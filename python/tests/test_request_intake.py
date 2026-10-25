@@ -65,7 +65,7 @@ def build_materialization(materialization_id: str, *, desired_phase: str) -> Mat
         destination_uri="gs://lakehouse/orders",
         runtime_mode="dedicated",
         resolved_runtime_name="kaspr-mat-1",
-        namespace="kafka-sql",
+        namespace="midstream",
         desired_phase=desired_phase,
         created_at="2026-07-12T00:00:00Z",
         updated_at="2026-07-12T00:00:00Z",
@@ -83,7 +83,7 @@ def build_status(materialization_id: str, *, desired_phase: str, observed_phase:
         observation_source="hybrid",
         runtime_health=RuntimeHealth(level="unknown"),
         resource_observation=ResourceObservation(
-            namespace="kafka-sql",
+            namespace="midstream",
             kaspr_app_name="kaspr-mat-1",
             resource_exists=False,
             managed_agent_states={},
@@ -105,7 +105,7 @@ def build_request_event(materialization_id: str, *, action: str, name: str | Non
             destination_uri="gs://lakehouse/orders",
             runtime_mode="dedicated",
             runtime_name="kaspr-mat-1",
-            namespace="kafka-sql",
+            namespace="midstream",
         ),
         claim_request_id="idr-claim000001" if action == "create" else None,
     )

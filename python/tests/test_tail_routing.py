@@ -54,7 +54,7 @@ PARTITIONER_VECTORS = [
 #: A member of the lab's maintenance app as DescribeGroups v2 reported it on 2026-10-23.
 LAB_MEMBER = {
     "member_id": "develop-materializer-maintenance-app-0-a22d4404-9a28-4818-893a-9e55fbe3a01b",
-    "metadata": "AAQAAAACAClkZXZlbG9wLW1hdGVyaWFsaXplci1tYWludGVuYW5jZS1yZXF1ZXN0cwA0ZGV2ZWxvcC1tYXRlcmlhbGl6ZXItbWFpbnRlbmFuY2UtYXBwLWFzc2lnbm9yLWxlYWRlcgAAAN97ImFzc2lnbm1lbnQiOiB7ImFjdGl2ZXMiOiB7fSwgInN0YW5kYnlzIjoge319LCAidXJsIjogImh0dHA6Ly9kZXZlbG9wLW1hdGVyaWFsaXplci1tYWludGVuYW5jZS1hcHAtMC5kZXZlbG9wLW1hdGVyaWFsaXplci1tYWludGVuYW5jZS1hcHAua2Fma2Etc3FsLnN2Yy5jbHVzdGVyLmxvY2FsOjYwNjUiLCAiY2hhbmdlbG9nX2Rpc3RyaWJ1dGlvbiI6IHt9LCAidG9waWNfZ3JvdXBzIjoge319",
+    "metadata": "AAQAAAACAClkZXZlbG9wLW1hdGVyaWFsaXplci1tYWludGVuYW5jZS1yZXF1ZXN0cwA0ZGV2ZWxvcC1tYXRlcmlhbGl6ZXItbWFpbnRlbmFuY2UtYXBwLWFzc2lnbm9yLWxlYWRlcgAAAN97ImFzc2lnbm1lbnQiOiB7ImFjdGl2ZXMiOiB7fSwgInN0YW5kYnlzIjoge319LCAidXJsIjogImh0dHA6Ly9kZXZlbG9wLW1hdGVyaWFsaXplci1tYWludGVuYW5jZS1hcHAtMC5kZXZlbG9wLW1hdGVyaWFsaXplci1tYWludGVuYW5jZS1hcHAubWlkc3RyZWFtLnN2Yy5jbHVzdGVyLmxvY2FsOjYwNjUiLCAiY2hhbmdlbG9nX2Rpc3RyaWJ1dGlvbiI6IHt9LCAidG9waWNfZ3JvdXBzIjoge319",
     "assignment": "AAQAAAACADRkZXZlbG9wLW1hdGVyaWFsaXplci1tYWludGVuYW5jZS1hcHAtYXNzaWdub3ItbGVhZGVyAAAAAQAAAAAAKWRldmVsb3AtbWF0ZXJpYWxpemVyLW1haW50ZW5hbmNlLXJlcXVlc3RzAAAABgAAAAAAAAABAAAAAgAAAAMAAAAEAAAABQAAANV4nMVRy27CMBD8Fctn24S2cMivVBFanG1YYWzjXUdqUf69bvoBBXHobUfaeWjmpoGZpnjBKLpXNw1eaEZe7xFnDCnbCwgWgkBfWBqgKBgherSQs/3lp2IDwoilEd+7wai/yQWvFVl4ZRi1NerFqFej3ozaDUtTYIE4Hj+fy/JwlGH58a4lNKBPIrnfbO4y79w9b+4MH2ewfA2OZ+98qNyeXUgeQr/v9jvd3P0J4tSkpsNILIWOVSjFtYf/SNR811IkZfKHqaSanxqle3CT7bJ8A+HZ9jU=",
 }
 
@@ -89,7 +89,7 @@ class MemberMapTests(unittest.TestCase):
         self.assertEqual(4, version)
         self.assertEqual(["develop-materializer-maintenance-requests", "develop-materializer-maintenance-app-assignor-leader"], subscription)
         self.assertEqual(
-            "http://develop-materializer-maintenance-app-0.develop-materializer-maintenance-app.kafka-sql.svc.cluster.local:6065",
+            "http://develop-materializer-maintenance-app-0.develop-materializer-maintenance-app.midstream.svc.cluster.local:6065",
             json.loads(user_data)["url"],
         )
         _, assigned, _ = decode_member_assignment(assignment)
@@ -110,7 +110,7 @@ class MemberMapTests(unittest.TestCase):
         self.assertIsNone(mapped.owner(6))
 
     def test_a_member_whose_metadata_does_not_read_is_reached_by_its_pods_name(self) -> None:
-        own = "http://materializer-tail-app-0.materializer-tail-app.kafka-sql.svc.cluster.local:6065"
+        own = "http://materializer-tail-app-0.materializer-tail-app.midstream.svc.cluster.local:6065"
         description = ConsumerGroupDescription(
             group_id="materializer-tail-app",
             state="Stable",
@@ -127,7 +127,7 @@ class MemberMapTests(unittest.TestCase):
 
         (member,) = member_map(description, topic=TICK_TOPIC, own_url=own).members
 
-        self.assertEqual("http://materializer-tail-app-1.materializer-tail-app.kafka-sql.svc.cluster.local:6065", member.url)
+        self.assertEqual("http://materializer-tail-app-1.materializer-tail-app.midstream.svc.cluster.local:6065", member.url)
         self.assertEqual((1, 3), member.partitions)
 
     def test_names_and_addresses(self) -> None:

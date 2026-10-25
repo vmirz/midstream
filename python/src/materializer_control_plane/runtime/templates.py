@@ -18,7 +18,7 @@ from materializer_control_plane.runtime.naming import resolve_runtime_app_name, 
 from materializer_control_plane.runtime_app.config import get_runtime_app_config
 
 PACKAGE_DISTRIBUTION_NAME = "materializer-control-plane"
-PACKAGE_REPOSITORY_URL = "git+ssh://git@github.com/TotalWineLabs/kaspr-kafka-materializer.git"
+PACKAGE_REPOSITORY_URL = "git+https://github.com/vmirz/midstream.git"
 #: The runtime's RocksDB write buffer and how many it keeps: its state table's write-ahead log holds
 #: at most their product before a flush (`_default_runtime_spec`).
 STATE_STORE_WRITE_BUFFER_BYTES = 4 * 1024 * 1024

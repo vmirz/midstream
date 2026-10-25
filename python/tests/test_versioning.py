@@ -62,7 +62,7 @@ class RuntimeVersionReportingTests(unittest.TestCase):
             observation_source="hybrid",
             runtime_health=RuntimeHealth(level="healthy"),
             resource_observation=ResourceObservation(
-                namespace="kafka-sql",
+                namespace="midstream",
                 kaspr_app_name="kaspr-mat-1",
                 resource_exists=True,
                 managed_agent_states=[],
@@ -92,7 +92,7 @@ class DeletedMaterializationStaysDeletedTests(unittest.TestCase):
             destination_uri="gs://lakehouse/orders",
             runtime_mode="dedicated",
             resolved_runtime_name="kaspr-mat-1",
-            namespace="kafka-sql",
+            namespace="midstream",
             desired_phase=desired_phase,
             created_at="2026-09-12T00:00:00Z",
             updated_at="2026-09-12T03:27:00Z",
@@ -109,7 +109,7 @@ class DeletedMaterializationStaysDeletedTests(unittest.TestCase):
             observation_source="hybrid",
             runtime_health=RuntimeHealth(level="healthy"),
             resource_observation=ResourceObservation(
-                namespace="kafka-sql",
+                namespace="midstream",
                 kaspr_app_name="kaspr-mat-1",
                 resource_exists=True,
                 managed_agent_states={},

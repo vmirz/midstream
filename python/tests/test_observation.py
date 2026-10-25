@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import asyncio
 from collections.abc import Iterable
 import copy
@@ -50,6 +51,7 @@ from materializer_control_plane.storage import (
     save_runtime_binding,
 )
 from table_records import build_table_record
+from materializer_control_plane import config as control_plane_config
 
 
 class FakeTable:
@@ -94,7 +96,7 @@ def build_materialization(*, desired_phase: str = "running") -> Materialization:
         destination_uri="abfs://lakehouse/orders",
         runtime_mode="dedicated",
         resolved_runtime_name="kaspr-mat-1",
-        namespace="kafka-sql",
+        namespace="midstream",
         desired_phase=desired_phase,
         created_at="2026-07-12T00:00:00Z",
         updated_at="2026-07-12T00:00:00Z",
@@ -128,7 +130,7 @@ def build_status(
         observation_source="hybrid",
         runtime_health=RuntimeHealth(level=runtime_health_level),
         resource_observation=ResourceObservation(
-            namespace="kafka-sql",
+            namespace="midstream",
             kaspr_app_name="kaspr-mat-1",
             resource_exists=True,
             ready_condition=ready_condition,
@@ -174,7 +176,7 @@ class ObservationMappingTests(unittest.TestCase):
     def test_normalize_resource_observation_filters_owned_agents(self) -> None:
         normalized = normalize_resource_observation(
             KasprAppObservationInput(
-                namespace="kafka-sql",
+                namespace="midstream",
                 kaspr_app_name="kaspr-materializer-orders",
                 resource_exists=True,
                 managed_agent_states={
@@ -196,7 +198,7 @@ class ObservationMappingTests(unittest.TestCase):
             build_status(desired_phase="deleting", observed_phase="deleting"),
             normalize_resource_observation(
                 KasprAppObservationInput(
-                    namespace="kafka-sql",
+                    namespace="midstream",
                     kaspr_app_name="kaspr-materializer-orders",
                     resource_exists=False,
                 )
@@ -212,7 +214,7 @@ class ObservationMappingTests(unittest.TestCase):
             build_status(ready_status="True"),
             normalize_resource_observation(
                 KasprAppObservationInput(
-                    namespace="kafka-sql",
+                    namespace="midstream",
                     kaspr_app_name="kaspr-materializer-orders",
                     resource_exists=True,
                     ready_condition=ResourceCondition(
@@ -239,7 +241,7 @@ class ObservationMappingTests(unittest.TestCase):
             ),
             normalize_resource_observation(
                 KasprAppObservationInput(
-                    namespace="kafka-sql",
+                    namespace="midstream",
                     kaspr_app_name="kaspr-materializer-orders",
                     resource_exists=True,
                     ready_condition=ResourceCondition(
@@ -288,7 +290,7 @@ class ObservationMappingTests(unittest.TestCase):
             current_status,
             normalize_resource_observation(
                 KasprAppObservationInput(
-                    namespace="kafka-sql",
+                    namespace="midstream",
                     kaspr_app_name="kaspr-materializer-orders",
                     resource_exists=True,
                     ready_condition=ResourceCondition(
@@ -316,7 +318,7 @@ class ObservationMappingTests(unittest.TestCase):
             build_status(ready_status="True"),
             normalize_resource_observation(
                 KasprAppObservationInput(
-                    namespace="kafka-sql",
+                    namespace="midstream",
                     kaspr_app_name="kaspr-materializer-orders",
                     resource_exists=True,
                     ready_condition=ResourceCondition(
@@ -340,7 +342,7 @@ class ObservationMappingTests(unittest.TestCase):
             build_status(ready_status="True"),
             normalize_resource_observation(
                 KasprAppObservationInput(
-                    namespace="kafka-sql",
+                    namespace="midstream",
                     kaspr_app_name="kaspr-materializer-orders",
                     resource_exists=True,
                     ready_condition=ResourceCondition(
@@ -364,7 +366,7 @@ class ObservationMappingTests(unittest.TestCase):
             build_status(),
             normalize_resource_observation(
                 KasprAppObservationInput(
-                    namespace="kafka-sql",
+                    namespace="midstream",
                     kaspr_app_name="kaspr-materializer-orders",
                     resource_exists=True,
                     ready_condition=ResourceCondition(
@@ -388,7 +390,7 @@ class ObservationMappingTests(unittest.TestCase):
             build_status(),
             normalize_resource_observation(
                 KasprAppObservationInput(
-                    namespace="kafka-sql",
+                    namespace="midstream",
                     kaspr_app_name="kaspr-materializer-orders",
                     resource_exists=True,
                     ready_condition=ResourceCondition(
@@ -412,7 +414,7 @@ def scaled_app(available_members: str | None, *, generation: int = 3, observed_g
     """A KasprApp as the operator reports it: ready whenever available members equal desired."""
     return normalize_resource_observation(
         KasprAppObservationInput(
-            namespace="kafka-sql",
+            namespace="midstream",
             kaspr_app_name="kaspr-mat-1",
             resource_exists=True,
             metadata_generation=generation,
@@ -531,7 +533,7 @@ class ObservationServiceTests(unittest.TestCase):
                 materialization_id="mat-1",
                 runtime_mode="dedicated",
                 kaspr_app_name="kaspr-materializer-orders",
-                namespace="kafka-sql",
+                namespace="midstream",
                 managed_agent_names=["writer", "committer"],
                 template_version="v1",
                 last_applied_spec_hash="hash",
@@ -752,7 +754,7 @@ class ObservationServiceTests(unittest.TestCase):
             self.table,
             "mat-1",
             KasprAppObservationInput(
-                namespace="kafka-sql",
+                namespace="midstream",
                 kaspr_app_name="kaspr-materializer-orders",
                 resource_exists=True,
                 metadata_generation=5,
@@ -776,7 +778,7 @@ class ObservationServiceTests(unittest.TestCase):
             self.table,
             "mat-1",
             KasprAppObservationInput(
-                namespace="kafka-sql",
+                namespace="midstream",
                 kaspr_app_name="kaspr-materializer-orders",
                 resource_exists=True,
                 ready_condition=ResourceCondition(
@@ -806,7 +808,7 @@ class ObservationServiceTests(unittest.TestCase):
             self.table,
             "mat-1",
             KasprAppObservationInput(
-                namespace="kafka-sql",
+                namespace="midstream",
                 kaspr_app_name="kaspr-materializer-orders",
                 resource_exists=False,
             ),
@@ -833,7 +835,7 @@ class ObservationServiceTests(unittest.TestCase):
                     caused_by=EventCause(kind="request", id="req-delete"),
                     dedupe_key="observe:mat-1:work-delete:1",
                     target_runtime=__import__("materializer_control_plane.models", fromlist=["TargetRuntime"]).TargetRuntime(
-                        namespace="kafka-sql",
+                        namespace="midstream",
                         kaspr_app_name="kaspr-mat-1",
                     ),
                     observation_policy=ObservationPolicy(
@@ -855,7 +857,7 @@ class ObservationServiceTests(unittest.TestCase):
         self.assertEqual(outputs[0]["value"]["materialization_id"], "mat-1")
         self.assertEqual(
             outputs[0]["value"]["target_runtime"],
-            {"namespace": "kafka-sql", "kaspr_app_name": "kaspr-mat-1"},
+            {"namespace": "midstream", "kaspr_app_name": "kaspr-mat-1"},
         )
 
     def test_a_status_from_a_materialization_the_control_plane_does_not_hold_is_dropped(self) -> None:
@@ -901,7 +903,7 @@ class ObservationServiceTests(unittest.TestCase):
         resource_status = handle_resource_observation(
             "mat-1",
             {
-                "namespace": "kafka-sql",
+                "namespace": "midstream",
                 "kaspr_app_name": "kaspr-materializer-orders",
                 "resource_exists": False,
             },
@@ -982,7 +984,7 @@ class ObservationServiceTests(unittest.TestCase):
                 materialization_id="mat-1",
                 runtime_mode="dedicated",
                 kaspr_app_name="kaspr-materializer-orders",
-                namespace="kafka-sql",
+                namespace="midstream",
                 managed_agent_names=["writer", "committer"],
                 template_version="v1",
                 last_applied_spec_hash="stale-hash",
@@ -1026,7 +1028,7 @@ class ObservationServiceTests(unittest.TestCase):
                 materialization_id="mat-1",
                 runtime_mode="dedicated",
                 kaspr_app_name="kaspr-materializer-orders",
-                namespace="kafka-sql",
+                namespace="midstream",
                 managed_agent_names=["writer", "committer"],
                 template_version="v1",
                 last_applied_spec_hash="stale-hash",
@@ -1057,7 +1059,7 @@ class ObservationServiceTests(unittest.TestCase):
                 destination_uri="abfs://lakehouse/orders",
                 runtime_mode="dedicated",
                 resolved_runtime_name="kaspr-materializer-older",
-                namespace="kafka-sql",
+                namespace="midstream",
                 desired_phase="deleting",
                 created_at="2026-07-12T00:00:00Z",
                 updated_at="2026-07-12T00:00:00Z",
@@ -1076,7 +1078,7 @@ class ObservationServiceTests(unittest.TestCase):
                 observation_source="hybrid",
                 runtime_health=RuntimeHealth(level="unknown"),
                 resource_observation=ResourceObservation(
-                    namespace="kafka-sql",
+                    namespace="midstream",
                     kaspr_app_name="kaspr-materializer-older",
                     resource_exists=False,
                     managed_agent_states={},
@@ -1089,7 +1091,7 @@ class ObservationServiceTests(unittest.TestCase):
                 materialization_id="mat-0",
                 runtime_mode="dedicated",
                 kaspr_app_name="kaspr-materializer-older",
-                namespace="kafka-sql",
+                namespace="midstream",
                 managed_agent_names=["writer", "committer"],
                 template_version="v1",
                 last_applied_spec_hash="old-hash",
@@ -1117,7 +1119,7 @@ class ObservationServiceTests(unittest.TestCase):
                 materialization_id="mat-1",
                 runtime_mode="dedicated",
                 kaspr_app_name="kaspr-materializer-orders",
-                namespace="kafka-sql",
+                namespace="midstream",
                 managed_agent_names=["writer", "committer"],
                 template_version="v1",
                 last_applied_spec_hash="stale-hash",
@@ -1152,7 +1154,7 @@ def observe_work(*, kaspr_app_name: str = "kaspr-mat-1") -> dict:
         requested_at="2026-07-12T00:05:00Z",
         caused_by=EventCause(kind="scheduler", id="observe:mat-1"),
         dedupe_key="observe:mat-1:1",
-        target_runtime=TargetRuntime(namespace="kafka-sql", kaspr_app_name=kaspr_app_name),
+        target_runtime=TargetRuntime(namespace="midstream", kaspr_app_name=kaspr_app_name),
         observation_policy=ObservationPolicy(
             attempt=1,
             max_attempts=4,
@@ -1231,7 +1233,7 @@ class SlowKubernetesApi:
 
 
 READY_APP = {
-    "namespace": "kafka-sql",
+    "namespace": "midstream",
     "kaspr_app_name": "kaspr-mat-1",
     "resource_exists": True,
     "managed_agent_states": {"writer": "running"},
@@ -1267,7 +1269,7 @@ class AsyncObservationHandlerTests(unittest.TestCase):
                 materialization_id="mat-1",
                 runtime_mode="dedicated",
                 kaspr_app_name="kaspr-mat-1",
-                namespace="kafka-sql",
+                namespace="midstream",
                 managed_agent_names=["writer"],
                 template_version="v1",
                 last_applied_spec_hash="hash",
@@ -1469,7 +1471,7 @@ class AsyncObservationHandlerTests(unittest.TestCase):
 
                 self.assertEqual(outputs, [])
                 self.assertEqual(self.table.values, before)
-                self.assertIn("Kubernetes read of KasprApp kafka-sql/kaspr-mat-1 timed out after 0.05s", logs.output[0])
+                self.assertIn("Kubernetes read of KasprApp midstream/kaspr-mat-1 timed out after 0.05s", logs.output[0])
                 self.assertTrue(api.cancelled.wait(2), "the read was left running on the client's loop")
 
     def test_a_read_that_fails_otherwise_still_raises(self) -> None:
@@ -1483,6 +1485,14 @@ class AsyncObservationHandlerTests(unittest.TestCase):
             asyncio.run(
                 handle_observation_work_for_output_async(observe_work(), self.table, FailingClient(), observed_at="t")
             )
+
+
+
+def setUpModule() -> None:
+    # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
+    # reach the configuration without choosing one, so the environment names it for them.
+    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    control_plane_config.get_config.cache_clear()
 
 
 if __name__ == "__main__":
@@ -1546,7 +1556,7 @@ class RestartInstabilityTests(unittest.TestCase):
 
     def test_member_states_round_trip_on_the_observation(self) -> None:
         observation = ResourceObservation(
-            namespace="kafka-sql",
+            namespace="midstream",
             kaspr_app_name="kaspr-mat-1",
             resource_exists=True,
             managed_agent_states={},
@@ -1564,7 +1574,7 @@ def replace_members(observation: ResourceObservation, members) -> ResourceObserv
 
 def oom_looping_observation(*, exited_at: str = TEN_MINUTES_AGO) -> KasprAppObservationInput:
     return KasprAppObservationInput(
-        namespace="kafka-sql",
+        namespace="midstream",
         kaspr_app_name="kaspr-mat-1",
         resource_exists=True,
         ready_condition=ResourceCondition(status="True", reason="Healthy", message="Ready", last_transition_time=AN_HOUR_AGO),

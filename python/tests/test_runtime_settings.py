@@ -294,6 +294,7 @@ class RuntimeSettingsDeliveryTests(unittest.TestCase):
 def build_materialization() -> Materialization:
     return Materialization(
         materialization_id="mat-1",
+        namespace="midstream",
         name="shop",
         tables=table_specs("orders", "customers"),
         destination_uri="gs://lake/orders",

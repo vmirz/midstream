@@ -55,6 +55,7 @@ class FakeTable:
 def build_materialization(**overrides) -> Materialization:
     values = dict(
         materialization_id=MATERIALIZATION_ID,
+        namespace="midstream",
         name="shop",
         tables=table_specs("orders"),
         destination_uri="gs://lake",
@@ -77,7 +78,7 @@ def build_status() -> MaterializationStatus:
         observation_source="hybrid",
         runtime_health=RuntimeHealth(level="healthy"),
         resource_observation=ResourceObservation(
-            namespace="kafka-sql",
+            namespace="midstream",
             kaspr_app_name="kaspr-mat-1",
             resource_exists=True,
             managed_agent_states={"kaspr-mat-1-writer": "running"},

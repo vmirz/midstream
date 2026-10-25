@@ -133,6 +133,7 @@ def build_materialization(*topics: str) -> Materialization:
     topics = topics or ("orders",)
     return Materialization(
         materialization_id="mat-1",
+        namespace="midstream",
         name="shop",
         tables=tuple(TableSpec(name=name, source_topic=topic, dataset="shop", dataset_id="ds-000000000001") for name, topic in zip(table_names_for_topics(topics), topics)),
         destination_uri="gs://lake",

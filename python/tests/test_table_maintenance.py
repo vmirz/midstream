@@ -57,6 +57,7 @@ class FakeTable:
 def build_materialization(materialization_id: str, *topics: str, desired_phase: str = "running") -> Materialization:
     return Materialization(
         materialization_id=materialization_id,
+        namespace="midstream",
         name=f"shop_{materialization_id[-1]}",
         tables=table_specs(*topics),
         destination_uri="gs://lake",

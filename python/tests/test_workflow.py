@@ -123,7 +123,7 @@ def build_materialization(**overrides) -> Materialization:
         destination_uri=DESTINATION,
         runtime_mode="dedicated",
         resolved_runtime_name="kaspr-mat-a1b2c3d4e5f6",
-        namespace="kafka-sql",
+        namespace="midstream",
         desired_phase="running",
         created_at="2026-07-12T00:00:00Z",
         updated_at="2026-07-12T00:00:00Z",
@@ -143,7 +143,7 @@ def build_status(**overrides) -> MaterializationStatus:
         observation_source="hybrid",
         runtime_health=RuntimeHealth(level="unknown"),
         resource_observation=ResourceObservation(
-            namespace="kafka-sql",
+            namespace="midstream",
             kaspr_app_name="kaspr-mat-a1b2c3d4e5f6",
             resource_exists=False,
             managed_agent_states={},
@@ -476,7 +476,7 @@ class RuntimeApplyTests(WorkflowTestCase):
         kinds = [resource["kind"] for resource in self.kaspr.applied]
         self.assertEqual(["KasprApp", "KasprTable", "KasprAgent", "KasprAgent", "KasprAgent", "KasprTask", "KasprTask", "KasprTask"], kinds)
         # The maintenance clock a runtime ran before 2.0 goes with the apply.
-        self.assertEqual([{"namespace": "kafka-sql", "name": "kaspr-mat-a1b2c3d4e5f6-maintenance-timer", "kind": "KasprTask"}], self.kaspr.deleted)
+        self.assertEqual([{"namespace": "midstream", "name": "kaspr-mat-a1b2c3d4e5f6-maintenance-timer", "kind": "KasprTask"}], self.kaspr.deleted)
         writer = next(resource for resource in self.kaspr.applied if resource["metadata"]["name"].endswith("-writer"))
         self.assertIn(LOCATION, writer["spec"]["processors"]["init"]["python"])
         binding = get_runtime_binding(self.table, MATERIALIZATION_ID)

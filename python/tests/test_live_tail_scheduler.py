@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
@@ -12,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from table_records import build_table_record, table_specs  # noqa: E402
 
+from materializer_control_plane import config as control_plane_config
 from materializer_control_plane.config import ControlPlaneConfig  # noqa: E402
 from materializer_control_plane.handlers.maintenance import build_table_maintenance_trigger, handle_maintenance_work  # noqa: E402
 from materializer_control_plane.models import (  # noqa: E402
@@ -56,6 +58,7 @@ class FakeTable:
 def build_materialization(materialization_id: str, *topics: str, desired_phase: str = "running", skip_tombstones: bool = False) -> Materialization:
     return Materialization(
         materialization_id=materialization_id,
+        namespace="midstream",
         name=f"shop_{materialization_id[-1]}",
         tables=table_specs(*topics),
         destination_uri="gs://lake",
@@ -221,6 +224,14 @@ class LiveTailMessageTests(unittest.TestCase):
         hints = LiveTailHints.from_dict({"offsets": {0: "7", "1": 9}, "schema_id": "2"})
         self.assertEqual(({"0": 7, "1": 9}, 2, None), (hints.offsets, hints.schema_id, hints.metadata_location))
         self.assertEqual(LiveTailHints(), LiveTailHints.from_dict(None))
+
+
+
+def setUpModule() -> None:
+    # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
+    # reach the configuration without choosing one, so the environment names it for them.
+    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    control_plane_config.get_config.cache_clear()
 
 
 if __name__ == "__main__":
