@@ -217,7 +217,7 @@ The views need the console's credential and a bearer, both the service token (ne
 ```bash
 SERVICE_TOKEN=$(kubectl get secret -n $NS develop-materializer-auth -o jsonpath='{.data.service-token}' | base64 -d)
 kubectl port-forward -n $NS svc/$TAIL-app-api 6066:6065 &
-curl -s localhost:6066/tail/v1/members -H "X-Materializer-Console: $SERVICE_TOKEN" \
+curl -s localhost:6066/tail/v1/members -H "X-Console-Token: $SERVICE_TOKEN" \
      -H "authorization: Bearer $SERVICE_TOKEN" | python3 -m json.tool      # state Stable, two members, 32 partitions each
 ```
 
@@ -810,7 +810,7 @@ Stopping a materialization stops its tail too; resuming brings it back within a 
 ### Look at the tail app
 
 ```bash
-curl -s 'localhost:6066/tail/v1/members?health=true' -H "X-Materializer-Console: $SERVICE_TOKEN" \
+curl -s 'localhost:6066/tail/v1/members?health=true' -H "X-Console-Token: $SERVICE_TOKEN" \
      -H "authorization: Bearer $SERVICE_TOKEN" | python3 -m json.tool
 for p in $(tail_pods); do kubectl logs -n $NS $p --tail=50 | grep -E 'tail_|ERROR|WARN'; done
 ```

@@ -96,7 +96,7 @@ One wheel, pinned to an exact git commit (handbook 01, 16).
 | `python/tests/` | The `unittest` suite: the executable specification |
 | `manifests/base/` | The control plane's CRDs: app, agents, tasks, tables, webviews, RBAC; `maintenance/`, the maintenance app's; `tail/` and `webviews/tail-*.yaml`, the tail app's |
 | `manifests/{dev,staging,prod}/` | Overlays; `dev` adds `develop-` prefixes and renames |
-| `console/` | The Materializer Console and its handbook (`console/docs/`) |
+| `console/` | The Midstream Console and its handbook (`console/docs/`) |
 | `docs/handbook/` | The reference manual |
 
 ## 4. Stack

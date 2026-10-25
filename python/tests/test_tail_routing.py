@@ -181,7 +181,7 @@ class ForwardingTests(unittest.IsolatedAsyncioTestCase):
         path, headers = self.harness.control_plane.forwarded[-1]
         self.assertEqual("/tail/v1/materializations/mat-1/tables/orders", path)
         self.assertEqual(f"Bearer {self.token}", headers["authorization"])
-        self.assertIn("x-materializer-console", headers)
+        self.assertIn("x-console-token", headers)
         self.assertEqual(self.other.config.member_id, headers["X-Tail-Forwarded-By"])
         self.assertNotIn("tail:mat-1:orders", self.other.tables, "the forwarder holds nothing of it")
 

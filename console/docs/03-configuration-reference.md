@@ -56,7 +56,7 @@ are ignored (`RETIRED_SETTINGS`, `server/settings/catalog.ts`).
 | Variable | Type | Default | Effect |
 |----------|------|---------|--------|
 | `CONSOLE_SERVICE_TOKEN` | string | unset | The credential the console reads its shared live views with — the fleet, details, schemas, topics and its own settings. Must equal the control plane's `AUTH_SERVICE_TOKEN`; it can read, never change. Unset, those views read as a guest and show only what guests may see, and the console logs a warning at start |
-| `CONSOLE_SESSION_COOKIE` | string | `materializer_session` | Name of the HttpOnly cookie holding a browser's session. Renaming it signs everyone out |
+| `CONSOLE_SESSION_COOKIE` | string | `console_session` | Name of the HttpOnly cookie holding a browser's session. Renaming it signs everyone out |
 | `CONSOLE_COOKIE_SECURE` | `auto` \| `true` \| `false` | `auto` | Whether the cookie is `Secure`. `auto` follows the scheme the request arrived with, as the ingress reports it (`trustProxy`), so it is Secure behind TLS and still works on `http://localhost` |
 | `CONSOLE_SESSION_CHECK_MS` | int | `5000` | How long the console trusts a session it checked with the control plane before asking again. Deactivating someone reaches this console within this long. Overridable (Security) |
 | `CONSOLE_SIGN_IN_ATTEMPTS_PER_MINUTE` | int | `10` | Sign-in attempts one client address may make per minute before the console answers `429`. Overridable (Security) |
@@ -112,7 +112,7 @@ window to at least twice it.
 
 | Variable | Type | Default | Contents |
 |----------|------|---------|----------|
-| `CONSOLE_DATA_DIR` | string | `<os.tmpdir()>/materializer-console` | Parent directory for all local state |
+| `CONSOLE_DATA_DIR` | string | `<os.tmpdir()>/midstream-console` | Parent directory for all local state |
 | `CONSOLE_PARQUET_CACHE_DIR` | string | `<CONSOLE_DATA_DIR>/parquet-cache` | Mirrored data files (cached mode only) |
 | `CONSOLE_PARQUET_CACHE_MAX_BYTES` | int | `8589934592` (8 GiB) | Eviction budget for the file cache |
 
@@ -250,7 +250,7 @@ PORT=8787
 LOG_LEVEL=info
 
 # A roomy volume for run results and the cached-mode file cache
-CONSOLE_DATA_DIR=/var/lib/materializer-console
+CONSOLE_DATA_DIR=/var/lib/midstream-console
 CONSOLE_PARQUET_CACHE_MAX_BYTES=4294967296
 
 # Direct gs:// scanning — no downloads, no local cache growth

@@ -108,7 +108,7 @@ async function main(): Promise<void> {
   await app.listen({ port: config.port, host: config.host });
   logger.info(
     { port: config.port, controlPlane: config.controlPlaneUrl, workerPool: Number(process.env.UV_THREADPOOL_SIZE) },
-    'materializer console ready',
+    'midstream console ready',
   );
   logDataAccessMode();
   if (!config.serviceToken) {

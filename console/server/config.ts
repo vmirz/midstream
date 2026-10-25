@@ -54,7 +54,7 @@ export function environmentDefault(name: string): string | number | boolean | nu
   return environmentDefaults.get(name);
 }
 
-const dataDir = str('CONSOLE_DATA_DIR', join(tmpdir(), 'materializer-console'));
+const dataDir = str('CONSOLE_DATA_DIR', join(tmpdir(), 'midstream-console'));
 
 /**
  * The console's own version, read from `package.json`.
@@ -133,7 +133,7 @@ const deployment = {
    */
   serviceToken: optional('CONSOLE_SERVICE_TOKEN'),
   /** The cookie holding a signed-in browser's session. Renaming it signs everyone out. */
-  sessionCookieName: str('CONSOLE_SESSION_COOKIE', 'materializer_session'),
+  sessionCookieName: str('CONSOLE_SESSION_COOKIE', 'console_session'),
   /**
    * Whether the session cookie is marked Secure: `auto` follows the request's scheme, as reported
    * by the ingress, so it is Secure behind TLS and still works on http://localhost.

@@ -42,7 +42,7 @@ and the system:
    console shows them beside the snapshot, each record exactly once, within seconds of being
    produced (19).
 9. Status flows back continuously: `GET /materializations/{id}` and its table records reflect
-   reality, and the Materializer Console reads the tables themselves — joining them in SQL if asked.
+   reality, and the Midstream Console reads the tables themselves — joining them in SQL if asked.
    An engine on the REST catalog reads `lake.sales.orders`, and joins it with any table, in any
    dataset, its token may read.
 
@@ -115,7 +115,7 @@ of its partitions and forwards a request for another's. It never writes a table 
 
 ### The console
 
-The Materializer Console (`/console`) is a Node BFF and a React client. It talks to the control plane
+The Midstream Console (`/console`) is a Node BFF and a React client. It talks to the control plane
 over HTTP only, and reads tables itself: their pointers, metadata and manifests from GCS, and their
 data files through DuckDB (web 06, 07). It is meant to be extractable into its own repository.
 
@@ -389,7 +389,7 @@ There is **no linter or formatter configured** in this repository. Do not introd
     kafka/                          Topic/consumer-group admin, metadata
     scheduler/                      Routed-output builders
   tests/                            52 unittest modules
-/console/                           Materializer Console: BFF + React client (self-contained)
+/console/                           Midstream Console: BFF + React client (self-contained)
   docs/                             Console handbook (17 documents)
 ```
 

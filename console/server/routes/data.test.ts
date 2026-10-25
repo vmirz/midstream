@@ -235,7 +235,7 @@ describe('runs and their tails', () => {
     assert.equal(run.rows, 12 + 4);
     assert.equal(run.tail?.status, 'complete');
     assert.equal(asked[0]?.headers.authorization, 'Bearer token-test');
-    assert.equal(asked[0]?.headers['x-materializer-console'], config.serviceToken);
+    assert.equal(asked[0]?.headers['x-console-token'], config.serviceToken);
 
     asked.length = 0;
     const without = await finishedRun(server, { liveTail: false });

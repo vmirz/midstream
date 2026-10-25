@@ -83,10 +83,10 @@ while the console is stopped. To keep the Parquet cache across restarts, mount a
 ```yaml
 env:
   - name: CONSOLE_DATA_DIR
-    value: /var/lib/materializer-console
+    value: /var/lib/midstream-console
 volumeMounts:
   - name: console-data
-    mountPath: /var/lib/materializer-console
+    mountPath: /var/lib/midstream-console
 ```
 
 Sizing: the Parquet cache is bounded by `CONSOLE_PARQUET_CACHE_MAX_BYTES` (8 GiB default); stored
@@ -147,11 +147,11 @@ term while leaving the watched detail responsive.
 
 ## 13.6 Log reference
 
-Structured JSON via Pino, `service: materializer-console`.
+Structured JSON via Pino, `service: midstream-console`.
 
 | Level | Message | Meaning |
 |-------|---------|---------|
-| `info` | `materializer console ready` | Listening; includes port, control-plane URL and `workerPool`, the size of Node's worker pool (§13.7) |
+| `info` | `midstream console ready` | Listening; includes port, control-plane URL and `workerPool`, the size of Node's worker pool (§13.7) |
 | `info` | `duckdb instance ready` | First query initialised DuckDB |
 | `info` | `console log level changed` | A Settings page change to the log level was applied |
 | `info` | `shutting down console` | SIGTERM/SIGINT received |
@@ -287,7 +287,7 @@ The message says what failed:
 | `names … outside its location` / `says it is at …` | The table points at files the console will not read ([12 §12.6](./12-security-model.md#126-paths-a-table-names)) | Find the commit that did it (Table tab › Snapshots) |
 
 ```bash
-kubectl -n midstream logs deploy/materializer-console | grep 'table could not be read'
+kubectl -n midstream logs deploy/midstream-console | grep 'table could not be read'
 ```
 
 The log line carries storage's own error, which the page leaves out.
@@ -305,7 +305,7 @@ with an error naming the column it meant. The column rail lists them.
 A filter has to read its columns from every object in the range, and from outside the cloud each
 object is four round trips. Check, in order:
 
-1. `workerPool` in the `materializer console ready` line. It should be at least
+1. `workerPool` in the `midstream console ready` line. It should be at least
    `CONSOLE_RUN_CONCURRENCY × CONSOLE_RUN_SCAN_CONCURRENCY`; an explicit, smaller
    `UV_THREADPOOL_SIZE` caps every scan at that many objects in flight, whatever the scan width.
 2. The range. Every preset shows its row count before it is run, and a narrower one is

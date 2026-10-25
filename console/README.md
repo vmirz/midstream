@@ -1,4 +1,4 @@
-# Materializer Console
+# Midstream Console
 
 Real-time web console for the Kafka materializer: its control plane, its runtimes, and the Iceberg
 tables each materialization fills, one per source topic, each in a dataset. Console 3.0 needs

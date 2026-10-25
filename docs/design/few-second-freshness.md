@@ -715,7 +715,7 @@ The console depends on the tail through one HTTP endpoint (§6.2) and stays extr
   from the body and headers; non-2xx and timeouts become a `TailOutcome` of `unavailable` with a
   reason (`not_ready`, `rebalancing`, `unavailable_for_snapshot`, `off`, `unreachable`, `forbidden`),
   never a thrown error. The bearer is the person's token (`callerOf(request).token`), and
-  `X-Materializer-Console` carries the console's service credential (`config.serviceToken`), which
+  `X-Console-Token` carries the console's service credential (`config.serviceToken`), which
   the tail app requires: the endpoint is the console's alone (§6.2).
 - **Runs.** Every run gets a work directory (`<CONSOLE_RUN_DIR>/<run id>/`, today only statements
   have one; `runs/run.ts` takes it over and `releaseStorage` removes it). At the start of
@@ -826,8 +826,8 @@ count bounds the app's members; changing it later moves every table once.
 
 ### 6.2 The tail HTTP API (tail app)
 
-**The console's alone.** These endpoints exist for the Materializer Console and no other caller:
-every request must carry the console's service credential in `X-Materializer-Console` besides the
+**The console's alone.** These endpoints exist for the Midstream Console and no other caller:
+every request must carry the console's service credential in `X-Console-Token` besides the
 person's bearer, or it is `403 forbidden`, reason `console_only`. They are not part of the public
 API — handbook 04 lists them only to say so, handbook 19 documents them — and may change between
 releases without a deprecation.
@@ -842,7 +842,7 @@ releases without a deprecation.
 | `format` | `parquet` (default) or `json` (rows as JSON objects, at most 1,000, for tests and debugging; the same row builder) |
 | `wait_ms` | optional, default 0, at most 5,000: how long the owner may hold the answer while the table is activating or catching up, so the first look at a parked table usually includes its tail; the console sends `liveTailTimeoutMs − 500` |
 
-Headers: `Authorization: Bearer <session or access token>`; `X-Materializer-Console: <the console's
+Headers: `Authorization: Bearer <session or access token>`; `X-Console-Token: <the console's
 service credential>` (required, above); `x-forwarded-for`/`x-forwarded-user-agent` as the console
 forwards them; `X-Tail-Forwarded-By` between members only.
 
@@ -879,7 +879,7 @@ later test runs on a Kaspr that has it.
 | Status | `code` / `details.reason` | When |
 |---|---|---|
 | `401` / `403` | as `identity/authorization.py` raises them | no usable session; `data.query` not held on the table's dataset; password change required |
-| `403 forbidden` | `console_only` | the request lacks the console's credential in `X-Materializer-Console`, or carries a wrong one |
+| `403 forbidden` | `console_only` | the request lacks the console's credential in `X-Console-Token`, or carries a wrong one |
 | `404 not_found` | `live_tail_off` | the table is not tailed by this app: never ticked, forgotten, cancelled, or the materialization is not running |
 | `409 conflict` | `tail_unavailable`, `details.partitions: {"0": "behind_retention"}` | `after[p]` is older than the retained range: the caller's snapshot is too old — re-pin |
 | `409 conflict` | `tail_rebalancing` | the table is moving between members: the member the map named does not own it yet, or the map is stale after a refresh — retry on the next refresh |
@@ -1277,7 +1277,7 @@ carries the field. Runtimes are untouched. Additive everywhere: a **minor** rele
 - The head peek needs the same `data.query` on the table's dataset, is bounded by
   `live_tail_peek_max_rows`, is shown apart from the table and is stored nowhere.
 - The endpoint is the console's alone: every request must carry the console's service credential
-  in `X-Materializer-Console` besides the person's bearer, so a script holding a valid token cannot
+  in `X-Console-Token` besides the person's bearer, so a script holding a valid token cannot
   use it (`403 console_only`); it is not a public API and is documented as console-internal
   (handbook 19), free to change between releases. In every deployment the console runs in-cluster
   and the Service is cluster-internal; the lab's HTTPRoute exposes `/tail/*` for development and
@@ -1317,7 +1317,7 @@ suites green (§13.7).
 | `test_agent_manifests.py` (extended) | the `maintenance` agent's `tail` output topic (64 partitions) and its dev-overlay patch; the tail app owns its agent, task and WebViews (as `test_the_maintenance_app_owns_its_agent_and_task`); tail WebViews authorize through `authorize_tail` (`AuthorizationWiringTests` taught the exception by app label); every overlay prefixes the tail topics and the tail app's env |
 | `test_tail_exactly_once.py` (new) | model-based: random records on 1–8 partitions; a simulated runtime committing random prefixes (offsets only ever growing); compaction (offsets unchanged); bursts; the buffer's trims, pauses, parks and re-seeds (buffer dropped); member moves (a fresh buffer seeded from a lagging record of the offsets); schema changes (re-conform); and a simulated console that pins snapshots at random moments and fetches tails incrementally (`after = through`), with and without `wait`. After every step: the union of a pinned snapshot's rows and its tail segments is exactly the records with offset ≤ `through`, each once; `through` never regresses within a run; every answer is a contiguous prefix or a `409`, never a hole; a `backlogged` or `parked` table reads nothing. Ten thousand random schedules per run of the suite, seeded so a failure replays |
 | `test_tail_failures.py` (new; fault injection through the fakes) | **Kafka:** a fetch raising mid-ingest keeps the buffer, retries with backoff, grows `lag_ms`, keeps serving what is buffered, and resumes from `next_offset` with no gap or duplicate; a partition whose leader is unavailable blocks only itself; the source topic deleted → the table is `unavailable` with its reason, answers `503`, and recovers when the topic returns. **Control plane:** the schema fetch failing → GCS fallback; both failing → retries 1, 2, 5, 10, 30 s and `not_ready` meanwhile; session checks failing → cached sessions served through the 60 s grace, then `503 control_plane_unreachable`, and recovery afterwards. **Messages:** malformed ticks, cancels and table events logged and dropped; duplicate and late ticks and events idempotent; a tick whose hints carry offsets below those known never moves `committed` backwards; a `table_committed` ahead of ingest (committed > `next_offset`) trims nothing unread, and the rows fetched afterwards still serve an older snapshot within retention. **Serving:** `serve_concurrency` requests at once queue the rest, never fail them; a `wait_ms` request on a table that never catches up answers at the deadline with what it has; a forwarded request the owner answers `409 tail_rebalancing` is passed through unchanged; the peek's dedicated consumer failing leaves the tail's own consumer untouched |
-| `test_tail_security.py` (new) | a forged `X-Tail-Forwarded-By` from outside the app gains nothing (the bearer is checked regardless); no token → `401`; an expired or ended session → `401` within `session_check_seconds`; a revoked access token likewise; a token limited to another dataset → `403`; the service token alone → `403` on rows and peek, `200` on health; a person's bearer without `X-Materializer-Console` → `403 console_only`, with a wrong value → `403 console_only`, and the forwarded request carries it to the owner; path parameters validated as the control plane's identifiers are (no traversal; an unknown table is `404` and leaks nothing else); the peek's `rows` above the cap clamped, below 1 refused; no row content in any log line |
+| `test_tail_security.py` (new) | a forged `X-Tail-Forwarded-By` from outside the app gains nothing (the bearer is checked regardless); no token → `401`; an expired or ended session → `401` within `session_check_seconds`; a revoked access token likewise; a token limited to another dataset → `403`; the service token alone → `403` on rows and peek, `200` on health; a person's bearer without `X-Console-Token` → `403 console_only`, with a wrong value → `403 console_only`, and the forwarded request carries it to the owner; path parameters validated as the control plane's identifiers are (no traversal; an unknown table is `404` and leaks nothing else); the peek's `rows` above the cap clamped, below 1 refused; no row content in any log line |
 
 ### 13.2 Console tests (`node --test`)
 
@@ -1686,7 +1686,7 @@ Decided by the owner on 2026-10-23:
 | D18 | **Nothing is persisted:** a member's state is in memory and rebuilt from the ticks, the control plane, the table events and Kafka; a restart costs seconds of `tail_not_ready` for the tables being watched |
 | D19 | **Live applies to the browse view.** A statement gets its tail once per run; the SQL panel's *Auto re-run* (off by default) starts a new run 5 s after the previous one finished |
 | D20 | **Relative ranges slide under Live:** the end stays open so appended tail rows are never pruned, the start is re-resolved on each new run; an absolute range with a past end polls nothing |
-| D21 | **The tail endpoint is the console's alone:** every request carries the console's service credential in `X-Materializer-Console` besides the person's bearer (`403 console_only` otherwise); not a public API, documented as console-internal. The console runs in-cluster in every deployment (`CONSOLE_TAIL_URL` is the Service); the lab's HTTPRoute `/tail/*` serves development and testing from a laptop |
+| D21 | **The tail endpoint is the console's alone:** every request carries the console's service credential in `X-Console-Token` besides the person's bearer (`403 console_only` otherwise); not a public API, documented as console-internal. The console runs in-cluster in every deployment (`CONSOLE_TAIL_URL` is the Service); the lab's HTTPRoute `/tail/*` serves development and testing from a laptop |
 | D22 | **Kaspr changes:** in scope for one thing only, an error content type per WebView; when made, the implementer pauses and asks the owner to deploy it to the kaspr-operator and the lab before further testing. No other Kaspr change: the routing confirmations fall back to the FQDN scheme if needed |
 | D23 | `live_tail_idle_seconds` stays deployment-wide; no per-materialization always-on mode in this release |
 | D24 | The fleet is up to 100 materializations and 500 topics **per control plane**; §11.1 is sized for that |

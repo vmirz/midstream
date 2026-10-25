@@ -449,7 +449,7 @@ The console (`/console`) is a client of this API like any other, with three addi
 
 **The session lives in a cookie.** `POST /api/auth/login` forwards the credentials to the control
 plane and stores the returned token in an `HttpOnly`, `SameSite=Lax` cookie
-(`CONSOLE_SESSION_COOKIE`, default `materializer_session`), `Secure` behind TLS
+(`CONSOLE_SESSION_COOKIE`, default `console_session`), `Secure` behind TLS
 (`CONSOLE_COOKIE_SECURE=auto`). The page's scripts never see the token. Scripts may instead send
 `Authorization: Bearer` to the console.
 
@@ -473,7 +473,7 @@ is not `same-origin`, or whose `Origin` is another host, is refused with `403`
 
 **The live tail is read with the person's own session.** A run that reads a table's live tail calls
 the tail app with the person's token as its bearer and `CONSOLE_SERVICE_TOKEN` in
-`X-Materializer-Console`. The tail app answers the console alone — a request without that header is
+`X-Console-Token`. The tail app answers the console alone — a request without that header is
 `403 console_only` — and checks the person itself: it resolves the token with `GET /auth/session`,
 rebuilds the principal from its description (`principal_from_description`), and requires
 `data.query` on the table's dataset, a token's dataset limit included, exactly as the control plane

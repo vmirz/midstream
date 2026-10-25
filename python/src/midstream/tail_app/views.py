@@ -6,7 +6,7 @@ physical format, with `X-Tail-*` headers saying how far the answer goes. `…/he
 topic's newest records, apart from any run. `GET /tail/v1/health` and `/tail/v1/members` describe
 this member and the app.
 
-Every request must carry the console's credential (`X-Materializer-Console`) besides the person's
+Every request must carry the console's credential (`X-Console-Token`) besides the person's
 bearer. A member that does not own the table checks the caller, then forwards the request - its
 path, query and caller's headers - to the member that does, once: a forwarded request is never
 forwarded again (`X-Tail-Forwarded-By`), and an owner that does not hold the table answers

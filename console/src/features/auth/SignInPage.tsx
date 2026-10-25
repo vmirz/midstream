@@ -58,7 +58,7 @@ export function SignInPage(): ReactNode {
           <span className="grid size-10 place-items-center rounded-[11px] bg-[var(--color-ink)]">
             <span className="size-3.5 rounded-[3px] bg-[var(--color-canvas)]" />
           </span>
-          <h1 className="mt-4 text-[20px] font-semibold tracking-tight">Sign in to Materializer</h1>
+          <h1 className="mt-4 text-[20px] font-semibold tracking-tight">Sign in to Midstream</h1>
           <p className="mt-1 text-[13px] text-[var(--color-ink-muted)]">Use the account an administrator made for you.</p>
         </div>
 

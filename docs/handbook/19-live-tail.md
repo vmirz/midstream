@@ -212,7 +212,7 @@ table pauses. Committed segments are trimmed `live_tail_retention_seconds` after
 ## 19.9 The HTTP API
 
 The tail app's WebViews, under `/tail/v1`. Every one requires the console's credential in
-`X-Materializer-Console` (the console's service token) and a person's bearer token: the endpoint is
+`X-Console-Token` (the console's service token) and a person's bearer token: the endpoint is
 the console's alone, and the person is authorized on each request (§19.10).
 
 **`GET /tail/v1/materializations/{id}/tables/{table}`** — the records past `after`.
@@ -263,7 +263,7 @@ JSON (`errorContentType`; Kaspr 0.11.30 and kaspr-operator 0.19.7 or later):
 |---|---|---|
 | `400` | the field | A bad `after`, `max_rows`, `format`; a name that is not one |
 | `401` | `sign_in_required`, `session_ended`, `token_revoked`, … | No usable session, as the control plane says |
-| `403` | `console_only` | `X-Materializer-Console` missing or wrong |
+| `403` | `console_only` | `X-Console-Token` missing or wrong |
 | `403` | the permission and dataset | No `data.query` on the table's dataset; `password_change_required` |
 | `404` | `live_tail_off` | The table is not tailed: not running, dropping, not ticked yet, unknown |
 | `409` | `tail_unavailable` (`details.partitions`) | `after` is older than the tail holds: a newer snapshot has a tail |
@@ -274,7 +274,7 @@ JSON (`errorContentType`; Kaspr 0.11.30 and kaspr-operator 0.19.7 or later):
 
 ## 19.10 Who may read a tail
 
-1. **The console alone.** `X-Materializer-Console` must equal the service token the app was given
+1. **The console alone.** `X-Console-Token` must equal the service token the app was given
    (`TAIL_SERVICE_TOKEN`, from the same Secret as the control plane's); `403
    console_only` otherwise, on all four views.
 2. **The person, checked with the control plane.** The bearer token is resolved with

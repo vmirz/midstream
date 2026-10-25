@@ -101,7 +101,7 @@ class TailSecurityTests(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(view=name, console=console):
                     request = self.harness.request(token=self.reader, after={}, console=False, rows=10)
                     if console is not None:
-                        request.headers["X-Materializer-Console"] = console
+                        request.headers["X-Console-Token"] = console
                     error = await self.refused(view(request))
                     self.assertEqual((403, "console_only"), (error.status_code, error.details["reason"]))
 

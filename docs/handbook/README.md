@@ -43,7 +43,7 @@ aspirational design prose.
 |------|---------|
 | `/AGENTS.md` | Short always-on agent instructions: commands, project map, guardrails. Read first, kept under 300 lines. |
 | `/KAFKA_MATERIALIZER_SOURCE_OF_TRUTH.md` | Condensed single-file end-to-end narrative. Good for a one-shot overview; this handbook is the deep reference. |
-| `/console/docs/` | The Materializer Console's own handbook (17 documents), cited here as `web <n>`. |
+| `/console/docs/` | The Midstream Console's own handbook (17 documents), cited here as `web <n>`. |
 
 ---
 

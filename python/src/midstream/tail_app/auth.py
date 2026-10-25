@@ -14,7 +14,7 @@ be reached.
 Two rules come first:
 
 - **The console's alone.** Every request carries the console's service credential in
-  `X-Materializer-Console` besides the person's bearer, or it is `403 forbidden`, `console_only`: a
+  `X-Console-Token` besides the person's bearer, or it is `403 forbidden`, `console_only`: a
   script holding a valid token cannot use these endpoints, which are no public API.
 - **People only, for rows.** A guest, and the service credential itself, hold no `data.query` by
   default, and a person who must change their password is refused, as everywhere.
@@ -37,7 +37,7 @@ from midstream.identity.principals import Principal, principal_from_description
 from midstream.tail_app.control_plane import ControlPlane, ControlPlaneError
 from midstream.web.errors import WebError, forbidden, unauthenticated, unavailable
 
-CONSOLE_HEADER = "x-materializer-console"
+CONSOLE_HEADER = "x-console-token"
 #: Sessions remembered at most, the console's own bound.
 SESSION_CACHE_LIMIT = 10_000
 #: The request headers a check passes on, so the control plane records where a request came from.
@@ -92,7 +92,7 @@ def require_console(request: Any, console_token: str | None) -> None:
     presented = header(request, CONSOLE_HEADER) or ""
     if not console_token or not presented or not hmac.compare_digest(presented.encode("utf-8"), console_token.encode("utf-8")):
         raise forbidden(
-            "The live tail answers the Materializer Console only.",
+            "The live tail answers the Midstream Console only.",
             reason="console_only",
         )
 

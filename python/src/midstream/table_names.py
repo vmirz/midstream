@@ -62,7 +62,7 @@ DUCKDB_RESERVED_KEYWORDS = frozenset(
 )
 
 #: Statement verbs and file-reading functions. DuckDB accepts these as table names, but read-only
-#: SQL front ends — the Materializer Console among them — refuse a query that mentions one, so a
+#: SQL front ends — the Midstream Console among them — refuse a query that mentions one, so a
 #: table named after one could never be queried there.
 STATEMENT_KEYWORDS = frozenset(
     {

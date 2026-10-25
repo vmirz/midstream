@@ -9,7 +9,7 @@
  * up to the tail's `through` exactly once; each later fetch continues at the last one's `through`.
  *
  * Every call carries the person's own session, which the tail app checks with the control plane,
- * and the console's credential in `X-Materializer-Console`: the endpoint is this console's alone.
+ * and the console's credential in `X-Console-Token`: the endpoint is this console's alone.
  * Nothing here throws for the tail's sake. Every answer, refusal and failure is a `TailOutcome`, so a
  * run that cannot have its tail goes on with committed rows and says why.
  */
@@ -123,7 +123,7 @@ export interface TailRequest {
 }
 
 /** The header the tail app requires the console's credential in. */
-export const CONSOLE_HEADER = 'x-materializer-console';
+export const CONSOLE_HEADER = 'x-console-token';
 
 /** How much sooner than the console's own timeout the tail app is asked to answer. */
 const WAIT_MARGIN_MS = 500;

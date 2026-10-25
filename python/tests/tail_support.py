@@ -695,7 +695,7 @@ class TailHarness:
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
         if console:
-            headers["X-Materializer-Console"] = CONSOLE_TOKEN
+            headers["X-Console-Token"] = CONSOLE_TOKEN
         values = {key: str(value) for key, value in query.items()}
         if after is not None:
             values["after"] = json.dumps({str(partition): offset for partition, offset in after.items()})

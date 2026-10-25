@@ -163,7 +163,7 @@ export function AppShell({ children }: { children: ReactNode }): ReactNode {
             <span className="size-2 rounded-[2px] bg-[var(--color-canvas)]" />
           </span>
           {collapsed ? null : (
-            <span className="truncate text-[13px] font-semibold tracking-tight">Materializer</span>
+            <span className="truncate text-[13px] font-semibold tracking-tight">Midstream</span>
           )}
         </div>
 
