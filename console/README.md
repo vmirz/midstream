@@ -1,4 +1,4 @@
-# Materializer Console
+# Midstream Console
 
 Real-time web console for the Kafka materializer: its control plane, its runtimes, and the Iceberg
 tables each materialization fills, one per source topic, each in a dataset. Console 3.0 needs
@@ -89,7 +89,7 @@ override wins until it is reset ([docs/03](docs/03-configuration-reference.md)).
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `CONTROL_PLANE_URL` | `http://localhost:6065` | Control-plane API base URL |
-| `CONSOLE_SERVICE_TOKEN` | unset | The control plane's `MATERIALIZER_AUTH_SERVICE_TOKEN`; lets the live views read for everyone |
+| `CONSOLE_SERVICE_TOKEN` | unset | The control plane's `AUTH_SERVICE_TOKEN`; lets the live views read for everyone |
 | `PORT` | `8787` | Console server port |
 | `CONSOLE_LIST_POLL_MS` | `2000` | Fleet refresh cadence while a client is connected |
 | `CONSOLE_DETAIL_POLL_MS` | `1500` | Refresh cadence for a materialization with an open detail view |

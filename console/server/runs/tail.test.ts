@@ -274,7 +274,7 @@ describe('a browse run with a live tail', () => {
     assert.equal(seen.length, 1);
     assert.deepEqual(seen[0]?.after, ORDERS_TAIL.committed, 'past the snapshot’s offsets');
     assert.equal(seen[0]?.headers.authorization, `Bearer ${PERSON.token}`);
-    assert.equal(seen[0]?.headers['x-materializer-console'], config.serviceToken);
+    assert.equal(seen[0]?.headers['x-console-token'], config.serviceToken);
     assert.equal(seen[0]?.query.get('max_rows'), '100000');
     assert.equal(seen[0]?.query.get('wait_ms'), '2500', 'the tail app answers before the console gives up');
   });

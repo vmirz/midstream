@@ -17,12 +17,12 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from materializer_control_plane.lakehouse.files import data_file_uri, partition_text, partition_values
-from materializer_control_plane.lakehouse.lifecycle import schema_from_json
-from materializer_control_plane.lakehouse.parquet import DEFAULT_COMPRESSION, arrow_schema
-from materializer_control_plane.lakehouse.schema.conform import Conformer, unmapped_text
-from materializer_control_plane.lakehouse.schema.forkmap import ForkMap
-from materializer_control_plane.runtime_app.writer.seal import SealJob, SealOutput
+from midstream.lakehouse.files import data_file_uri, partition_text, partition_values
+from midstream.lakehouse.lifecycle import schema_from_json
+from midstream.lakehouse.parquet import DEFAULT_COMPRESSION, arrow_schema
+from midstream.lakehouse.schema.conform import Conformer, unmapped_text
+from midstream.lakehouse.schema.forkmap import ForkMap
+from midstream.runtime_app.writer.seal import SealJob, SealOutput
 
 
 class _PartitionFile:

@@ -6,12 +6,12 @@ from collections.abc import Iterable
 from dataclasses import replace
 import unittest
 
-from materializer_control_plane.config import ControlPlaneConfig
-from materializer_control_plane.lakehouse.schema.forkmap import ForkMap
-from materializer_control_plane.lakehouse.schema.infer import infer
-from materializer_control_plane.lakehouse.schema.policy import evolve
-from materializer_control_plane.lakehouse.tables import build_schema
-from materializer_control_plane.models import (
+from midstream.config import ControlPlaneConfig
+from midstream.lakehouse.schema.forkmap import ForkMap
+from midstream.lakehouse.schema.infer import infer
+from midstream.lakehouse.schema.policy import evolve
+from midstream.lakehouse.tables import build_schema
+from midstream.models import (
     LagPoint,
     Materialization,
     MaterializationStatus,
@@ -21,7 +21,7 @@ from materializer_control_plane.models import (
     RuntimeHealth,
     RuntimeProgress,
 )
-from materializer_control_plane.storage import (
+from midstream.storage import (
     get_materialization,
     get_materialization_status,
     save_materialization,
@@ -31,12 +31,12 @@ from materializer_control_plane.storage import (
     save_runtime_autoscale,
     save_runtime_binding,
 )
-from materializer_control_plane.models.table import MaintenanceRun
-from materializer_control_plane.services.schema_projection import build_schema_projection
+from midstream.models.table import MaintenanceRun
+from midstream.services.schema_projection import build_schema_projection
 from table_records import build_table_record, table_spec, table_specs
-from materializer_control_plane.kafka.metadata import TopicListing, TopicMetadata
-from materializer_control_plane.services.topic_catalog import TopicCatalogCache
-from materializer_control_plane.web import (
+from midstream.kafka.metadata import TopicListing, TopicMetadata
+from midstream.services.topic_catalog import TopicCatalogCache
+from midstream.web import (
     WebError,
     analyze_topics_view,
     create_materialization,
@@ -54,10 +54,10 @@ from materializer_control_plane.web import (
     stop_materialization,
     update_materialization,
 )
-from materializer_control_plane.web.errors import error_response
-from materializer_control_plane.identity.principals import Principal, grants_for_user
-from materializer_control_plane.models import Dataset, DatasetGrant, PendingTopicChange, TableClaim, TopicChangePlan, User
-from materializer_control_plane.storage.identity import (
+from midstream.web.errors import error_response
+from midstream.identity.principals import Principal, grants_for_user
+from midstream.models import Dataset, DatasetGrant, PendingTopicChange, TableClaim, TopicChangePlan, User
+from midstream.storage.identity import (
     get_user,
     save_dataset,
     save_dataset_grant,
@@ -65,11 +65,11 @@ from materializer_control_plane.storage.identity import (
     save_table_claim,
     save_user,
 )
-from materializer_control_plane.models import MaintenanceMessage
-from materializer_control_plane.services.settings import apply_settings_change
-from materializer_control_plane.models import SettingOverride, SettingsChangeRequest
-from materializer_control_plane.storage.settings import get_settings_document, save_settings_document
-from materializer_control_plane import config as control_plane_config
+from midstream.models import MaintenanceMessage
+from midstream.services.settings import apply_settings_change
+from midstream.models import SettingOverride, SettingsChangeRequest
+from midstream.storage.settings import get_settings_document, save_settings_document
+from midstream import config as control_plane_config
 
 
 class FakeTable:
@@ -1673,7 +1673,7 @@ class WebMutationTests(unittest.TestCase):
 def setUpModule() -> None:
     # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
     # reach the configuration without choosing one, so the environment names it for them.
-    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    os.environ.setdefault("CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
     control_plane_config.get_config.cache_clear()
 
 

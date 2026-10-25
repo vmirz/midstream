@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 import unittest
 
-from materializer_control_plane.models import (
+from midstream.models import (
     EventCause,
     Materialization,
     MaterializationRequestEvent,
@@ -33,10 +33,10 @@ from materializer_control_plane.models import (
     TargetRuntime,
     TopicChangeRequest,
 )
-from materializer_control_plane.models.events import TableClaimResult
-from materializer_control_plane.models.materialization import PendingTopicChange, TopicChangePlan
-from materializer_control_plane.models.status import ConsumerLag, MemberProgress, TopicLag
-from materializer_control_plane.models.table import MaintenanceRun, TableError
+from midstream.models.events import TableClaimResult
+from midstream.models.materialization import PendingTopicChange, TopicChangePlan
+from midstream.models.status import ConsumerLag, MemberProgress, TopicLag
+from midstream.models.table import MaintenanceRun, TableError
 
 
 class ModelRoundTripTests(unittest.TestCase):
@@ -250,7 +250,7 @@ class ModelRoundTripTests(unittest.TestCase):
         stored = record.to_dict()
         del stored["state"]
         self.assertEqual("active", MaterializationTable.from_dict(stored).state)
-        from materializer_control_plane.models import RunningMaintenance
+        from midstream.models import RunningMaintenance
 
         running = RunningMaintenance(job="compaction", started_at="2026-07-12T00:10:00Z", partition="2026-07-12", attempt=2, member_id="maintenance-0")
         busy = MaterializationTable.from_dict({**record.to_dict(), "maintenance_job": running.to_dict()})

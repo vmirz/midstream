@@ -83,10 +83,10 @@ while the console is stopped. To keep the Parquet cache across restarts, mount a
 ```yaml
 env:
   - name: CONSOLE_DATA_DIR
-    value: /var/lib/materializer-console
+    value: /var/lib/midstream-console
 volumeMounts:
   - name: console-data
-    mountPath: /var/lib/materializer-console
+    mountPath: /var/lib/midstream-console
 ```
 
 Sizing: the Parquet cache is bounded by `CONSOLE_PARQUET_CACHE_MAX_BYTES` (8 GiB default); stored
@@ -147,11 +147,11 @@ term while leaving the watched detail responsive.
 
 ## 13.6 Log reference
 
-Structured JSON via Pino, `service: materializer-console`.
+Structured JSON via Pino, `service: midstream-console`.
 
 | Level | Message | Meaning |
 |-------|---------|---------|
-| `info` | `materializer console ready` | Listening; includes port, control-plane URL and `workerPool`, the size of Node's worker pool (§13.7) |
+| `info` | `midstream console ready` | Listening; includes port, control-plane URL and `workerPool`, the size of Node's worker pool (§13.7) |
 | `info` | `duckdb instance ready` | First query initialised DuckDB |
 | `info` | `console log level changed` | A Settings page change to the log level was applied |
 | `info` | `shutting down console` | SIGTERM/SIGINT received |
@@ -166,7 +166,7 @@ Structured JSON via Pino, `service: materializer-console`.
 | `warn` | `topic catalog refresh failed` | The topic list for the create dialog could not be reloaded; the previous list is served |
 | `warn` | `run failed` | A run failed for a reason other than its statement; `err` has the cause and the user sees the message |
 | `warn` | `run eviction failed` | An expired run's stored result could not be deleted from `CONSOLE_RUN_DIR` |
-| `warn` | `CONSOLE_SERVICE_TOKEN is not set: …` | At start: the live views read the control plane as a guest. Set it to the control plane's `MATERIALIZER_AUTH_SERVICE_TOKEN` |
+| `warn` | `CONSOLE_SERVICE_TOKEN is not set: …` | At start: the live views read the control plane as a guest. Set it to the control plane's `AUTH_SERVICE_TOKEN` |
 | `warn` | `sign-out could not be recorded with the control plane` | The browser was signed out (cookie cleared), but the control plane did not hear it; the session ends at its idle timeout |
 | `warn` | `ignoring stored console settings this console does not accept` | A stored override is unknown to this console or out of its bounds, probably written by another console version; `settings` lists them. The environment's value applies |
 | `debug` | `detail refresh failed` | One materialization's detail failed; others unaffected |
@@ -248,7 +248,7 @@ control plane before 4.3, its live tail switched off there. A statement has *Aut
 The run shows committed rows and keeps asking. *Live is unavailable* (in amber at the status line's right;
 its tooltip carries the reason): the tail app cannot be reached at `CONSOLE_TAIL_URL`, or refuses the
 console — `403 console_only` in the console's log means its `CONSOLE_SERVICE_TOKEN` is not the tail
-app's `MATERIALIZER_TAIL_SERVICE_TOKEN`. *Live is starting* or *Live is reconnecting* for more than a
+app's `TAIL_SERVICE_TOKEN`. *Live is starting* or *Live is reconnecting* for more than a
 minute (the table warming up, or moving between members): a tail app member restarting, or the
 table's topic without a leader. The tail app's health view names the table's state and last error
 (handbook 12 §12.7, 19 §19.16).
@@ -287,7 +287,7 @@ The message says what failed:
 | `names … outside its location` / `says it is at …` | The table points at files the console will not read ([12 §12.6](./12-security-model.md#126-paths-a-table-names)) | Find the commit that did it (Table tab › Snapshots) |
 
 ```bash
-kubectl -n midstream logs deploy/materializer-console | grep 'table could not be read'
+kubectl -n midstream logs deploy/midstream-console | grep 'table could not be read'
 ```
 
 The log line carries storage's own error, which the page leaves out.
@@ -305,7 +305,7 @@ with an error naming the column it meant. The column rail lists them.
 A filter has to read its columns from every object in the range, and from outside the cloud each
 object is four round trips. Check, in order:
 
-1. `workerPool` in the `materializer console ready` line. It should be at least
+1. `workerPool` in the `midstream console ready` line. It should be at least
    `CONSOLE_RUN_CONCURRENCY × CONSOLE_RUN_SCAN_CONCURRENCY`; an explicit, smaller
    `UV_THREADPOOL_SIZE` caps every scan at that many objects in flight, whatever the scan width.
 2. The range. Every preset shows its row count before it is run, and a narrower one is
@@ -403,7 +403,7 @@ term.
 12. **4.0.0** needs control plane 4.0.0, which takes every materialization's destination,
     namespace, runtime name and storage from the deployment and refuses a create that names one:
     deploy the control plane first, and set its destination (Settings › Materializations ›
-    Destination, or `MATERIALIZER_CONTROL_PLANE_DEFAULT_DESTINATION_URI`) before announcing the
+    Destination, or `CONTROL_PLANE_DEFAULT_DESTINATION_URI`) before announcing the
     upgrade, since without one nobody can create a materialization. Scripts that create through the
     console's API drop those four fields. No migration: existing materializations keep what they
     were created with.

@@ -4,8 +4,8 @@ import os
 from collections.abc import Iterable
 import unittest
 
-from materializer_control_plane.config import ControlPlaneConfig
-from materializer_control_plane.models import (
+from midstream.config import ControlPlaneConfig
+from midstream.models import (
     Materialization,
     MaterializationSchema,
     MaterializationStatus,
@@ -15,8 +15,8 @@ from materializer_control_plane.models import (
     RuntimeHealth,
     TableSpec,
 )
-from materializer_control_plane.models.table import MaintenanceRun, TableError
-from materializer_control_plane.storage import (
+from midstream.models.table import MaintenanceRun, TableError
+from midstream.storage import (
     MATERIALIZATION_KEY_PREFIX,
     MATERIALIZATION_OP_KEY_PREFIX,
     MATERIALIZATION_SCHEMA_KEY_PREFIX,
@@ -57,7 +57,7 @@ from materializer_control_plane.storage import (
     save_operation_record,
     save_runtime_binding,
 )
-from materializer_control_plane import config as control_plane_config
+from midstream import config as control_plane_config
 
 
 class FakeTable:
@@ -505,7 +505,7 @@ class MaterializationListingTests(unittest.TestCase):
 def setUpModule() -> None:
     # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
     # reach the configuration without choosing one, so the environment names it for them.
-    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    os.environ.setdefault("CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
     control_plane_config.get_config.cache_clear()
 
 
@@ -605,7 +605,7 @@ class UnreadableRecordTests(unittest.TestCase):
     def test_it_is_reported_once(self) -> None:
         self._save_legacy("mat-reported-once")
 
-        with self.assertLogs("materializer_control_plane.storage.envelopes", level="WARNING") as logged:
+        with self.assertLogs("midstream.storage.envelopes", level="WARNING") as logged:
             list_materializations(self.table, limit="all")
             list_materializations(self.table, limit="all")
 
@@ -622,8 +622,8 @@ class MaterializationListShardOrphanTests(unittest.TestCase):
         """
         from dataclasses import replace
 
-        from materializer_control_plane.storage.envelopes import encode_payload_envelope
-        from materializer_control_plane.storage.keys import materialization_key
+        from midstream.storage.envelopes import encode_payload_envelope
+        from midstream.storage.keys import materialization_key
 
         table = OrphanShardTable()
         current = build_materialization("mat-1", "2026-07-12T03:27:00Z")
@@ -658,8 +658,8 @@ class MaterializationListShardOrphanTests(unittest.TestCase):
         """
         from dataclasses import replace
 
-        from materializer_control_plane.storage.envelopes import encode_payload_envelope
-        from materializer_control_plane.storage.keys import materialization_key
+        from midstream.storage.envelopes import encode_payload_envelope
+        from midstream.storage.keys import materialization_key
 
         table = OrphanShardTable()
         # The stale copy is the one saved under the key, so it is scanned first.

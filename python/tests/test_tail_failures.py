@@ -21,11 +21,11 @@ from tail_support import (  # noqa: E402
     tick,
 )
 
-from materializer_control_plane.tail_app import worker as worker_module  # noqa: E402
-from materializer_control_plane.tail_app.handlers import handle_tail_message  # noqa: E402
-from materializer_control_plane.tail_app.views import tail_head_view, tail_rows_view  # noqa: E402
-from materializer_control_plane.tail_app.worker import reset_worker  # noqa: E402
-from materializer_control_plane.web.errors import WebError  # noqa: E402
+from midstream.tail_app import worker as worker_module  # noqa: E402
+from midstream.tail_app.handlers import handle_tail_message  # noqa: E402
+from midstream.tail_app.views import tail_head_view, tail_rows_view  # noqa: E402
+from midstream.tail_app.worker import reset_worker  # noqa: E402
+from midstream.web.errors import WebError  # noqa: E402
 
 import io  # noqa: E402
 
@@ -152,7 +152,7 @@ class ControlPlaneFailureTests(FailureCase):
     async def test_a_seed_that_cannot_read_the_schema_anywhere_is_retried_and_not_ready_meanwhile(self) -> None:
         self.harness.control_plane.schema_down = True
         self.harness.deliver(tick(self.target))
-        with patch("materializer_control_plane.runtime_app.table_state.load_table", side_effect=OSError("no GCS either")):
+        with patch("midstream.runtime_app.table_state.load_table", side_effect=OSError("no GCS either")):
             await self.activate()
             with self.assertRaises(WebError) as caught:
                 await self.tail()
@@ -168,11 +168,11 @@ class MessageTests(FailureCase):
     def test_malformed_messages_are_logged_and_dropped(self) -> None:
         reset_worker(self.worker)
         self.addCleanup(reset_worker, None)
-        with self.assertLogs("materializer_control_plane.tail_app.handlers", level=logging.WARNING):
+        with self.assertLogs("midstream.tail_app.handlers", level=logging.WARNING):
             handle_tail_message({"kind": "tail_tick"})
-        with self.assertLogs("materializer_control_plane.tail_app.handlers", level=logging.WARNING):
+        with self.assertLogs("midstream.tail_app.handlers", level=logging.WARNING):
             handle_tail_message({"kind": "tail_cancel", "target": self.target.to_dict(), "issued_at": "t", "reason": "bored"})
-        with self.assertLogs("materializer_control_plane.tail_app.worker", level=logging.WARNING):
+        with self.assertLogs("midstream.tail_app.worker", level=logging.WARNING):
             self.worker.apply_event(b"{not json")
         self.worker.apply_event(json.dumps(["not", "an", "event"]).encode())
         self.assertEqual({}, self.worker.tables)

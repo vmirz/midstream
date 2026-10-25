@@ -13,7 +13,7 @@ Set these once per shell:
 NS=midstream
 MAT=mat-a1b2c3d4e5f6                 # the materialization id
 RT=kaspr-$MAT                        # runtime app name (base overlay)
-# RT=develop-$MAT                    # dev overlay: MATERIALIZER_CONTROL_PLANE_RUNTIME_NAME_PREFIX=develop
+# RT=develop-$MAT                    # dev overlay: CONTROL_PLANE_RUNTIME_NAME_PREFIX=develop
 CP=develop-materializer-control-plane
 TAIL=develop-materializer-tail       # the tail app (19)
 ```
@@ -134,7 +134,7 @@ than 100,000 records behind that would take longer than 30 minutes to catch up g
 until it has (07 §7.12a). Check that the cluster has room for that many members of the runtimes most
 likely to fall behind — each member requests what the runtime spec says, its CPU then set by the
 VPA — or lower *Autoscaling maximum replicas*, or turn *Autoscale runtimes* off, before the upgrade
-(Settings › Materializations, or `MATERIALIZER_CONTROL_PLANE_RUNTIME_AUTOSCAL…` in the manifest).
+(Settings › Materializations, or `CONTROL_PLANE_RUNTIME_AUTOSCAL…` in the manifest).
 
 ### Upgrading to a release that adds topics
 
@@ -217,7 +217,7 @@ The views need the console's credential and a bearer, both the service token (ne
 ```bash
 SERVICE_TOKEN=$(kubectl get secret -n $NS develop-materializer-auth -o jsonpath='{.data.service-token}' | base64 -d)
 kubectl port-forward -n $NS svc/$TAIL-app-api 6066:6065 &
-curl -s localhost:6066/tail/v1/members -H "X-Materializer-Console: $SERVICE_TOKEN" \
+curl -s localhost:6066/tail/v1/members -H "X-Console-Token: $SERVICE_TOKEN" \
      -H "authorization: Bearer $SERVICE_TOKEN" | python3 -m json.tool      # state Stable, two members, 32 partitions each
 ```
 
@@ -628,12 +628,12 @@ The 0.x `reader/main.py` helper is gone: there is nothing it did that `iceberg_s
 ## 12.6 Protocol logging
 
 Off by default in code; the base manifests turn it on for the control plane and for runtimes
-(`MATERIALIZER_PROTOCOL_LOGGING_ENABLED`). Switch it per component on the console's Settings page,
+(`PROTOCOL_LOGGING_ENABLED`). Switch it per component on the console's Settings page,
 with no restart: **Diagnostics → Protocol logging** for the control plane, and **Runtimes →
 Protocol logging** for every runtime. The runtimes' slow-wait interval is beside it.
 
 Changing the deployment value instead means the control-plane app's env, or for runtimes the
-rendered spec (`MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC`), which re-applies every runtime.
+rendered spec (`CONTROL_PLANE_RUNTIME_APP_SPEC`), which re-applies every runtime.
 
 Output is one structured line per event. Useful filters:
 
@@ -810,7 +810,7 @@ Stopping a materialization stops its tail too; resuming brings it back within a 
 ### Look at the tail app
 
 ```bash
-curl -s 'localhost:6066/tail/v1/members?health=true' -H "X-Materializer-Console: $SERVICE_TOKEN" \
+curl -s 'localhost:6066/tail/v1/members?health=true' -H "X-Console-Token: $SERVICE_TOKEN" \
      -H "authorization: Bearer $SERVICE_TOKEN" | python3 -m json.tool
 for p in $(tail_pods); do kubectl logs -n $NS $p --tail=50 | grep -E 'tail_|ERROR|WARN'; done
 ```
@@ -935,7 +935,7 @@ kafka-console-consumer --bootstrap-server $BROKERS --topic $RT-commits --max-mes
 | Consumer lag stops updating; the control-plane log shows `TimeoutError: Kafka did not answer within 30s` from the maintenance agent | The refresh's topic lookup timed out: Kafka is unreachable or not answering. Each refresh gives up after 30 s; the next, a minute later, tries again. A consumer group whose own lookup fails is measured as one that has committed nothing: from the runtime's heartbeat offsets | Fix Kafka connectivity; lag resumes with the first refresh that gets an answer |
 | Local disk filling in a runtime pod | uploads failing: the backlog grows to its limits, then the source pauses | fix GCS access; batches retry and the backlog drains by itself |
 | Runtime pods restart `OOMKilled`, or seals fail with `seal process exited with status -9`, and the partition never advances | the memory limit is below a seal's need, on top of the worker's own use | raise the runtime memory to 2 GiB (§12.10); nothing is lost meanwhile |
-| The maintenance app restarts `OOMKilled`, or its compactions fail with `exited with status -9` | its limit is below a compaction child's need, times its concurrent jobs | raise its memory, or lower `MATERIALIZER_MAINTENANCE_MAX_CONCURRENT_JOBS` (§12.10); the runtimes are not affected |
+| The maintenance app restarts `OOMKilled`, or its compactions fail with `exited with status -9` | its limit is below a compaction child's need, times its concurrent jobs | raise its memory, or lower `MAINTENANCE_MAX_CONCURRENT_JOBS` (§12.10); the runtimes are not affected |
 | Seals take minutes, and backlog pauses come and go on a busy topic | the runtime pod's CPU limit is one core, which the seal shares with the writer (the shipped limit before 4.2) | two CPUs per runtime pod (§12.10) |
 | A pod's CPU request is not the one in its manifest, and changes over time | its VerticalPodAutoscaler sets it from the pod's use, in place (02 §2.10c) | nothing: `kubectl describe vpa <app>-app-vpa` shows the recommendation and its bounds |
 | A KasprApp reports `VerticalPodAutoscalerReady=False` | `NotInstalled`: no Vertical Pod Autoscaler in the cluster; `Forbidden`: the operator may not manage VPAs; `Invalid`, `Conflict`: the VPA was refused, or one of that name is not the app's | nothing breaks meanwhile: the app runs with its manifest resources. Install the add-on, grant the operator's chart RBAC, or delete the stray VPA (02 §2.10c) |
@@ -972,12 +972,12 @@ kafka-console-consumer --bootstrap-server $BROKERS --topic $RT-commits --max-mes
 | `403 password_change_required` | The account must replace a password someone else chose | Change it in the console first |
 | The console shows only the list, never details | `CONSOLE_SERVICE_TOKEN` unset or different from the control plane's | Set it to the Secret's `service-token` |
 | The Data tab has no **Live** toggle | No `CONSOLE_TAIL_URL`; the live tail off in this console or in Settings › Live tail; or the materialization is stopped | Turn on what is off (§12.7) |
-| The Data tab says *Live is unavailable* | The tail app cannot be reached at `CONSOLE_TAIL_URL`, or refuses the console (`403 console_only`: its `MATERIALIZER_TAIL_SERVICE_TOKEN` is not the console's `CONSOLE_SERVICE_TOKEN`) | Fix the URL or the Secret; the console keeps asking |
+| The Data tab says *Live is unavailable* | The tail app cannot be reached at `CONSOLE_TAIL_URL`, or refuses the console (`403 console_only`: its `TAIL_SERVICE_TOKEN` is not the console's `CONSOLE_SERVICE_TOKEN`) | Fix the URL or the Secret; the console keeps asking |
 | *Live is starting* for more than a few seconds | The table is seeding: its schema cannot be had from the control plane or GCS, or its topic has no leader | The table's `last_error` in the tail's health (§12.7) |
 | *N records behind*, in amber on the Data tab's status line | The table is `backlogged`: its runtime is more than twice `live_tail_max_rows_per_table` behind the topic (a backfill, a burst, a stopped runtime) | Nothing: the tail starts once the runtime is within 75 % of the bound; **Peek** (under More actions) shows the topic's newest records meanwhile |
 | *N records behind* that stays short of the newest | The table is paused at its bound or its rate ceiling | Routine? Raise `live_tail_max_rows_per_table` or `live_tail_max_records_per_second_per_table` |
 | The tail app logs `tail_routing_mismatch` | A tick arrived on a partition its key does not hash to: the control plane's producer partitions differently from the tail's ownership rule | Report it: requests reach the wrong member until fixed (19 §19.5) |
-| A tail app member restarts `OOMKilled` | `MATERIALIZER_TAIL_MEMORY_BUDGET_BYTES` is too close to the pod's limit for its tables | Lower the budget or raise the limit (§12.10) |
+| A tail app member restarts `OOMKilled` | `TAIL_MEMORY_BUDGET_BYTES` is too close to the pod's limit for its tables | Lower the budget or raise the limit (§12.10) |
 | Nobody can manage users | No active administrator, no bootstrap secret | Set the bootstrap keys; restart (§12.7) |
 
 ## 12.10 Scaling and sizing
@@ -1027,7 +1027,7 @@ So:
   2.98 GiB at its peak, and one spec sizes every member.
 - **The maintenance app**: one member runs one compaction at a time by default, so about 0.3 GiB of
   its own plus up to 1.3 GiB for the child: the shipped 1 GiB request and 3 GiB limit leave room.
-  More concurrent jobs (`MATERIALIZER_MAINTENANCE_MAX_CONCURRENT_JOBS`) need about 1.3 GiB more each;
+  More concurrent jobs (`MAINTENANCE_MAX_CONCURRENT_JOBS`) need about 1.3 GiB more each;
   more replicas (up to the topic's 6 partitions) share the tables between them. Past the limit
   the kernel kills a child or the pod; a seal or a compaction that dies retries, and nothing is lost,
   as no offset commits past an uncommitted row. Raising `target_row_group_size_bytes` or
@@ -1037,7 +1037,7 @@ So:
   and those committed in the last `live_tail_retention_seconds` (120), at about 1.06 bytes per raw
   byte (19 §19.15). At 1,000 records a second of 1 KB that can reach about 290 MB, past the
   per-table `live_tail_max_bytes_per_table` (256 MiB), where the table pauses: raise it for such a
-  table. A member's tables together stay under `MATERIALIZER_TAIL_MEMORY_BUDGET_BYTES` (2.5 GiB of
+  table. A member's tables together stay under `TAIL_MEMORY_BUDGET_BYTES` (2.5 GiB of
   the 4 GiB limit). Building rows costs about 100 µs of CPU a record of 1 KB, so one core builds
   about 10,000 records a second across a member's tables, and following a quiet table costs about
   1.4 millicores besides (19 §19.15). More members (up to the 64 tick partitions) share the tables;
@@ -1046,7 +1046,7 @@ So:
   requested from use between 100m and 900m) bounds how fast it reconciles and serves the API and the
   REST catalog, not how fast any materialization runs.
 
-Runtime pods take `resources` from `MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC`, the same for every
+Runtime pods take `resources` from `CONTROL_PLANE_RUNTIME_APP_SPEC`, the same for every
 materialization (02, *The embedded runtime app spec*). The shipped manifests limit each member to
 2 CPUs and 1 GiB, and request 0.5 CPU and 1 GiB to start with. Every app's VerticalPodAutoscaler
 then moves its CPU request to what it uses, in place (02 §2.10c), so one spec no longer reserves a
@@ -1083,7 +1083,7 @@ than its partitions keep busy, and returns it to its own once caught up (§12.7)
 - The runtime control topic is broadcast to every runtime, but carries only settings deliveries.
 - The maintenance app gets one tick per table each minute, and one member runs one long job at a
   time: hundreds of tables with frequent compactions can queue behind each other. Raise
-  `MATERIALIZER_MAINTENANCE_MAX_CONCURRENT_JOBS` or the app's replicas (its memory with them).
+  `MAINTENANCE_MAX_CONCURRENT_JOBS` or the app's replicas (its memory with them).
 
 ## 12.11 Disaster recovery
 
@@ -1114,8 +1114,8 @@ With the materialization stopped, from a shell with the package installed and GC
 
 ```python
 from datetime import UTC, datetime
-from materializer_control_plane.lakehouse.gcs import shared_storage_client
-from materializer_control_plane.lakehouse.pointer import TablePointer, find_latest_metadata, write_pointer
+from midstream.lakehouse.gcs import shared_storage_client
+from midstream.lakehouse.pointer import TablePointer, find_latest_metadata, write_pointer
 
 LOC = "gs://…/<storage prefix>/<materialization id>/<table>"   # the table record's location
 UUID = "…"                                       # the table record's table_uuid
@@ -1193,7 +1193,7 @@ with the same email and password. This is the procedure the lab ran on 2026-10-1
      (`schema-proposals`, `compact-object-manifests`); the others are replaced by name.
 4. **Deploy 1.0** with the control plane at `replicas: 1`, and verify the installed commit in the
    `install-packages` init container's log (`Resolved … to commit <sha>`). Set
-   `MATERIALIZER_CONTROL_PLANE_CATALOG_BASE_URL` to the address engines reach the control plane at.
+   `CONTROL_PLANE_CATALOG_BASE_URL` to the address engines reach the control plane at.
 5. **Check**: sign in as the existing administrator; the Settings page shows the kept overrides.
    An override of a setting 1.0 removed (the schema authority's, the object manifest's) stays in the
    `settings` table, unread: configuration is resolved only for settings the catalog defines, and
@@ -1214,7 +1214,7 @@ and every other account must be added again. Use it only if the identity tables 
 1. **Before**, with the 2.0 control plane, delete every materialization (`DELETE /materializations/
    {id}`) and wait for each to leave the list: that drops its tables and its runtime. 3.0 cannot
    read a 2.0 materialization, so it can neither show nor delete one.
-2. **Deploy 3.0.** Rename `MATERIALIZER_CONTROL_PLANE_ICEBERG_NAMESPACE` to `…_STORAGE_PREFIX` in the
+2. **Deploy 3.0.** Rename `CONTROL_PLANE_ICEBERG_NAMESPACE` to `…_STORAGE_PREFIX` in the
    overlay, bind the `directory` table where it bound `identity`, add the eight `datasets-*` WebViews,
    and patch `request-intake`'s second output and `identity-intake`'s output and `state` binding in a
    renaming overlay (02 §2.9). kaspr-operator 0.19.4 or later rebalances the control plane for the

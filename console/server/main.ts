@@ -108,13 +108,13 @@ async function main(): Promise<void> {
   await app.listen({ port: config.port, host: config.host });
   logger.info(
     { port: config.port, controlPlane: config.controlPlaneUrl, workerPool: Number(process.env.UV_THREADPOOL_SIZE) },
-    'materializer console ready',
+    'midstream console ready',
   );
   logDataAccessMode();
   if (!config.serviceToken) {
     logger.warn(
       'CONSOLE_SERVICE_TOKEN is not set: the live views read the control plane as a guest and show only ' +
-        'what guests may see. Set it to the control plane\'s MATERIALIZER_AUTH_SERVICE_TOKEN.',
+        'what guests may see. Set it to the control plane\'s AUTH_SERVICE_TOKEN.',
     );
   }
 

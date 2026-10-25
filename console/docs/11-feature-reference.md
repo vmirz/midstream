@@ -16,7 +16,7 @@ Persistent around every page (`components/AppShell.tsx`).
 
 ### Signing in (`/sign-in`)
 
-**Sign in to Materializer**: email and password, with the control plane's sign-in methods (today
+**Sign in to Midstream**: email and password, with the control plane's sign-in methods (today
 email and password only). A wrong email and a wrong password read the same — "Email or password
 is incorrect." — and a locked-out or deactivated account says so. "Forgot your password? Ask an
 administrator to set a new one." There is no self-registration.

@@ -693,7 +693,7 @@ function ConnectPanel({
       {!connection.configured ? (
         <p className="border-b border-[var(--color-line)] px-5 py-2.5 text-[12px] text-[var(--color-ink-muted)]">
           This is the address the console reaches the control plane at. Engines outside the cluster need the one set in
-          MATERIALIZER_CONTROL_PLANE_CATALOG_BASE_URL.
+          CONTROL_PLANE_CATALOG_BASE_URL.
         </p>
       ) : null}
       <div className="relative">

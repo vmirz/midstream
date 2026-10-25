@@ -247,7 +247,7 @@ Principles:
 
 ### 5.1 The tail app: `materializer-tail`
 
-A KasprApp of its own, `manifests/base/tail/`, package `python/src/materializer_control_plane/tail_app/`,
+A KasprApp of its own, `manifests/base/tail/`, package `python/src/midstream/tail_app/`,
 built on the maintenance app's shape (`maintenance_app/`, 02 §2.10a): one agent on a request topic
 keyed by table, one periodic task, no KasprTable, the same image, Kafka user, GCP credentials and
 scheduling as the control plane — plus two WebViews, since Kaspr apps serve HTTP the same way the
@@ -312,7 +312,7 @@ materialization and table, `services/table_maintenance.py`) also emits, routed `
   `schema_id`, `metadata_location`;
 - a **`tail_cancel`** for a table `dropping`, or of a materialization `deleting`/`deleted`.
 
-A table no tick has named for `MATERIALIZER_TAIL_FORGET_AFTER_SECONDS` (300) is forgotten: its
+A table no tick has named for `TAIL_FORGET_AFTER_SECONDS` (300) is forgotten: its
 partitions unassigned, its buffer dropped. That is how opt-out and a stopped materialization end a
 tail; the console stops asking the moment the detail says `live_tail: false`.
 
@@ -426,7 +426,7 @@ measures (a few consumer shards per member is the fallback if it matters). Recor
 #### Following the table: `materialization-table-events`
 
 One plain consumer per member (no group, from the latest offset at start; the seed covers anything
-earlier) on `MATERIALIZER_TAIL_TABLE_EVENTS_TOPIC`, applying for owned tables that are active — a
+earlier) on `TAIL_TABLE_EVENTS_TOPIC`, applying for owned tables that are active — a
 parked table fetches its schema and offsets afresh when activated (06 §6.6):
 
 - **`table_committed`** → `payload.offsets` are the table's new committed offsets: advance each
@@ -477,7 +477,7 @@ run older than that is told the tail is unavailable for its snapshot and the con
 and `live_tail_max_bytes_per_table` (256 MiB resident: Arrow batches, compressed raw lines and the
 open segments together). At a bound ingest **pauses** for that table (its partitions are paused on
 the consumer) rather than evicting, so what is buffered stays a contiguous prefix; it resumes at
-75 % of both limits. The member also holds `MATERIALIZER_TAIL_MEMORY_BUDGET_BYTES` (2.5 GiB resident
+75 % of both limits. The member also holds `TAIL_MEMORY_BUDGET_BYTES` (2.5 GiB resident
 across every table); as it is approached, retained segments are dropped first, then the table with
 the largest buffer pauses. Paused partitions are reported in every response (`X-Tail-Status:
 truncated`, `X-Tail-Paused`, `X-Tail-End-Offsets`), in the health view, and logged once per
@@ -547,7 +547,7 @@ newest N records on the topic, as they will look in the table*, on demand, apart
   seeks each to `end(p) − ⌈N / P⌉`, fetches once, unassigns, and hands the records through the
   ingest path's decode and `build_row`; the rows are sorted newest first by Kafka timestamp, then
   offset, and cut to N. Tombstones and undecodable values are treated as ingest treats them. One peek
-  fetch at a time per member (`MATERIALIZER_TAIL_PEEK_CONCURRENCY`, 2); each answer is cached for one
+  fetch at a time per member (`TAIL_PEEK_CONCURRENCY`, 2); each answer is cached for one
   second per table, so several tabs share one read.
 - **Bounds.** `N ≤ live_tail_peek_max_rows` (1,000; the console asks for 200); one seek and one fetch
   per partition, at most `max_partition_fetch_bytes` each. The answer carries `X-Tail-Peek-Offsets`
@@ -562,7 +562,7 @@ newest N records on the topic, as they will look in the table*, on demand, apart
 #### Serving
 
 `GET /tail/v1/materializations/{materialization_id}/tables/{table}?after=…&max_rows=…&max_bytes=…`
-(contract in §6.2), on `MATERIALIZER_TAIL_SERVE_CONCURRENCY` (4) threads per member:
+(contract in §6.2), on `TAIL_SERVE_CONCURRENCY` (4) threads per member:
 
 1. Authorize (below). Resolve the table; forward if another member owns it; `404` if not tailed;
    `503 tail_not_ready` while seeding.
@@ -590,7 +590,7 @@ steady-state answer is a second and a half of records; the whole window is sent 
 The console sends the **person's** session token (`callerOf(request)`, as it does for every change
 it forwards). The tail member resolves it the way the console itself does (`web/server/auth/principal.ts`):
 `GET <control plane>/auth/session` with the bearer, cached by a hash of the token for
-`MATERIALIZER_TAIL_SESSION_CHECK_SECONDS` (5), kept 60 s more if the control plane is unreachable.
+`TAIL_SESSION_CHECK_SECONDS` (5), kept 60 s more if the control plane is unreachable.
 The answer's `principal` (`Principal.describe()`: `permissions`, `all_permissions`,
 `dataset_permissions`, `dataset_limit`, `password_change_required`) is rebuilt into a `Principal` by
 a new helper `identity/principals.py::principal_from_description(payload)`, so the check is the
@@ -618,18 +618,18 @@ lag, pauses, errors, the budget), `GET /tail/v1/members` (the partition → memb
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `MATERIALIZER_TAIL_APP_NAME` | `materializer-tail` | names the member in logs and views |
-| `MATERIALIZER_TAIL_CONTROL_PLANE_URL` | — (required) | in-cluster `http://materializer-control-plane-app-api:6065` (`develop-` prefixed in dev): session checks and schema fetches |
-| `MATERIALIZER_TAIL_SERVICE_TOKEN` | — (from the `materializer-auth` Secret, key `service-token`) | the read-only service credential, for schema fetches only |
-| `MATERIALIZER_TAIL_TABLE_EVENTS_TOPIC` | `materialization-table-events` | the topic it follows (prefixed per overlay) |
-| `MATERIALIZER_TAIL_REQUESTS_TOPIC` | `materializer-tail-requests` | the tick topic, for owner computation (prefixed per overlay) |
-| `MATERIALIZER_TAIL_FORGET_AFTER_SECONDS` | `300` | a table no tick names for this long is dropped |
-| `MATERIALIZER_TAIL_MEMORY_BUDGET_BYTES` | `2684354560` (2.5 GiB) | resident buffer bytes across every table before retained rows are dropped and the largest table pauses |
-| `MATERIALIZER_TAIL_SESSION_CHECK_SECONDS` | `5` | how long a checked session is trusted |
-| `MATERIALIZER_TAIL_SERVE_CONCURRENCY` | `4` | Parquet builds at once per member |
-| `MATERIALIZER_TAIL_PEEK_CONCURRENCY` | `2` | head-peek fetches at once per member |
-| `MATERIALIZER_TAIL_MEMBER_MAP_REFRESH_SECONDS` | `15` | how often the partition → member map is refreshed |
-| `MATERIALIZER_RUNTIME_MEMBER_ID` | the pod name | as the maintenance app |
+| `TAIL_APP_NAME` | `materializer-tail` | names the member in logs and views |
+| `TAIL_CONTROL_PLANE_URL` | — (required) | in-cluster `http://materializer-control-plane-app-api:6065` (`develop-` prefixed in dev): session checks and schema fetches |
+| `TAIL_SERVICE_TOKEN` | — (from the `materializer-auth` Secret, key `service-token`) | the read-only service credential, for schema fetches only |
+| `TAIL_TABLE_EVENTS_TOPIC` | `materialization-table-events` | the topic it follows (prefixed per overlay) |
+| `TAIL_REQUESTS_TOPIC` | `materializer-tail-requests` | the tick topic, for owner computation (prefixed per overlay) |
+| `TAIL_FORGET_AFTER_SECONDS` | `300` | a table no tick names for this long is dropped |
+| `TAIL_MEMORY_BUDGET_BYTES` | `2684354560` (2.5 GiB) | resident buffer bytes across every table before retained rows are dropped and the largest table pauses |
+| `TAIL_SESSION_CHECK_SECONDS` | `5` | how long a checked session is trusted |
+| `TAIL_SERVE_CONCURRENCY` | `4` | Parquet builds at once per member |
+| `TAIL_PEEK_CONCURRENCY` | `2` | head-peek fetches at once per member |
+| `TAIL_MEMBER_MAP_REFRESH_SECONDS` | `15` | how often the partition → member map is refreshed |
+| `RUNTIME_MEMBER_ID` | the pod name | as the maintenance app |
 | `K_KAFKA_*`, `K_WEB_HOST`, `GOOGLE_APPLICATION_CREDENTIALS` | from the KasprApp spec and the operator | the Kafka client (as `kafka/metadata.py::from_environment` reads it), this member's own URL, GCS for the fallback seed |
 
 Resources per member: requests 1 CPU / 2 GiB, limits 2 CPU / 4 GiB (§11.1); `replicas` by §11.1's
@@ -677,7 +677,7 @@ Today `runtime_app/writer/seal.py::run_seal` (lines 142–209) turns a staged li
 row part, unchanged, into a new module:
 
 ```python
-# python/src/materializer_control_plane/lakehouse/rows.py
+# python/src/midstream/lakehouse/rows.py
 @dataclass(frozen=True, slots=True)
 class BuiltRow:
     row: dict[str, Any]          # every column of the table's current schema, metadata first
@@ -715,7 +715,7 @@ The console depends on the tail through one HTTP endpoint (§6.2) and stays extr
   from the body and headers; non-2xx and timeouts become a `TailOutcome` of `unavailable` with a
   reason (`not_ready`, `rebalancing`, `unavailable_for_snapshot`, `off`, `unreachable`, `forbidden`),
   never a thrown error. The bearer is the person's token (`callerOf(request).token`), and
-  `X-Materializer-Console` carries the console's service credential (`config.serviceToken`), which
+  `X-Console-Token` carries the console's service credential (`config.serviceToken`), which
   the tail app requires: the endpoint is the console's alone (§6.2).
 - **Runs.** Every run gets a work directory (`<CONSOLE_RUN_DIR>/<run id>/`, today only statements
   have one; `runs/run.ts` takes it over and `releaseStorage` removes it). At the start of
@@ -826,8 +826,8 @@ count bounds the app's members; changing it later moves every table once.
 
 ### 6.2 The tail HTTP API (tail app)
 
-**The console's alone.** These endpoints exist for the Materializer Console and no other caller:
-every request must carry the console's service credential in `X-Materializer-Console` besides the
+**The console's alone.** These endpoints exist for the Midstream Console and no other caller:
+every request must carry the console's service credential in `X-Console-Token` besides the
 person's bearer, or it is `403 forbidden`, reason `console_only`. They are not part of the public
 API — handbook 04 lists them only to say so, handbook 19 documents them — and may change between
 releases without a deprecation.
@@ -842,7 +842,7 @@ releases without a deprecation.
 | `format` | `parquet` (default) or `json` (rows as JSON objects, at most 1,000, for tests and debugging; the same row builder) |
 | `wait_ms` | optional, default 0, at most 5,000: how long the owner may hold the answer while the table is activating or catching up, so the first look at a parked table usually includes its tail; the console sends `liveTailTimeoutMs − 500` |
 
-Headers: `Authorization: Bearer <session or access token>`; `X-Materializer-Console: <the console's
+Headers: `Authorization: Bearer <session or access token>`; `X-Console-Token: <the console's
 service credential>` (required, above); `x-forwarded-for`/`x-forwarded-user-agent` as the console
 forwards them; `X-Tail-Forwarded-By` between members only.
 
@@ -879,7 +879,7 @@ later test runs on a Kaspr that has it.
 | Status | `code` / `details.reason` | When |
 |---|---|---|
 | `401` / `403` | as `identity/authorization.py` raises them | no usable session; `data.query` not held on the table's dataset; password change required |
-| `403 forbidden` | `console_only` | the request lacks the console's credential in `X-Materializer-Console`, or carries a wrong one |
+| `403 forbidden` | `console_only` | the request lacks the console's credential in `X-Console-Token`, or carries a wrong one |
 | `404 not_found` | `live_tail_off` | the table is not tailed by this app: never ticked, forgotten, cancelled, or the materialization is not running |
 | `409 conflict` | `tail_unavailable`, `details.partitions: {"0": "behind_retention"}` | `after[p]` is older than the retained range: the caller's snapshot is too old — re-pin |
 | `409 conflict` | `tail_rebalancing` | the table is moving between members: the member the map named does not own it yet, or the map is stale after a refresh — retry on the next refresh |
@@ -926,7 +926,7 @@ is `data.query` on the dataset; health is `materializations.view_details`.
 ### 6.5 Settings
 
 Control plane (`settings/catalog.py`, `CONTROL_PLANE_SETTINGS`, new section `live-tail`; config
-fields and env vars `MATERIALIZER_CONTROL_PLANE_<KEY>` per the adding-settings skill):
+fields and env vars `CONTROL_PLANE_<KEY>` per the adding-settings skill):
 
 | Key | Kind | Default | Bounds | Description (as shown) |
 |---|---|---|---|---|
@@ -1242,7 +1242,7 @@ panel say so. Offering the tail to engines is possible later and is not in this 
 ### 11.5 Bounds, stated
 
 Per table `live_tail_max_rows_per_table` / `_bytes_per_table`; per request `max_rows` (console:
-`liveTailMaxRows`) and `max_bytes`; per member `MATERIALIZER_TAIL_MEMORY_BUDGET_BYTES`; retention
+`liveTailMaxRows`) and `max_bytes`; per member `TAIL_MEMORY_BUDGET_BYTES`; retention
 `live_tail_retention_seconds`; serve concurrency 4 per member; the session cache bounded (10,000
 entries, as the console's); members ≤ 64. A query reads at most its caps' worth of tail rows plus
 the snapshot files its range selects, as today.
@@ -1277,7 +1277,7 @@ carries the field. Runtimes are untouched. Additive everywhere: a **minor** rele
 - The head peek needs the same `data.query` on the table's dataset, is bounded by
   `live_tail_peek_max_rows`, is shown apart from the table and is stored nowhere.
 - The endpoint is the console's alone: every request must carry the console's service credential
-  in `X-Materializer-Console` besides the person's bearer, so a script holding a valid token cannot
+  in `X-Console-Token` besides the person's bearer, so a script holding a valid token cannot
   use it (`403 console_only`); it is not a public API and is documented as console-internal
   (handbook 19), free to change between releases. In every deployment the console runs in-cluster
   and the Service is cluster-internal; the lab's HTTPRoute exposes `/tail/*` for development and
@@ -1317,7 +1317,7 @@ suites green (§13.7).
 | `test_agent_manifests.py` (extended) | the `maintenance` agent's `tail` output topic (64 partitions) and its dev-overlay patch; the tail app owns its agent, task and WebViews (as `test_the_maintenance_app_owns_its_agent_and_task`); tail WebViews authorize through `authorize_tail` (`AuthorizationWiringTests` taught the exception by app label); every overlay prefixes the tail topics and the tail app's env |
 | `test_tail_exactly_once.py` (new) | model-based: random records on 1–8 partitions; a simulated runtime committing random prefixes (offsets only ever growing); compaction (offsets unchanged); bursts; the buffer's trims, pauses, parks and re-seeds (buffer dropped); member moves (a fresh buffer seeded from a lagging record of the offsets); schema changes (re-conform); and a simulated console that pins snapshots at random moments and fetches tails incrementally (`after = through`), with and without `wait`. After every step: the union of a pinned snapshot's rows and its tail segments is exactly the records with offset ≤ `through`, each once; `through` never regresses within a run; every answer is a contiguous prefix or a `409`, never a hole; a `backlogged` or `parked` table reads nothing. Ten thousand random schedules per run of the suite, seeded so a failure replays |
 | `test_tail_failures.py` (new; fault injection through the fakes) | **Kafka:** a fetch raising mid-ingest keeps the buffer, retries with backoff, grows `lag_ms`, keeps serving what is buffered, and resumes from `next_offset` with no gap or duplicate; a partition whose leader is unavailable blocks only itself; the source topic deleted → the table is `unavailable` with its reason, answers `503`, and recovers when the topic returns. **Control plane:** the schema fetch failing → GCS fallback; both failing → retries 1, 2, 5, 10, 30 s and `not_ready` meanwhile; session checks failing → cached sessions served through the 60 s grace, then `503 control_plane_unreachable`, and recovery afterwards. **Messages:** malformed ticks, cancels and table events logged and dropped; duplicate and late ticks and events idempotent; a tick whose hints carry offsets below those known never moves `committed` backwards; a `table_committed` ahead of ingest (committed > `next_offset`) trims nothing unread, and the rows fetched afterwards still serve an older snapshot within retention. **Serving:** `serve_concurrency` requests at once queue the rest, never fail them; a `wait_ms` request on a table that never catches up answers at the deadline with what it has; a forwarded request the owner answers `409 tail_rebalancing` is passed through unchanged; the peek's dedicated consumer failing leaves the tail's own consumer untouched |
-| `test_tail_security.py` (new) | a forged `X-Tail-Forwarded-By` from outside the app gains nothing (the bearer is checked regardless); no token → `401`; an expired or ended session → `401` within `session_check_seconds`; a revoked access token likewise; a token limited to another dataset → `403`; the service token alone → `403` on rows and peek, `200` on health; a person's bearer without `X-Materializer-Console` → `403 console_only`, with a wrong value → `403 console_only`, and the forwarded request carries it to the owner; path parameters validated as the control plane's identifiers are (no traversal; an unknown table is `404` and leaks nothing else); the peek's `rows` above the cap clamped, below 1 refused; no row content in any log line |
+| `test_tail_security.py` (new) | a forged `X-Tail-Forwarded-By` from outside the app gains nothing (the bearer is checked regardless); no token → `401`; an expired or ended session → `401` within `session_check_seconds`; a revoked access token likewise; a token limited to another dataset → `403`; the service token alone → `403` on rows and peek, `200` on health; a person's bearer without `X-Console-Token` → `403 console_only`, with a wrong value → `403 console_only`, and the forwarded request carries it to the owner; path parameters validated as the control plane's identifiers are (no traversal; an unknown table is `404` and leaks nothing else); the peek's `rows` above the cap clamped, below 1 refused; no row content in any log line |
 
 ### 13.2 Console tests (`node --test`)
 
@@ -1545,8 +1545,8 @@ Each phase ends with the repo's checks: `python -m unittest discover -s python/t
 
 | Change | Files |
 |---|---|
-| New `build_row` / `BuiltRow` | `python/src/materializer_control_plane/lakehouse/rows.py` (new) |
-| `run_seal` uses it; nothing else changes | `python/src/materializer_control_plane/runtime_app/writer/seal.py` |
+| New `build_row` / `BuiltRow` | `python/src/midstream/lakehouse/rows.py` (new) |
+| `run_seal` uses it; nothing else changes | `python/src/midstream/runtime_app/writer/seal.py` |
 | Tests | `python/tests/test_row_builder.py` (new), `python/tests/test_runtime_seal.py` (golden equality), regenerate `web/testdata/iceberg` with `python/tests/console_fixture.py` and confirm `git diff` shows only ids/UUIDs (expected per web 14 §14.2) |
 
 ### Phase 1 — the control plane
@@ -1567,10 +1567,10 @@ Each phase ends with the repo's checks: `python -m unittest discover -s python/t
 
 | Change | Files |
 |---|---|
-| Package | `python/src/materializer_control_plane/tail_app/__init__.py`, `config.py`, `buffer.py` (pure), `consumer.py` (the member's one source consumer + fake seam), `events.py` (the table-events follower), `table_tail.py` (one table: activation and parking, seed, ingest, serve), `routing.py` (owner partition, member map, forwarding), `serve.py` (Parquet), `peek.py` (the head peek: its dedicated consumer, the buffer path, the cache), `auth.py` (session check, `authorize_tail`), `control_plane.py` (schema fetch, session fetch, with the service token), `worker.py` (tables by key, ticks, forget-after, budget), `handlers.py` (thin: `handle_tail_message`, `advance_tail`, `tail_rows_view`, `tail_health_view`, `tail_members_view`, `tail_head_view`) — all new |
+| Package | `python/src/midstream/tail_app/__init__.py`, `config.py`, `buffer.py` (pure), `consumer.py` (the member's one source consumer + fake seam), `events.py` (the table-events follower), `table_tail.py` (one table: activation and parking, seed, ingest, serve), `routing.py` (owner partition, member map, forwarding), `serve.py` (Parquet), `peek.py` (the head peek: its dedicated consumer, the buffer path, the cache), `auth.py` (session check, `authorize_tail`), `control_plane.py` (schema fetch, session fetch, with the service token), `worker.py` (tables by key, ticks, forget-after, budget), `handlers.py` (thin: `handle_tail_message`, `advance_tail`, `tail_rows_view`, `tail_health_view`, `tail_members_view`, `tail_head_view`) — all new |
 | `principal_from_description` | `identity/principals.py` |
 | `describe_consumer_group` | `kafka/admin.py` (decode assignments and Faust `ClientMetadata` from member metadata) |
-| Manifests | `manifests/base/tail/app.yaml` (replicas 2, resources, env incl. `MATERIALIZER_TAIL_SERVICE_TOKEN` from the `materializer-auth` Secret), `tail-worker.yaml` (agent on `materializer-tail-requests`, `partitions: 64`, `declare: true`), `tail-step.yaml` (task every 5 s: forget stale tables, trim, refresh the member map, refresh end offsets and re-evaluate the `backlogged`/`catching_up`/`paused` states), `manifests/base/webviews/tail-rows.yaml`, `tail-health.yaml`, `tail-members.yaml`, `tail-head.yaml` (labelled `kaspr.io/app: materializer-tail`); `manifests/base/kustomization.yaml`; `manifests/dev/kustomization.yaml` (labels by selector, topic names, `MATERIALIZER_TAIL_*` env, the Secret name, package ref) |
+| Manifests | `manifests/base/tail/app.yaml` (replicas 2, resources, env incl. `TAIL_SERVICE_TOKEN` from the `materializer-auth` Secret), `tail-worker.yaml` (agent on `materializer-tail-requests`, `partitions: 64`, `declare: true`), `tail-step.yaml` (task every 5 s: forget stale tables, trim, refresh the member map, refresh end offsets and re-evaluate the `backlogged`/`catching_up`/`paused` states), `manifests/base/webviews/tail-rows.yaml`, `tail-health.yaml`, `tail-members.yaml`, `tail-head.yaml` (labelled `kaspr.io/app: materializer-tail`); `manifests/base/kustomization.yaml`; `manifests/dev/kustomization.yaml` (labels by selector, topic names, `TAIL_*` env, the Secret name, package ref) |
 | Tests | `python/tests/tail_support.py`, `test_tail_buffer.py`, `test_tail_routing.py`, `test_tail_app.py`, `test_tail_parity.py` (new), `test_kafka_admin.py`, `test_agent_manifests.py`, `test_package_layout.py` (the new subpackage imports) |
 | Docs | handbook 02 (§2.10b the tail app), 03 (§3.4 constants), 04 (§4.1: the `/tail/v1` endpoints are the console's alone, documented in 19, not part of the public API), 10 (a section pointing to the new doc), new `docs/handbook/19-live-tail.md` (the model, the contracts, ownership and routing, exactly once, capacity and sizing, operating it), 12 (runbook entries: health and members views, pauses, re-seeds, moves, sizing in §12.10), 14 (limits), README table; `AGENTS.md` project map (`tail_app/`) |
 | **Verification items, first thing** | (a) Kaspr's key serializer for the control plane's `topicSend` keys is `raw` and the producer's partitioner is aiokafka's default: produce one tick and compare its partition with the owner computation (the self-check does this continuously). (b) `describe_consumer_groups` in the installed aiokafka returns member metadata and assignments in a form the decoder handles, and the Faust `ClientMetadata` decompresses with `PartitionAssignor._decompress`; if not, use the FQDN fallback (the pod name from the static member's instance id and this member's own `K_WEB_HOST` suffix). (c) How Kaspr deserializes a `json` agent input and what it does with a value that is not UTF-8 JSON: nothing in `runtime_app/` produces `RuntimeMalformedRecord` today (only `state.py` consumes it), so the writer never sees such a value — mirror that outcome (no row; position advances). (d) Measure the row builder's cost per record and the resident-bytes-per-raw factor on the lab's record shapes, and the re-assign hiccup, to replace §9's and §11.1's estimates |
@@ -1686,7 +1686,7 @@ Decided by the owner on 2026-10-23:
 | D18 | **Nothing is persisted:** a member's state is in memory and rebuilt from the ticks, the control plane, the table events and Kafka; a restart costs seconds of `tail_not_ready` for the tables being watched |
 | D19 | **Live applies to the browse view.** A statement gets its tail once per run; the SQL panel's *Auto re-run* (off by default) starts a new run 5 s after the previous one finished |
 | D20 | **Relative ranges slide under Live:** the end stays open so appended tail rows are never pruned, the start is re-resolved on each new run; an absolute range with a past end polls nothing |
-| D21 | **The tail endpoint is the console's alone:** every request carries the console's service credential in `X-Materializer-Console` besides the person's bearer (`403 console_only` otherwise); not a public API, documented as console-internal. The console runs in-cluster in every deployment (`CONSOLE_TAIL_URL` is the Service); the lab's HTTPRoute `/tail/*` serves development and testing from a laptop |
+| D21 | **The tail endpoint is the console's alone:** every request carries the console's service credential in `X-Console-Token` besides the person's bearer (`403 console_only` otherwise); not a public API, documented as console-internal. The console runs in-cluster in every deployment (`CONSOLE_TAIL_URL` is the Service); the lab's HTTPRoute `/tail/*` serves development and testing from a laptop |
 | D22 | **Kaspr changes:** in scope for one thing only, an error content type per WebView; when made, the implementer pauses and asks the owner to deploy it to the kaspr-operator and the lab before further testing. No other Kaspr change: the routing confirmations fall back to the FQDN scheme if needed |
 | D23 | `live_tail_idle_seconds` stays deployment-wide; no per-materialization always-on mode in this release |
 | D24 | The fleet is up to 100 materializations and 500 topics **per control plane**; §11.1 is sized for that |

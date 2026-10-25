@@ -17,10 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from seal_cases import NO_KEY, golden_evolution, golden_lines, line  # noqa: E402
 from seal_golden import seal_job  # noqa: E402
 
-from materializer_control_plane.lakehouse.parquet import arrow_schema  # noqa: E402
-from materializer_control_plane.lakehouse.rows import BuiltRow, build_row, parse_timestamp  # noqa: E402
-from materializer_control_plane.lakehouse.schema.conform import Conformer  # noqa: E402
-from materializer_control_plane.runtime_app.writer.seal import run_seal  # noqa: E402
+from midstream.lakehouse.parquet import arrow_schema  # noqa: E402
+from midstream.lakehouse.rows import BuiltRow, build_row, parse_timestamp  # noqa: E402
+from midstream.lakehouse.schema.conform import Conformer  # noqa: E402
+from midstream.runtime_app.writer.seal import run_seal  # noqa: E402
 
 NOW = datetime(2026, 10, 23, 12, 0, 0, tzinfo=UTC)
 

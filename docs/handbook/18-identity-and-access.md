@@ -33,7 +33,7 @@ anything, so a change to anyone's access applies to their next request.
 |---|---|---|---|
 | `user` | `Authorization: Bearer <session token>` from `POST /auth/login` | Everything the Guest group, the All Users group and their own groups grant | Their email |
 | `guest` | No `Authorization` header | What the Guest group grants: by default the materialization list and status | `guest` (a guest cannot change anything by default) |
-| `service` | `Authorization: Bearer <MATERIALIZER_AUTH_SERVICE_TOKEN>` | A fixed read-only set: `materializations.view`, `.view_details`, `datasets.view`, `dataset.view_schema` on every dataset, `topics.view`, `settings.view`. The console filters what it reads with it for each person (§18.9) | `service:console` |
+| `service` | `Authorization: Bearer <AUTH_SERVICE_TOKEN>` | A fixed read-only set: `materializations.view`, `.view_details`, `datasets.view`, `dataset.view_schema` on every dataset, `topics.view`, `settings.view`. The console filters what it reads with it for each person (§18.9) | `service:console` |
 | `token` | `Authorization: Bearer tok_<id>_<secret>`, an access token (§18.15) | The token's permissions — `catalog.read`, optionally `catalog.write` — on each dataset only as far as its owner still holds them there, and only on the datasets it is limited to, if any | Its owner's email |
 
 - A token that cannot be used is **refused** with `401`, never quietly treated as a guest's, so a
@@ -426,7 +426,7 @@ on a materialization and its request event. The `x-submitted-by` header is no lo
 **`identity-bootstrap`** (KasprTask, at startup, leader only) publishes a `bootstrap` request. The
 agent stores the built-in groups that are not stored yet, records `seeded_at`, and, **when no
 active administrator exists**, makes the bootstrap administrator from the Secret
-(`MATERIALIZER_AUTH_BOOTSTRAP_ADMIN_EMAIL` / `_PASSWORD`, optional `_FIRST_NAME` / `_LAST_NAME`,
+(`AUTH_BOOTSTRAP_ADMIN_EMAIL` / `_PASSWORD`, optional `_FIRST_NAME` / `_LAST_NAME`,
 default "Admin User"):
 
 - no account with that email → created in the Admin group (`user.bootstrapped`);
@@ -449,7 +449,7 @@ The console (`/console`) is a client of this API like any other, with three addi
 
 **The session lives in a cookie.** `POST /api/auth/login` forwards the credentials to the control
 plane and stores the returned token in an `HttpOnly`, `SameSite=Lax` cookie
-(`CONSOLE_SESSION_COOKIE`, default `materializer_session`), `Secure` behind TLS
+(`CONSOLE_SESSION_COOKIE`, default `console_session`), `Secure` behind TLS
 (`CONSOLE_COOKIE_SECURE=auto`). The page's scripts never see the token. Scripts may instead send
 `Authorization: Bearer` to the console.
 
@@ -462,7 +462,7 @@ own token, so the control plane authorizes them again. A route for a dataset per
 request is about: a Data tab run needs `data.query` on every table it reads, an export
 `data.export`, a schema read `dataset.view_schema` on the table's dataset. Live views — the fleet,
 details, schemas, topics, the console's own settings — are read once for everyone with
-`CONSOLE_SERVICE_TOKEN`, which must equal the control plane's `MATERIALIZER_AUTH_SERVICE_TOKEN`;
+`CONSOLE_SERVICE_TOKEN`, which must equal the control plane's `AUTH_SERVICE_TOKEN`;
 without it they read as a guest. What a live view sends each person is cut down to what they may
 see (`live/store.ts::visibleDetail`): a table's schema reaches only those who may read its dataset.
 Event streams check their caller every 30 seconds and close when access is lost.
@@ -473,7 +473,7 @@ is not `same-origin`, or whose `Origin` is another host, is refused with `403`
 
 **The live tail is read with the person's own session.** A run that reads a table's live tail calls
 the tail app with the person's token as its bearer and `CONSOLE_SERVICE_TOKEN` in
-`X-Materializer-Console`. The tail app answers the console alone — a request without that header is
+`X-Console-Token`. The tail app answers the console alone — a request without that header is
 `403 console_only` — and checks the person itself: it resolves the token with `GET /auth/session`,
 rebuilds the principal from its description (`principal_from_description`), and requires
 `data.query` on the table's dataset, a token's dataset limit included, exactly as the control plane
@@ -538,7 +538,7 @@ curl -s localhost:6065/users -H "authorization: Bearer $TOKEN" | python3 -m json
 
 Overridable from the Settings page's **Security** section (`control-plane` scope, §17.3):
 
-| Key | Env var (`MATERIALIZER_CONTROL_PLANE_…`) | Default | Bounds | Takes effect for |
+| Key | Env var (`CONTROL_PLANE_…`) | Default | Bounds | Takes effect for |
 |---|---|---|---|---|
 | `session_idle_timeout_minutes` | `SESSION_IDLE_TIMEOUT_MINUTES` | 480 | 5–10,080, ≤ max length | new and renewed sessions |
 | `session_max_lifetime_hours` | `SESSION_MAX_LIFETIME_HOURS` | 168 | 1–2,160 | new sign-ins |
@@ -556,10 +556,10 @@ every key optional. The Settings page's Deployment section says only whether eac
 
 | Secret key | Env var | Purpose |
 |---|---|---|
-| `signing-key` | `MATERIALIZER_AUTH_SIGNING_KEY` | Signs sessions. At least 32 characters; without it nobody can sign in and every request is a guest's |
-| `previous-signing-key` | `MATERIALIZER_AUTH_PREVIOUS_SIGNING_KEY` | Still verifies sessions it signed, for rotation |
-| `service-token` | `MATERIALIZER_AUTH_SERVICE_TOKEN` | The console's read-only credential; at least 32 characters; same value as the console's `CONSOLE_SERVICE_TOKEN` |
-| `bootstrap-admin-email`, `bootstrap-admin-password` | `MATERIALIZER_AUTH_BOOTSTRAP_ADMIN_EMAIL`, `…_PASSWORD` | The first administrator (§18.8) |
+| `signing-key` | `AUTH_SIGNING_KEY` | Signs sessions. At least 32 characters; without it nobody can sign in and every request is a guest's |
+| `previous-signing-key` | `AUTH_PREVIOUS_SIGNING_KEY` | Still verifies sessions it signed, for rotation |
+| `service-token` | `AUTH_SERVICE_TOKEN` | The console's read-only credential; at least 32 characters; same value as the console's `CONSOLE_SERVICE_TOKEN` |
+| `bootstrap-admin-email`, `bootstrap-admin-password` | `AUTH_BOOTSTRAP_ADMIN_EMAIL`, `…_PASSWORD` | The first administrator (§18.8) |
 
 A key or token shorter than 32 characters is ignored and logged.
 

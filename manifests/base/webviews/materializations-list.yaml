@@ -24,8 +24,8 @@ spec:
         map:
           entrypoint: list_materializations
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.materializations import list_materializations_view
+            from midstream.identity.authorization import authorize
+            from midstream.web.materializations import list_materializations_view
 
             def read_query_params(request):
                 if hasattr(request, "query_params"):

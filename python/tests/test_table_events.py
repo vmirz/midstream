@@ -10,15 +10,15 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from materializer_control_plane.handlers import handle_runtime_status, handle_table_event  # noqa: E402
-from materializer_control_plane.models import (  # noqa: E402
+from midstream.handlers import handle_runtime_status, handle_table_event  # noqa: E402
+from midstream.models import (  # noqa: E402
     Materialization,
     MaterializationStatus,
     ResourceCondition,
     ResourceObservation,
     RuntimeHealth,
 )
-from materializer_control_plane.storage import (  # noqa: E402
+from midstream.storage import (  # noqa: E402
     get_materialization,
     get_materialization_schema,
     get_materialization_status,
@@ -379,7 +379,7 @@ class TableEventTests(unittest.TestCase):
         # From a runtime that predates multi-topic materializations.
         unnamed = {key: value for key, value in self.schema_changed(1).items() if key != "table"}
 
-        with self.assertLogs("materializer_control_plane.handlers.table_events", level="WARNING"):
+        with self.assertLogs("midstream.handlers.table_events", level="WARNING"):
             self.assertFalse(handle_table_event(unnamed, self.table))
         self.assertIsNone(get_materialization_schema(self.table, MATERIALIZATION_ID, "orders"))
 

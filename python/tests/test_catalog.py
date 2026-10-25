@@ -15,19 +15,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lakehouse_support import LOCATION, MATERIALIZATION_ID, MATERIALIZATION_LOCATION, NAMESPACE, LakeFixture  # noqa: E402
 from table_records import table_spec  # noqa: E402
 
-from materializer_control_plane.config import ControlPlaneConfig  # noqa: E402
-from materializer_control_plane.identity.principals import Grants, Principal  # noqa: E402
-from materializer_control_plane.lakehouse.pointer import read_pointer  # noqa: E402
-from materializer_control_plane.lakehouse.rest import ENDPOINTS, CatalogError  # noqa: E402
-from materializer_control_plane.models import Dataset, Materialization, MaterializationTable, TableClaim  # noqa: E402
-from materializer_control_plane.storage import get_materialization_table, save_materialization, save_materialization_table  # noqa: E402
-from materializer_control_plane.storage.identity import (  # noqa: E402
+from midstream.config import ControlPlaneConfig  # noqa: E402
+from midstream.identity.principals import Grants, Principal  # noqa: E402
+from midstream.lakehouse.pointer import read_pointer  # noqa: E402
+from midstream.lakehouse.rest import ENDPOINTS, CatalogError  # noqa: E402
+from midstream.models import Dataset, Materialization, MaterializationTable, TableClaim  # noqa: E402
+from midstream.storage import get_materialization_table, save_materialization, save_materialization_table  # noqa: E402
+from midstream.storage.identity import (  # noqa: E402
     delete_table_claim,
     save_dataset,
     save_dataset_name,
     save_table_claim,
 )
-from materializer_control_plane.web.catalog import (  # noqa: E402
+from midstream.web.catalog import (  # noqa: E402
     catalog_commit_view,
     catalog_config_view,
     catalog_errors,
@@ -39,7 +39,7 @@ from materializer_control_plane.web.catalog import (  # noqa: E402
     catalog_tables_view,
     reset_catalog_cache,
 )
-from materializer_control_plane.web.errors import forbidden  # noqa: E402
+from midstream.web.errors import forbidden  # noqa: E402
 
 CONFIG = ControlPlaneConfig(storage_prefix="materializer", catalog_metadata_cache_seconds=60)
 PAYMENTS_LOCATION = f"{MATERIALIZATION_LOCATION}/payments"
@@ -286,7 +286,7 @@ class CatalogTests(unittest.TestCase):
 
         # Past the cache, the pointer is read again; an unchanged table is not downloaded again.
         reset = replace(CONFIG, catalog_metadata_cache_seconds=1)
-        from materializer_control_plane.web import catalog as catalog_module
+        from midstream.web import catalog as catalog_module
 
         for cached in catalog_module._CACHE.values():
             cached.fetched_at -= 10

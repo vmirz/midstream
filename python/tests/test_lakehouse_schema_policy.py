@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 import unittest
 
-from materializer_control_plane.lakehouse.schema.forkmap import COLLAPSED, CURRENT, SUPERSEDED, ForkMap
-from materializer_control_plane.lakehouse.schema.index import build_index
-from materializer_control_plane.lakehouse.schema.infer import infer, union
-from materializer_control_plane.lakehouse.schema.policy import (
+from midstream.lakehouse.schema.forkmap import COLLAPSED, CURRENT, SUPERSEDED, ForkMap
+from midstream.lakehouse.schema.index import build_index
+from midstream.lakehouse.schema.infer import infer, union
+from midstream.lakehouse.schema.policy import (
     ADDED,
     COLLAPSED_CHANGE,
     FORKED,
@@ -16,7 +16,7 @@ from materializer_control_plane.lakehouse.schema.policy import (
     SchemaLimits,
     evolve,
 )
-from materializer_control_plane.lakehouse.tables import FIRST_PAYLOAD_FIELD_ID, build_schema
+from midstream.lakehouse.tables import FIRST_PAYLOAD_FIELD_ID, build_schema
 
 
 def start(*records, limits=None):

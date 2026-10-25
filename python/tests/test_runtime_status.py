@@ -13,8 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lakehouse_support import MATERIALIZATION_ID  # noqa: E402
 from runtime_support import FakeTable, RuntimeHarness, run  # noqa: E402
 
-from materializer_control_plane.runtime_app.handlers.status import build_runtime_status_snapshot  # noqa: E402
-from materializer_control_plane.runtime_app.state import get_partition_state, update_pending_batch  # noqa: E402
+from midstream.runtime_app.handlers.status import build_runtime_status_snapshot  # noqa: E402
+from midstream.runtime_app.state import get_partition_state, update_pending_batch  # noqa: E402
 
 
 class RuntimeStatusTests(unittest.TestCase):

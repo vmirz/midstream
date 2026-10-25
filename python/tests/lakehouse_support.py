@@ -13,17 +13,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gcs_fakes import FakeGcs  # noqa: E402
 
-from materializer_control_plane.lakehouse.catalog import GcsPointerCatalog, StaticTableDirectory, TableEntry  # noqa: E402
-from materializer_control_plane.lakehouse.commits import AnnouncedFile, PendingFiles, commit_append, plan_append  # noqa: E402
-from materializer_control_plane.lakehouse.files import data_file_uri, partition_text, partition_values  # noqa: E402
-from materializer_control_plane.lakehouse.offsets import committed_offsets  # noqa: E402
-from materializer_control_plane.lakehouse.parquet import table_from_rows, write_table  # noqa: E402
-from materializer_control_plane.lakehouse.rows import build_row  # noqa: E402
-from materializer_control_plane.lakehouse.schema.conform import Conformer  # noqa: E402
-from materializer_control_plane.lakehouse.schema.forkmap import ForkMap  # noqa: E402
-from materializer_control_plane.lakehouse.schema.infer import infer  # noqa: E402
-from materializer_control_plane.lakehouse.schema.policy import evolve  # noqa: E402
-from materializer_control_plane.lakehouse.tables import (  # noqa: E402
+from midstream.lakehouse.catalog import GcsPointerCatalog, StaticTableDirectory, TableEntry  # noqa: E402
+from midstream.lakehouse.commits import AnnouncedFile, PendingFiles, commit_append, plan_append  # noqa: E402
+from midstream.lakehouse.files import data_file_uri, partition_text, partition_values  # noqa: E402
+from midstream.lakehouse.offsets import committed_offsets  # noqa: E402
+from midstream.lakehouse.parquet import table_from_rows, write_table  # noqa: E402
+from midstream.lakehouse.rows import build_row  # noqa: E402
+from midstream.lakehouse.schema.conform import Conformer  # noqa: E402
+from midstream.lakehouse.schema.forkmap import ForkMap  # noqa: E402
+from midstream.lakehouse.schema.infer import infer  # noqa: E402
+from midstream.lakehouse.schema.policy import evolve  # noqa: E402
+from midstream.lakehouse.tables import (  # noqa: E402
     build_schema,
     new_table_metadata,
     table_properties,

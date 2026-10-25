@@ -26,8 +26,8 @@ spec:
         map:
           entrypoint: prepare_settings_change
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.settings import update_settings
+            from midstream.identity.authorization import authorize
+            from midstream.web.settings import update_settings
 
             async def prepare_settings_change(request, scope, settings_table, directory_table):
                 principal = authorize(request, directory_table, "settings.manage")
@@ -42,7 +42,7 @@ spec:
           keySelector:
             python: |
               def select_key(value):
-                  from materializer_control_plane.storage.settings import settings_routing_key
+                  from midstream.storage.settings import settings_routing_key
 
                   return settings_routing_key(value["request_event"]["scope"])
           valueSelector:

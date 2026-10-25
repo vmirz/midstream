@@ -84,7 +84,7 @@ run reads, the table a schema is of, the datasets a run read for its rows and ex
 
 | Header | Required | Effect |
 |--------|----------|--------|
-| `cookie: materializer_session=…` | for anything a guest may not do | The browser's session, set by `POST /api/auth/login` |
+| `cookie: console_session=…` | for anything a guest may not do | The browser's session, set by `POST /api/auth/login` |
 | `authorization: Bearer <token>` | instead of the cookie | For scripts: a control-plane session token from `POST /auth/login` |
 | `content-type: application/json` | on POST with a body | |
 

@@ -26,9 +26,9 @@ spec:
         map:
           entrypoint: list_audit
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.http import query_params
-            from materializer_control_plane.web.identity import audit_view
+            from midstream.identity.authorization import authorize
+            from midstream.web.http import query_params
+            from midstream.web.identity import audit_view
 
             def list_audit(request, directory_table, audit_table, settings_table):
                 principal = authorize(request, directory_table, "audit.view")

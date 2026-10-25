@@ -5,8 +5,8 @@ from collections.abc import Iterable
 import unittest
 from unittest.mock import patch
 
-from materializer_control_plane.handlers import handle_observation_work_for_output, handle_work_event_for_routed_output
-from materializer_control_plane.models import (
+from midstream.handlers import handle_observation_work_for_output, handle_work_event_for_routed_output
+from midstream.models import (
     EventCause,
     Materialization,
     MaterializationStatus,
@@ -17,20 +17,20 @@ from materializer_control_plane.models import (
     RuntimeHealth,
     TargetRuntime,
 )
-from materializer_control_plane.schema.discovery import StubDiscoveryService
-from materializer_control_plane.storage import (
+from midstream.schema.discovery import StubDiscoveryService
+from midstream.storage import (
     materialization_routing_key,
     save_materialization,
     save_materialization_table,
     save_materialization_status,
     save_runtime_binding,
 )
-from materializer_control_plane.runtime import build_runtime_binding
-from materializer_control_plane.config import ControlPlaneConfig
-from materializer_control_plane.models import SettingsChangeRequest
-from materializer_control_plane.services.settings import apply_settings_change
+from midstream.runtime import build_runtime_binding
+from midstream.config import ControlPlaneConfig
+from midstream.models import SettingsChangeRequest
+from midstream.services.settings import apply_settings_change
 from table_records import build_table_record, table_specs
-from materializer_control_plane import config as control_plane_config
+from midstream import config as control_plane_config
 
 
 class FakeTable:
@@ -65,7 +65,7 @@ class FakeKasprAppClient:
         self.deleted.append((namespace, name))
 
     def observe(self, *, namespace: str, name: str):
-        from materializer_control_plane.observation.reader import KasprAppObservationInput
+        from midstream.observation.reader import KasprAppObservationInput
 
         if self.observation is None:
             return KasprAppObservationInput(
@@ -97,7 +97,7 @@ class FakeKafkaAdminClient:
         return list(self.consumer_groups)
 
     def delete_consumer_group(self, group_id: str) -> None:
-        from materializer_control_plane.kafka.admin import ConsumerGroupNotEmptyError
+        from midstream.kafka.admin import ConsumerGroupNotEmptyError
 
         if group_id in self.nonempty_consumer_groups:
             raise ConsumerGroupNotEmptyError(group_id)
@@ -147,7 +147,7 @@ def build_status(*, observed_phase: str = "requested") -> MaterializationStatus:
 class SchedulerRoutingTests(unittest.TestCase):
     def setUp(self) -> None:
         self.package_revision_patcher = patch(
-            "materializer_control_plane.runtime.templates.get_installed_package_revision",
+            "midstream.runtime.templates.get_installed_package_revision",
             return_value="pkg-rev-1",
         )
         self.package_revision_patcher.start()
@@ -421,7 +421,7 @@ class SchedulerRoutingTests(unittest.TestCase):
                     requested_at="2026-07-12T00:00:15Z",
                     caused_by=EventCause(kind="scheduler", id="observe:mat-1"),
                     dedupe_key="observe:mat-1:1",
-                    target_runtime=__import__("materializer_control_plane.models", fromlist=["TargetRuntime"]).TargetRuntime(
+                    target_runtime=__import__("midstream.models", fromlist=["TargetRuntime"]).TargetRuntime(
                         namespace="midstream",
                         kaspr_app_name="kaspr-materializer-orders",
                     ),
@@ -482,7 +482,7 @@ class SchedulerRoutingTests(unittest.TestCase):
                     requested_at="2026-07-12T00:00:15Z",
                     caused_by=EventCause(kind="scheduler", id="observe:mat-1"),
                     dedupe_key="observe:mat-1:1",
-                    target_runtime=__import__("materializer_control_plane.models", fromlist=["TargetRuntime"]).TargetRuntime(
+                    target_runtime=__import__("midstream.models", fromlist=["TargetRuntime"]).TargetRuntime(
                         namespace="midstream",
                         kaspr_app_name="kaspr-materializer-orders",
                     ),
@@ -524,7 +524,7 @@ class SchedulerRoutingTests(unittest.TestCase):
 def setUpModule() -> None:
     # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
     # reach the configuration without choosing one, so the environment names it for them.
-    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    os.environ.setdefault("CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
     control_plane_config.get_config.cache_clear()
 
 

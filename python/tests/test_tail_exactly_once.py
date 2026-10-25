@@ -32,11 +32,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from tail_support import DATASET_ID, TailHarness, reader_on, target, tick  # noqa: E402
 
-from materializer_control_plane.lakehouse.lifecycle import schema_to_json  # noqa: E402
-from materializer_control_plane.lakehouse.schema.infer import infer  # noqa: E402
-from materializer_control_plane.lakehouse.schema.policy import evolve  # noqa: E402
-from materializer_control_plane.tail_app.views import tail_rows_view  # noqa: E402
-from materializer_control_plane.web.errors import WebError  # noqa: E402
+from midstream.lakehouse.lifecycle import schema_to_json  # noqa: E402
+from midstream.lakehouse.schema.infer import infer  # noqa: E402
+from midstream.lakehouse.schema.policy import evolve  # noqa: E402
+from midstream.tail_app.views import tail_rows_view  # noqa: E402
+from midstream.web.errors import WebError  # noqa: E402
 from seal_cases import golden_evolution  # noqa: E402
 
 #: Schedules one run of the suite tries; `TAIL_EXACTLY_ONCE_SCHEDULES` asks for more (or fewer).

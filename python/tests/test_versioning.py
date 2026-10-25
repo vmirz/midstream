@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import unittest
 
-from materializer_control_plane.models.events import RuntimeStatusEvent
-from materializer_control_plane.models.status import (
+from midstream.models.events import RuntimeStatusEvent
+from midstream.models.status import (
     MaterializationStatus,
     ResourceCondition,
     ResourceObservation,
     RuntimeHealth,
 )
-from materializer_control_plane.version import PACKAGE_VERSION, UNKNOWN_VERSION, package_version
-from materializer_control_plane.web.system import version_view
+from midstream.version import PACKAGE_VERSION, UNKNOWN_VERSION, package_version
+from midstream.web.system import version_view
 
 
 def build_event(**overrides) -> RuntimeStatusEvent:
@@ -83,7 +83,7 @@ class DeletedMaterializationStaysDeletedTests(unittest.TestCase):
     """A deleted materialization must not read as alive anywhere."""
 
     def _materialization(self, desired_phase: str):
-        from materializer_control_plane.models import Materialization, TableSpec
+        from midstream.models import Materialization, TableSpec
 
         return Materialization(
             materialization_id="mat-1",
@@ -125,7 +125,7 @@ class DeletedMaterializationStaysDeletedTests(unittest.TestCase):
         )
 
     def test_stale_running_status_reads_as_deleted(self) -> None:
-        from materializer_control_plane.storage.materializations import observed_phase_for
+        from midstream.storage.materializations import observed_phase_for
 
         phase, reason = observed_phase_for(
             self._materialization("deleted"), self._status("running", "processing")
@@ -134,7 +134,7 @@ class DeletedMaterializationStaysDeletedTests(unittest.TestCase):
         self.assertEqual(reason, "runtime_removed")
 
     def test_a_live_materialization_keeps_its_reported_status(self) -> None:
-        from materializer_control_plane.storage.materializations import observed_phase_for
+        from midstream.storage.materializations import observed_phase_for
 
         phase, reason = observed_phase_for(
             self._materialization("running"), self._status("running", "processing")
@@ -143,8 +143,8 @@ class DeletedMaterializationStaysDeletedTests(unittest.TestCase):
 
     def test_runtime_status_cannot_revive_a_deleting_materialization(self) -> None:
         """Late or replayed status events are the mechanism that resurrected them."""
-        from materializer_control_plane.services.observation import apply_runtime_status_event
-        from materializer_control_plane.storage import (
+        from midstream.services.observation import apply_runtime_status_event
+        from midstream.storage import (
             save_materialization,
             save_materialization_status,
         )

@@ -19,7 +19,7 @@ spec:
         map:
           entrypoint: answer
           python: |
-            from materializer_control_plane.tail_app.handlers import tail_members
+            from midstream.tail_app.handlers import tail_members
 
             async def answer(request):
                 # Authorizes the caller first, through the control plane: the console's credential,

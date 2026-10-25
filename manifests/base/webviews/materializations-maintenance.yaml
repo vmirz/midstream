@@ -28,9 +28,9 @@ spec:
         map:
           entrypoint: prepare_maintenance
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.http import json_body
-            from materializer_control_plane.web.materializations import request_maintenance
+            from midstream.identity.authorization import authorize
+            from midstream.web.http import json_body
+            from midstream.web.materializations import request_maintenance
 
             async def prepare_maintenance(request, materialization_id, control_plane_table, directory_table, settings_table):
                 principal = authorize(request, directory_table, "materializations.maintain")

@@ -24,8 +24,8 @@ try:
 except ImportError:  # pragma: no cover - google-cloud-storage is a dependency of the package
     storage = None
 
-from materializer_control_plane.storage import objects
-from materializer_control_plane.storage.objects import (
+from midstream.storage import objects
+from midstream.storage.objects import (
     BATCH_RETRY_DELAYS_SECONDS,
     CLEANUP_PASS_MAX_OBJECTS,
     DELETE_BATCH_SIZE,

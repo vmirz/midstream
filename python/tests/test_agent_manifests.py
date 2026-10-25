@@ -12,13 +12,13 @@ import subprocess
 import types
 import unittest
 
-from materializer_control_plane.handlers.maintenance import (
+from midstream.handlers.maintenance import (
     MAINTENANCE_STEP_TRIGGERS,
     MAINTENANCE_STEPS,
 )
-from materializer_control_plane.models import MaterializationWorkEvent
-from materializer_control_plane.models.events import WORK_STEPS
-from materializer_control_plane.services.workflow import WORKFLOW_APPLY_STEPS
+from midstream.models import MaterializationWorkEvent
+from midstream.models.events import WORK_STEPS
+from midstream.services.workflow import WORKFLOW_APPLY_STEPS
 
 MANIFEST_ROOT = Path(__file__).resolve().parents[2] / "manifests" / "base" / "agents"
 
@@ -624,7 +624,7 @@ class AuthorizationWiringTests(unittest.TestCase):
             import yaml  # noqa: F401
         except ImportError:
             self.skipTest("pyyaml is required to read manifests")
-        from materializer_control_plane.identity.permissions import PERMISSION_KEYS
+        from midstream.identity.permissions import PERMISSION_KEYS
 
         checked = 0
         for document in self._webviews():
@@ -667,8 +667,8 @@ class AuthorizationWiringTests(unittest.TestCase):
 
     def _check_tail_view(self, name: str, operation: dict, source: str) -> None:
         """A tail app view binds no table, and hands the request to a handler that authorizes it."""
-        from materializer_control_plane.identity.permissions import PERMISSION_KEYS
-        from materializer_control_plane.tail_app import views as tail_views
+        from midstream.identity.permissions import PERMISSION_KEYS
+        from midstream.tail_app import views as tail_views
 
         self.assertFalse(operation.get("tables"), f"{name}: the tail app has no tables to bind")
         called = {_called_name(node) for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)}
@@ -691,7 +691,7 @@ class AuthorizationWiringTests(unittest.TestCase):
             import yaml  # noqa: F401
         except ImportError:
             self.skipTest("pyyaml is required to read manifests")
-        from materializer_control_plane.tail_app.handlers import error_body
+        from midstream.tail_app.handlers import error_body
 
         views = {document["metadata"]["name"]: document for document in self._webviews()}
         for name in ("tail-rows", "tail-head"):
@@ -969,15 +969,15 @@ class OverlayTopicWiringTests(unittest.TestCase):
                 tail_worker = next(document for name, document in agents.items() if name.endswith("tail-worker"))
                 table_events = next(document for name, document in agents.items() if name.endswith("table-events"))
                 env = {item["name"]: item for item in apps[tail_app]["spec"]["template"]["kasprContainer"]["env"]}
-                self.assertEqual(tail_worker["spec"]["input"]["topic"]["name"], env["MATERIALIZER_TAIL_REQUESTS_TOPIC"]["value"])
+                self.assertEqual(tail_worker["spec"]["input"]["topic"]["name"], env["TAIL_REQUESTS_TOPIC"]["value"])
                 self.assertEqual(64, tail_worker["spec"]["input"]["topic"]["partitions"])
-                self.assertEqual(table_events["spec"]["input"]["topic"]["name"], env["MATERIALIZER_TAIL_TABLE_EVENTS_TOPIC"]["value"])
-                self.assertEqual(tail_app, env["MATERIALIZER_TAIL_APP_NAME"]["value"])
-                self.assertEqual(f"http://{control_plane}-app-api:6065", env["MATERIALIZER_TAIL_CONTROL_PLANE_URL"]["value"])
+                self.assertEqual(table_events["spec"]["input"]["topic"]["name"], env["TAIL_TABLE_EVENTS_TOPIC"]["value"])
+                self.assertEqual(tail_app, env["TAIL_APP_NAME"]["value"])
+                self.assertEqual(f"http://{control_plane}-app-api:6065", env["TAIL_CONTROL_PLANE_URL"]["value"])
                 cp_env = {item["name"]: item for item in apps[control_plane]["spec"]["template"]["kasprContainer"]["env"]}
                 self.assertEqual(
-                    cp_env["MATERIALIZER_AUTH_SERVICE_TOKEN"]["valueFrom"]["secretKeyRef"],
-                    env["MATERIALIZER_TAIL_SERVICE_TOKEN"]["valueFrom"]["secretKeyRef"],
+                    cp_env["AUTH_SERVICE_TOKEN"]["valueFrom"]["secretKeyRef"],
+                    env["TAIL_SERVICE_TOKEN"]["valueFrom"]["secretKeyRef"],
                     f"{overlay.name}: the tail app reads another service credential than the control plane",
                 )
                 self.assertEqual(
@@ -1057,7 +1057,7 @@ def _runtime_consumed_topics(documents: list[dict]) -> set[str]:
             continue
         container = document.get("spec", {}).get("template", {}).get("kasprContainer", {})
         for entry in container.get("env") or []:
-            if entry.get("name") == "MATERIALIZER_CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC" and entry.get("value"):
+            if entry.get("name") == "CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC" and entry.get("value"):
                 topics.add(entry["value"])
     return topics
 
@@ -1081,7 +1081,7 @@ class MaintenanceTriggerTests(unittest.TestCase):
 
     def test_every_trigger_builder_produces_a_valid_work_event(self) -> None:
         """Runs the exact call the cron task makes, so a rejected step fails here, not in a pod."""
-        from materializer_control_plane.handlers import maintenance as maintenance_handler
+        from midstream.handlers import maintenance as maintenance_handler
 
         for step, builder_name in sorted(MAINTENANCE_STEP_TRIGGERS.items()):
             with self.subTest(step=step):
@@ -1140,7 +1140,7 @@ class VerticalPodAutoscalingTests(unittest.TestCase):
                 name = document["metadata"]["name"]
                 specs[name] = document["spec"]
                 for item in document["spec"]["template"].get("kasprContainer", {}).get("env", []):
-                    if item["name"] == "MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC":
+                    if item["name"] == "CONTROL_PLANE_RUNTIME_APP_SPEC":
                         specs[f"{name}'s runtime spec"] = yaml.safe_load(item["value"])
             self.assertTrue(any(name.endswith("runtime spec") for name in specs), f"{overlay.name}: no runtime spec")
             for name, spec in specs.items():

@@ -11,7 +11,7 @@ import asyncio
 import os
 import unittest
 
-from materializer_control_plane.tail_app.http import AiohttpClient, HttpUnavailable
+from midstream.tail_app.http import AiohttpClient, HttpUnavailable
 
 try:
     from aiohttp import web

@@ -215,7 +215,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from lakehouse_support import LakeFixture  # noqa: E402
 
-from materializer_control_plane.lakehouse.maintenance import live_data_files  # noqa: E402
+from midstream.lakehouse.maintenance import live_data_files  # noqa: E402
 
 
 class MyBehaviorTests(unittest.TestCase):
@@ -263,8 +263,8 @@ kubectl kustomize manifests/dev > /tmp/dev.yaml
 ### Inspecting a rendered runtime spec by hand
 
 ```python
-from materializer_control_plane.config import ControlPlaneConfig
-from materializer_control_plane.runtime.templates import (
+from midstream.config import ControlPlaneConfig
+from midstream.runtime.templates import (
     build_dedicated_runtime_template_input,
     iter_rendered_resources,
     render_dedicated_runtime_resources,

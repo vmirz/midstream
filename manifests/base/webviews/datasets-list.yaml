@@ -22,9 +22,9 @@ spec:
         map:
           entrypoint: list_datasets
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.http import query_params
-            from materializer_control_plane.web.datasets import list_datasets_view
+            from midstream.identity.authorization import authorize
+            from midstream.web.http import query_params
+            from midstream.web.datasets import list_datasets_view
 
             def list_datasets(request, directory_table):
                 principal = authorize(request, directory_table, "datasets.view")

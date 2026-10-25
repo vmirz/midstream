@@ -19,7 +19,7 @@ spec:
         map:
           entrypoint: read_version
           python: |
-            from materializer_control_plane.web.system import version_view
+            from midstream.web.system import version_view
 
             def read_version(request):
                 return version_view()

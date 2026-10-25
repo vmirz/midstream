@@ -102,7 +102,7 @@ used; a copy taken at startup would miss every later change.
 ```ts
 export const logger: FastifyBaseLogger = pino({
   level: config.logLevel,
-  base: { service: 'materializer-console' },
+  base: { service: 'midstream-console' },
   redact: { paths: ['req.headers.authorization', 'req.headers.cookie'], remove: true },
 });
 ```

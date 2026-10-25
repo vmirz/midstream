@@ -5,20 +5,20 @@ import unittest
 from collections.abc import Iterable
 from unittest.mock import patch
 
-from materializer_control_plane.config import ControlPlaneConfig
-from materializer_control_plane.models import Materialization, SettingOverride, SettingsDocument
-from materializer_control_plane.runtime import (
+from midstream.config import ControlPlaneConfig
+from midstream.models import Materialization, SettingOverride, SettingsDocument
+from midstream.runtime import (
     build_dedicated_runtime_template_input,
     render_dedicated_runtime_resources,
     spec_hash,
 )
-from materializer_control_plane.runtime_app.config import get_runtime_app_config
-from materializer_control_plane.runtime_app.handlers.runtime_settings import (
+from midstream.runtime_app.config import get_runtime_app_config
+from midstream.runtime_app.handlers.runtime_settings import (
     apply_runtime_settings_message,
     handle_control_message,
 )
-from materializer_control_plane.runtime_app.handlers.status import build_runtime_heartbeat, build_runtime_status_snapshot
-from materializer_control_plane.runtime_app.live_settings import (
+from midstream.runtime_app.handlers.status import build_runtime_heartbeat, build_runtime_status_snapshot
+from midstream.runtime_app.live_settings import (
     RUNTIME_SETTINGS_KEY,
     current_runtime_settings,
     current_settings_position,
@@ -27,8 +27,8 @@ from materializer_control_plane.runtime_app.live_settings import (
     reset_runtime_settings,
     sanitize_runtime_settings,
 )
-from materializer_control_plane.services.settings import build_runtime_settings_message
-from materializer_control_plane.settings import CONTROL_PLANE_SETTINGS, apply_control_plane_overrides
+from midstream.services.settings import build_runtime_settings_message
+from midstream.settings import CONTROL_PLANE_SETTINGS, apply_control_plane_overrides
 from table_records import build_table_records, table_specs
 
 
@@ -81,7 +81,7 @@ class LiveRuntimeSettingsTests(unittest.TestCase):
         self.addCleanup(reset_runtime_settings)
 
     def test_overrides_apply_over_the_environment(self) -> None:
-        with patch.dict(os.environ, {"MATERIALIZER_RUNTIME_MAX_OPEN_FILE_AGE_SECONDS": "600"}):
+        with patch.dict(os.environ, {"RUNTIME_MAX_OPEN_FILE_AGE_SECONDS": "600"}):
             self.assertEqual(get_runtime_app_config().max_open_file_age_seconds, 600)
             install_runtime_settings(1, {"max_open_file_age_seconds": 120, "protocol_logging_enabled": True})
             config = get_runtime_app_config()
@@ -95,7 +95,7 @@ class LiveRuntimeSettingsTests(unittest.TestCase):
 
     def test_an_unworkable_combination_keeps_the_deployed_values(self) -> None:
         install_runtime_settings(1, {"max_open_file_age_seconds": 7200})
-        with self.assertLogs("materializer_control_plane.runtime_app.config", level="WARNING") as logs:
+        with self.assertLogs("midstream.runtime_app.config", level="WARNING") as logs:
             first = get_runtime_app_config()
             second = get_runtime_app_config()
         self.assertEqual(first.max_open_file_age_seconds, 120)
@@ -309,7 +309,7 @@ class RenderedRuntimeTests(unittest.TestCase):
         reset_runtime_settings()
         self.addCleanup(reset_runtime_settings)
         patcher = patch(
-            "materializer_control_plane.runtime.templates.get_installed_package_revision",
+            "midstream.runtime.templates.get_installed_package_revision",
             return_value="pkg-rev-1",
         )
         patcher.start()

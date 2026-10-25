@@ -22,9 +22,9 @@ spec:
         map:
           entrypoint: list_users
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.http import query_params
-            from materializer_control_plane.web.identity import list_users_view
+            from midstream.identity.authorization import authorize
+            from midstream.web.http import query_params
+            from midstream.web.identity import list_users_view
 
             def list_users(request, directory_table):
                 principal = authorize(request, directory_table, "users.view")

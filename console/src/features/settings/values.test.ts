@@ -36,7 +36,7 @@ function setting(overrides: Partial<SettingView> = {}): SettingView {
     advanced: false,
     danger: false,
     effect: null,
-    envVar: 'MATERIALIZER_CONTROL_PLANE_MAX_RUNTIME_REPLICAS',
+    envVar: 'CONTROL_PLANE_MAX_RUNTIME_REPLICAS',
     value: 64,
     source: 'default',
     defaultValue: 64,

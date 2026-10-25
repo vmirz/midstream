@@ -35,7 +35,7 @@ spec:
       - apply-identity-request
     init:
       python: |
-        from materializer_control_plane.handlers.identity import handle_identity_request
+        from midstream.handlers.identity import handle_identity_request
     operations:
       - name: apply-identity-request
         tables:

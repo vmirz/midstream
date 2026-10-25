@@ -13,9 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lakehouse_support import MATERIALIZATION_ID  # noqa: E402
 from runtime_support import TOPIC, TP, RuntimeHarness, run  # noqa: E402
 
-from materializer_control_plane.runtime_app.handlers.writer import RuntimeShutdownInterrupted  # noqa: E402
-from materializer_control_plane.runtime_app.outbox import outbox  # noqa: E402
-from materializer_control_plane.runtime_app.state import get_partition_state  # noqa: E402
+from midstream.runtime_app.handlers.writer import RuntimeShutdownInterrupted  # noqa: E402
+from midstream.runtime_app.outbox import outbox  # noqa: E402
+from midstream.runtime_app.state import get_partition_state  # noqa: E402
 
 
 class WriterTests(unittest.TestCase):
@@ -115,7 +115,7 @@ class WriterTests(unittest.TestCase):
         async def scenario():
             message = self.runtime.message(partition=0, offset=0)
             with patch(
-                "materializer_control_plane.runtime_app.handlers.writer.append_row_to_batch",
+                "midstream.runtime_app.handlers.writer.append_row_to_batch",
                 side_effect=OSError("disk full"),
             ):
                 with self.assertRaises(OSError):
@@ -136,7 +136,7 @@ class WriterTests(unittest.TestCase):
             for offset in range(9):
                 await self.runtime.write({"order_id": f"O-{offset}"}, offset=offset)
 
-        with patch("materializer_control_plane.runtime_app.pipeline.BatchPipeline.schedule"):
+        with patch("midstream.runtime_app.pipeline.BatchPipeline.schedule"):
             run(scenario())
         self.assertTrue(self.runtime.app.consumer.paused)
         self.assertIn(TP(TOPIC, 0), self.runtime.app.consumer.paused[0])

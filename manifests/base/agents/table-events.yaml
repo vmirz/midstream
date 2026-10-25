@@ -17,7 +17,7 @@ spec:
       - apply-table-event
     init:
       python: |
-        from materializer_control_plane.handlers.table_events import handle_table_event
+        from midstream.handlers.table_events import handle_table_event
     operations:
       - name: apply-table-event
         tables:

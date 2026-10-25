@@ -15,7 +15,7 @@ from pyiceberg.expressions import GreaterThanOrEqual  # noqa: E402
 from pyiceberg.transforms import MonthTransform  # noqa: E402
 from pyiceberg.types import TimestamptzType  # noqa: E402
 
-from materializer_control_plane.lakehouse.commits import (  # noqa: E402
+from midstream.lakehouse.commits import (  # noqa: E402
     ACCEPTED,
     COVERED,
     OVERLAP,
@@ -26,7 +26,7 @@ from materializer_control_plane.lakehouse.commits import (  # noqa: E402
     plan_append,
     table_totals,
 )
-from materializer_control_plane.lakehouse.files import (  # noqa: E402
+from midstream.lakehouse.files import (  # noqa: E402
     data_file_uri,
     partition_record,
     partition_text,
@@ -34,7 +34,7 @@ from materializer_control_plane.lakehouse.files import (  # noqa: E402
     partition_values,
     read_parquet_footer,
 )
-from materializer_control_plane.lakehouse.offsets import (  # noqa: E402
+from midstream.lakehouse.offsets import (  # noqa: E402
     OFFSETS_PROPERTY,
     VALID_THROUGH_PROPERTY,
     CommittedOffsets,

@@ -452,6 +452,6 @@ Changing them is a code change plus a package-revision-pinned redeploy of every 
 | `DEFAULT_RESOURCE_OBSERVATION_STALE_SECONDS` (600) | Sweep cron interval is lengthened | You want tighter K8s-side freshness |
 | `DEFAULT_DESIRED_OBSERVED_MISMATCH_STALE_SECONDS` (600) | Pauses/resumes legitimately take longer | You want faster detection of stuck transitions |
 
-If you raise `MATERIALIZER_RUNTIME_HEARTBEAT_INTERVAL` (default `"30s"`), you **must** raise
+If you raise `RUNTIME_HEARTBEAT_INTERVAL` (default `"30s"`), you **must** raise
 `DEFAULT_HEARTBEAT_STALE_SECONDS` to at least 3× the new value, or every healthy runtime will
 be intermittently classified as silent and flipped between `running` and `degraded`.

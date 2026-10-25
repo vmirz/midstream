@@ -167,7 +167,7 @@ Notes:
 ```yaml
 pythonPackages:
   packages:
-    - git+ssh://git@github.com/TotalWineLabs/kaspr-kafka-materializer.git@main#egg=materializer-control-plane&subdirectory=python
+    - git+ssh://git@github.com/TotalWineLabs/kaspr-kafka-materializer.git@main#egg=midstream&subdirectory=python
   installPolicy: { retries: 3, timeout: 600, onFailure: block }
 ```
 
@@ -183,7 +183,7 @@ The dev overlay replaces `@main` with `@develop`.
 | `github-deploy-key` | `id_ed25519`, `known_hosts` | `/var/run/secrets/github-ssh` (init container, `defaultMode: 256`) | Cloning the package over SSH |
 | `kafka-materializer-gcp-credentials` | `google_application_credentials.json` | `/app/gcp` (kaspr container, read-only) | GCS access via `GOOGLE_APPLICATION_CREDENTIALS` |
 | `materializer-control-plane-user` | `password` | referenced by `authentication.passwordSecret` | Kafka SCRAM-SHA-512 auth |
-| `materializer-auth` (`develop-materializer-auth` in dev) | `signing-key`, `previous-signing-key`, `service-token`, `bootstrap-admin-email`, `bootstrap-admin-password` | `MATERIALIZER_AUTH_*` env vars, each `optional: true` | Session signing, the console's service token, the first administrator ([18](./18-identity-and-access.md) §18.11) |
+| `materializer-auth` (`develop-materializer-auth` in dev) | `signing-key`, `previous-signing-key`, `service-token`, `bootstrap-admin-email`, `bootstrap-admin-password` | `AUTH_*` env vars, each `optional: true` | Session signing, the console's service token, the first administrator ([18](./18-identity-and-access.md) §18.11) |
 
 **Never** commit, echo, or reproduce the contents of these secrets. They are referenced by
 name only.
@@ -217,7 +217,7 @@ tolerations:
 
 ### The embedded runtime app spec
 
-`MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC` is a **YAML document embedded in an environment
+`CONTROL_PLANE_RUNTIME_APP_SPEC` is a **YAML document embedded in an environment
 variable**. It is parsed by `config._load_runtime_app_spec()` and used as the base `spec:` for
 every generated runtime `KasprApp`. Template rendering merges/overrides on top of it.
 
@@ -240,17 +240,17 @@ verticalPodAutoscaler:           # the members' CPU request from their use (§2.
   maxAllowed: { cpu: 1500m }
 config: { topicAllowDeclare: true, brokerRebalanceTimeout: 300 }
 pythonPackages:
-  packages: [ git+ssh://...@main#egg=materializer-control-plane&subdirectory=python ]
+  packages: [ git+ssh://...@main#egg=midstream&subdirectory=python ]
 template:
   pod: { nodeSelector, tolerations, volumes: [github-ssh, gcp-credentials] }
   pythonPackagesInitContainer: { env: [GIT_SSH_COMMAND], volumeMounts: [github-ssh] }
   kasprContainer:
     env:
-      - name: MATERIALIZER_RUNTIME_MEMBER_ID
+      - name: RUNTIME_MEMBER_ID
         valueFrom: { fieldRef: { fieldPath: metadata.name } }
       - name: GOOGLE_APPLICATION_CREDENTIALS
         value: /app/gcp/google_application_credentials.json
-      - name: MATERIALIZER_PROTOCOL_LOGGING_ENABLED
+      - name: PROTOCOL_LOGGING_ENABLED
         value: "true"
     volumeMounts: [ { name: gcp-credentials, mountPath: /app/gcp, readOnly: true } ]
 ```
@@ -265,7 +265,7 @@ Two important differences from the control plane itself:
    reserve little. The
    memory is too small for a backfill's seals. Sizing, with measurements:
    [12 §12.10](./12-operations-runbook.md), 14 §14.4.
-2. **`MATERIALIZER_RUNTIME_MEMBER_ID` comes from `metadata.name`** (the pod name). This is the
+2. **`RUNTIME_MEMBER_ID` comes from `metadata.name`** (the pod name). This is the
    `member_id` that owns batches, appears in data file names, and names the committer.
 
 The control plane adds `K_STREAM_WAIT_EMPTY=false`, `K_STORE_ROCKSDB_WRITE_BUFFER_SIZE=4194304` and
@@ -285,28 +285,28 @@ The control plane adds `K_STREAM_WAIT_EMPTY=false`, `K_STORE_ROCKSDB_WRITE_BUFFE
 
 | Variable | Base value |
 |----------|------------|
-| `MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE` | `midstream` |
-| `MATERIALIZER_CONTROL_PLANE_DEFAULT_LIST_LIMIT` | `"30"` |
-| `MATERIALIZER_CONTROL_PLANE_DEFAULT_DESTINATION_URI` | `""` — set per environment; empty means every create request names its own destination |
-| `MATERIALIZER_CONTROL_PLANE_RUNTIME_NAME_PREFIX` | `kaspr` |
-| `MATERIALIZER_CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION` | `v1` |
+| `CONTROL_PLANE_DEFAULT_NAMESPACE` | `midstream` |
+| `CONTROL_PLANE_DEFAULT_LIST_LIMIT` | `"30"` |
+| `CONTROL_PLANE_DEFAULT_DESTINATION_URI` | `""` — set per environment; empty means every create request names its own destination |
+| `CONTROL_PLANE_RUNTIME_NAME_PREFIX` | `kaspr` |
+| `CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION` | `v1` |
 | `GOOGLE_APPLICATION_CREDENTIALS` | `/app/gcp/google_application_credentials.json` |
-| `MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC` | the embedded YAML above |
-| `MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_REQUESTS_TOPIC` | `materialization-requests` |
-| `MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_WORK_TOPIC` | `materialization-work` |
-| `MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_STATUS_TOPIC` | `materialization-status` |
-| `MATERIALIZER_CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC` | `materialization-schema-authority-updates` (runtime control, 06 §6.7) |
-| `MATERIALIZER_CONTROL_PLANE_TABLE_EVENTS_TOPIC` | `materialization-table-events` |
-| `MATERIALIZER_CONTROL_PLANE_STORAGE_PREFIX` | `materializer` (dev: `develop`): the directory under the destination every materialization's tables are created in, which keeps deployments sharing a bucket apart (`ICEBERG_NAMESPACE` before 3.0; a table's Iceberg namespace is its dataset) |
-| `MATERIALIZER_CONTROL_PLANE_DELETED_RETENTION_HOURS`, `…_DEFAULT_RUNTIME_STORAGE_SIZE`, `…_DEFAULT_RUNTIME_REPLICAS` | retention of deleted records; a new runtime's volume per member (`64Mi`: it holds only the state table, 10 §10.8) and default replicas. The control plane's own volume is its KasprApp's `storage` (1Gi), the maintenance app's likewise |
-| `MATERIALIZER_CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC` | `materializer-settings-requests` |
-| `MATERIALIZER_CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC` | `materializer-identity-requests` |
-| `MATERIALIZER_AUTH_SIGNING_KEY`, `…_PREVIOUS_SIGNING_KEY`, `…_SERVICE_TOKEN`, `…_BOOTSTRAP_ADMIN_EMAIL`, `…_BOOTSTRAP_ADMIN_PASSWORD` | from the `materializer-auth` Secret |
-| `MATERIALIZER_PROTOCOL_LOGGING_ENABLED` | `"true"` |
+| `CONTROL_PLANE_RUNTIME_APP_SPEC` | the embedded YAML above |
+| `CONTROL_PLANE_MATERIALIZATION_REQUESTS_TOPIC` | `materialization-requests` |
+| `CONTROL_PLANE_MATERIALIZATION_WORK_TOPIC` | `materialization-work` |
+| `CONTROL_PLANE_MATERIALIZATION_STATUS_TOPIC` | `materialization-status` |
+| `CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC` | `materialization-schema-authority-updates` (runtime control, 06 §6.7) |
+| `CONTROL_PLANE_TABLE_EVENTS_TOPIC` | `materialization-table-events` |
+| `CONTROL_PLANE_STORAGE_PREFIX` | `materializer` (dev: `develop`): the directory under the destination every materialization's tables are created in, which keeps deployments sharing a bucket apart (`ICEBERG_NAMESPACE` before 3.0; a table's Iceberg namespace is its dataset) |
+| `CONTROL_PLANE_DELETED_RETENTION_HOURS`, `…_DEFAULT_RUNTIME_STORAGE_SIZE`, `…_DEFAULT_RUNTIME_REPLICAS` | retention of deleted records; a new runtime's volume per member (`64Mi`: it holds only the state table, 10 §10.8) and default replicas. The control plane's own volume is its KasprApp's `storage` (1Gi), the maintenance app's likewise |
+| `CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC` | `materializer-settings-requests` |
+| `CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC` | `materializer-identity-requests` |
+| `AUTH_SIGNING_KEY`, `…_PREVIOUS_SIGNING_KEY`, `…_SERVICE_TOKEN`, `…_BOOTSTRAP_ADMIN_EMAIL`, `…_BOOTSTRAP_ADMIN_PASSWORD` | from the `materializer-auth` Secret |
+| `PROTOCOL_LOGGING_ENABLED` | `"true"` |
 
 Notably **absent** from manifests (code defaults apply):
-`MATERIALIZER_CONTROL_PLANE_TABLE_NAME` (default `state`),
-`MATERIALIZER_PROTOCOL_LOG_SLOW_WAIT_SECONDS` (default `30`), and the catalog settings
+`CONTROL_PLANE_TABLE_NAME` (default `state`),
+`PROTOCOL_LOG_SLOW_WAIT_SECONDS` (default `30`), and the catalog settings
 (`catalog_api_enabled`, `catalog_base_url`, 03).
 
 See [03 — Configuration reference](./03-configuration-reference.md) for the complete list. Many of
@@ -653,7 +653,7 @@ Renames `metadata.name` on every resource:
 | RoleBinding | subject `materializer-control-plane-app` → `develop-materializer-control-plane-app` |
 | every KasprAgent / KasprWebView / KasprTask / KasprTable labelled `kaspr.io/app=materializer-control-plane` (`labelSelector`) | label `kaspr.io/app: develop-materializer-control-plane` |
 | the maintenance app's agent and task (`labelSelector: kaspr.io/app=materializer-maintenance`) | label `kaspr.io/app: develop-materializer-maintenance`. Without the selectors, the blanket patch would hand them to the control plane (`test_the_maintenance_app_owns_its_agent_and_task`) |
-| KasprApp `materializer-maintenance` | package ref → `@develop`; `MATERIALIZER_MAINTENANCE_APP_NAME` → `develop-materializer-maintenance` |
+| KasprApp `materializer-maintenance` | package ref → `@develop`; `MAINTENANCE_APP_NAME` → `develop-materializer-maintenance` |
 | `maintenance-worker` | input topic → `develop-materializer-maintenance-requests`, output topic 0 → `develop-materialization-table-events` |
 | `maintenance-step` | `topicSend` → `develop-materialization-table-events` |
 | `request-intake` | input topic, output topic 0 (`develop-materialization-work`), output topic 1 (`develop-materializer-identity-requests`), table names |
@@ -670,14 +670,14 @@ Renames `metadata.name` on every resource:
 | every WebView, and `identity-intake` | directory table → `develop-directory`; `identity-intake` also `identity-audit` → `develop-identity-audit`, `state` → `develop-state`, `settings` → `develop-settings`, input topic → `develop-materializer-identity-requests` and output topic 0 → `develop-materialization-work` |
 | every view that sends an identity request, `identity-bootstrap`, `identity-maintenance` | `topicSend` → `develop-materializer-identity-requests` |
 | `audit-list` | table → `develop-identity-audit` |
-| KasprApp `materializer-control-plane` env | `MATERIALIZER_AUTH_*` read the `develop-materializer-auth` Secret |
+| KasprApp `materializer-control-plane` env | `AUTH_*` read the `develop-materializer-auth` Secret |
 
 ### Dev-specific behavioral changes
 
 | Setting | Base | Dev |
 |---------|------|-----|
 | Package git ref | `@main` | `@develop` |
-| `MATERIALIZER_CONTROL_PLANE_RUNTIME_NAME_PREFIX` | `kaspr` | `develop` |
+| `CONTROL_PLANE_RUNTIME_NAME_PREFIX` | `kaspr` | `develop` |
 | Table names | `state`, `settings`, `directory`, `identity-audit` | `develop-state`, `develop-settings`, `develop-directory`, `develop-identity-audit` |
 | Materialization topics | `materialization-*` | `develop-materialization-*` |
 | Iceberg namespace | `materializer` | `develop` |
@@ -694,7 +694,7 @@ Two sharp edges worth knowing:
    `develop-materializer-control-plane-app-schedule-requests` (with `-app-`). If delayed work
    silently disappears in one environment, check whether the topic the Kaspr scheduler actually
    consumes matches the topic the agents write to.
-2. **Dev runtimes may not declare topics.** The dev `MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC`
+2. **Dev runtimes may not declare topics.** The dev `CONTROL_PLANE_RUNTIME_APP_SPEC`
    sets `config: { brokerRebalanceTimeout: 300 }` without `topicAllowDeclare: true`, so dev
    runtimes may not be allowed to declare their topics.
 
@@ -748,10 +748,10 @@ one task (10 §10.10):
 
 | Environment variable | Default | Meaning |
 |---|---|---|
-| `MATERIALIZER_MAINTENANCE_APP_NAME` | `materializer-maintenance` | names the app in its commits' snapshot summaries (`materializer.runtime`) and its table events |
-| `MATERIALIZER_MAINTENANCE_MAX_CONCURRENT_JOBS` | `1` | long jobs - compactions, orphan cleanups - one member runs at once, across its tables |
-| `MATERIALIZER_MAINTENANCE_FORGET_AFTER_SECONDS` | `300` | a table no tick has named for this long is forgotten and its job stopped |
-| `MATERIALIZER_RUNTIME_MEMBER_ID` | the pod name | names the member in its events |
+| `MAINTENANCE_APP_NAME` | `materializer-maintenance` | names the app in its commits' snapshot summaries (`materializer.runtime`) and its table events |
+| `MAINTENANCE_MAX_CONCURRENT_JOBS` | `1` | long jobs - compactions, orphan cleanups - one member runs at once, across its tables |
+| `MAINTENANCE_FORGET_AFTER_SECONDS` | `300` | a table no tick has named for this long is forgotten and its job stopped |
+| `RUNTIME_MEMBER_ID` | the pod name | names the member in its events |
 
 What the jobs do - intervals, sizes, retention - comes with every tick from the runtime settings
 (17 §17.3): no setting needs the app restarted. It holds no state of its own: no table, no volume
@@ -774,13 +774,13 @@ tables between them; each table is one member's.
 
 | Environment variable | Base value | Meaning |
 |---|---|---|
-| `MATERIALIZER_RUNTIME_MEMBER_ID` | the pod name | names the member in answers, health and logs |
-| `MATERIALIZER_TAIL_APP_NAME` | `materializer-tail` | the app, as its consumer group and member map name it |
-| `MATERIALIZER_TAIL_CONTROL_PLANE_URL` | `http://materializer-control-plane-app-api:6065` | sessions, schemas and tables |
-| `MATERIALIZER_TAIL_SERVICE_TOKEN` | Secret `materializer-auth`, key `service-token` (optional) | the console's credential and the app's own; without one, every request is `403 console_only` |
-| `MATERIALIZER_TAIL_TABLE_EVENTS_TOPIC` | `materialization-table-events` | commits and schema changes, read by every member |
-| `MATERIALIZER_TAIL_REQUESTS_TOPIC` | `materializer-tail-requests` | the ticks' topic, as the member map reads the assignment |
-| `MATERIALIZER_TAIL_MEMORY_BUDGET_BYTES` | `2684354560` | resident bytes a member's tables may hold together (19 §19.8) |
+| `RUNTIME_MEMBER_ID` | the pod name | names the member in answers, health and logs |
+| `TAIL_APP_NAME` | `materializer-tail` | the app, as its consumer group and member map name it |
+| `TAIL_CONTROL_PLANE_URL` | `http://materializer-control-plane-app-api:6065` | sessions, schemas and tables |
+| `TAIL_SERVICE_TOKEN` | Secret `materializer-auth`, key `service-token` (optional) | the console's credential and the app's own; without one, every request is `403 console_only` |
+| `TAIL_TABLE_EVENTS_TOPIC` | `materialization-table-events` | commits and schema changes, read by every member |
+| `TAIL_REQUESTS_TOPIC` | `materializer-tail-requests` | the ticks' topic, as the member map reads the assignment |
+| `TAIL_MEMORY_BUDGET_BYTES` | `2684354560` | resident bytes a member's tables may hold together (19 §19.8) |
 
 The control plane's `maintenance` agent declares and writes the requests topic (its third output,
 route `tail`), so ticks can be sent before the tail app first starts. The partition count bounds the

@@ -22,9 +22,9 @@ from tail_support import (  # noqa: E402
     tick,
 )
 
-from materializer_control_plane.kafka.admin import ConsumerGroupDescription, GroupMemberDescription  # noqa: E402
-from materializer_control_plane.models import live_tail_routing_key  # noqa: E402
-from materializer_control_plane.tail_app.routing import (  # noqa: E402
+from midstream.kafka.admin import ConsumerGroupDescription, GroupMemberDescription  # noqa: E402
+from midstream.models import live_tail_routing_key  # noqa: E402
+from midstream.tail_app.routing import (  # noqa: E402
     decode_member_assignment,
     decode_member_metadata,
     fallback_url,
@@ -33,8 +33,8 @@ from materializer_control_plane.tail_app.routing import (  # noqa: E402
     murmur2,
     owner_partition,
 )
-from materializer_control_plane.tail_app.views import tail_rows_view  # noqa: E402
-from materializer_control_plane.web.errors import WebError  # noqa: E402
+from midstream.tail_app.views import tail_rows_view  # noqa: E402
+from midstream.web.errors import WebError  # noqa: E402
 
 #: Computed with aiokafka 0.14.0's `murmur2` and `DefaultPartitioner` - the partitioner Faust's
 #: producer uses - and, for the two maintenance keys, the partitions the lab's ticks were found on.
@@ -181,7 +181,7 @@ class ForwardingTests(unittest.IsolatedAsyncioTestCase):
         path, headers = self.harness.control_plane.forwarded[-1]
         self.assertEqual("/tail/v1/materializations/mat-1/tables/orders", path)
         self.assertEqual(f"Bearer {self.token}", headers["authorization"])
-        self.assertIn("x-materializer-console", headers)
+        self.assertIn("x-console-token", headers)
         self.assertEqual(self.other.config.member_id, headers["X-Tail-Forwarded-By"])
         self.assertNotIn("tail:mat-1:orders", self.other.tables, "the forwarder holds nothing of it")
 
@@ -252,12 +252,12 @@ class RoutingSelfCheckTests(unittest.TestCase):
         message = tick(target())
         right = owner_partition(message.key, harness.partitions)
 
-        with self.assertLogs("materializer_control_plane.tail_app.worker", level=logging.ERROR) as logged:
+        with self.assertLogs("midstream.tail_app.worker", level=logging.ERROR) as logged:
             harness.worker.handle(message, partition=(right + 1) % harness.partitions)
         self.assertIn("tail_routing_mismatch", logged.output[0])
         self.assertEqual(1, harness.worker.counters["routing_mismatches"])
 
-        with self.assertNoLogs("materializer_control_plane.tail_app.worker", level=logging.ERROR):
+        with self.assertNoLogs("midstream.tail_app.worker", level=logging.ERROR):
             harness.worker.handle(message, partition=right)
 
 

@@ -62,15 +62,15 @@ afterEach(() => {
 describe('the session cookie', () => {
   it('is HttpOnly and SameSite, and Secure behind TLS', () => {
     const cookie = sessionCookie('a b', { maxAgeSeconds: 120.6, secure: true });
-    assert.match(cookie, /^materializer_session=a%20b; Path=\/; HttpOnly; SameSite=Lax; Max-Age=120; Secure$/);
+    assert.match(cookie, /^console_session=a%20b; Path=\/; HttpOnly; SameSite=Lax; Max-Age=120; Secure$/);
     assert.doesNotMatch(sessionCookie('x', { maxAgeSeconds: 0, secure: false }), /Secure/);
     assert.equal(secureCookie('https'), true);
     assert.equal(secureCookie('http'), false);
   });
 
   it('is read back from a Cookie header', () => {
-    const cookies = parseCookies('theme=dark; materializer_session=v1.abc.def; broken; =x; other="quoted"');
-    assert.equal(cookies.get('materializer_session'), 'v1.abc.def');
+    const cookies = parseCookies('theme=dark; console_session=v1.abc.def; broken; =x; other="quoted"');
+    assert.equal(cookies.get('console_session'), 'v1.abc.def');
     assert.equal(cookies.get('other'), 'quoted');
     assert.equal(parseCookies(undefined).size, 0);
   });
@@ -191,12 +191,12 @@ describe('signing in and out', () => {
       payload: { email: 'test@example.com', password: 'secret password' },
     });
     assert.equal(response.statusCode, 200);
-    assert.match(String(response.headers['set-cookie']), /^materializer_session=v1.issued.token; Path=\/; HttpOnly; SameSite=Lax; Max-Age=\d+$/);
+    assert.match(String(response.headers['set-cookie']), /^console_session=v1.issued.token; Path=\/; HttpOnly; SameSite=Lax; Max-Age=\d+$/);
     assert.equal(response.json().principal.email, 'test@example.com');
     assert.doesNotMatch(response.body, /v1\.issued\.token/);
 
     stub({ session: (async () => signedInSession()) as never });
-    const allowed = await server.inject({ url: '/api/private', headers: { cookie: 'materializer_session=v1.issued.token' } });
+    const allowed = await server.inject({ url: '/api/private', headers: { cookie: 'console_session=v1.issued.token' } });
     assert.equal(allowed.statusCode, 200);
     stub({ session: (async () => guestSession()) as never });
     const anonymous = await server.inject({ url: '/api/private' });
@@ -261,7 +261,7 @@ describe('signing in and out', () => {
     const response = await server.inject({
       method: 'POST',
       url: '/api/auth/logout',
-      headers: { cookie: 'materializer_session=v1.some.token' },
+      headers: { cookie: 'console_session=v1.some.token' },
     });
     assert.equal(response.statusCode, 200);
     assert.ok(ended);
@@ -269,7 +269,7 @@ describe('signing in and out', () => {
 
     forgetAllSessions();
     stub({ session: (async () => ({ ...guestSession(), session_error: 'session_expired' })) as never });
-    const expired = await server.inject({ url: '/api/auth/session', headers: { cookie: 'materializer_session=v1.old.token' } });
+    const expired = await server.inject({ url: '/api/auth/session', headers: { cookie: 'console_session=v1.old.token' } });
     assert.equal(expired.json().sessionError, 'session_expired');
     assert.match(String(expired.headers['set-cookie']), /Max-Age=0/);
   });
@@ -282,8 +282,8 @@ describe('signing in and out', () => {
       refresh: (async () => ({ ...signedInSession(), token: 'v1.new.token' })) as never,
     });
     const server = await app();
-    const response = await server.inject({ url: '/api/auth/session', headers: { cookie: 'materializer_session=v1.old.token' } });
+    const response = await server.inject({ url: '/api/auth/session', headers: { cookie: 'console_session=v1.old.token' } });
     assert.equal(response.statusCode, 200);
-    assert.match(String(response.headers['set-cookie']), /^materializer_session=v1.new.token;/);
+    assert.match(String(response.headers['set-cookie']), /^console_session=v1.new.token;/);
   });
 });

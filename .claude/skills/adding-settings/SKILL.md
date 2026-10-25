@@ -31,16 +31,16 @@ and no test catches it — check the id. A new section is §6.
 
 ## 2. Adjustable control-plane setting
 
-1. **Config field** — `python/src/materializer_control_plane/config.py`: a default constant, a
+1. **Config field** — `python/src/midstream/config.py`: a default constant, a
    field on the frozen `ControlPlaneConfig`, and a parse in `get_config()` with the env var
-   `MATERIALIZER_CONTROL_PLANE_<KEY_IN_CAPS>` and a `minimum` no looser than the page's bound:
+   `CONTROL_PLANE_<KEY_IN_CAPS>` and a `minimum` no looser than the page's bound:
 
    ```python
    session_refresh_minutes=_parse_int_env(
-       os.getenv("MATERIALIZER_CONTROL_PLANE_SESSION_REFRESH_MINUTES"),
+       os.getenv("CONTROL_PLANE_SESSION_REFRESH_MINUTES"),
        default=SESSION_REFRESH_MINUTES,
        minimum=1,
-       name="MATERIALIZER_CONTROL_PLANE_SESSION_REFRESH_MINUTES",
+       name="CONTROL_PLANE_SESSION_REFRESH_MINUTES",
    ),
    ```
 
@@ -65,8 +65,8 @@ and no test catches it — check the id. A new section is §6.
    ),
    ```
 
-   Pass `env_var=` only when the variable does not follow the `MATERIALIZER_CONTROL_PLANE_` rule
-   (e.g. `MATERIALIZER_PROTOCOL_LOGGING_ENABLED`). `nullable=True` lets a `gcs_uri` be empty.
+   Pass `env_var=` only when the variable does not follow the `CONTROL_PLANE_` rule
+   (e.g. `PROTOCOL_LOGGING_ENABLED`). `nullable=True` lets a `gcs_uri` be empty.
    A rule spanning settings goes in `validate_scope_values` (it receives every effective value of
    the scope) — raise `SettingValueError(message, key=<the setting to blame>)`. If two valid values
    can still disagree between an override and the deployment, also clamp in

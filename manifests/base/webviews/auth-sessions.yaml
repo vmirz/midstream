@@ -22,7 +22,7 @@ spec:
         map:
           entrypoint: read_sessions
           python: |
-            from materializer_control_plane.web.auth import my_sessions_view
+            from midstream.web.auth import my_sessions_view
 
             def read_sessions(request, directory_table):
                 return my_sessions_view(directory_table, request)

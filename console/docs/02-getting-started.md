@@ -59,7 +59,7 @@ For the live views to show details, give the console the control plane's service
 
 ```bash
 # console/.env
-CONSOLE_SERVICE_TOKEN=<the control plane's MATERIALIZER_AUTH_SERVICE_TOKEN>
+CONSOLE_SERVICE_TOKEN=<the control plane's AUTH_SERVICE_TOKEN>
 ```
 
 Without it the server logs a warning, and the fleet and detail streams read as a guest.

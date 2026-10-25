@@ -9,14 +9,14 @@ import types
 import unittest
 from unittest.mock import patch
 
-from materializer_control_plane.handlers import handle_resource_observation, handle_runtime_status
-from materializer_control_plane.handlers.resource_observation import (
+from midstream.handlers import handle_resource_observation, handle_runtime_status
+from midstream.handlers.resource_observation import (
     build_sweep_observation_trigger,
     handle_observation_work_for_output,
     handle_observation_work_for_output_async,
 )
-from materializer_control_plane.kubernetes import KubernetesKasprAppClient
-from materializer_control_plane.models import (
+from midstream.kubernetes import KubernetesKasprAppClient
+from midstream.models import (
     EventCause,
     Materialization,
     MaterializationStatus,
@@ -31,18 +31,18 @@ from materializer_control_plane.models import (
     TableSpec,
     TargetRuntime,
 )
-from materializer_control_plane.observation import (
+from midstream.observation import (
     build_one_shot_observation_policy,
     derive_status_from_resource_observation,
     heartbeat_is_stale,
     normalize_resource_observation,
     observation_backoff_seconds,
 )
-from materializer_control_plane.observation.mapping import available_member_count
-from materializer_control_plane.observation.reader import KasprAppObservationInput
-from materializer_control_plane.observation.restarts import restart_instability
-from materializer_control_plane.services import apply_resource_observation, apply_runtime_status_event
-from materializer_control_plane.storage import (
+from midstream.observation.mapping import available_member_count
+from midstream.observation.reader import KasprAppObservationInput
+from midstream.observation.restarts import restart_instability
+from midstream.services import apply_resource_observation, apply_runtime_status_event
+from midstream.storage import (
     get_runtime_binding,
     get_materialization_status,
     save_materialization,
@@ -51,7 +51,7 @@ from materializer_control_plane.storage import (
     save_runtime_binding,
 )
 from table_records import build_table_record
-from materializer_control_plane import config as control_plane_config
+from midstream import config as control_plane_config
 
 
 class FakeTable:
@@ -519,7 +519,7 @@ class StoppedObservationTests(unittest.TestCase):
 class ObservationServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.package_revision_patcher = patch(
-            "materializer_control_plane.runtime.templates.get_installed_package_revision",
+            "midstream.runtime.templates.get_installed_package_revision",
             return_value="pkg-rev-1",
         )
         self.package_revision_patcher.start()
@@ -834,7 +834,7 @@ class ObservationServiceTests(unittest.TestCase):
                     requested_at="2026-07-12T00:05:00Z",
                     caused_by=EventCause(kind="request", id="req-delete"),
                     dedupe_key="observe:mat-1:work-delete:1",
-                    target_runtime=__import__("materializer_control_plane.models", fromlist=["TargetRuntime"]).TargetRuntime(
+                    target_runtime=__import__("midstream.models", fromlist=["TargetRuntime"]).TargetRuntime(
                         namespace="midstream",
                         kaspr_app_name="kaspr-mat-1",
                     ),
@@ -876,7 +876,7 @@ class ObservationServiceTests(unittest.TestCase):
         )
         before = dict(self.table.values)
 
-        with self.assertLogs("materializer_control_plane.services.observation", level="WARNING") as logged:
+        with self.assertLogs("midstream.services.observation", level="WARNING") as logged:
             self.assertIsNone(apply_runtime_status_event(self.table, event))
             self.assertIsNone(handle_runtime_status(event.to_dict(), self.table))
 
@@ -1254,7 +1254,7 @@ class AsyncObservationHandlerTests(unittest.TestCase):
 
     def setUp(self) -> None:
         patcher = patch(
-            "materializer_control_plane.runtime.templates.get_installed_package_revision",
+            "midstream.runtime.templates.get_installed_package_revision",
             return_value="pkg-rev-1",
         )
         patcher.start()
@@ -1441,7 +1441,7 @@ class AsyncObservationHandlerTests(unittest.TestCase):
                 client._api = api
                 before = copy.deepcopy(self.table.values)
 
-                with self.assertLogs("materializer_control_plane.handlers.resource_observation", "WARNING") as logs:
+                with self.assertLogs("midstream.handlers.resource_observation", "WARNING") as logs:
                     if awaited:
                         outputs = finish_within(
                             5,
@@ -1491,7 +1491,7 @@ class AsyncObservationHandlerTests(unittest.TestCase):
 def setUpModule() -> None:
     # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
     # reach the configuration without choosing one, so the environment names it for them.
-    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    os.environ.setdefault("CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
     control_plane_config.get_config.cache_clear()
 
 

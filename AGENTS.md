@@ -31,7 +31,7 @@ kubectl kustomize manifests/dev
 # Access the running dev API locally (there is no standalone local web server in this repo)
 kubectl port-forward -n midstream svc/develop-materializer-control-plane-app-api 6065:6065
 
-# Materializer Console (separate npm workspace under /console)
+# Midstream Console (separate npm workspace under /console)
 cd console && npm install && npm run dev   # BFF on :8787, client on :5173
 cd console && npm run typecheck            # both TypeScript projects
 cd console && npm test                     # node --test: reader, run engine, routes
@@ -48,7 +48,7 @@ python python/tests/console_fixture.py
 ```
 
 ## Project Map / Architecture
-- `/python/src/materializer_control_plane/` — importable control-plane package; business logic lives here.
+- `/python/src/midstream/` — importable control-plane package; business logic lives here.
   - `models/` — immutable domain/event/status models with `to_dict()` / `from_dict()`.
   - `storage/` — Kaspr table keys, envelopes, persistence helpers, bounded listings.
   - `services/` — workflow orchestration and control-plane behavior.
@@ -65,7 +65,7 @@ python python/tests/console_fixture.py
 - `/python/tests/` — `unittest` suite; use these tests as the source of truth for behavior.
 - `/manifests/base/` — shared Kaspr CRDs: app, agents, tasks, table, roles, webviews.
 - `/manifests/{dev,staging,prod}/` — Kustomize overlays; `dev/` adds `develop-` prefixes and topic/table renames.
-- `/console/` — Materializer Console: a self-contained Node BFF plus React client. It depends on the control plane only through its public HTTP API and is intended to be extractable into its own repository. See `console/README.md`, and `console/docs/README.md` for the full 17-document handbook.
+- `/console/` — Midstream Console: a self-contained Node BFF plus React client. It depends on the control plane only through its public HTTP API and is intended to be extractable into its own repository. See `console/README.md`, and `console/docs/README.md` for the full 17-document handbook.
 - `/KAFKA_MATERIALIZER_SOURCE_OF_TRUTH.md` — code-derived, end-to-end reference document for deep architecture and implementation context.
 - `/docs/handbook/` — 19-document deep reference manual. Load the specific document you need rather than the whole set:
   - `01` system overview · `02` deployment/manifests · `03` configuration · `04` HTTP API · `05` data models

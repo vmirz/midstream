@@ -17,13 +17,13 @@ from google.api_core.exceptions import ServiceUnavailable  # noqa: E402
 from gcs_fakes import FakeGcs  # noqa: E402
 from table_records import table_specs  # noqa: E402
 
-from materializer_control_plane.config import ControlPlaneConfig  # noqa: E402
-from materializer_control_plane.handlers import handle_work_event_for_routed_output  # noqa: E402
-from materializer_control_plane.kafka.admin import ConsumerGroupNotEmptyError  # noqa: E402
-from materializer_control_plane.lakehouse.catalog import GcsPointerCatalog, StaticTableDirectory, TableEntry  # noqa: E402
-from materializer_control_plane.lakehouse.pointer import POINTER_NAME, TablePointer, utc_now, write_pointer  # noqa: E402
-from materializer_control_plane.lakehouse.tables import partition_granularity_of  # noqa: E402
-from materializer_control_plane.models import (  # noqa: E402
+from midstream.config import ControlPlaneConfig  # noqa: E402
+from midstream.handlers import handle_work_event_for_routed_output  # noqa: E402
+from midstream.kafka.admin import ConsumerGroupNotEmptyError  # noqa: E402
+from midstream.lakehouse.catalog import GcsPointerCatalog, StaticTableDirectory, TableEntry  # noqa: E402
+from midstream.lakehouse.pointer import POINTER_NAME, TablePointer, utc_now, write_pointer  # noqa: E402
+from midstream.lakehouse.tables import partition_granularity_of  # noqa: E402
+from midstream.models import (  # noqa: E402
     TableClaimResult,
     EventCause,
     Materialization,
@@ -33,11 +33,11 @@ from materializer_control_plane.models import (  # noqa: E402
     RunningMaintenance,
     RuntimeHealth,
 )
-from materializer_control_plane.runtime_app.config import RuntimeAppConfig  # noqa: E402
-from materializer_control_plane.schema import StubDiscoveryService  # noqa: E402
-from materializer_control_plane.services import process_work_event, process_work_event_async  # noqa: E402
-from materializer_control_plane.services.workflow import MAX_DESTINATION_CLEANUP_RETRY_ATTEMPTS  # noqa: E402
-from materializer_control_plane.storage import (  # noqa: E402
+from midstream.runtime_app.config import RuntimeAppConfig  # noqa: E402
+from midstream.schema import StubDiscoveryService  # noqa: E402
+from midstream.services import process_work_event, process_work_event_async  # noqa: E402
+from midstream.services.workflow import MAX_DESTINATION_CLEANUP_RETRY_ATTEMPTS  # noqa: E402
+from midstream.storage import (  # noqa: E402
     get_materialization,
     get_materialization_schema,
     get_materialization_status,
@@ -51,7 +51,7 @@ from materializer_control_plane.storage import (  # noqa: E402
     save_materialization_table,
     save_operation_record,
 )
-from materializer_control_plane.storage import objects  # noqa: E402
+from midstream.storage import objects  # noqa: E402
 
 DESTINATION = "gs://lake"
 MATERIALIZATION_ID = "mat-a1b2c3d4e5f6"
@@ -178,7 +178,7 @@ class WorkflowTestCase(unittest.TestCase):
         self.kaspr = FakeKasprAppClient()
         self.config = ControlPlaneConfig(discovery_sample_records=50, discovery_sample_seconds=3)
         self.discovery = StubDiscoveryService(SAMPLE)
-        patcher = patch("materializer_control_plane.runtime.templates.get_installed_package_revision", return_value="pkg-rev-1")
+        patcher = patch("midstream.runtime.templates.get_installed_package_revision", return_value="pkg-rev-1")
         patcher.start()
         self.addCleanup(patcher.stop)
         save_materialization(self.table, build_materialization())

@@ -11,14 +11,14 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from materializer_control_plane.models import Materialization, TableSpec
-from materializer_control_plane.schema.discovery import (
+from midstream.models import Materialization, TableSpec
+from midstream.schema.discovery import (
     FETCH_MAX_BYTES,
     MAX_PARTITION_FETCH_BYTES,
     KafkaTopicDiscoveryService,
 )
-from materializer_control_plane.table_names import table_names_for_topics
-from materializer_control_plane.utils.background_loop import AdapterTimeoutError
+from midstream.table_names import table_names_for_topics
+from midstream.utils.background_loop import AdapterTimeoutError
 
 TP = namedtuple("TopicPartition", ["topic", "partition"])
 
@@ -399,7 +399,7 @@ class DiscoveryDeadlineTests(unittest.TestCase):
         consumer = SlowConsumer({0: log_of([{"id": 1}])}, hang_in="stop")
         service = self.service(consumer)
 
-        with patch("materializer_control_plane.schema.discovery.STOP_TIMEOUT_SECONDS", 0.05):
+        with patch("midstream.schema.discovery.STOP_TIMEOUT_SECONDS", 0.05):
             result = finish_within(10, lambda: service.discover(build_materialization()))
 
         self.assertEqual([{"id": 1}], result.records("orders"))
@@ -414,8 +414,8 @@ class DiscoveryDeadlineTests(unittest.TestCase):
 
         service = self.service(BlockingConsumer({0: log_of([{"id": 1}])}), connect_timeout_seconds=0.05)
 
-        with patch("materializer_control_plane.schema.discovery.STOP_TIMEOUT_SECONDS", 0.05), patch(
-            "materializer_control_plane.schema.discovery.DEADLINE_MARGIN_SECONDS", 0.05
+        with patch("midstream.schema.discovery.STOP_TIMEOUT_SECONDS", 0.05), patch(
+            "midstream.schema.discovery.DEADLINE_MARGIN_SECONDS", 0.05
         ):
             started = time.monotonic()
             with self.assertRaises(AdapterTimeoutError) as raised:

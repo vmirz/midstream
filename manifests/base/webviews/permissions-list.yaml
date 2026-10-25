@@ -22,8 +22,8 @@ spec:
         map:
           entrypoint: list_permissions
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.identity import permissions_view
+            from midstream.identity.authorization import authorize
+            from midstream.web.identity import permissions_view
 
             def list_permissions(request, directory_table):
                 principal = authorize(request, directory_table, None)

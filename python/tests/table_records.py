@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from materializer_control_plane.lakehouse.tables import table_identity
-from materializer_control_plane.models import Materialization, MaterializationTable, TableSpec
-from materializer_control_plane.table_names import table_names_for_topics
+from midstream.lakehouse.tables import table_identity
+from midstream.models import Materialization, MaterializationTable, TableSpec
+from midstream.table_names import table_names_for_topics
 
 #: The dataset tests put tables in unless they say otherwise.
 DATASET = "shop"

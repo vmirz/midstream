@@ -22,8 +22,8 @@ spec:
         map:
           entrypoint: list_roles
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.identity import list_roles_view
+            from midstream.identity.authorization import authorize
+            from midstream.web.identity import list_roles_view
 
             def list_roles(request, directory_table):
                 principal = authorize(request, directory_table, "roles.view")

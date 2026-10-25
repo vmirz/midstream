@@ -17,7 +17,7 @@ spec:
       python: |
         from datetime import UTC, datetime
 
-        from materializer_control_plane.handlers.settings import build_settings_bootstrap_request
+        from midstream.handlers.settings import build_settings_bootstrap_request
 
         def current_timestamp():
             return datetime.now(tz=UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -35,7 +35,7 @@ spec:
           keySelector:
             python: |
               def select_key(value):
-                  from materializer_control_plane.storage.settings import settings_routing_key
+                  from midstream.storage.settings import settings_routing_key
 
                   return settings_routing_key(value["scope"])
           valueSelector:

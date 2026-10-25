@@ -26,8 +26,8 @@ spec:
         map:
           entrypoint: read_settings
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.settings import settings_scope_view
+            from midstream.identity.authorization import authorize
+            from midstream.web.settings import settings_scope_view
 
             def read_settings(request, scope, settings_table, control_plane_table, directory_table):
                 authorize(request, directory_table, "settings.view")

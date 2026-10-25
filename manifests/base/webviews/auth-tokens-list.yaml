@@ -22,8 +22,8 @@ spec:
         map:
           entrypoint: read_tokens
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.tokens import my_access_tokens_view
+            from midstream.identity.authorization import authorize
+            from midstream.web.tokens import my_access_tokens_view
 
             def read_tokens(request, directory_table):
                 principal = authorize(request, directory_table, None)

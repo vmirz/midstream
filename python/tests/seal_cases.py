@@ -14,10 +14,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from materializer_control_plane.lakehouse.schema.forkmap import ForkMap
-from materializer_control_plane.lakehouse.schema.infer import infer
-from materializer_control_plane.lakehouse.schema.policy import Evolution, SchemaLimits, evolve
-from materializer_control_plane.lakehouse.tables import build_schema
+from midstream.lakehouse.schema.forkmap import ForkMap
+from midstream.lakehouse.schema.infer import infer
+from midstream.lakehouse.schema.policy import Evolution, SchemaLimits, evolve
+from midstream.lakehouse.tables import build_schema
 
 BASE_RECORD = {
     "order_id": "O1",

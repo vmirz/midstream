@@ -399,7 +399,7 @@ Nothing under `/console` imports from `python/`.
 | Location | Contents |
 |----------|----------|
 | `localStorage['console.theme']` | `light` \| `dark` |
-| `materializer_session` cookie (HttpOnly) | This browser's control-plane session; scripts cannot read it |
+| `console_session` cookie (HttpOnly) | This browser's control-plane session; scripts cannot read it |
 | `localStorage['console.data.sqlHeight']` | SQL editor height, px |
 | `localStorage['console.data.railWidth']` | Column rail width, px (264–720) |
 | `localStorage['console.data.jsonShape']` | JSON layout for exports and the row drawer: `nested` or `flat` |

@@ -24,8 +24,8 @@ spec:
         map:
           entrypoint: get_schema_version
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.materializations import (
+            from midstream.identity.authorization import authorize
+            from midstream.web.materializations import (
                 get_materialization_schema_version_view,
             )
 

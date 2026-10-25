@@ -1,4 +1,4 @@
-# Materializer Console Handbook
+# Midstream Console Handbook
 
 A complete, code-derived reference for the web application in `/console`. Every claim here is
 traceable to a file in this directory; where behaviour is subtle or surprising, the document says

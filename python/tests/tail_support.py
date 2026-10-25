@@ -21,14 +21,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from seal_cases import golden_evolution  # noqa: E402
 
-from materializer_control_plane.lakehouse.lifecycle import schema_to_json  # noqa: E402
-from materializer_control_plane.tail_app.ingest import TailSchema  # noqa: E402
+from midstream.lakehouse.lifecycle import schema_to_json  # noqa: E402
+from midstream.tail_app.ingest import TailSchema  # noqa: E402
 
 #: 2026-10-18T10:00:00Z in epoch milliseconds.
 BASE_MS = 1_760_781_600_000
 
 
-from materializer_control_plane.tail_app.consumer import TP  # noqa: E402  - the adapter's own key type
+from midstream.tail_app.consumer import TP  # noqa: E402  - the adapter's own key type
 
 
 @dataclass(slots=True)
@@ -246,13 +246,13 @@ import struct  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 from urllib.parse import parse_qs, unquote, urlparse  # noqa: E402
 
-from materializer_control_plane.identity.permissions import SERVICE_PERMISSIONS, expand_permissions  # noqa: E402
-from materializer_control_plane.identity.principals import Grants, Principal  # noqa: E402
-from materializer_control_plane.models import LiveTailHints, LiveTailMessage, LiveTailTarget, live_tail_routing_key  # noqa: E402
-from materializer_control_plane.tail_app.config import TailAppConfig  # noqa: E402
-from materializer_control_plane.tail_app.http import HttpResponse, HttpUnavailable  # noqa: E402
-from materializer_control_plane.tail_app.routing import owner_partition  # noqa: E402
-from materializer_control_plane.tail_app.worker import TailWorker  # noqa: E402
+from midstream.identity.permissions import SERVICE_PERMISSIONS, expand_permissions  # noqa: E402
+from midstream.identity.principals import Grants, Principal  # noqa: E402
+from midstream.models import LiveTailHints, LiveTailMessage, LiveTailTarget, live_tail_routing_key  # noqa: E402
+from midstream.tail_app.config import TailAppConfig  # noqa: E402
+from midstream.tail_app.http import HttpResponse, HttpUnavailable  # noqa: E402
+from midstream.tail_app.routing import owner_partition  # noqa: E402
+from midstream.tail_app.worker import TailWorker  # noqa: E402
 
 CONSOLE_TOKEN = "console-service-token-0123456789abcdef0123456789"
 CONTROL_PLANE_URL = "http://control-plane:6065"
@@ -352,7 +352,7 @@ class FakeAdmin:
         self.fail = False
 
     async def describe_consumer_group_async(self, group_id: str):
-        from materializer_control_plane.kafka.admin import ConsumerGroupDescription, GroupMemberDescription
+        from midstream.kafka.admin import ConsumerGroupDescription, GroupMemberDescription
 
         self.calls += 1
         if self.fail:
@@ -466,9 +466,9 @@ class FakeControlPlane:
         return _json_response(404, {"error": {"code": "not_found", "message": "no route", "details": {}}})
 
     async def _member(self, base: str, parsed: Any, headers: dict[str, str]) -> HttpResponse:
-        from materializer_control_plane.tail_app import handlers
-        from materializer_control_plane.tail_app.views import tail_head_view, tail_health_view, tail_rows_view
-        from materializer_control_plane.web.errors import WebError
+        from midstream.tail_app import handlers
+        from midstream.tail_app.views import tail_head_view, tail_health_view, tail_rows_view
+        from midstream.web.errors import WebError
 
         if base in self.unreachable_members or base not in self.members:
             raise HttpUnavailable(f"{base}: connection refused")
@@ -695,7 +695,7 @@ class TailHarness:
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
         if console:
-            headers["X-Materializer-Console"] = CONSOLE_TOKEN
+            headers["X-Console-Token"] = CONSOLE_TOKEN
         values = {key: str(value) for key, value in query.items()}
         if after is not None:
             values["after"] = json.dumps({str(partition): offset for partition, offset in after.items()})

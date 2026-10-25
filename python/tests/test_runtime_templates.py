@@ -12,18 +12,18 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from materializer_control_plane.config import ControlPlaneConfig  # noqa: E402
-from materializer_control_plane.models import Materialization  # noqa: E402
-from materializer_control_plane.scale import DEFAULT_STORAGE_SIZE, storage_size_to_bytes  # noqa: E402
-from materializer_control_plane.runtime import (  # noqa: E402
+from midstream.config import ControlPlaneConfig  # noqa: E402
+from midstream.models import Materialization  # noqa: E402
+from midstream.scale import DEFAULT_STORAGE_SIZE, storage_size_to_bytes  # noqa: E402
+from midstream.runtime import (  # noqa: E402
     build_dedicated_runtime_template_input,
     iter_rendered_resources,
     render_dedicated_runtime_resources,
     spec_hash,
 )
-from materializer_control_plane.runtime.templates import STATE_STORE_WRITE_BUFFER_BYTES, STATE_STORE_WRITE_BUFFERS  # noqa: E402
+from midstream.runtime.templates import STATE_STORE_WRITE_BUFFER_BYTES, STATE_STORE_WRITE_BUFFERS  # noqa: E402
 from table_records import build_table_records, table_spec, table_specs  # noqa: E402
-from materializer_control_plane import config as control_plane_config
+from midstream import config as control_plane_config
 
 
 def build_materialization(**overrides) -> Materialization:
@@ -61,7 +61,7 @@ def shipped_runtime_app_spec() -> dict:
 
     manifest = Path(__file__).resolve().parents[2] / "manifests" / "base" / "apps" / "control-plane.yaml"
     env = yaml.safe_load(manifest.read_text())["spec"]["template"]["kasprContainer"]["env"]
-    value = next(item["value"] for item in env if item["name"] == "MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC")
+    value = next(item["value"] for item in env if item["name"] == "CONTROL_PLANE_RUNTIME_APP_SPEC")
     return yaml.safe_load(value)
 
 
@@ -94,7 +94,7 @@ def init_python(resource: dict) -> str:
 
 class RuntimeTemplateTests(unittest.TestCase):
     def setUp(self) -> None:
-        patcher = patch("materializer_control_plane.runtime.templates.get_installed_package_revision", return_value="pkg-rev-1")
+        patcher = patch("midstream.runtime.templates.get_installed_package_revision", return_value="pkg-rev-1")
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -130,10 +130,10 @@ class RuntimeTemplateTests(unittest.TestCase):
         spec = app["spec"]
         self.assertEqual(spec["bootstrapServers"], "kafka:9092")
         self.assertEqual(spec["storage"]["class"], "standard")
-        self.assertEqual(spec["template"]["kasprContainer"]["env"][0]["name"], "MATERIALIZER_RUNTIME_MEMBER_ID")
+        self.assertEqual(spec["template"]["kasprContainer"]["env"][0]["name"], "RUNTIME_MEMBER_ID")
         self.assertEqual(
             spec["pythonPackages"]["packages"][0],
-            "git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=materializer-control-plane&subdirectory=python",
+            "git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python",
         )
         annotations = app["metadata"]["annotations"]
         self.assertEqual(annotations["control-plane/package-revision"], "pkg-rev-1")
@@ -342,7 +342,7 @@ class RuntimeTemplateTests(unittest.TestCase):
                     "template": {"pod": {"tolerations": [{"key": "app", "operator": "Equal", "value": "streaming", "effect": "NoSchedule"}]}},
                     "pythonPackages": {
                         "packages": [
-                            "git+https://github.com/vmirz/midstream.git@main#egg=materializer-control-plane&subdirectory=python",
+                            "git+https://github.com/vmirz/midstream.git@main#egg=midstream&subdirectory=python",
                             "acme-runtime-support==1.2.3",
                         ]
                     },
@@ -364,7 +364,7 @@ class RuntimeTemplateTests(unittest.TestCase):
                     "template": {
                         "kasprContainer": {
                             "env": [
-                                {"name": "MATERIALIZER_RUNTIME_MEMBER_ID", "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}},
+                                {"name": "RUNTIME_MEMBER_ID", "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}},
                                 {"name": "GOOGLE_APPLICATION_CREDENTIALS", "value": "/app/gcp/key.json"},
                                 {"name": "K_STREAM_WAIT_EMPTY", "value": "true"},
                             ]
@@ -381,7 +381,7 @@ class RuntimeTemplateTests(unittest.TestCase):
                 "K_STORE_ROCKSDB_MAX_WRITE_BUFFER_NUMBER",
                 "K_STORE_ROCKSDB_WRITE_BUFFER_SIZE",
                 "K_STREAM_WAIT_EMPTY",
-                "MATERIALIZER_RUNTIME_MEMBER_ID",
+                "RUNTIME_MEMBER_ID",
             ],
         )
         self.assertEqual([item for item in env if item["name"] == "K_STREAM_WAIT_EMPTY"], [{"name": "K_STREAM_WAIT_EMPTY", "value": "true"}])
@@ -445,7 +445,7 @@ class RuntimeTemplateTests(unittest.TestCase):
 def setUpModule() -> None:
     # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
     # reach the configuration without choosing one, so the environment names it for them.
-    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    os.environ.setdefault("CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
     control_plane_config.get_config.cache_clear()
 
 

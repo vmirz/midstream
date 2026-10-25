@@ -155,7 +155,7 @@ describe('fetching a tail', () => {
     assert.equal(url.searchParams.get('max_rows'), '500');
     assert.equal(url.searchParams.get('wait_ms'), '1500');
     assert.equal(asked.headers.authorization, `Bearer ${PERSON.token}`);
-    assert.equal(asked.headers['x-materializer-console'], config.serviceToken);
+    assert.equal(asked.headers['x-console-token'], config.serviceToken);
   });
 
   it('turns every refusal into an outcome the status line can tell apart', async () => {

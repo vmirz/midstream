@@ -24,8 +24,8 @@ spec:
         map:
           entrypoint: get_dataset
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.datasets import get_dataset_view
+            from midstream.identity.authorization import authorize
+            from midstream.web.datasets import get_dataset_view
 
             def get_dataset(request, dataset, directory_table, control_plane_table):
                 principal = authorize(request, directory_table, "datasets.view")

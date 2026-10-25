@@ -42,7 +42,7 @@ and the system:
    console shows them beside the snapshot, each record exactly once, within seconds of being
    produced (19).
 9. Status flows back continuously: `GET /materializations/{id}` and its table records reflect
-   reality, and the Materializer Console reads the tables themselves — joining them in SQL if asked.
+   reality, and the Midstream Console reads the tables themselves — joining them in SQL if asked.
    An engine on the REST catalog reads `lake.sales.orders`, and joins it with any table, in any
    dataset, its token may read.
 
@@ -76,7 +76,7 @@ desired state and observes the runtimes; it never touches data files.
 
 One `KasprApp` per materialization, plus a table, three agents and three tasks — **eight Kubernetes
 resources**, rendered from Jinja2 templates in
-`python/src/materializer_control_plane/runtime_app/templates/`.
+`python/src/midstream/runtime_app/templates/`.
 
 | Resource | Template | Role |
 |----------|----------|------|
@@ -89,7 +89,7 @@ resources**, rendered from Jinja2 templates in
 | `<rt>-pipeline` (KasprTask) | `pipeline-task.yaml.j2` | every 5 s: advance the batch pipeline — seals in child processes, uploads on pool threads — announce files, release acknowledgements |
 | `<rt>-commit-timer` (KasprTask) | `commit-timer-task.yaml.j2` | leader only, every 5 s: a `commit_tick`, the committer's clock; a commit is due `commit_interval_seconds` after the last |
 
-Both planes run the **same Python package** (`materializer-control-plane`). The runtime side lives
+Both planes run the **same Python package** (`midstream`). The runtime side lives
 under `runtime_app/`, the maintenance app's under `maintenance_app/`, the Iceberg library they all
 use under `lakehouse/`, the control-plane side everywhere else. One wheel, one install, one version
 pin.
@@ -115,7 +115,7 @@ of its partitions and forwards a request for another's. It never writes a table 
 
 ### The console
 
-The Materializer Console (`/console`) is a Node BFF and a React client. It talks to the control plane
+The Midstream Console (`/console`) is a Node BFF and a React client. It talks to the control plane
 over HTTP only, and reads tables itself: their pointers, metadata and manifests from GCS, and their
 data files through DuckDB (web 06, 07). It is meant to be extractable into its own repository.
 
@@ -368,7 +368,7 @@ There is **no linter or formatter configured** in this repository. Do not introd
   staging/  prod/                   Pass-through overlays (resources: [../base])
 /python/
   pyproject.toml                    Package metadata and dependencies
-  src/materializer_control_plane/
+  src/midstream/
     config.py                       Control-plane config + defaults
     protocol_logging.py             Structured protocol event logging
     models/                         Domain, event, status, table, binding, envelope models
@@ -389,7 +389,7 @@ There is **no linter or formatter configured** in this repository. Do not introd
     kafka/                          Topic/consumer-group admin, metadata
     scheduler/                      Routed-output builders
   tests/                            52 unittest modules
-/console/                           Materializer Console: BFF + React client (self-contained)
+/console/                           Midstream Console: BFF + React client (self-contained)
   docs/                             Console handbook (17 documents)
 ```
 

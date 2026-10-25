@@ -35,7 +35,7 @@ spec:
       - take-message
     init:
       python: |
-        from materializer_control_plane.maintenance_app.handlers import handle_maintenance_message
+        from midstream.maintenance_app.handlers import handle_maintenance_message
     operations:
       - name: take-message
         map:

@@ -7,13 +7,13 @@ import types
 import unittest
 from unittest.mock import patch
 
-from materializer_control_plane.kafka.admin import (
+from midstream.kafka.admin import (
     AIOKafkaAdminClient,
     AsyncRunner,
     ConsumerGroupNotEmptyError,
     _build_admin_client,
 )
-from materializer_control_plane.utils.background_loop import AdapterTimeoutError
+from midstream.utils.background_loop import AdapterTimeoutError
 
 
 class Hung:
@@ -85,7 +85,7 @@ class KafkaAdminImportTests(unittest.TestCase):
                 return types.SimpleNamespace(AIOKafkaAdminClient=FakeAdminClient)
             raise AssertionError(f"unexpected import {name}")
 
-        with patch("materializer_control_plane.kafka.admin.import_module", side_effect=fake_import_module):
+        with patch("midstream.kafka.admin.import_module", side_effect=fake_import_module):
             client = _build_admin_client(bootstrap_servers="kafka:9092")
 
         self.assertIsInstance(client, FakeAdminClient)
@@ -148,7 +148,7 @@ class KafkaAdminImportTests(unittest.TestCase):
                 return [types.SimpleNamespace(groups=self.groups)]
 
         self.assertEqual(("Dead", ()), (lambda d: (d.state, d.members))(self._client_over(FakeAdminClient([])).describe_consumer_group("tail-app")))
-        with patch("materializer_control_plane.kafka.admin._error_for_code", return_value=RuntimeError):
+        with patch("midstream.kafka.admin._error_for_code", return_value=RuntimeError):
             with self.assertRaises(RuntimeError) as caught:
                 self._client_over(FakeAdminClient([(15, "tail-app", "", "", "", [])])).describe_consumer_group("tail-app")
         self.assertIn("tail-app", str(caught.exception))
@@ -171,7 +171,7 @@ class KafkaAdminImportTests(unittest.TestCase):
                 return types.SimpleNamespace(topics=[("refunds", [(0, self.error_code), (1, self.error_code)])])
 
         with patch(
-            "materializer_control_plane.kafka.admin._offset_commit_request_type",
+            "midstream.kafka.admin._offset_commit_request_type",
             return_value=lambda *fields: fields,
         ):
             self._client_over(FakeAdminClient(0)).commit_group_offsets("kaspr-app", {"refunds": {1: 0, 0: 5}})
@@ -200,7 +200,7 @@ class KafkaAdminImportTests(unittest.TestCase):
         )
         try:
             with patch(
-                "materializer_control_plane.kafka.admin._delete_groups_request_type",
+                "midstream.kafka.admin._delete_groups_request_type",
                 return_value=lambda groups: groups,
             ):
                 with self.assertRaises(ConsumerGroupNotEmptyError):
@@ -392,7 +392,7 @@ class KafkaAdminDeadlineTests(unittest.TestCase):
                 client = self.client(admin, call_timeout_seconds=0.05)
 
                 with patch(
-                    "materializer_control_plane.kafka.admin._delete_groups_request_type",
+                    "midstream.kafka.admin._delete_groups_request_type",
                     return_value=lambda groups: groups,
                 ):
                     with self.assertRaises(AdapterTimeoutError) as raised:

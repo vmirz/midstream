@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import unittest
 
-from materializer_control_plane.table_names import (
+from midstream.table_names import (
     TABLE_NAME_MAX_LENGTH,
     InvalidNameError,
     InvalidSourceTopicsError,

@@ -22,8 +22,8 @@ spec:
         map:
           entrypoint: get_user
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.identity import get_user_view
+            from midstream.identity.authorization import authorize
+            from midstream.web.identity import get_user_view
 
             def get_user(request, user_id, directory_table):
                 principal = authorize(request, directory_table, "users.view_details")

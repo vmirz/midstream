@@ -192,7 +192,7 @@ string}`) in the operator's CRD.
 ### The dev overlay's runtimes cannot declare topics
 
 The base runtime spec sets `config: {topicAllowDeclare: true}`; the dev overlay's replacement
-`MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC` leaves it out, so dev runtimes depend on the broker
+`CONTROL_PLANE_RUNTIME_APP_SPEC` leaves it out, so dev runtimes depend on the broker
 creating their topics. Whether that is intended is not recorded anywhere.
 
 ### The sweep cannot rescue a materialization that has no runtime yet
@@ -330,7 +330,7 @@ and nothing reads them. Deleting a key from every shard needs Kaspr's per-partit
 
 ### Runtime pods are sized for the whole deployment
 
-Every runtime pod takes `resources` from `MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC`; a
+Every runtime pod takes `resources` from `CONTROL_PLANE_RUNTIME_APP_SPEC`; a
 materialization's `resource_profile` is carried but unused, so a busy topic's runtime is limited
 like a quiet one's. Since 4.2 that holds for the limits only, CPU included. The base manifests
 limit each member to 2 CPUs, room for a seal child beside a main process that uses a full core on a
@@ -498,7 +498,7 @@ does not do. The API's schema `since` is the commit time, not the data's (04 §4
 
 ### The maintenance app runs one long job at a time per member
 
-A member runs `MATERIALIZER_MAINTENANCE_MAX_CONCURRENT_JOBS` compactions or orphan cleanups at once
+A member runs `MAINTENANCE_MAX_CONCURRENT_JOBS` compactions or orphan cleanups at once
 (1 by default), visiting its tables in turn, and a compaction may take up to
 `compaction_timeout_minutes`. Many tables with a backlog each, on one member, wait for each
 other: each gets a job in turn, not a job an interval. Snapshot expiry takes no slot. More replicas
