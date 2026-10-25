@@ -11,7 +11,7 @@ The API is exposed by `KasprWebView` custom resources attached to the control-pl
 Local access:
 
 ```bash
-kubectl -n kafka-sql port-forward svc/develop-materializer-control-plane-app-api 6065:6065
+kubectl -n midstream port-forward svc/develop-materializer-control-plane-app-api 6065:6065
 ```
 
 The tail app's endpoints, under `/tail/v1` on its own Service (`develop-materializer-tail-app-api`),
@@ -302,7 +302,7 @@ Topic `materialization-requests`, key `materialization:mat-a1b2c3d4e5f6`:
     "destination_uri": "gs://kafka-materializations",
     "runtime_mode": "dedicated",
     "runtime_name": "develop-mat-a1b2c3d4e5f6",
-    "namespace": "kafka-sql",
+    "namespace": "midstream",
     "resource_profile": null,
     "storage_size": "64Mi",
     "replicas": 16,
@@ -398,7 +398,7 @@ applies to materializations created after it.
 | Field | Is | Settings page |
 |---|---|---|
 | `destination_uri` | `default_destination_uri`. The tables are created at `<destination_uri>/<storage_prefix>/<materialization_id>/<table>`, one directory each (11 §11.1) | Materializations › Destination |
-| `namespace` | `default_namespace` (`kafka-sql`): where the runtime's KasprApp runs | read-only |
+| `namespace` | `default_namespace`: where the runtime's KasprApp runs | read-only |
 | `runtime_name` | `<runtime_name_prefix>-<materialization_id>`, bounded to a Kubernetes name (`runtime/naming.py`); the record's `resolved_runtime_name` | — |
 | `storage_size` | `default_runtime_storage_size` (`64Mi`): each runtime member's persistent volume, which holds only its state table (10 §10.8). The control plane's and the maintenance app's own volumes are their manifests' (1Gi) | Materializations › Storage per replica |
 
@@ -431,7 +431,7 @@ overruled; 3.x let a request choose them (16 §16.8). An update may still repeat
     "pending_topic_change": null,
     "destination_uri": "gs://kafka-materializations",
     "runtime_mode": "dedicated",
-    "namespace": "kafka-sql",
+    "namespace": "midstream",
     "replicas": 4,
     "autoscaling": true,
     "partition_granularity": "day",
@@ -480,7 +480,7 @@ overruled; 3.x let a request choose them (16 §16.8). An update may still repeat
   },
   "runtime_binding": {
     "kaspr_app_name": "develop-mat-a1b2c3d4e5f6",
-    "namespace": "kafka-sql",
+    "namespace": "midstream",
     "managed_agent_names": [
       "develop-mat-a1b2c3d4e5f6-writer",
       "develop-mat-a1b2c3d4e5f6-committer",
@@ -1107,7 +1107,7 @@ than guessing.
 ```json
 {
   "default_destination_uri": "gs://kafka-materializations",
-  "default_namespace": "kafka-sql",
+  "default_namespace": "midstream",
   "default_replicas": 1,
   "max_replicas": 64,
   "max_topics": 20,
@@ -1193,7 +1193,7 @@ value comes from, plus the deployment's read-only settings:
       "label": "Runtime namespace",
       "description": "Namespace new runtimes deploy into. …",
       "env_var": "MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE",
-      "value": "kafka-sql"
+      "value": "midstream"
     }
   ]
 }

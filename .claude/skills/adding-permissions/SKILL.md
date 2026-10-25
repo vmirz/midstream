@@ -43,7 +43,7 @@ PermissionDefinition(
   the role editor shows them as included. Never imply something *more* powerful, and **stay within
   the scope**: a dataset permission implies only dataset permissions, or a grant on one dataset
   would hand out something across the deployment (`test_identity` checks it).
-- **A dataset permission** also goes in `web/shared/access.ts::DATASET_PERMISSIONS` (the console's
+- **A dataset permission** also goes in `console/shared/access.ts::DATASET_PERMISSIONS` (the console's
   `can(principal, key, datasetId)` needs to know it is held per dataset), and in the dataset roles
   (Dataset Reader / Writer / Owner) it belongs to.
 - **Order** in `PERMISSIONS` is the order the role editor and the user page list them; keep each
@@ -118,7 +118,7 @@ The first line of the WebView operation's Python, with the directory table bound
 
 ## 4. Gate the console
 
-**Route** (`web/server/routes/*.ts`), and call the control plane as the person:
+**Route** (`console/server/routes/*.ts`), and call the control plane as the person:
 
 ```ts
 app.post('/api/materializations/:materializationId/restart', { preHandler: permit('materializations.restart') }, async (request, reply) => {
@@ -140,7 +140,7 @@ app.post('/api/materializations/:materializationId/restart', { preHandler: permi
   `onLost` (see `routes/stream.ts`).
 - A route that answers anyone (no guard) is a deliberate choice; say why in a comment.
 
-**UI** (`web/src`): never a security boundary, always a courtesy.
+**UI** (`console/src`): never a security boundary, always a courtesy.
 
 | Gate | How |
 |---|---|
@@ -171,9 +171,9 @@ so a new permission appears there with no console change.
 
 - `docs/handbook/18-identity-and-access.md` §18.3: the permission table, and the built-in role
   table if a role changed.
-- `docs/handbook/04-http-api-reference.md` §4.1 **Needs** column; `web/docs/08-console-api-reference.md`
+- `docs/handbook/04-http-api-reference.md` §4.1 **Needs** column; `console/docs/08-console-api-reference.md`
   §8.1 **Needs** column.
-- `web/docs/11-feature-reference.md` where a button, tab or page now depends on it.
+- `console/docs/11-feature-reference.md` where a button, tab or page now depends on it.
 
 ## 7. Verify
 
@@ -182,7 +182,7 @@ python -m unittest discover -s python/tests -p 'test_identity.py' -v
 python -m unittest discover -s python/tests -p 'test_datasets.py' -v
 python -m unittest discover -s python/tests -p 'test_*.py'
 kubectl kustomize manifests/base >/dev/null && kubectl kustomize manifests/dev >/dev/null
-cd web && npm test && npm run typecheck && npm run build
+cd console && npm test && npm run typecheck && npm run build
 ```
 
 Then in a browser, three times: as a **guest** (sent to sign-in), as someone **without** the

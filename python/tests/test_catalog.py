@@ -152,6 +152,7 @@ class CatalogTests(unittest.TestCase):
             save_dataset_name(self.directory, name, dataset_id, updated_at=NOW)
         self.materialization = Materialization(
             materialization_id=MATERIALIZATION_ID,
+            namespace="midstream",
             name="Shop",
             tables=(table_spec("orders", "orders"), table_spec("payments", "payments")),
             destination_uri="gs://lake",

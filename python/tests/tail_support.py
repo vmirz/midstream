@@ -582,14 +582,14 @@ class TailHarness:
         self.partitions = partitions
         for index in range(members):
             name = f"materializer-tail-app-{index}"
-            url = f"http://{name}.materializer-tail-app.kafka-sql.svc.cluster.local:6065"
+            url = f"http://{name}.materializer-tail-app.midstream.svc.cluster.local:6065"
             clients = FakeClients(self.kafka, self.admin)
             worker = TailWorker(
                 config=TailAppConfig(
                     control_plane_url=CONTROL_PLANE_URL,
                     member_id=name,
                     group_id="materializer-tail-app",
-                    web_host=f"{name}.materializer-tail-app.kafka-sql.svc.cluster.local",
+                    web_host=f"{name}.materializer-tail-app.midstream.svc.cluster.local",
                     web_port=6065,
                     requests_topic=TICK_TOPIC,
                 ),

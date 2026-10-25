@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import asyncio
 from dataclasses import replace
 from pathlib import Path
@@ -22,6 +23,7 @@ from materializer_control_plane.runtime import (  # noqa: E402
 )
 from materializer_control_plane.runtime.templates import STATE_STORE_WRITE_BUFFER_BYTES, STATE_STORE_WRITE_BUFFERS  # noqa: E402
 from table_records import build_table_records, table_spec, table_specs  # noqa: E402
+from materializer_control_plane import config as control_plane_config
 
 
 def build_materialization(**overrides) -> Materialization:
@@ -32,7 +34,7 @@ def build_materialization(**overrides) -> Materialization:
         destination_uri="gs://lakehouse",
         runtime_mode="dedicated",
         resolved_runtime_name="kaspr-mat-1",
-        namespace="kafka-sql",
+        namespace="midstream",
         desired_phase="running",
         created_at="2026-07-12T00:00:00Z",
         updated_at="2026-07-12T00:00:00Z",
@@ -131,7 +133,7 @@ class RuntimeTemplateTests(unittest.TestCase):
         self.assertEqual(spec["template"]["kasprContainer"]["env"][0]["name"], "MATERIALIZER_RUNTIME_MEMBER_ID")
         self.assertEqual(
             spec["pythonPackages"]["packages"][0],
-            "git+ssh://git@github.com/TotalWineLabs/kaspr-kafka-materializer.git@pkg-rev-1#egg=materializer-control-plane&subdirectory=python",
+            "git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=materializer-control-plane&subdirectory=python",
         )
         annotations = app["metadata"]["annotations"]
         self.assertEqual(annotations["control-plane/package-revision"], "pkg-rev-1")
@@ -337,10 +339,10 @@ class RuntimeTemplateTests(unittest.TestCase):
             config=ControlPlaneConfig(
                 runtime_app_spec={
                     "authentication": {"type": "scram-sha-512", "username": "runtime-user"},
-                    "template": {"pod": {"tolerations": [{"key": "app", "operator": "Equal", "value": "twmapp", "effect": "NoSchedule"}]}},
+                    "template": {"pod": {"tolerations": [{"key": "app", "operator": "Equal", "value": "streaming", "effect": "NoSchedule"}]}},
                     "pythonPackages": {
                         "packages": [
-                            "git+ssh://git@github.com/TotalWineLabs/kaspr-kafka-materializer.git@main#egg=materializer-control-plane&subdirectory=python",
+                            "git+https://github.com/vmirz/midstream.git@main#egg=materializer-control-plane&subdirectory=python",
                             "acme-runtime-support==1.2.3",
                         ]
                     },
@@ -437,6 +439,14 @@ class RuntimeTemplateTests(unittest.TestCase):
         rendered = render(build_materialization(partition_granularity="hour"))
         self.assertIn('partition_granularity="hour"', init_python(by_suffix(rendered["kaspr_agents"], "-writer")))
         self.assertIn('partition_granularity="hour"', init_python(by_suffix(rendered["kaspr_agents"], "-committer")))
+
+
+
+def setUpModule() -> None:
+    # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
+    # reach the configuration without choosing one, so the environment names it for them.
+    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    control_plane_config.get_config.cache_clear()
 
 
 if __name__ == "__main__":

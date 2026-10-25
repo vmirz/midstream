@@ -60,7 +60,7 @@ class KubernetesClientObservationTests(unittest.TestCase):
                     },
                 },
             },
-            namespace="kafka-sql",
+            namespace="midstream",
             name="kaspr-materializer-orders",
         )
 
@@ -139,7 +139,7 @@ class FakeCustomObjectsApi:
             raise
 
 
-APP = {"kind": "KasprApp", "metadata": {"namespace": "kafka-sql", "name": "kaspr-mat-1"}}
+APP = {"kind": "KasprApp", "metadata": {"namespace": "midstream", "name": "kaspr-mat-1"}}
 
 
 class KubernetesClientDeadlineTests(unittest.TestCase):
@@ -157,12 +157,12 @@ class KubernetesClientDeadlineTests(unittest.TestCase):
 
         async def awaited():
             await client.apply_async(APP)
-            await client.delete_async(namespace="kafka-sql", name="kaspr-mat-1-writer", kind="KasprAgent")
-            return await client.observe_async(namespace="kafka-sql", name="kaspr-mat-1")
+            await client.delete_async(namespace="midstream", name="kaspr-mat-1-writer", kind="KasprAgent")
+            return await client.observe_async(namespace="midstream", name="kaspr-mat-1")
 
         observation = asyncio.run(awaited())
 
-        self.assertEqual(observation, client.observe(namespace="kafka-sql", name="kaspr-mat-1"))
+        self.assertEqual(observation, client.observe(namespace="midstream", name="kaspr-mat-1"))
         self.assertEqual(observation.managed_agent_states, {"writer": "running"})
         self.assertEqual(
             api.calls[:4],
@@ -191,7 +191,7 @@ class KubernetesClientDeadlineTests(unittest.TestCase):
                     turns += 1
 
             ticking = asyncio.ensure_future(tick())
-            observation = await client.observe_async(namespace="kafka-sql", name="kaspr-mat-1")
+            observation = await client.observe_async(namespace="midstream", name="kaspr-mat-1")
             done = True
             await ticking
             return observation
@@ -202,16 +202,16 @@ class KubernetesClientDeadlineTests(unittest.TestCase):
 
     def test_every_call_is_cancelled_at_its_deadline(self) -> None:
         calls = {
-            "Kubernetes apply of KasprApp kafka-sql/kaspr-mat-1": ("apply", (APP,), {}),
-            "Kubernetes delete of KasprTable kafka-sql/kaspr-mat-1-schema-state": (
+            "Kubernetes apply of KasprApp midstream/kaspr-mat-1": ("apply", (APP,), {}),
+            "Kubernetes delete of KasprTable midstream/kaspr-mat-1-schema-state": (
                 "delete",
                 (),
-                {"namespace": "kafka-sql", "name": "kaspr-mat-1-schema-state", "kind": "KasprTable"},
+                {"namespace": "midstream", "name": "kaspr-mat-1-schema-state", "kind": "KasprTable"},
             ),
-            "Kubernetes read of KasprApp kafka-sql/kaspr-mat-1": (
+            "Kubernetes read of KasprApp midstream/kaspr-mat-1": (
                 "observe",
                 (),
-                {"namespace": "kafka-sql", "name": "kaspr-mat-1"},
+                {"namespace": "midstream", "name": "kaspr-mat-1"},
             ),
         }
         for description, (method, args, kwargs) in calls.items():
@@ -298,9 +298,9 @@ class KubernetesClientMemberTests(unittest.TestCase):
                 pod("kaspr-mat-1-app-2"),
             ]
         )
-        observation = self.client(core).observe(namespace="kafka-sql", name="kaspr-mat-1")
+        observation = self.client(core).observe(namespace="midstream", name="kaspr-mat-1")
 
-        self.assertEqual([("kafka-sql", "kaspr.io/app=kaspr-mat-1")], core.calls)
+        self.assertEqual([("midstream", "kaspr.io/app=kaspr-mat-1")], core.calls)
         self.assertEqual(["kaspr-mat-1-app-0", "kaspr-mat-1-app-1", "kaspr-mat-1-app-2"], [member.name for member in observation.members])
         first, looping, quiet = observation.members
         self.assertEqual((58, "OOMKilled", 137, "2026-10-25T02:25:10Z", None), (first.restarts, first.last_exit_reason, first.last_exit_code, first.last_exited_at, first.waiting_reason))
@@ -308,17 +308,17 @@ class KubernetesClientMemberTests(unittest.TestCase):
         self.assertEqual((0, None, None), (quiet.restarts, quiet.last_exit_reason, quiet.last_exited_at))
 
     def test_a_pod_without_the_kaspr_container_is_a_member_with_nothing_to_say(self) -> None:
-        observation = self.client(FakeCoreV1Api([pod("kaspr-mat-1-app-0", restarts=4, container="istio-proxy")])).observe(namespace="kafka-sql", name="kaspr-mat-1")
+        observation = self.client(FakeCoreV1Api([pod("kaspr-mat-1-app-0", restarts=4, container="istio-proxy")])).observe(namespace="midstream", name="kaspr-mat-1")
         self.assertEqual(0, observation.members[0].restarts)
 
     def test_pods_it_may_not_read_leave_the_observation_without_members(self) -> None:
         client = self.client(FakeCoreV1Api(refuse=True))
         with self.assertLogs("materializer_control_plane.kubernetes.kaspr_apps", level="WARNING") as logs:
-            first = client.observe(namespace="kafka-sql", name="kaspr-mat-1")
-            second = client.observe(namespace="kafka-sql", name="kaspr-mat-1")
+            first = client.observe(namespace="midstream", name="kaspr-mat-1")
+            second = client.observe(namespace="midstream", name="kaspr-mat-1")
         self.assertEqual((None, None), (first.members, second.members))
         self.assertEqual({"writer": "running"}, first.managed_agent_states)
         self.assertEqual(1, len(logs.records), "reported once")
 
     def test_without_a_pod_reader_nothing_is_read(self) -> None:
-        self.assertIsNone(self.client(None).observe(namespace="kafka-sql", name="kaspr-mat-1").members)
+        self.assertIsNone(self.client(None).observe(namespace="midstream", name="kaspr-mat-1").members)

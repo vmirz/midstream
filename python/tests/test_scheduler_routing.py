@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
 import unittest
 from unittest.mock import patch
@@ -29,6 +30,7 @@ from materializer_control_plane.config import ControlPlaneConfig
 from materializer_control_plane.models import SettingsChangeRequest
 from materializer_control_plane.services.settings import apply_settings_change
 from table_records import build_table_record, table_specs
+from materializer_control_plane import config as control_plane_config
 
 
 class FakeTable:
@@ -110,7 +112,7 @@ def build_materialization(*, desired_phase: str = "running", updated_at: str = "
         destination_uri="abfs://lakehouse/orders",
         runtime_mode="dedicated",
         resolved_runtime_name="kaspr-mat-1",
-        namespace="kafka-sql",
+        namespace="midstream",
         desired_phase=desired_phase,
         created_at="2026-07-12T00:00:00Z",
         updated_at=updated_at,
@@ -128,7 +130,7 @@ def build_status(*, observed_phase: str = "requested") -> MaterializationStatus:
         observation_source="hybrid",
         runtime_health=RuntimeHealth(level="unknown"),
         resource_observation=ResourceObservation(
-            namespace="kafka-sql",
+            namespace="midstream",
             kaspr_app_name="kaspr-mat-1",
             resource_exists=True,
             managed_agent_states={"writer": "running"},
@@ -300,7 +302,7 @@ class SchedulerRoutingTests(unittest.TestCase):
                 caused_by=EventCause(kind="resource_observation", id="runtime-deleted:mat-1"),
                 dedupe_key="cleanup_runtime_kafka:mat-1",
                 target_runtime=TargetRuntime(
-                    namespace="kafka-sql",
+                    namespace="midstream",
                     kaspr_app_name="kaspr-mat-1",
                 ),
             ).to_dict(),
@@ -420,7 +422,7 @@ class SchedulerRoutingTests(unittest.TestCase):
                     caused_by=EventCause(kind="scheduler", id="observe:mat-1"),
                     dedupe_key="observe:mat-1:1",
                     target_runtime=__import__("materializer_control_plane.models", fromlist=["TargetRuntime"]).TargetRuntime(
-                        namespace="kafka-sql",
+                        namespace="midstream",
                         kaspr_app_name="kaspr-materializer-orders",
                     ),
                     observation_policy=ObservationPolicy(
@@ -433,7 +435,7 @@ class SchedulerRoutingTests(unittest.TestCase):
                 table,
                 FakeKasprAppClient(
                     observation={
-                        "namespace": "kafka-sql",
+                        "namespace": "midstream",
                         "kaspr_app_name": "kaspr-materializer-orders",
                         "resource_exists": True,
                         "managed_agent_states": {"writer": "running"},
@@ -481,7 +483,7 @@ class SchedulerRoutingTests(unittest.TestCase):
                     caused_by=EventCause(kind="scheduler", id="observe:mat-1"),
                     dedupe_key="observe:mat-1:1",
                     target_runtime=__import__("materializer_control_plane.models", fromlist=["TargetRuntime"]).TargetRuntime(
-                        namespace="kafka-sql",
+                        namespace="midstream",
                         kaspr_app_name="kaspr-materializer-orders",
                     ),
                     observation_policy=ObservationPolicy(
@@ -494,7 +496,7 @@ class SchedulerRoutingTests(unittest.TestCase):
                 table,
                 FakeKasprAppClient(
                     observation={
-                        "namespace": "kafka-sql",
+                        "namespace": "midstream",
                         "kaspr_app_name": "kaspr-materializer-orders",
                         "resource_exists": True,
                         "managed_agent_states": {"writer": "running"},
@@ -516,6 +518,14 @@ class SchedulerRoutingTests(unittest.TestCase):
         # The runtime loads its table itself; the control plane only keeps watching for its heartbeat.
         self.assertEqual(["scheduler"], [routed["route"] for routed in routed_outputs])
         self.assertEqual(routed_outputs[0]["value"]["step"], "observe_runtime")
+
+
+
+def setUpModule() -> None:
+    # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
+    # reach the configuration without choosing one, so the environment names it for them.
+    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    control_plane_config.get_config.cache_clear()
 
 
 if __name__ == "__main__":

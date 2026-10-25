@@ -2,7 +2,7 @@
 
 ## 1.1 What the system does
 
-`kaspr-kafka-materializer` continuously materializes JSON records from Kafka topics into **Apache
+Midstream continuously materializes JSON records from Kafka topics into **Apache
 Iceberg tables — one per source topic — in Google Cloud Storage**, exactly once, with a self-service
 HTTP API, schemas that evolve by themselves, and an Iceberg REST catalog that any engine can attach.
 A materialization reads one or more topics with one runtime, each into a table in a **dataset**: a
@@ -115,7 +115,7 @@ of its partitions and forwards a request for another's. It never writes a table 
 
 ### The console
 
-The Materializer Console (`/web`) is a Node BFF and a React client. It talks to the control plane
+The Materializer Console (`/console`) is a Node BFF and a React client. It talks to the control plane
 over HTTP only, and reads tables itself: their pointers, metadata and manifests from GCS, and their
 data files through DuckDB (web 06, 07). It is meant to be extractable into its own repository.
 
@@ -350,9 +350,9 @@ members stage, seal, upload; the committer commits; table events keep the table 
 | Config parsing | PyYAML | `>=6.0.0` |
 | Kubernetes client | kubernetes-asyncio | `>=33.1.0` |
 | Kafka admin/consumer | aiokafka | **not declared**; provided by the Kaspr runtime image |
-| Console | Node 24+, React, DuckDB (`@duckdb/node-api` 1.5.5), avsc | `web/package.json` |
+| Console | Node 24+, React, DuckDB (`@duckdb/node-api` 1.5.5), avsc | `console/package.json` |
 | Manifests | Kustomize (`kubectl kustomize`) | — |
-| Tests | stdlib `unittest`; `node --test` in `/web` | — |
+| Tests | stdlib `unittest`; `node --test` in `/console` | — |
 
 There is **no linter or formatter configured** in this repository. Do not introduce one.
 
@@ -362,7 +362,6 @@ There is **no linter or formatter configured** in this repository. Do not introd
 /AGENTS.md                          Agent instructions (short, always-on)
 /KAFKA_MATERIALIZER_SOURCE_OF_TRUTH.md   Condensed end-to-end narrative
 /docs/handbook/                     This handbook
-/control-plane/                     Historical design docs and contracts
 /manifests/
   base/                             Shared CRDs: app, agents, tasks, tables, roles, webviews; maintenance/, tail/
   dev/                              The substantive overlay (develop- prefixes, topic renames)
@@ -390,9 +389,8 @@ There is **no linter or formatter configured** in this repository. Do not introd
     kafka/                          Topic/consumer-group admin, metadata
     scheduler/                      Routed-output builders
   tests/                            52 unittest modules
-/web/                               Materializer Console: BFF + React client (self-contained)
+/console/                           Materializer Console: BFF + React client (self-contained)
   docs/                             Console handbook (17 documents)
-/Jenkinsfile                        CI
 ```
 
 ## 1.10 Where to go next

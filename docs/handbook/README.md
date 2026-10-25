@@ -1,6 +1,6 @@
 # Kafka Materializer Handbook
 
-This directory is the **deep reference manual** for `kaspr-kafka-materializer` 4.1, which
+This directory is the **deep reference manual** for Midstream, which
 materializes Kafka topics into Apache Iceberg tables. It is written to be read by humans doing
 enhancement work and to be loaded as context by LLMs answering detailed design and implementation
 questions.
@@ -43,8 +43,7 @@ aspirational design prose.
 |------|---------|
 | `/AGENTS.md` | Short always-on agent instructions: commands, project map, guardrails. Read first, kept under 300 lines. |
 | `/KAFKA_MATERIALIZER_SOURCE_OF_TRUTH.md` | Condensed single-file end-to-end narrative. Good for a one-shot overview; this handbook is the deep reference. |
-| `/web/docs/` | The Materializer Console's own handbook (17 documents), cited here as `web <n>`. |
-| `/control-plane/` | Original design docs and contracts. **Historical intent, not authoritative.** |
+| `/console/docs/` | The Materializer Console's own handbook (17 documents), cited here as `web <n>`. |
 
 ---
 
@@ -55,10 +54,10 @@ When two sources disagree, trust them in this order:
 1. `manifests/` — what is actually deployed (topic names, agent wiring, env vars, cron schedules).
 2. `python/src/materializer_control_plane/` — what the code actually does.
 3. `python/tests/` — executable specification; asserts exact payload shapes and edge cases.
-4. `control-plane/*.md` and other prose — design intent, may be stale.
+4. Other prose — design intent, may be stale.
 
-This handbook follows that order. Where a document in `control-plane/` conflicts with code,
-the conflict is called out explicitly (see [14 — Known gaps](./14-known-gaps-and-roadmap.md)).
+This handbook follows that order. Where prose and code disagree, the conflict is called out
+explicitly (see [14 — Known gaps](./14-known-gaps-and-roadmap.md)).
 
 ---
 
@@ -69,7 +68,7 @@ the conflict is called out explicitly (see [14 — Known gaps](./14-known-gaps-a
   navigation hints, not guarantees.
 - **`<runtime-app>`**, or **`<rt>`**, is a placeholder for the resolved runtime KasprApp name,
   e.g. `kaspr-mat-a1b2c3d4e5f6` (base) or `develop-mat-a1b2c3d4e5f6` (dev overlay).
-- **`web <n>`** is document `<n>` of the console handbook, `web/docs/`.
+- **`web <n>`** is document `<n>` of the console handbook, `console/docs/`.
 - **`<location>`** is a table's location, `<destination>/<storage prefix>/<materialization id>/<table>`.
 - **Timestamps** are always UTC ISO-8601 with a `Z` suffix and second precision, e.g.
   `2026-01-15T10:30:00Z`. Produced by

@@ -140,7 +140,7 @@ plain field named after its key has no entry:
 It is stored as the table property `materializer.fork-map`, beside the schema in the runtime's state
 table, and in the control plane's projection. The seal's conform step, the writer's drift detector,
 the evolution policy, the API projection and the console's logical columns all read it through the
-same `build_index` walk (the console has a TypeScript port, `web/server/iceberg/schema.ts`, checked
+same `build_index` walk (the console has a TypeScript port, `console/server/iceberg/schema.ts`, checked
 against the Python projection by the E5 fixture).
 
 ## 9.6 Discovery: schema 0

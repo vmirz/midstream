@@ -285,7 +285,7 @@ The control plane adds `K_STREAM_WAIT_EMPTY=false`, `K_STORE_ROCKSDB_WRITE_BUFFE
 
 | Variable | Base value |
 |----------|------------|
-| `MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE` | `kafka-sql` |
+| `MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE` | `midstream` |
 | `MATERIALIZER_CONTROL_PLANE_DEFAULT_LIST_LIMIT` | `"30"` |
 | `MATERIALIZER_CONTROL_PLANE_DEFAULT_DESTINATION_URI` | `""` — set per environment; empty means every create request names its own destination |
 | `MATERIALIZER_CONTROL_PLANE_RUNTIME_NAME_PREFIX` | `kaspr` |
@@ -545,13 +545,10 @@ The synthetic `materialization_id` is the literal string `__system__`.
 Identical, but no `schedule:` block (fires once at app start) and passes
 `task_id="sweep-observations-startup-task"`.
 
-> **Doc/manifest mismatch:** `control-plane/contracts/observation-policy.md` recommends a
-> 5-minute sweep. The manifest uses 2 minutes. The manifest wins.
-
 ## 2.7 RBAC
 
 ```yaml
-Role materializer-control-plane-kasprapp-manager (ns kafka-sql)
+Role materializer-control-plane-kasprapp-manager (ns midstream)
   apiGroups: [kaspr.io]
   resources: [kasprapps, kasprtables, kaspragents, kasprtasks]
   verbs:     [get, create, patch, delete]
@@ -861,12 +858,12 @@ way, so restart it too if anything targeted these apps' pods before.
 **Checking it:**
 
 ```bash
-kubectl -n kafka-sql get vpa                       # one per app and one per runtime
-kubectl -n kafka-sql describe vpa develop-materializer-control-plane-app-vpa   # its recommendation
-kubectl -n kafka-sql get kasprapp develop-materializer-control-plane \
+kubectl -n midstream get vpa                       # one per app and one per runtime
+kubectl -n midstream describe vpa develop-materializer-control-plane-app-vpa   # its recommendation
+kubectl -n midstream get kasprapp develop-materializer-control-plane \
   -o jsonpath='{.status.conditions[?(@.type=="VerticalPodAutoscalerReady")]}'
-kubectl -n kafka-sql get events --field-selector reason=InPlaceResizedByVPA
-kubectl -n kafka-sql get pod develop-materializer-control-plane-app-0 \
+kubectl -n midstream get events --field-selector reason=InPlaceResizedByVPA
+kubectl -n midstream get pod develop-materializer-control-plane-app-0 \
   -o jsonpath='{.spec.containers[?(@.name=="kaspr")].resources}'
 ```
 
@@ -885,21 +882,21 @@ the container a `resizePolicy`. The Settings page shows the runtimes' value read
 kubectl kustomize manifests/dev > /dev/null && echo "dev renders OK"
 
 # 2. Confirm prerequisite secrets exist (names only — never print contents)
-kubectl -n kafka-sql get secret github-deploy-key kafka-materializer-gcp-credentials \
+kubectl -n midstream get secret github-deploy-key kafka-materializer-gcp-credentials \
         materializer-control-plane-user develop-materializer-auth -o name
 
 # 3. Apply
 kubectl apply -k manifests/dev
 
 # 4. Watch the app come up
-kubectl -n kafka-sql get kasprapp develop-materializer-control-plane -w
+kubectl -n midstream get kasprapp develop-materializer-control-plane -w
 
 # 5. Verify all child resources are linked
-kubectl -n kafka-sql get kasprapp develop-materializer-control-plane \
+kubectl -n midstream get kasprapp develop-materializer-control-plane \
         -o jsonpath='{.status.linkedResources}' | python -m json.tool
 
 # 6. Port-forward and smoke test
-kubectl -n kafka-sql port-forward svc/develop-materializer-control-plane-app-api 6065:6065 &
+kubectl -n midstream port-forward svc/develop-materializer-control-plane-app-api 6065:6065 &
 curl -s localhost:6065/system/version | python -m json.tool          # public
 curl -s localhost:6065/auth/session | python -m json.tool            # who am I: a guest here
 curl -s localhost:6065/materializations | python -m json.tool        # guests may list by default
@@ -929,18 +926,8 @@ restart does not assign the new topics. Force one rebalance per environment afte
 
 ## 2.12 CI
 
-`Jenkinsfile` at the repository root is a four-line shared-library call:
-
-```groovy
-buildDeployManifests {
-    namespace="kafka-sql"
-    destination="crs"
-    branchDeploy=false
-}
-```
-
-All build/deploy logic lives in the `buildDeployManifests` shared library, not in this
-repository. This repository has no linter or formatter; the meaningful local gates are:
+Continuous integration is being set up in GitHub Actions. This repository has no linter or
+formatter; the gates, run locally until then, are:
 
 ```bash
 python -m unittest discover -s python/tests -p 'test_*.py' -v

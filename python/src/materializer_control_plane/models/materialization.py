@@ -210,6 +210,8 @@ class Materialization:
     desired_phase: str
     created_at: str
     updated_at: str
+    #: The Kubernetes namespace its runtime runs in: the deployment's, taken at creation.
+    namespace: str
     runtime_mode: str = "dedicated"
     #: A label: free text, not unique, of no meaning in SQL or storage. Set to the id when none is
     #: given, and changeable at any time.
@@ -218,7 +220,6 @@ class Materialization:
     resolved_runtime_name: str | None = None
     runtime_group: str | None = None
     runtime_app_ref: str | None = None
-    namespace: str = "kafka-sql"
     created_by: str | None = None
     #: The account that created it, when an account did; `created_by` is that account's email.
     created_by_id: str | None = None
@@ -340,7 +341,7 @@ class Materialization:
             runtime_group=value.get("runtime_group"),
             resolved_runtime_name=value.get("resolved_runtime_name"),
             runtime_app_ref=value.get("runtime_app_ref"),
-            namespace=value.get("namespace", "kafka-sql"),
+            namespace=value["namespace"],
             desired_phase=value["desired_phase"],
             created_at=value["created_at"],
             updated_at=value["updated_at"],

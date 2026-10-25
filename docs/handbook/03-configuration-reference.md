@@ -51,7 +51,7 @@ revision. With no settings table it returns `get_config()` unchanged.
 | Field | Env var | Default | Validation |
 |-------|---------|---------|------------|
 | `control_plane_table_name` | `MATERIALIZER_CONTROL_PLANE_TABLE_NAME` | `state` | none |
-| `default_namespace` | `MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE` | `kafka-sql` | none; the Kubernetes namespace every runtime runs in (a create request cannot choose another) |
+| `default_namespace` | `MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE` | the pod's own namespace, read from its service-account mount | the Kubernetes namespace every runtime runs in (a create request cannot choose another); with neither the variable nor the mount, the configuration refuses to load |
 | `default_runtime_name_prefix` | `MATERIALIZER_CONTROL_PLANE_RUNTIME_NAME_PREFIX` | `kaspr` | none; a runtime is named `<prefix>-<materialization_id>`, never by its request |
 | `default_runtime_template_version` | `MATERIALIZER_CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION` | `v1` | none |
 | `runtime_app_spec` | `MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC` | `{}` | must parse to a YAML mapping |
@@ -425,7 +425,7 @@ Kaspr changelog topic suffixes.
 
 | Setting | Code default | Base manifest | Dev overlay |
 |---------|-------------|---------------|-------------|
-| Namespace | `kafka-sql` | `kafka-sql` | `kafka-sql` |
+| Namespace | `midstream` | `midstream` | `midstream` |
 | Runtime name prefix | `kaspr` | `kaspr` | `develop` |
 | Template version | `v1` | `v1` | `v1` |
 | List limit | `30` | `30` | `30` |

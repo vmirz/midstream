@@ -48,7 +48,7 @@ class ModelRoundTripTests(unittest.TestCase):
             destination_uri="abfs://lakehouse/orders",
             runtime_mode="dedicated",
             resolved_runtime_name="kaspr-mat-123",
-            namespace="kafka-sql",
+            namespace="midstream",
             desired_phase="running",
             created_at="2026-07-12T00:00:00Z",
             updated_at="2026-07-12T00:00:00Z",
@@ -72,6 +72,7 @@ class ModelRoundTripTests(unittest.TestCase):
         def build(*tables: TableSpec) -> Materialization:
             return Materialization(
                 materialization_id="mat-123",
+                namespace="midstream",
                 name="shop",
                 tables=tables,
                 destination_uri="gs://lake",
@@ -91,6 +92,7 @@ class ModelRoundTripTests(unittest.TestCase):
         kept = TableSpec(name="payments", source_topic="payments", dataset="shop", dataset_id="ds-000000000001")
         materialization = Materialization(
             materialization_id="mat-123",
+            namespace="midstream",
             name="shop",
             tables=(TableSpec(name="orders", source_topic="orders", dataset="shop", dataset_id="ds-000000000001"),),
             retired_tables=(kept,),
@@ -127,6 +129,7 @@ class ModelRoundTripTests(unittest.TestCase):
         pending = PendingTopicChange(request_id="req-2", claim_request_id="idr-claim-req-2", submitted_at="2026-10-22T00:00:00Z", plan=plan)
         materialization = Materialization(
             materialization_id="mat-a1b2c3d4e5f6",
+            namespace="midstream",
             name="",
             tables=(orders,),
             destination_uri="gs://lake",
@@ -154,6 +157,7 @@ class ModelRoundTripTests(unittest.TestCase):
 
         materialization = Materialization(
             materialization_id="mat-a1b2c3d4e5f6",
+            namespace="midstream",
             name="shop",
             tables=(spec("orders", "sales", "ds-1"), spec("invoices", "finance", "ds-2"), spec("refunds", "sales", "ds-1")),
             retired_tables=(spec("ledger", "audit", "ds-3"),),
@@ -180,6 +184,7 @@ class ModelRoundTripTests(unittest.TestCase):
         stored = {
             "materialization_id": "mat-123",
             "name": "orders",
+            "namespace": "midstream",
             "tables": [{"name": "orders", "source_topic": "orders", "dataset": "shop", "dataset_id": "ds-000000000001"}],
             "destination_uri": "gs://lake",
             "desired_phase": "running",
@@ -288,7 +293,7 @@ class ModelRoundTripTests(unittest.TestCase):
                 tables=(TableSpec(name="orders", source_topic="orders", dataset="shop", dataset_id="ds-000000000001"), TableSpec(name="payments", source_topic="payments", dataset="shop", dataset_id="ds-000000000001")),
                 destination_uri="abfs://lakehouse/orders",
                 runtime_mode="dedicated",
-                namespace="kafka-sql",
+                namespace="midstream",
                 resource_profile="small",
                 labels={"domain": "orders"},
             ),
@@ -316,7 +321,7 @@ class ModelRoundTripTests(unittest.TestCase):
                 tables=(TableSpec(name="orders", source_topic="orders", dataset="shop", dataset_id="ds-000000000001"),),
                 destination_uri="gs://lake",
                 runtime_mode="dedicated",
-                namespace="kafka-sql",
+                namespace="midstream",
             ),
             topic_change=change,
         )
@@ -342,7 +347,7 @@ class ModelRoundTripTests(unittest.TestCase):
             caused_by=EventCause(kind="scheduler", id="observe:mat-123"),
             dedupe_key="observe:mat-123:op-1:1",
             target_runtime=TargetRuntime(
-                namespace="kafka-sql",
+                namespace="midstream",
                 kaspr_app_name="kaspr-mat-123",
             ),
             observation_policy=ObservationPolicy(
@@ -429,7 +434,7 @@ class ModelRoundTripTests(unittest.TestCase):
                 latest_offsets={"orders": {"0": 1024}, "payments": {"0": 7}},
             ),
             resource_observation=ResourceObservation(
-                namespace="kafka-sql",
+                namespace="midstream",
                 kaspr_app_name="kaspr-materializer-orders",
                 resource_exists=True,
                 metadata_generation=4,
@@ -467,7 +472,7 @@ class ModelRoundTripTests(unittest.TestCase):
             materialization_id="mat-123",
             runtime_mode="dedicated",
             kaspr_app_name="kaspr-materializer-orders",
-            namespace="kafka-sql",
+            namespace="midstream",
             managed_agent_names=["writer", "committer"],
             template_version="v1",
             last_applied_spec_hash="abc123",
@@ -717,7 +722,7 @@ class ModelValidationTests(unittest.TestCase):
                 observation_source="hybrid",
                 runtime_health=RuntimeHealth(level="unknown"),
                 resource_observation=ResourceObservation(
-                    namespace="kafka-sql",
+                    namespace="midstream",
                     kaspr_app_name="kaspr-materializer-orders",
                     resource_exists=False,
                     managed_agent_states={},
@@ -727,6 +732,7 @@ class ModelValidationTests(unittest.TestCase):
     def test_materialization_round_trips_skip_tombstones_and_defaults_it_for_older_records(self) -> None:
         materialization = Materialization(
             materialization_id="mat-123",
+            namespace="midstream",
             tables=(TableSpec(name="orders", source_topic="orders", dataset="shop", dataset_id="ds-000000000001"),),
             destination_uri="gs://lakehouse/orders",
             desired_phase="running",
@@ -744,6 +750,7 @@ class ModelValidationTests(unittest.TestCase):
         # 4.1 and 4.2 let a materialization switch its live tail off; now every one has it.
         materialization = Materialization(
             materialization_id="mat-123",
+            namespace="midstream",
             tables=(TableSpec(name="orders", source_topic="orders", dataset="shop", dataset_id="ds-000000000001"),),
             destination_uri="gs://lakehouse/orders",
             desired_phase="running",
@@ -765,6 +772,7 @@ class ModelValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "skip_tombstones must be a boolean"):
             Materialization(
                 materialization_id="mat-123",
+                namespace="midstream",
                 tables=(TableSpec(name="orders", source_topic="orders", dataset="shop", dataset_id="ds-000000000001"),),
                 destination_uri="gs://lakehouse/orders",
                 desired_phase="running",

@@ -1,23 +1,31 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
+from unittest import mock
 
+from materializer_control_plane import config as config_module
 from materializer_control_plane.config import (
     DEFAULT_LIST_LIMIT,
-    DEFAULT_NAMESPACE,
     DEFAULT_RUNTIME_NAME_PREFIX,
     MATERIALIZATION_REQUESTS_TOPIC,
     MATERIALIZATION_WORK_TOPIC,
     MATERIALIZATION_STATUS_TOPIC,
     SCHEMA_AUTHORITY_UPDATES_TOPIC,
     TABLE_EVENTS_TOPIC,
+    _resolve_default_namespace,
     get_config,
     normalize_list_limit,
 )
 
 
 class ControlPlaneConfigTests(unittest.TestCase):
+    def setUp(self) -> None:
+        get_config.cache_clear()
+        # A deployment always names the runtimes' namespace; the namespace tests below take it away.
+        os.environ["MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE"] = "midstream"
+
     def tearDown(self) -> None:
         get_config.cache_clear()
         for key in (
@@ -54,7 +62,7 @@ class ControlPlaneConfigTests(unittest.TestCase):
     def test_get_config_uses_contract_defaults(self) -> None:
         config = get_config()
 
-        self.assertEqual(config.default_namespace, DEFAULT_NAMESPACE)
+        self.assertEqual(config.default_namespace, "midstream")
         self.assertEqual(config.default_runtime_name_prefix, DEFAULT_RUNTIME_NAME_PREFIX)
         self.assertEqual(
             config.runtime_name_for_materialization("mat-123"),
@@ -72,6 +80,36 @@ class ControlPlaneConfigTests(unittest.TestCase):
         self.assertEqual(config.discovery_sample_records, 200)
         self.assertTrue(config.catalog_api_enabled)
         self.assertIsNone(config.catalog_base_url)
+
+    def test_the_namespace_set_by_the_deployment_wins_over_the_pods_own(self) -> None:
+        os.environ["MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE"] = " custom-ns "
+        with tempfile.NamedTemporaryFile("w", delete=False) as handle:
+            handle.write("pod-namespace\n")
+        try:
+            self.assertEqual(_resolve_default_namespace(in_cluster_namespace_file=handle.name), "custom-ns")
+        finally:
+            os.unlink(handle.name)
+
+    def test_without_the_variable_the_namespace_is_the_pods_own(self) -> None:
+        os.environ.pop("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", None)
+        with tempfile.NamedTemporaryFile("w", delete=False) as handle:
+            handle.write("pod-namespace\n")
+        try:
+            self.assertEqual(_resolve_default_namespace(in_cluster_namespace_file=handle.name), "pod-namespace")
+            with mock.patch.object(config_module, "IN_CLUSTER_NAMESPACE_FILE", handle.name):
+                self.assertEqual(get_config().default_namespace, "pod-namespace")
+        finally:
+            os.unlink(handle.name)
+
+    def test_with_neither_the_configuration_refuses_to_load(self) -> None:
+        """No namespace is ever assumed: outside a pod, the deployment has to name one."""
+        os.environ.pop("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", None)
+        missing = os.path.join(tempfile.gettempdir(), "midstream-no-such-namespace-file")
+        with self.assertRaisesRegex(ValueError, "MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE is not set"):
+            _resolve_default_namespace(in_cluster_namespace_file=missing)
+        with mock.patch.object(config_module, "IN_CLUSTER_NAMESPACE_FILE", missing):
+            with self.assertRaisesRegex(ValueError, "no in-cluster namespace file"):
+                get_config()
 
     def test_get_config_reads_the_settings_requests_topic(self) -> None:
         os.environ["MATERIALIZER_CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC"] = "develop-materializer-settings-requests"
@@ -124,7 +162,7 @@ template:
     tolerations:
       - key: app
         operator: Equal
-        value: twmapp
+        value: streaming
         effect: NoSchedule
 """
 

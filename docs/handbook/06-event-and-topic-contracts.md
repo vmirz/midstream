@@ -158,7 +158,7 @@ output (§6.18).
     "destination_uri": "gs://kafka-materializations",
     "runtime_mode": "dedicated",
     "runtime_name": "develop-mat-a1b2c3d4e5f6",
-    "namespace": "kafka-sql",
+    "namespace": "midstream",
     "resource_profile": null,
     "storage_size": "64Mi",
     "replicas": 16,
@@ -261,7 +261,7 @@ The step sets are disjoint, so every message is handled once — but `repair_sta
   "caused_by": { "kind": "request", "id": "req-9f8e7d6c5b4a" },
   "dedupe_key": "start_discovery:mat-a1b2c3d4e5f6:req-9f8e7d6c5b4a",
   "target_runtime": {
-    "namespace": "kafka-sql",
+    "namespace": "midstream",
     "kaspr_app_name": "develop-mat-a1b2c3d4e5f6"
   }
 }
@@ -277,7 +277,7 @@ Observation follow-up:
   "requested_at": "2026-10-18T10:30:20Z",
   "caused_by": { "kind": "scheduler", "id": "observe:mat-a1b2c3d4e5f6" },
   "dedupe_key": "observe:mat-a1b2c3d4e5f6:2",
-  "target_runtime": { "namespace": "kafka-sql", "kaspr_app_name": "develop-mat-a1b2c3d4e5f6" },
+  "target_runtime": { "namespace": "midstream", "kaspr_app_name": "develop-mat-a1b2c3d4e5f6" },
   "observation_policy": {
     "attempt": 2,
     "max_attempts": 4,

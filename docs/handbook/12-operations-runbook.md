@@ -4,13 +4,13 @@ Day-to-day operation: deploy, verify, diagnose, repair.
 
 ## 12.0 Conventions used in this runbook
 
-Assumed environment: namespace `kafka-sql`, dev overlay. For staging/prod, drop the `develop-`
+Assumed environment: namespace `midstream`, dev overlay. For staging/prod, drop the `develop-`
 prefix from control-plane names.
 
 Set these once per shell:
 
 ```bash
-NS=kafka-sql
+NS=midstream
 MAT=mat-a1b2c3d4e5f6                 # the materialization id
 RT=kaspr-$MAT                        # runtime app name (base overlay)
 # RT=develop-$MAT                    # dev overlay: MATERIALIZER_CONTROL_PLANE_RUNTIME_NAME_PREFIX=develop
@@ -82,16 +82,6 @@ kubectl apply -k manifests/dev
 # watch the control plane come up
 kubectl get kasprapp -n $NS -w
 kubectl get pods -n $NS -o wide -w | grep $CP
-```
-
-CI is Jenkins with a shared library — the whole `Jenkinsfile` is:
-
-```groovy
-buildDeployManifests {
-    namespace     = "kafka-sql"
-    destination   = "crs"
-    branchDeploy  = false
-}
 ```
 
 ### Upgrading to 1.0
@@ -1239,7 +1229,7 @@ and every other account must be added again. Use it only if the identity tables 
 **A 2.0 materialization left running** (step 1 skipped): 3.0 skips its records, logging each once
 (`Skipping materialization record …`), and drops its runtime's status events (`Ignoring runtime
 status from …`). Its runtime keeps writing its 2.0 tables, unmanaged. Remove it by hand: delete its
-KasprApp (`kubectl delete kasprapp <runtime> -n kafka-sql`), then its Kafka topics
+KasprApp (`kubectl delete kasprapp <runtime> -n midstream`), then its Kafka topics
 (`<runtime>-app-assignor-leader`, `<runtime>-app-<runtime>-state-changelog`, `<runtime>-commits`),
 its consumer group `<runtime>-app` once Empty (after the session timeout), and its tables' objects
 under `<destination>/<old namespace>/<name>-<hex12>/`. Its records stay in the `state` table,

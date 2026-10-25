@@ -13,7 +13,8 @@ import yaml
 
 ALLOWED_LIST_LIMITS = ("10", "30", "100", "all")
 DEFAULT_LIST_LIMIT = "30"
-DEFAULT_NAMESPACE = "kafka-sql"
+# Where a pod finds its own namespace; the deployment can name another for the runtimes.
+IN_CLUSTER_NAMESPACE_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 DEFAULT_RUNTIME_NAME_PREFIX = "kaspr"
 DEFAULT_RUNTIME_TEMPLATE_VERSION = "v1"
 DEFAULT_RUNTIME_APP_SPEC: dict[str, Any] = {}
@@ -138,7 +139,9 @@ def normalize_list_limit(limit: str | None) -> str:
 class ControlPlaneConfig:
     """Immutable runtime configuration loaded from environment variables."""
 
-    default_namespace: str = DEFAULT_NAMESPACE
+    #: The namespace every runtime is created in: the deployment's, or the pod's own
+    #: (`_resolve_default_namespace`). Nothing in the code names one.
+    default_namespace: str = ""
     default_runtime_name_prefix: str = DEFAULT_RUNTIME_NAME_PREFIX
     default_runtime_template_version: str = DEFAULT_RUNTIME_TEMPLATE_VERSION
     runtime_app_spec: dict[str, Any] = field(default_factory=dict)
@@ -208,6 +211,30 @@ class ControlPlaneConfig:
         return f"{self.default_runtime_name_prefix}-{materialization_id}"
 
 
+def _resolve_default_namespace(*, in_cluster_namespace_file: str | None = None) -> str:
+    """The namespace the control plane creates runtimes in.
+
+    The deployment names it with `MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE`; without that, a pod
+    reads its own namespace from the service-account mount Kubernetes gives every pod. With neither,
+    the configuration cannot be loaded: no namespace is ever assumed.
+    """
+    configured = (os.getenv("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE") or "").strip()
+    if configured:
+        return configured
+    path = IN_CLUSTER_NAMESPACE_FILE if in_cluster_namespace_file is None else in_cluster_namespace_file
+    try:
+        with open(path, encoding="utf-8") as handle:
+            own = handle.read().strip()
+    except OSError:
+        own = ""
+    if own:
+        return own
+    raise ValueError(
+        "MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE is not set and no in-cluster namespace file was "
+        "found: the control plane needs the namespace its runtimes are created in"
+    )
+
+
 @lru_cache(maxsize=1)
 def get_config() -> ControlPlaneConfig:
     """Load and cache the control-plane configuration from the environment."""
@@ -216,10 +243,7 @@ def get_config() -> ControlPlaneConfig:
             "MATERIALIZER_CONTROL_PLANE_TABLE_NAME",
             CONTROL_PLANE_TABLE_NAME,
         ),
-        default_namespace=os.getenv(
-            "MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE",
-            DEFAULT_NAMESPACE,
-        ),
+        default_namespace=_resolve_default_namespace(),
         default_runtime_name_prefix=os.getenv(
             "MATERIALIZER_CONTROL_PLANE_RUNTIME_NAME_PREFIX",
             DEFAULT_RUNTIME_NAME_PREFIX,

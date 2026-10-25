@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
@@ -14,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from table_records import build_table_record, table_specs  # noqa: E402
 
 from materializer_control_plane.config import ControlPlaneConfig, get_config  # noqa: E402
+from materializer_control_plane import config as control_plane_config  # noqa: E402
 from materializer_control_plane.handlers.maintenance import handle_maintenance_work  # noqa: E402
 from materializer_control_plane.handlers.resource_observation import (  # noqa: E402
     build_sweep_observation_trigger,
@@ -76,7 +78,7 @@ def materialization(*, replicas: int = 1, autoscaling: bool = True, desired_phas
         tables=table_specs("orders"),
         destination_uri="gs://lakehouse/warehouse",
         resolved_runtime_name="kaspr-mat-1",
-        namespace="kafka-sql",
+        namespace="midstream",
         desired_phase=desired_phase,
         created_at=at(0),
         updated_at=at(0),
@@ -233,7 +235,7 @@ def status(*, observed_phase: str = "running", health: str = "healthy") -> Mater
         runtime_health=RuntimeHealth(level=health),
         last_heartbeat=at(0),
         resource_observation=ResourceObservation(
-            namespace="kafka-sql",
+            namespace="midstream",
             kaspr_app_name="kaspr-mat-1",
             resource_exists=True,
             managed_agent_states={"writer": "running"},
@@ -276,7 +278,7 @@ class AutoscaleAfterLagTests(unittest.TestCase):
         self.assertEqual(("work", "materialization:mat-1"), (outputs[0]["route"], outputs[0]["key"]))
         work = outputs[0]["value"]
         self.assertEqual(("apply_runtime", {"kind": "scheduler", "id": "runtime-autoscaling"}), (work["step"], work["caused_by"]))
-        self.assertEqual({"namespace": "kafka-sql", "kaspr_app_name": "kaspr-mat-1"}, {k: work["target_runtime"][k] for k in ("namespace", "kaspr_app_name")})
+        self.assertEqual({"namespace": "midstream", "kaspr_app_name": "kaspr-mat-1"}, {k: work["target_runtime"][k] for k in ("namespace", "kaspr_app_name")})
         record = get_runtime_autoscale(self.table, "mat-1")
         self.assertEqual((4, 3), (record.replicas, len(record.points)))
 
@@ -331,7 +333,7 @@ class ScaledSweepTests(unittest.TestCase):
                 materialization_id="mat-1",
                 runtime_mode="dedicated",
                 kaspr_app_name="kaspr-mat-1",
-                namespace="kafka-sql",
+                namespace="midstream",
                 managed_agent_names=["writer", "committer"],
                 template_version="v1",
                 last_applied_spec_hash=spec_hash(rendered),
@@ -372,7 +374,7 @@ def request(action: str, *, autoscaling: bool | None = None, replicas: int | Non
             tables=table_specs("orders"),
             destination_uri="gs://lakehouse/warehouse",
             runtime_name="kaspr-mat-1",
-            namespace="kafka-sql",
+            namespace="midstream",
             replicas=replicas,
             autoscaling=autoscaling,
         ),
@@ -429,6 +431,14 @@ class AutoscaleRequestTests(unittest.TestCase):
 def tearDownModule() -> None:
     # Renders read the deployment's configuration, which is cached: leave none behind for other modules.
     get_config.cache_clear()
+
+
+
+def setUpModule() -> None:
+    # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
+    # reach the configuration without choosing one, so the environment names it for them.
+    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    control_plane_config.get_config.cache_clear()
 
 
 if __name__ == "__main__":

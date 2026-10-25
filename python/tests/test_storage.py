@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
 import unittest
 
@@ -56,6 +57,7 @@ from materializer_control_plane.storage import (
     save_operation_record,
     save_runtime_binding,
 )
+from materializer_control_plane import config as control_plane_config
 
 
 class FakeTable:
@@ -89,7 +91,7 @@ def build_materialization(materialization_id: str, updated_at: str) -> Materiali
         created_at="2026-07-12T00:00:00Z",
         updated_at=updated_at,
         runtime_mode="dedicated",
-        namespace="kafka-sql",
+        namespace="midstream",
     )
 
 
@@ -103,7 +105,7 @@ def build_status(materialization_id: str, observed_phase: str, phase_reason: str
         observation_source="hybrid",
         runtime_health=RuntimeHealth(level="healthy"),
         resource_observation=ResourceObservation(
-            namespace="kafka-sql",
+            namespace="midstream",
             kaspr_app_name=f"kaspr-materializer-{materialization_id}",
             resource_exists=True,
             managed_agent_states={"writer": "running"},
@@ -190,7 +192,7 @@ class StoragePersistenceTests(unittest.TestCase):
             materialization_id="mat-123",
             runtime_mode="dedicated",
             kaspr_app_name="kaspr-materializer-orders",
-            namespace="kafka-sql",
+            namespace="midstream",
             managed_agent_names=["writer", "schema-proposer"],
             template_version="v1",
             last_applied_spec_hash="abc123",
@@ -379,7 +381,7 @@ class StoragePersistenceTests(unittest.TestCase):
                 materialization_id="mat-123",
                 runtime_mode="dedicated",
                 kaspr_app_name="kaspr-materializer-orders",
-                namespace="kafka-sql",
+                namespace="midstream",
                 managed_agent_names=["writer"],
                 template_version="v1",
                 last_applied_spec_hash="abc123",
@@ -497,6 +499,14 @@ class MaterializationListingTests(unittest.TestCase):
         self.assertEqual(result["items"][0]["observed_phase"], "running")
         self.assertEqual(result["items"][0]["phase_reason"], "running")
         self.assertEqual(result["items"][0]["updated_at"], "2026-07-12T00:01:00Z")
+
+
+
+def setUpModule() -> None:
+    # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
+    # reach the configuration without choosing one, so the environment names it for them.
+    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    control_plane_config.get_config.cache_clear()
 
 
 if __name__ == "__main__":

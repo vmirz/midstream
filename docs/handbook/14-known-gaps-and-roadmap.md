@@ -640,7 +640,6 @@ cannot forbid an override; a lock would be a per-setting flag checked in
 | Issue | File | Impact |
 |-------|------|--------|
 | `kustomconfig.yaml` is empty | `manifests/base/` | referenced under `configurations:` but contributes nothing |
-| Sweep interval documented as 5 min | `control-plane/contracts/observation-policy.md` | the cron is `*/2 * * * *` |
 | RBAC lacks `list`/`watch` | `manifests/base/roles/control-plane-kasprapp-role.yaml` | only `get/create/patch/delete` on four kinds |
 | `workflow-apply` declares its dynamic topic, `resource-observation` does not | `manifests/base/agents/*.yaml` | the latter relies on the topic existing |
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import asyncio
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
@@ -89,6 +90,7 @@ from materializer_control_plane.storage.objects import (
     table_object_prefixes,
 )
 from table_records import build_table_record, table_specs
+from materializer_control_plane import config as control_plane_config
 
 
 class FakeTable:
@@ -176,6 +178,7 @@ def build_materialization(
 ) -> Materialization:
     return Materialization(
         materialization_id=materialization_id,
+        namespace="midstream",
         name="shop",
         tables=table_specs(*source_topics),
         destination_uri="gs://lake/materialized",
@@ -204,7 +207,7 @@ def build_status(
         observation_source="hybrid",
         runtime_health=RuntimeHealth(level="healthy"),
         resource_observation=ResourceObservation(
-            namespace="kafka-sql",
+            namespace="midstream",
             kaspr_app_name=f"kaspr-{materialization_id}",
             resource_exists=True,
             managed_agent_states={},
@@ -1784,7 +1787,7 @@ class ShardRoutingTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.table = ShardedTable()
-        self.config = ControlPlaneConfig(deleted_retention_hours=24)
+        self.config = ControlPlaneConfig(deleted_retention_hours=24, default_namespace="midstream")
         system_shard = self.table.shard_of(self.SYSTEM_KEY)
         # A materialization homed in the `__system__` shard would prove nothing.
         self.materialization_id = next(
@@ -1956,7 +1959,7 @@ class ShardRoutingTests(unittest.TestCase):
                     materialization_id=self.materialization_id,
                     runtime_mode="dedicated",
                     kaspr_app_name=f"kaspr-{self.materialization_id}",
-                    namespace="kafka-sql",
+                    namespace="midstream",
                     managed_agent_names=["writer", "committer"],
                     template_version="v1",
                     last_applied_spec_hash="hash",
@@ -1980,6 +1983,14 @@ class ShardRoutingTests(unittest.TestCase):
         self.assertEqual(self.table.shards, before)
         self.assertEqual([(output["route"], output["key"]) for output in outputs], [("work", self.home_key)])
         self.assertEqual(outputs[0]["value"]["step"], "observe_runtime")
+
+
+
+def setUpModule() -> None:
+    # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
+    # reach the configuration without choosing one, so the environment names it for them.
+    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    control_plane_config.get_config.cache_clear()
 
 
 if __name__ == "__main__":

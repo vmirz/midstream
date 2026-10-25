@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import asyncio
 from collections.abc import Iterable
 from dataclasses import replace
@@ -68,6 +69,7 @@ from materializer_control_plane.models import MaintenanceMessage
 from materializer_control_plane.services.settings import apply_settings_change
 from materializer_control_plane.models import SettingOverride, SettingsChangeRequest
 from materializer_control_plane.storage.settings import get_settings_document, save_settings_document
+from materializer_control_plane import config as control_plane_config
 
 
 class FakeTable:
@@ -97,7 +99,7 @@ def build_materialization(materialization_id: str, *topics: str) -> Materializat
         destination_uri="abfs://lakehouse/orders",
         runtime_mode="dedicated",
         resolved_runtime_name="kaspr-mat-1",
-        namespace="kafka-sql",
+        namespace="midstream",
         desired_phase="running",
         created_at="2026-07-12T00:00:00Z",
         updated_at="2026-07-12T00:00:00Z",
@@ -123,7 +125,7 @@ def build_status(materialization_id: str, desired_phase: str = "running", observ
             latest_offsets={"orders": {"0": 1024}},
         ),
         resource_observation=ResourceObservation(
-            namespace="kafka-sql",
+            namespace="midstream",
             kaspr_app_name="kaspr-mat-1",
             resource_exists=True,
             managed_agent_states={"writer": "running"},
@@ -207,7 +209,7 @@ class WebCreateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.table = FakeTable()
         self.directory = build_directory()
-        self.config = ControlPlaneConfig(default_destination_uri="gs://lake")
+        self.config = ControlPlaneConfig(default_destination_uri="gs://lake", default_namespace="midstream")
 
     def _create(
         self,
@@ -246,7 +248,7 @@ class WebCreateTests(unittest.TestCase):
         self.assertEqual(acceptance.response["phase_reason"], "claiming_tables")
         self.assertEqual(acceptance.materialization.resolved_runtime_name, "kaspr-mat-1")
         self.assertEqual(acceptance.request_event.action, "create")
-        self.assertEqual(acceptance.request_event.spec.namespace, "kafka-sql")
+        self.assertEqual(acceptance.request_event.spec.namespace, "midstream")
         self.assertEqual(acceptance.request_event.spec.runtime_name, "kaspr-mat-1")
         # The names are claimed next, by the directory; a client waits on the claim's outcome.
         self.assertEqual("idr-claim000001", acceptance.request_event.claim_request_id)
@@ -380,10 +382,10 @@ class WebCreateTests(unittest.TestCase):
     def test_what_a_materialization_does_not_choose_is_refused_naming_the_deployments(self) -> None:
         # Every materialization takes the deployment's destination, namespace, storage and a
         # generated runtime name: a request that names one is refused rather than overruled.
-        config = ControlPlaneConfig(default_destination_uri="gs://lake", default_runtime_storage_size="64Mi")
+        config = ControlPlaneConfig(default_destination_uri="gs://lake", default_runtime_storage_size="64Mi", default_namespace="midstream")
         for field, value, says in (
             ("destination_uri", "gs://elsewhere/orders", "under the deployment's destination, gs://lake"),
-            ("namespace", "team-a", "the deployment's namespace, kafka-sql"),
+            ("namespace", "team-a", "the deployment's namespace, midstream"),
             ("runtime_name", "orders-runtime", "generated from its id: kaspr-mat-1"),
             ("storage_size", "8Gi", "the deployment's storage, 64Mi"),
         ):
@@ -424,10 +426,10 @@ class WebCreateTests(unittest.TestCase):
 
         self.assertEqual(acceptance.materialization.storage_size, "64Mi")
         self.assertEqual(acceptance.materialization.replicas, 1)
-        self.assertEqual(acceptance.materialization.namespace, "kafka-sql")
+        self.assertEqual(acceptance.materialization.namespace, "midstream")
         self.assertEqual(acceptance.materialization.destination_uri, "gs://lake")
         self.assertEqual(acceptance.request_event.spec.storage_size, "64Mi")
-        self.assertEqual(acceptance.request_event.spec.namespace, "kafka-sql")
+        self.assertEqual(acceptance.request_event.spec.namespace, "midstream")
 
     def test_create_materialization_accepts_skip_tombstones(self) -> None:
         acceptance = self._create({"tables": tables("orders"), "skip_tombstones": True})
@@ -530,7 +532,7 @@ class WebCreateTests(unittest.TestCase):
                 self.assertEqual(("invalid_request", {"field": "name"}), (error.code, error.details))
 
     def test_create_materialization_writes_to_the_default_destination_when_none_is_given(self) -> None:
-        config = ControlPlaneConfig(default_destination_uri="gs://kafka-materializations")
+        config = ControlPlaneConfig(default_destination_uri="gs://kafka-materializations", default_namespace="midstream")
 
         acceptance = self._create({"tables": tables("orders")}, config=config)
 
@@ -568,6 +570,7 @@ class WebSystemSettingsTests(unittest.TestCase):
     def test_settings_report_the_defaults_a_create_request_falls_back_to(self) -> None:
         settings = settings_view(
             config=ControlPlaneConfig(
+                default_namespace="midstream",
                 default_destination_uri="gs://kafka-materializations",
                 default_runtime_replicas=2,
                 max_runtime_replicas=32,
@@ -578,7 +581,7 @@ class WebSystemSettingsTests(unittest.TestCase):
         self.assertEqual(settings["default_destination_uri"], "gs://kafka-materializations")
         self.assertEqual(settings["default_replicas"], 2)
         self.assertEqual(settings["max_replicas"], 32)
-        self.assertEqual(settings["default_namespace"], "kafka-sql")
+        self.assertEqual(settings["default_namespace"], "midstream")
         self.assertEqual(settings["default_storage_size"], "64Mi")
         self.assertEqual(settings["default_partition_granularity"], "day")
         # A materialization's name is a label; datasets and tables have names SQL reads.
@@ -818,7 +821,7 @@ class WebListAndDetailTests(unittest.TestCase):
                 materialization_id="mat-1",
                 runtime_mode="dedicated",
                 kaspr_app_name="kaspr-mat-1",
-                namespace="kafka-sql",
+                namespace="midstream",
                 managed_agent_names=["writer", "committer", "settings"],
                 template_version="v1",
                 last_applied_spec_hash="abc123",
@@ -1664,6 +1667,14 @@ class WebMutationTests(unittest.TestCase):
             self._delete()
 
         self.assertEqual((403, "secret"), (error_info.exception.status_code, error_info.exception.details["dataset"]))
+
+
+
+def setUpModule() -> None:
+    # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
+    # reach the configuration without choosing one, so the environment names it for them.
+    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    control_plane_config.get_config.cache_clear()
 
 
 if __name__ == "__main__":

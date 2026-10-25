@@ -58,6 +58,7 @@ from materializer_control_plane.web.settings import (
     update_settings,
 )
 from materializer_control_plane.web.system import settings_view
+from materializer_control_plane import config as control_plane_config
 
 
 class FakeTable:
@@ -112,6 +113,7 @@ def change(scope: str = "control-plane", *, request_id: str = "set-1", **fields:
 def build_materialization(materialization_id: str, *, name: str, desired_phase: str = "running") -> Materialization:
     return Materialization(
         materialization_id=materialization_id,
+        namespace="midstream",
         name=name,
         tables=(TableSpec(name="orders", source_topic="orders", dataset="shop", dataset_id="ds-000000000001"),),
         destination_uri="gs://lake/orders",
@@ -136,7 +138,7 @@ def build_status(
         observation_source="hybrid",
         runtime_health=RuntimeHealth(level="healthy"),
         resource_observation=ResourceObservation(
-            namespace="kafka-sql",
+            namespace="midstream",
             kaspr_app_name=f"kaspr-{materialization_id}",
             resource_exists=True,
             managed_agent_states={},
@@ -916,6 +918,14 @@ class RuntimeSettingsMessageTests(unittest.TestCase):
         )
         named = replace(document, lineage="20261008T090000Z-4e5f6a7b")
         self.assertEqual(build_runtime_settings_message(named, published_at="2026-10-08T10:00:00Z")["lineage"], named.lineage)
+
+
+
+def setUpModule() -> None:
+    # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
+    # reach the configuration without choosing one, so the environment names it for them.
+    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    control_plane_config.get_config.cache_clear()
 
 
 if __name__ == "__main__":

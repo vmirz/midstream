@@ -3,6 +3,7 @@ authorizing what a person may do with each one."""
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,6 +31,7 @@ from test_identity import (  # noqa: E402
 )
 from table_records import build_table_record, table_spec  # noqa: E402
 
+from materializer_control_plane import config as control_plane_config
 from materializer_control_plane.handlers.identity import handle_identity_request  # noqa: E402
 from materializer_control_plane.identity.authorization import authorize  # noqa: E402
 from materializer_control_plane.identity.principals import clear_grants_cache  # noqa: E402
@@ -360,6 +362,7 @@ class TableClaimTests(unittest.TestCase):
 def build_materialization(materialization_id: str, *specs, desired_phase: str = "running", updated_at: str = "2026-10-13T10:00:00Z") -> Materialization:
     return Materialization(
         materialization_id=materialization_id,
+        namespace="midstream",
         name="Shop",
         tables=specs,
         destination_uri="gs://lake",
@@ -686,6 +689,14 @@ class DatasetViewTests(unittest.TestCase):
             authorize(http_request(session_token(get_user(self.table, "viewer"))), self.table, "dataset.manage", dataset="shop", secrets=SECRETS, now=NOW_EPOCH)
         self.assertEqual(403, caught.exception.status_code)
         self.assertEqual("admin", authorize(http_request(session_token(get_user(self.table, "admin"))), self.table, "dataset.manage", dataset="shop", secrets=SECRETS, now=NOW_EPOCH).user_id)
+
+
+
+def setUpModule() -> None:
+    # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
+    # reach the configuration without choosing one, so the environment names it for them.
+    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    control_plane_config.get_config.cache_clear()
 
 
 if __name__ == "__main__":

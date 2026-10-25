@@ -8,8 +8,8 @@ Source: `tail_app/` (`worker.py`, `table_tail.py`, `buffer.py`, `ingest.py`, `se
 `routing.py`, `consumer.py`, `auth.py`, `peek.py`, `config.py`, `http.py`, `control_plane.py`),
 `services/live_tail.py`, `models/live_tail.py`, `lakehouse/rows.py`; manifests:
 `manifests/base/tail/`, `manifests/base/webviews/tail-*.yaml`, the maintenance agent's third output
-(`manifests/base/agents/maintenance.yaml`); console: `web/server/data/tail.ts`, `web/server/runs/tail.ts`,
-`web/src/features/data/live.ts`. Design: `docs/design/few-second-freshness.md`.
+(`manifests/base/agents/maintenance.yaml`); console: `console/server/data/tail.ts`, `console/server/runs/tail.ts`,
+`console/src/features/data/live.ts`. Design: `docs/design/few-second-freshness.md`.
 
 ## 19.1 The model in one paragraph
 
