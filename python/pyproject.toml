@@ -3,9 +3,9 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "materializer-control-plane"
+name = "midstream"
 version = "4.4.1"
-description = "Kaspr control plane for Kafka topic materialization"
+description = "Midstream: a streaming platform on Kaspr that materializes Kafka topics into Iceberg tables"
 requires-python = ">=3.12"
 dependencies = [
 	"jinja2>=3.1.0",
@@ -26,4 +26,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-"materializer_control_plane.runtime_app" = ["templates/*.j2"]
+"midstream.runtime_app" = ["templates/*.j2"]

@@ -22,8 +22,8 @@ spec:
         map:
           entrypoint: list_dataset_grants
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.datasets import list_dataset_grants_view
+            from midstream.identity.authorization import authorize
+            from midstream.web.datasets import list_dataset_grants_view
 
             def list_dataset_grants(request, dataset, directory_table):
                 principal = authorize(request, directory_table, "dataset.manage", dataset=dataset)

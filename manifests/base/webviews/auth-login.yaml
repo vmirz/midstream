@@ -26,8 +26,8 @@ spec:
         map:
           entrypoint: sign_in_request
           python: |
-            from materializer_control_plane.web.auth import sign_in
-            from materializer_control_plane.web.http import json_body
+            from midstream.web.auth import sign_in
+            from midstream.web.http import json_body
 
             async def sign_in_request(request, directory_table, settings_table):
                 body = await json_body(request, optional=True)
@@ -45,7 +45,7 @@ spec:
           keySelector:
             python: |
               def select_key(value):
-                  from materializer_control_plane.storage.identity import identity_routing_key
+                  from midstream.storage.identity import identity_routing_key
 
                   return identity_routing_key()
           valueSelector:

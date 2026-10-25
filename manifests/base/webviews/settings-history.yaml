@@ -24,8 +24,8 @@ spec:
         map:
           entrypoint: read_settings_history
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.settings import settings_history_view
+            from midstream.identity.authorization import authorize
+            from midstream.web.settings import settings_history_view
 
             def read_query_params(request):
                 if hasattr(request, "query_params"):

@@ -28,22 +28,22 @@ from gcs_fakes import FakeGcs  # noqa: E402
 from lakehouse_support import MATERIALIZATION_ID, MATERIALIZATION_LOCATION, NAMESPACE, LakeFixture  # noqa: E402
 from table_records import table_specs  # noqa: E402
 
-from materializer_control_plane.lakehouse.gcs import set_shared_storage_client  # noqa: E402
-from materializer_control_plane.runtime_app import acks, flow  # noqa: E402
-from materializer_control_plane.runtime_app.committer import (  # noqa: E402
+from midstream.lakehouse.gcs import set_shared_storage_client  # noqa: E402
+from midstream.runtime_app import acks, flow  # noqa: E402
+from midstream.runtime_app.committer import (  # noqa: E402
     _COMMITTERS,
     build_commit_tick,
     handle_commit_event,
     reset_committers,
 )
-from materializer_control_plane.runtime_app.config import RuntimeAppConfig  # noqa: E402
-from materializer_control_plane.runtime_app.handlers.writer import reset_writer, stage_source_record  # noqa: E402
-from materializer_control_plane.runtime_app.live_settings import reset_runtime_settings  # noqa: E402
-from materializer_control_plane.runtime_app.outbox import outbox  # noqa: E402
-from materializer_control_plane.runtime_app.performance import reset_runtime_performance  # noqa: E402
-from materializer_control_plane.runtime_app.pipeline import batch_pipeline, seal_in_process  # noqa: E402
-from materializer_control_plane.runtime_app.state import reset_runtime_state  # noqa: E402
-from materializer_control_plane.runtime_app.table_state import reset_table_state, table_contexts  # noqa: E402
+from midstream.runtime_app.config import RuntimeAppConfig  # noqa: E402
+from midstream.runtime_app.handlers.writer import reset_writer, stage_source_record  # noqa: E402
+from midstream.runtime_app.live_settings import reset_runtime_settings  # noqa: E402
+from midstream.runtime_app.outbox import outbox  # noqa: E402
+from midstream.runtime_app.performance import reset_runtime_performance  # noqa: E402
+from midstream.runtime_app.pipeline import batch_pipeline, seal_in_process  # noqa: E402
+from midstream.runtime_app.state import reset_runtime_state  # noqa: E402
+from midstream.runtime_app.table_state import reset_table_state, table_contexts  # noqa: E402
 
 TOPIC = "orders"
 RUNTIME_APP = "kaspr-mat-a1b2c3d4e5f6"
@@ -53,14 +53,14 @@ BASE_TIMESTAMP = datetime(2026, 10, 18, 10, 0, tzinfo=UTC)
 
 #: Every module that reads the runtime's configuration at its point of use.
 CONFIG_READERS = (
-    "materializer_control_plane.runtime_app.handlers.writer",
-    "materializer_control_plane.runtime_app.pipeline",
-    "materializer_control_plane.runtime_app.committer",
-    "materializer_control_plane.runtime_app.handlers.status",
-    "materializer_control_plane.runtime_app.handlers.runtime_settings",
+    "midstream.runtime_app.handlers.writer",
+    "midstream.runtime_app.pipeline",
+    "midstream.runtime_app.committer",
+    "midstream.runtime_app.handlers.status",
+    "midstream.runtime_app.handlers.runtime_settings",
     # Read inside a function for the maintenance app's compaction work root, so patched where it
     # is defined too.
-    "materializer_control_plane.runtime_app.config",
+    "midstream.runtime_app.config",
 )
 
 
@@ -262,7 +262,7 @@ class RuntimeHarness:
         reset_member()
         batch_pipeline.sealer = seal_in_process
         batch_pipeline.storage_client = self.lake.client
-        self._stack.enter_context(patch("materializer_control_plane.runtime_app.writer.context.PROCESS_EPOCH", uuid.uuid4().hex))
+        self._stack.enter_context(patch("midstream.runtime_app.writer.context.PROCESS_EPOCH", uuid.uuid4().hex))
         partitions, topics = self._assignment
         self.app = FakeApp(consumer=FakeConsumer(partitions, topics=topics))
 

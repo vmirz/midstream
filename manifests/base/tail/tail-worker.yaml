@@ -20,7 +20,7 @@ spec:
       - take-message
     init:
       python: |
-        from materializer_control_plane.tail_app.handlers import handle_tail_message
+        from midstream.tail_app.handlers import handle_tail_message
     operations:
       - name: take-message
         map:

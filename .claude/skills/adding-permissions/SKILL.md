@@ -21,7 +21,7 @@ materialization is `materializations.view_details`; a new way to change one is
 administrator would plausibly want to grant it separately. Every permission is one more checkbox
 in the role editor.
 
-## 1. Define it — `python/src/materializer_control_plane/identity/permissions.py`
+## 1. Define it — `python/src/midstream/identity/permissions.py`
 
 The examples below use a hypothetical **restart** action; nothing by that name exists.
 
@@ -83,8 +83,8 @@ The first line of the WebView operation's Python, with the directory table bound
         map:
           entrypoint: prepare_request
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.materializations import restart_materialization
+            from midstream.identity.authorization import authorize
+            from midstream.web.materializations import restart_materialization
 
             def prepare_request(request, materialization_id, directory_table, control_plane_table):
                 principal = authorize(request, directory_table, "materializations.restart")

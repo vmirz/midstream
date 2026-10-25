@@ -12,18 +12,18 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from materializer_control_plane.config import ControlPlaneConfig  # noqa: E402
-from materializer_control_plane.models import Materialization  # noqa: E402
-from materializer_control_plane.scale import DEFAULT_STORAGE_SIZE, storage_size_to_bytes  # noqa: E402
-from materializer_control_plane.runtime import (  # noqa: E402
+from midstream.config import ControlPlaneConfig  # noqa: E402
+from midstream.models import Materialization  # noqa: E402
+from midstream.scale import DEFAULT_STORAGE_SIZE, storage_size_to_bytes  # noqa: E402
+from midstream.runtime import (  # noqa: E402
     build_dedicated_runtime_template_input,
     iter_rendered_resources,
     render_dedicated_runtime_resources,
     spec_hash,
 )
-from materializer_control_plane.runtime.templates import STATE_STORE_WRITE_BUFFER_BYTES, STATE_STORE_WRITE_BUFFERS  # noqa: E402
+from midstream.runtime.templates import STATE_STORE_WRITE_BUFFER_BYTES, STATE_STORE_WRITE_BUFFERS  # noqa: E402
 from table_records import build_table_records, table_spec, table_specs  # noqa: E402
-from materializer_control_plane import config as control_plane_config
+from midstream import config as control_plane_config
 
 
 def build_materialization(**overrides) -> Materialization:
@@ -94,7 +94,7 @@ def init_python(resource: dict) -> str:
 
 class RuntimeTemplateTests(unittest.TestCase):
     def setUp(self) -> None:
-        patcher = patch("materializer_control_plane.runtime.templates.get_installed_package_revision", return_value="pkg-rev-1")
+        patcher = patch("midstream.runtime.templates.get_installed_package_revision", return_value="pkg-rev-1")
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -133,7 +133,7 @@ class RuntimeTemplateTests(unittest.TestCase):
         self.assertEqual(spec["template"]["kasprContainer"]["env"][0]["name"], "MATERIALIZER_RUNTIME_MEMBER_ID")
         self.assertEqual(
             spec["pythonPackages"]["packages"][0],
-            "git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=materializer-control-plane&subdirectory=python",
+            "git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python",
         )
         annotations = app["metadata"]["annotations"]
         self.assertEqual(annotations["control-plane/package-revision"], "pkg-rev-1")
@@ -342,7 +342,7 @@ class RuntimeTemplateTests(unittest.TestCase):
                     "template": {"pod": {"tolerations": [{"key": "app", "operator": "Equal", "value": "streaming", "effect": "NoSchedule"}]}},
                     "pythonPackages": {
                         "packages": [
-                            "git+https://github.com/vmirz/midstream.git@main#egg=materializer-control-plane&subdirectory=python",
+                            "git+https://github.com/vmirz/midstream.git@main#egg=midstream&subdirectory=python",
                             "acme-runtime-support==1.2.3",
                         ]
                     },

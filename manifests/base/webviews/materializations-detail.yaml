@@ -24,8 +24,8 @@ spec:
         map:
           entrypoint: get_detail
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.materializations import get_materialization_detail
+            from midstream.identity.authorization import authorize
+            from midstream.web.materializations import get_materialization_detail
 
             def get_detail(request, materialization_id, control_plane_table, directory_table):
                 principal = authorize(request, directory_table, "materializations.view_details")

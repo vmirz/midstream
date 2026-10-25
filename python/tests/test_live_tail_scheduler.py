@@ -13,10 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from table_records import build_table_record, table_specs  # noqa: E402
 
-from materializer_control_plane import config as control_plane_config
-from materializer_control_plane.config import ControlPlaneConfig  # noqa: E402
-from materializer_control_plane.handlers.maintenance import build_table_maintenance_trigger, handle_maintenance_work  # noqa: E402
-from materializer_control_plane.models import (  # noqa: E402
+from midstream import config as control_plane_config
+from midstream.config import ControlPlaneConfig  # noqa: E402
+from midstream.handlers.maintenance import build_table_maintenance_trigger, handle_maintenance_work  # noqa: E402
+from midstream.models import (  # noqa: E402
     LiveTailHints,
     LiveTailMessage,
     LiveTailTarget,
@@ -25,13 +25,13 @@ from materializer_control_plane.models import (  # noqa: E402
     SettingsDocument,
     live_tail_routing_key,
 )
-from materializer_control_plane.services.live_tail import (  # noqa: E402
+from midstream.services.live_tail import (  # noqa: E402
     LIVE_TAIL_SETTING_FIELDS,
     build_live_tail_messages,
     live_tail_output,
 )
-from materializer_control_plane.storage import save_materialization, save_materialization_table  # noqa: E402
-from materializer_control_plane.storage.settings import save_settings_document  # noqa: E402
+from midstream.storage import save_materialization, save_materialization_table  # noqa: E402
+from midstream.storage.settings import save_settings_document  # noqa: E402
 
 ISSUED_AT = "2026-10-23T12:00:00Z"
 

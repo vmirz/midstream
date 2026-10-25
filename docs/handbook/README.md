@@ -52,7 +52,7 @@ aspirational design prose.
 When two sources disagree, trust them in this order:
 
 1. `manifests/` — what is actually deployed (topic names, agent wiring, env vars, cron schedules).
-2. `python/src/materializer_control_plane/` — what the code actually does.
+2. `python/src/midstream/` — what the code actually does.
 3. `python/tests/` — executable specification; asserts exact payload shapes and edge cases.
 4. Other prose — design intent, may be stale.
 
@@ -63,7 +63,7 @@ explicitly (see [14 — Known gaps](./14-known-gaps-and-roadmap.md)).
 
 ## Conventions used in this handbook
 
-- **File references** use repo-relative paths, e.g. `python/src/materializer_control_plane/services/workflow.py`.
+- **File references** use repo-relative paths, e.g. `python/src/midstream/services/workflow.py`.
 - **Line references** (e.g. `workflow.py:288`) were accurate at time of writing; treat them as
   navigation hints, not guarantees.
 - **`<runtime-app>`**, or **`<rt>`**, is a placeholder for the resolved runtime KasprApp name,

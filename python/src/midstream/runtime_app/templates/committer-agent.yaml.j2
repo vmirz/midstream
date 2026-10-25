@@ -1,0 +1,68 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprAgent
+metadata:
+  name: {{ committer_agent_name }}
+  namespace: {{ namespace }}
+  labels:
+    kaspr.io/app: {{ runtime_app_name }}
+{{ labels | to_yaml(4) }}
+spec:
+  description: Commit this runtime's data files and schema changes to its Iceberg tables.
+  # One partition: the member that owns it is the only committer of every one of the runtime's
+  # tables (spec §7.6); Kaspr moves it to another member when this one goes away.
+  input:
+    declare: true
+    topic:
+      name: {{ commits_topic_name }}
+      valueSerializer: json
+      partitions: 1
+      retention: 3600
+  output:
+    topics:
+      - name: {{ table_events_topic }}
+        valueSerializer: json
+        keySelector:
+          python: |
+            def select_key(value):
+                return value.get("key")
+        valueSelector:
+          python: |
+            def select_value(value):
+                return value["value"]
+        predicate:
+          python: |
+            def should_send(value):
+                return isinstance(value, dict) and value.get("route") == "events"
+  processors:
+    pipeline:
+      - commit
+    init:
+      python: |
+        from midstream.runtime_app.committer import handle_commit_event
+        from midstream.runtime_app.table_state import table_contexts
+
+        TABLES = table_contexts(
+            {{ materialization_id | tojson }},
+            {{ tables | tojson }},
+            partition_granularity={{ partition_granularity | tojson }},
+        )
+    operations:
+      - name: commit
+        tables:
+          - name: {{ state_table_name }}
+            paramName: state_table
+        map:
+          entrypoint: commit
+          python: |
+            # Returns a plain generator of routed outputs (table events); Kaspr iterates a generator a
+            # map returns, but cannot iterate an async one.
+            async def commit(value, state_table):
+                return await handle_commit_event(
+                    value,
+                    state_table,
+                    context=context,
+                    materialization_id={{ materialization_id | tojson }},
+                    runtime_app_ref={{ runtime_app_name | tojson }},
+                    tables=TABLES,
+                    commits_topic={{ commits_topic_name | tojson }},
+                )

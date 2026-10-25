@@ -21,12 +21,12 @@ from google.api_core.exceptions import ServiceUnavailable  # noqa: E402
 from lakehouse_support import MATERIALIZATION_ID  # noqa: E402
 from runtime_support import MEMBER_ID, TP, RuntimeHarness, run  # noqa: E402
 
-from materializer_control_plane.lakehouse.maintenance import live_data_files  # noqa: E402
-from materializer_control_plane.lakehouse.offsets import committed_offsets  # noqa: E402
-from materializer_control_plane.runtime_app.handlers.status import build_runtime_heartbeat  # noqa: E402
-from materializer_control_plane.runtime_app.pipeline import BatchPipeline, batch_pipeline  # noqa: E402
-from materializer_control_plane.runtime_app.state import get_partition_state, list_partition_states  # noqa: E402
-from materializer_control_plane.runtime_app.table_state import committed_offsets_key, current_view, schema_key  # noqa: E402
+from midstream.lakehouse.maintenance import live_data_files  # noqa: E402
+from midstream.lakehouse.offsets import committed_offsets  # noqa: E402
+from midstream.runtime_app.handlers.status import build_runtime_heartbeat  # noqa: E402
+from midstream.runtime_app.pipeline import BatchPipeline, batch_pipeline  # noqa: E402
+from midstream.runtime_app.state import get_partition_state, list_partition_states  # noqa: E402
+from midstream.runtime_app.table_state import committed_offsets_key, current_view, schema_key  # noqa: E402
 
 TOPICS = ("orders", "payments")
 SEEDS = {"orders": ({"order_id": "O-0", "amount": 1},), "payments": ({"payment_id": "P-0", "total": 1.5},)}
@@ -113,7 +113,7 @@ class MultiTopicFlowTests(unittest.TestCase):
         self.assertEqual([0, 1, 2, 3, 4, 5], [row["_kafka_offset"] for row in self.runtime.rows("payments")])
 
     def test_a_record_of_a_topic_the_runtime_does_not_read_is_acknowledged_and_dropped(self) -> None:
-        with self.assertLogs("materializer_control_plane.runtime_app.handlers.writer", level="WARNING") as logs:
+        with self.assertLogs("midstream.runtime_app.handlers.writer", level="WARNING") as logs:
             message = run(self.runtime.write({"customer_id": "C-1"}, offset=0, topic="customers"))
 
         self.assertTrue(message.acked)
@@ -295,7 +295,7 @@ class SharedPipelineTests(unittest.TestCase):
             for offset in range(9):
                 await self.runtime.write(order(offset), offset=offset)
 
-        with patch("materializer_control_plane.runtime_app.pipeline.BatchPipeline.schedule"):
+        with patch("midstream.runtime_app.pipeline.BatchPipeline.schedule"):
             run(fill())
 
         paused = set().union(*self.runtime.app.consumer.paused)
@@ -313,7 +313,7 @@ class SharedPipelineTests(unittest.TestCase):
         self.runtime.configure(max_pending_upload_batches=2)
 
         async def scenario():
-            with patch("materializer_control_plane.runtime_app.pipeline.BatchPipeline.schedule"):
+            with patch("midstream.runtime_app.pipeline.BatchPipeline.schedule"):
                 for offset in range(3):
                     await self.runtime.write(order(offset), offset=offset)
                 for offset in range(3):

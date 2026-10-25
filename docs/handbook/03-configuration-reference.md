@@ -5,8 +5,8 @@ configuration files — only environment variables and code defaults.
 
 | Object | Module | Loaded by | Cached |
 |--------|--------|-----------|--------|
-| `ControlPlaneConfig` | `materializer_control_plane/config.py` | `get_config()` | Yes — `@lru_cache(maxsize=1)` |
-| `RuntimeAppConfig` | `materializer_control_plane/runtime_app/config.py` | `get_runtime_app_config()` | **No** — rebuilt on every call |
+| `ControlPlaneConfig` | `midstream/config.py` | `get_config()` | Yes — `@lru_cache(maxsize=1)` |
+| `RuntimeAppConfig` | `midstream/runtime_app/config.py` | `get_runtime_app_config()` | **No** — rebuilt on every call |
 
 Since 0.5.0 the environment is no longer the last word for every field. Settings that are safe to
 change while the system runs can be **overridden** from the console's Settings page. An override

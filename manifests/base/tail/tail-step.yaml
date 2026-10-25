@@ -16,7 +16,7 @@ spec:
       - advance-tail
     init:
       python: |
-        from materializer_control_plane.tail_app.handlers import advance_tail
+        from midstream.tail_app.handlers import advance_tail
     operations:
       - name: advance-tail
         map:

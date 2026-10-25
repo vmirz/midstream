@@ -12,18 +12,18 @@ import unittest
 from unittest.mock import patch
 import zlib
 
-from materializer_control_plane.config import ControlPlaneConfig
-from materializer_control_plane.handlers.maintenance import (
+from midstream.config import ControlPlaneConfig
+from midstream.handlers.maintenance import (
     build_consumer_lag_refresh_trigger,
     build_purge_deleted_trigger,
     build_table_maintenance_trigger,
     handle_maintenance_work_async,
 )
-from materializer_control_plane.handlers.resource_observation import (
+from midstream.handlers.resource_observation import (
     build_sweep_observation_trigger,
     handle_observation_work_for_output,
 )
-from materializer_control_plane.models import (
+from midstream.models import (
     ConsumerLag,
     Materialization,
     MaterializationSchema,
@@ -36,9 +36,9 @@ from materializer_control_plane.models import (
     RuntimeProgress,
     RuntimeStatusEvent,
 )
-from materializer_control_plane.kafka.metadata import TopicMetadata
-from materializer_control_plane.observation.progress import merge_member_progress
-from materializer_control_plane.scale import (
+from midstream.kafka.metadata import TopicMetadata
+from midstream.observation.progress import merge_member_progress
+from midstream.scale import (
     InvalidScaleError,
     ScaleSizingRules,
     assignable_members,
@@ -49,23 +49,23 @@ from materializer_control_plane.scale import (
     recommend_scale,
     storage_size_to_bytes,
 )
-from materializer_control_plane.services.consumer_lag import (
+from midstream.services.consumer_lag import (
     record_consumer_lag,
     refresh_consumer_lag,
     refresh_consumer_lag_async,
 )
-from materializer_control_plane.services.observation import apply_runtime_status_event
-from materializer_control_plane.services.retention import (
+from midstream.services.observation import apply_runtime_status_event
+from midstream.services.retention import (
     expired_materialization_purges,
     find_purge_candidates,
     purge_materialization_records,
 )
-from materializer_control_plane.services.sweep_cursor import SweepCursor
-from materializer_control_plane.services.topic_analysis import analyze_topics, analyze_topics_async
-from materializer_control_plane.services.workflow import process_work_event
-from materializer_control_plane.web.errors import WebError
-from materializer_control_plane.web.topics import analyze_topics_view, analyze_topics_view_async
-from materializer_control_plane.storage import (
+from midstream.services.sweep_cursor import SweepCursor
+from midstream.services.topic_analysis import analyze_topics, analyze_topics_async
+from midstream.services.workflow import process_work_event
+from midstream.web.errors import WebError
+from midstream.web.topics import analyze_topics_view, analyze_topics_view_async
+from midstream.storage import (
     get_materialization,
     get_materialization_status,
     list_materializations,
@@ -78,8 +78,8 @@ from materializer_control_plane.storage import (
     save_operation_record,
     save_runtime_binding,
 )
-from materializer_control_plane.storage import objects
-from materializer_control_plane.storage.objects import (
+from midstream.storage import objects
+from midstream.storage.objects import (
     CLEANUP_PASS_MAX_OBJECTS,
     DELETE_BATCH_SIZE,
     DestinationDeleteError,
@@ -90,7 +90,7 @@ from materializer_control_plane.storage.objects import (
     table_object_prefixes,
 )
 from table_records import build_table_record, table_specs
-from materializer_control_plane import config as control_plane_config
+from midstream import config as control_plane_config
 
 
 class FakeTable:
@@ -1124,7 +1124,7 @@ class TopicAnalysisTests(unittest.TestCase):
         metadata_client = self._orders_client()
         metadata_client.hang = True
 
-        with patch("materializer_control_plane.services.topic_analysis.ANALYZE_TIMEOUT_SECONDS", 0.05):
+        with patch("midstream.services.topic_analysis.ANALYZE_TIMEOUT_SECONDS", 0.05):
             with self.assertRaisesRegex(TimeoutError, r"^Kafka did not answer within 0.05s$"):
                 asyncio.run(analyze_topics_async(["orders"], metadata_client=metadata_client))
         self.assertTrue(metadata_client.cancelled, "the lookup was left running after the deadline")
@@ -1154,7 +1154,7 @@ class TopicAnalysisTests(unittest.TestCase):
         hanging = self._orders_client()
         hanging.hang = True
 
-        with patch("materializer_control_plane.services.topic_analysis.ANALYZE_TIMEOUT_SECONDS", 0.05):
+        with patch("midstream.services.topic_analysis.ANALYZE_TIMEOUT_SECONDS", 0.05):
             for metadata_client, reason in (
                 (failing, "Unable to bootstrap from [('kafka', 9092)]"),
                 (hanging, "Kafka did not answer within 0.05s"),
@@ -1714,7 +1714,7 @@ class AsyncMaintenanceHandlerTests(unittest.TestCase):
             {"orders": TopicMetadata(name="orders", exists=True, partitions=1, beginning_offsets={0: 0}, end_offsets={0: 100})}
         )
 
-        with patch("materializer_control_plane.handlers.maintenance._CONSUMER_LAG_CURSOR", SweepCursor()):
+        with patch("midstream.handlers.maintenance._CONSUMER_LAG_CURSOR", SweepCursor()):
             rounds = [
                 [
                     output["value"]["materialization_id"]
@@ -1888,10 +1888,10 @@ class ShardRoutingTests(unittest.TestCase):
     def test_the_directory_agent_reads_the_state_table_and_never_writes_it(self) -> None:
         """Claims, releases and the hourly sweep of claims all read materializations; every record they
         write is the directory's. A write to the state table outside a handled event would raise."""
-        from materializer_control_plane.models.identity import Dataset, IdentityRequest
-        from materializer_control_plane.services.identity import apply_identity_request
-        from materializer_control_plane.services.table_claims import claim_request, release_request
-        from materializer_control_plane.storage.identity import save_dataset, save_dataset_name
+        from midstream.models.identity import Dataset, IdentityRequest
+        from midstream.services.identity import apply_identity_request
+        from midstream.services.table_claims import claim_request, release_request
+        from midstream.storage.identity import save_dataset, save_dataset_name
 
         directory = FakeTable()
         save_dataset(directory, Dataset(dataset_id="ds-000000000001", name="shop", created_at="t", created_by="a", updated_at="t", updated_by="a"))
@@ -1917,8 +1917,8 @@ class ShardRoutingTests(unittest.TestCase):
         self.assertEqual(["dataset-table:ds-000000000001:orders"], claims)
 
     def test_intake_and_the_workflow_write_only_the_materializations_records_and_no_directory_record(self) -> None:
-        from materializer_control_plane.models import EventCause, MaterializationRequestEvent, MaterializationRequestSpec, TableClaimResult
-        from materializer_control_plane.services import process_request_event
+        from midstream.models import EventCause, MaterializationRequestEvent, MaterializationRequestSpec, TableClaimResult
+        from midstream.services import process_request_event
 
         create = MaterializationRequestEvent(
             request_id="req-1",

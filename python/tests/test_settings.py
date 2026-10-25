@@ -8,10 +8,10 @@ from collections.abc import Iterable
 from typing import Any
 from unittest.mock import patch
 
-from materializer_control_plane.config import ControlPlaneConfig, get_config
-from materializer_control_plane.handlers.settings import build_settings_bootstrap_request, handle_settings_request_for_output
-from materializer_control_plane.identity.secrets import IdentitySecrets, identity_secrets_from_environment
-from materializer_control_plane.models import (
+from midstream.config import ControlPlaneConfig, get_config
+from midstream.handlers.settings import build_settings_bootstrap_request, handle_settings_request_for_output
+from midstream.identity.secrets import IdentitySecrets, identity_secrets_from_environment
+from midstream.models import (
     Materialization,
     MaterializationStatus,
     MemberProgress,
@@ -24,15 +24,15 @@ from materializer_control_plane.models import (
     SettingsDocument,
     TableSpec,
 )
-from materializer_control_plane.runtime_app.config import RuntimeAppConfig
-from materializer_control_plane.runtime_app.live_settings import LIVE_SETTING_ENV_VARS, LIVE_SETTING_FIELDS
-from materializer_control_plane.services.settings import (
+from midstream.runtime_app.config import RuntimeAppConfig
+from midstream.runtime_app.live_settings import LIVE_SETTING_ENV_VARS, LIVE_SETTING_FIELDS
+from midstream.services.settings import (
     apply_settings_change,
     build_runtime_settings_message,
     new_settings_lineage,
     runtime_settings_output_for_apply,
 )
-from materializer_control_plane.settings import (
+from midstream.settings import (
     CONTROL_PLANE_SETTINGS,
     RUNTIME_SETTINGS,
     SettingValueError,
@@ -43,22 +43,22 @@ from materializer_control_plane.settings import (
     runtime_environment,
     validate_scope_values,
 )
-from materializer_control_plane.storage import save_materialization, save_materialization_status
-from materializer_control_plane.storage.settings import (
+from midstream.storage import save_materialization, save_materialization_status
+from midstream.storage.settings import (
     SETTINGS_HISTORY_LIMIT,
     get_settings_document,
     list_settings_changes,
     save_settings_document,
 )
-from materializer_control_plane.web.errors import WebError
-from materializer_control_plane.web.settings import (
+from midstream.web.errors import WebError
+from midstream.web.settings import (
     runtime_settings_rollout,
     settings_history_view,
     settings_scope_view,
     update_settings,
 )
-from materializer_control_plane.web.system import settings_view
-from materializer_control_plane import config as control_plane_config
+from midstream.web.system import settings_view
+from midstream import config as control_plane_config
 
 
 class FakeTable:
@@ -720,7 +720,7 @@ class SettingsViewTests(unittest.TestCase):
             (IdentitySecrets(), ("not configured: nobody can sign in", "not configured", "not configured")),
         )
         for secrets, expected in cases:
-            with patch("materializer_control_plane.web.settings.get_identity_secrets", return_value=secrets):
+            with patch("midstream.web.settings.get_identity_secrets", return_value=secrets):
                 view = settings_scope_view(self.settings, "control-plane", config=self.config, environ=self.environ)
             deployment = {item["key"]: item["value"] for item in view["deployment"]}
             self.assertEqual(

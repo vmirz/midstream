@@ -13,16 +13,16 @@ from lakehouse_support import IDENTIFIER, LOCATION, MATERIALIZATION_ID, LakeFixt
 
 from pyiceberg.exceptions import CommitFailedException, NoSuchTableError, TableAlreadyExistsError  # noqa: E402
 
-from materializer_control_plane.lakehouse.catalog import (  # noqa: E402
+from midstream.lakehouse.catalog import (  # noqa: E402
     ForeignTableError,
     GcsPointerCatalog,
     StaticTableDirectory,
     TableEntry,
     commit_once,
 )
-from materializer_control_plane.lakehouse.commits import PendingFiles, commit_append, commit_schema, plan_append  # noqa: E402
-from materializer_control_plane.lakehouse.offsets import committed_offsets  # noqa: E402
-from materializer_control_plane.lakehouse.pointer import (  # noqa: E402
+from midstream.lakehouse.commits import PendingFiles, commit_append, commit_schema, plan_append  # noqa: E402
+from midstream.lakehouse.offsets import committed_offsets  # noqa: E402
+from midstream.lakehouse.pointer import (  # noqa: E402
     PointerConflictError,
     TablePointer,
     find_latest_metadata,
@@ -31,10 +31,10 @@ from materializer_control_plane.lakehouse.pointer import (  # noqa: E402
     version_hint_uri,
     write_pointer,
 )
-from materializer_control_plane.lakehouse.schema.forkmap import ForkMap  # noqa: E402
-from materializer_control_plane.lakehouse.schema.infer import infer  # noqa: E402
-from materializer_control_plane.lakehouse.schema.policy import evolve  # noqa: E402
-from materializer_control_plane.lakehouse.tables import new_table_metadata  # noqa: E402
+from midstream.lakehouse.schema.forkmap import ForkMap  # noqa: E402
+from midstream.lakehouse.schema.infer import infer  # noqa: E402
+from midstream.lakehouse.schema.policy import evolve  # noqa: E402
+from midstream.lakehouse.tables import new_table_metadata  # noqa: E402
 
 
 class PointerTests(unittest.TestCase):

@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from tail_support import BASE_MS, Record, golden_schema, json_value  # noqa: E402
 
-from materializer_control_plane.tail_app.buffer import (  # noqa: E402
+from midstream.tail_app.buffer import (  # noqa: E402
     SEGMENT_MAX_AGE_SECONDS,
     SEGMENT_ROWS,
     SegmentView,
@@ -23,8 +23,8 @@ from materializer_control_plane.tail_app.buffer import (  # noqa: E402
     compress_lines,
     decompress_lines,
 )
-from materializer_control_plane.tail_app.ingest import build, stage  # noqa: E402
-from materializer_control_plane.tail_app.serve import build_answer, rows_batch  # noqa: E402
+from midstream.tail_app.ingest import build, stage  # noqa: E402
+from midstream.tail_app.serve import build_answer, rows_batch  # noqa: E402
 
 
 class Clock:

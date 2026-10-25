@@ -6,9 +6,9 @@ import types
 import unittest
 from unittest.mock import patch
 
-from materializer_control_plane.config import ControlPlaneConfig
-from materializer_control_plane.handlers import handle_request_event, handle_request_event_for_output
-from materializer_control_plane.models import (
+from midstream.config import ControlPlaneConfig
+from midstream.handlers import handle_request_event, handle_request_event_for_output
+from midstream.models import (
     Materialization,
     MaterializationRequestEvent,
     MaterializationRequestSpec,
@@ -16,10 +16,10 @@ from materializer_control_plane.models import (
     ResourceObservation,
     RuntimeHealth,
 )
-from materializer_control_plane.models import TopicChangeRequest
-from materializer_control_plane.services import IntakeResult, process_request_event
-from materializer_control_plane.services.workflow import is_live_drop
-from materializer_control_plane.storage import (
+from midstream.models import TopicChangeRequest
+from midstream.services import IntakeResult, process_request_event
+from midstream.services.workflow import is_live_drop
+from midstream.storage import (
     get_materialization,
     get_materialization_status,
     get_materialization_table,
@@ -28,8 +28,8 @@ from materializer_control_plane.storage import (
     save_materialization_status,
     save_materialization_table,
 )
-from materializer_control_plane.storage.identity import identity_routing_key
-from materializer_control_plane.storage.keys import materialization_routing_key
+from midstream.storage.identity import identity_routing_key
+from midstream.storage.keys import materialization_routing_key
 from table_records import build_table_record, table_spec
 
 
@@ -344,7 +344,7 @@ class RequestIntakeServiceTests(unittest.TestCase):
     def test_process_request_event_emits_protocol_log_when_enabled(self) -> None:
         config = ControlPlaneConfig(protocol_logging_enabled=True)
 
-        with patch("materializer_control_plane.services.request_intake.LOGGER") as logger:
+        with patch("midstream.services.request_intake.LOGGER") as logger:
             process_request_event(self.table, build_request_event("mat-1", action="create"), config=config)
 
         self.assertTrue(logger.info.called)

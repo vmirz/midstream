@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import replace
 import unittest
 
-from materializer_control_plane.models import Materialization, TableSpec, TopicChangeRequest
-from materializer_control_plane.services.topic_changes import TopicChangeError, describe_topic_change, plan_topic_change
-from materializer_control_plane.table_names import table_name_for_topic
+from midstream.models import Materialization, TableSpec, TopicChangeRequest
+from midstream.services.topic_changes import TopicChangeError, describe_topic_change, plan_topic_change
+from midstream.table_names import table_name_for_topic
 from table_records import build_table_record, table_spec, table_specs
 
 
@@ -233,7 +233,7 @@ class TopicChangePlanTests(unittest.TestCase):
         self.assertEqual(names(result.tables), ["orders", "payments"])
 
     def test_a_plan_round_trips_for_a_pending_change(self) -> None:
-        from materializer_control_plane.models import PendingTopicChange, TopicChangePlan
+        from midstream.models import PendingTopicChange, TopicChangePlan
 
         result = plan(build_materialization("orders", "payments"), ["orders", "refunds"], {"payments": "drop"})
         pending = PendingTopicChange(request_id="req-1", claim_request_id="idr-1", submitted_at="2026-07-12T00:00:00Z", plan=result)

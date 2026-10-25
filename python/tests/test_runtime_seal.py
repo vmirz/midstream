@@ -18,13 +18,13 @@ from seal_cases import golden_jobs  # noqa: E402
 from seal_golden import GOLDEN_PATH, describe_output, golden_descriptions, seal_job  # noqa: E402
 from seal_reference import reference_run_seal  # noqa: E402
 
-from materializer_control_plane.lakehouse.lifecycle import schema_to_json  # noqa: E402
-from materializer_control_plane.lakehouse.schema.forkmap import ForkMap  # noqa: E402
-from materializer_control_plane.lakehouse.schema.infer import infer  # noqa: E402
-from materializer_control_plane.lakehouse.schema.policy import evolve  # noqa: E402
-from materializer_control_plane.lakehouse.tables import build_schema  # noqa: E402
-from materializer_control_plane.runtime_app.writer import seal as seal_module  # noqa: E402
-from materializer_control_plane.runtime_app.writer.seal import SealJob, run_seal  # noqa: E402
+from midstream.lakehouse.lifecycle import schema_to_json  # noqa: E402
+from midstream.lakehouse.schema.forkmap import ForkMap  # noqa: E402
+from midstream.lakehouse.schema.infer import infer  # noqa: E402
+from midstream.lakehouse.schema.policy import evolve  # noqa: E402
+from midstream.lakehouse.tables import build_schema  # noqa: E402
+from midstream.runtime_app.writer import seal as seal_module  # noqa: E402
+from midstream.runtime_app.writer.seal import SealJob, run_seal  # noqa: E402
 
 FIELD_ID = b"PARQUET:field_id"
 

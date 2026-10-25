@@ -24,7 +24,7 @@ spec:
         map:
           entrypoint: read_session
           python: |
-            from materializer_control_plane.web.auth import session_view
+            from midstream.web.auth import session_view
 
             def read_session(request, directory_table, settings_table):
                 return session_view(directory_table, request, settings_table=settings_table)

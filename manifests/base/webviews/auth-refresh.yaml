@@ -26,7 +26,7 @@ spec:
         map:
           entrypoint: refresh_request
           python: |
-            from materializer_control_plane.web.auth import refresh_session
+            from midstream.web.auth import refresh_session
 
             def refresh_request(request, directory_table, settings_table):
                 return refresh_session(directory_table, request, settings_table=settings_table).to_value()
@@ -42,7 +42,7 @@ spec:
           keySelector:
             python: |
               def select_key(value):
-                  from materializer_control_plane.storage.identity import identity_routing_key
+                  from midstream.storage.identity import identity_routing_key
 
                   return identity_routing_key()
           valueSelector:

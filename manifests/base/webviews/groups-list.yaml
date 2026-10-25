@@ -22,8 +22,8 @@ spec:
         map:
           entrypoint: list_groups
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.identity import list_groups_view
+            from midstream.identity.authorization import authorize
+            from midstream.web.identity import list_groups_view
 
             def list_groups(request, directory_table):
                 principal = authorize(request, directory_table, "groups.view")

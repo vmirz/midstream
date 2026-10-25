@@ -16,7 +16,7 @@ spec:
       - list-topics
     init:
       python: |
-        from materializer_control_plane.kafka.metadata import get_metadata_client
+        from midstream.kafka.metadata import get_metadata_client
 
         # Shared with topic analysis and the maintenance agent so broker connections stay warm.
         metadata_client = get_metadata_client()
@@ -30,8 +30,8 @@ spec:
         map:
           entrypoint: list_topics_request
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.topics import list_topics_view
+            from midstream.identity.authorization import authorize
+            from midstream.web.topics import list_topics_view
 
             def read_query_params(request):
                 if hasattr(request, "query_params"):

@@ -58,8 +58,8 @@ spec:
       python: |
         from datetime import UTC, datetime
 
-        from materializer_control_plane.handlers import resource_observation as resource_observation_handler
-        from materializer_control_plane.kubernetes import KubernetesKasprAppClient
+        from midstream.handlers import resource_observation as resource_observation_handler
+        from midstream.kubernetes import KubernetesKasprAppClient
 
         kaspr_app_client = KubernetesKasprAppClient()
 

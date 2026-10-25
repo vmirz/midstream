@@ -15,8 +15,8 @@ from google.api_core.exceptions import ServiceUnavailable  # noqa: E402
 from lakehouse_support import BASE_TIME, LOCATION, MATERIALIZATION_ID  # noqa: E402
 from runtime_support import RuntimeHarness, run  # noqa: E402
 
-from materializer_control_plane.lakehouse.offsets import committed_offsets  # noqa: E402
-from materializer_control_plane.runtime_app.table_state import file_decisions_key, schema_key  # noqa: E402
+from midstream.lakehouse.offsets import committed_offsets  # noqa: E402
+from midstream.runtime_app.table_state import file_decisions_key, schema_key  # noqa: E402
 
 
 class CommitterTests(unittest.TestCase):
@@ -245,7 +245,7 @@ class CommitterTests(unittest.TestCase):
             self.runtime.committer.last_commit_at = time.monotonic()
             await self.runtime.deliver(newer, tick=False)
             # Announced twice, as a member announces again what no commit has covered.
-            with self.assertLogs("materializer_control_plane.runtime_app.committer", level="WARNING") as logs:
+            with self.assertLogs("midstream.runtime_app.committer", level="WARNING") as logs:
                 await self.runtime.deliver(older + older, tick=False)
             return logs.output, self.runtime.committer.table_block()
 
@@ -331,7 +331,7 @@ class RecreatedTableTests(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        from materializer_control_plane.runtime_app.table_state import SchemaRecord, committed_offsets_key, table_contexts
+        from midstream.runtime_app.table_state import SchemaRecord, committed_offsets_key, table_contexts
 
         self.runtime = RuntimeHarness({"order_id": "O-0"})
         self.addCleanup(self.runtime.close)

@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from unittest import mock
 
-from materializer_control_plane import config as config_module
-from materializer_control_plane.config import (
+from midstream import config as config_module
+from midstream.config import (
     DEFAULT_LIST_LIMIT,
     DEFAULT_RUNTIME_NAME_PREFIX,
     MATERIALIZATION_REQUESTS_TOPIC,

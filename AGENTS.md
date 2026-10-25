@@ -48,7 +48,7 @@ python python/tests/console_fixture.py
 ```
 
 ## Project Map / Architecture
-- `/python/src/materializer_control_plane/` — importable control-plane package; business logic lives here.
+- `/python/src/midstream/` — importable control-plane package; business logic lives here.
   - `models/` — immutable domain/event/status models with `to_dict()` / `from_dict()`.
   - `storage/` — Kaspr table keys, envelopes, persistence helpers, bounded listings.
   - `services/` — workflow orchestration and control-plane behavior.

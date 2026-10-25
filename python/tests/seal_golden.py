@@ -23,8 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from seal_cases import golden_evolution, golden_jobs  # noqa: E402
 
-from materializer_control_plane.lakehouse.lifecycle import schema_to_json  # noqa: E402
-from materializer_control_plane.runtime_app.writer.seal import SealJob, SealOutput, run_seal  # noqa: E402
+from midstream.lakehouse.lifecycle import schema_to_json  # noqa: E402
+from midstream.runtime_app.writer.seal import SealJob, SealOutput, run_seal  # noqa: E402
 
 GOLDEN_PATH = Path(__file__).resolve().parent / "golden" / "seal_rows.json"
 LOCATION = "gs://bucket/develop/mat-0123456789ab/orders"

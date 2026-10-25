@@ -1,0 +1,45 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTask
+metadata:
+  name: {{ pipeline_task_name }}
+  namespace: {{ namespace }}
+  labels:
+    kaspr.io/app: {{ runtime_app_name }}
+{{ labels | to_yaml(4) }}
+spec:
+  name: {{ pipeline_task_name }}
+  description: Roll aged batches, seal and upload them off the event loop, announce files to the committer and release what it committed.
+  schedule:
+    interval: {{ upload_interval }}
+  processors:
+    pipeline:
+      - advance-pipeline
+      - send-to-committer
+    init:
+      python: |
+        from midstream.runtime_app.pipeline import advance_pipeline
+    operations:
+      - name: advance-pipeline
+        tables:
+          - name: {{ state_table_name }}
+            paramName: state_table
+        map:
+          entrypoint: advance
+          python: |
+            # A plain generator of outbox messages: each is sent before the next is taken, and
+            # leaves the outbox only once the broker has acknowledged it.
+            def advance(state_table):
+                return advance_pipeline(context["app"], state_table)
+      - name: send-to-committer
+        topicSend:
+          name: {{ commits_topic_name }}
+          valueSerializer: json
+          ack: true
+          keySelector:
+            python: |
+              def select_key(value):
+                  return "commits"
+          valueSelector:
+            python: |
+              def select_value(value):
+                  return value

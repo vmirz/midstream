@@ -79,10 +79,10 @@ spec:
       - execute-work
     init:
       python: |
-        from materializer_control_plane.handlers import workflow_apply as workflow_apply_handler
-        from materializer_control_plane.kafka import AIOKafkaAdminClient
-        from materializer_control_plane.kubernetes import KubernetesKasprAppClient
-        from materializer_control_plane.schema.discovery import KafkaTopicDiscoveryService
+        from midstream.handlers import workflow_apply as workflow_apply_handler
+        from midstream.kafka import AIOKafkaAdminClient
+        from midstream.kubernetes import KubernetesKasprAppClient
+        from midstream.schema.discovery import KafkaTopicDiscoveryService
 
         discovery_service = KafkaTopicDiscoveryService.from_environment()
         kafka_admin_client = AIOKafkaAdminClient.from_environment()

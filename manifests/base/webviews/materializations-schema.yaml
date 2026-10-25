@@ -24,8 +24,8 @@ spec:
         map:
           entrypoint: get_schema
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.materializations import get_materialization_schema_view
+            from midstream.identity.authorization import authorize
+            from midstream.web.materializations import get_materialization_schema_view
 
             def get_schema(request, materialization_id, table_name, control_plane_table, directory_table):
                 # The schema needs "dataset.view_schema" on the table's dataset, which the view checks.

@@ -31,16 +31,16 @@ from test_identity import (  # noqa: E402
 )
 from table_records import build_table_record, table_spec  # noqa: E402
 
-from materializer_control_plane import config as control_plane_config
-from materializer_control_plane.handlers.identity import handle_identity_request  # noqa: E402
-from materializer_control_plane.identity.authorization import authorize  # noqa: E402
-from materializer_control_plane.identity.principals import clear_grants_cache  # noqa: E402
-from materializer_control_plane.models import Materialization, MaterializationWorkEvent, PendingTopicChange, TopicChangePlan  # noqa: E402
-from materializer_control_plane.models.identity import AuditEntry, Group, Role, TableClaim  # noqa: E402
-from materializer_control_plane.services.identity import apply_identity_request  # noqa: E402
-from materializer_control_plane.services.table_claims import claim_request, release_request  # noqa: E402
-from materializer_control_plane.storage import save_materialization, save_materialization_table  # noqa: E402
-from materializer_control_plane.storage.identity import (  # noqa: E402
+from midstream import config as control_plane_config
+from midstream.handlers.identity import handle_identity_request  # noqa: E402
+from midstream.identity.authorization import authorize  # noqa: E402
+from midstream.identity.principals import clear_grants_cache  # noqa: E402
+from midstream.models import Materialization, MaterializationWorkEvent, PendingTopicChange, TopicChangePlan  # noqa: E402
+from midstream.models.identity import AuditEntry, Group, Role, TableClaim  # noqa: E402
+from midstream.services.identity import apply_identity_request  # noqa: E402
+from midstream.services.table_claims import claim_request, release_request  # noqa: E402
+from midstream.storage import save_materialization, save_materialization_table  # noqa: E402
+from midstream.storage.identity import (  # noqa: E402
     find_dataset_by_name,
     get_claim_release,
     get_dataset,
@@ -56,8 +56,8 @@ from materializer_control_plane.storage.identity import (  # noqa: E402
     save_role,
     save_table_claim,
 )
-from materializer_control_plane.storage.keys import materialization_routing_key  # noqa: E402
-from materializer_control_plane.web.errors import WebError  # noqa: E402
+from midstream.storage.keys import materialization_routing_key  # noqa: E402
+from midstream.web.errors import WebError  # noqa: E402
 
 FINANCE = "ds-000000000002"
 
@@ -350,7 +350,7 @@ class TableClaimTests(unittest.TestCase):
         self.assertIsNone(handle_identity_request(request("maintenance", "system").to_dict(), self.table, self.audit, None, config=CONFIG))
 
     def test_whoever_asked_may_follow_their_claim(self) -> None:
-        from materializer_control_plane.web.identity import identity_request_view
+        from midstream.web.identity import identity_request_view
 
         self.apply(claim_tables("mat-1", table_spec("orders", "orders")))
         manager = authorize(http_request(session_token(get_user(self.table, "manager"))), self.table, None, secrets=SECRETS, now=NOW_EPOCH)
@@ -445,7 +445,7 @@ class ClaimSweepTests(unittest.TestCase):
         self.assertEqual(["stale"], [claim.table for claim in iter_table_claims(self.table)])
 
     def test_old_releases_are_forgotten(self) -> None:
-        from materializer_control_plane.models.identity import ClaimRelease
+        from midstream.models.identity import ClaimRelease
 
         save_claim_release(self.table, ClaimRelease("mat-old", "2026-10-01T00:00:00Z"))
         save_claim_release(self.table, ClaimRelease("mat-recent", "2026-10-12T00:00:00Z"))
@@ -505,7 +505,7 @@ class DatasetAuthorizationTests(unittest.TestCase):
             self.authorize("admin", "users.manage", dataset="shop")
 
     def test_a_token_limited_to_datasets_reads_only_those(self) -> None:
-        from materializer_control_plane.web.tokens import create_access_token_request
+        from midstream.web.tokens import create_access_token_request
 
         manager = self.authorize("manager", None)
         acceptance = create_access_token_request(manager, {"name": "BI", "datasets": ["finance"]}, request=http_request(), directory_table=self.table, now=datetime(2026, 10, 13, 12, tzinfo=UTC))
@@ -526,7 +526,7 @@ class DatasetAuthorizationTests(unittest.TestCase):
             authorize(http_request(acceptance.response["token"]), self.table, "catalog.read", any_dataset=True, secrets=SECRETS, now=NOW_EPOCH)
 
     def test_a_token_is_limited_only_to_datasets_its_owner_may_use_it_on(self) -> None:
-        from materializer_control_plane.web.tokens import create_access_token_request
+        from midstream.web.tokens import create_access_token_request
 
         viewer = self.authorize("viewer", None)
         with self.assertRaises(WebError) as caught:
@@ -549,8 +549,8 @@ class DatasetViewTests(unittest.TestCase):
         self.table, self.audit = directory()
         self.state = FakeTable()
         store_dataset(self.table, FINANCE, name="finance", grants={"admin": ("user", "dataset-owner")})
-        from materializer_control_plane.models import Dataset
-        from materializer_control_plane.storage.identity import save_dataset
+        from midstream.models import Dataset
+        from midstream.storage.identity import save_dataset
 
         save_dataset(self.table, replace(get_dataset(self.table, SHOP), description="Orders and payments"))
         materialization = build_materialization("mat-1", table_spec("orders", "orders"), table_spec("payments", "payments"))
@@ -566,7 +566,7 @@ class DatasetViewTests(unittest.TestCase):
         return authorize(http_request(session_token(get_user(self.table, user_id))), self.table, None, secrets=SECRETS, now=NOW_EPOCH)
 
     def test_everyone_sees_every_dataset_and_which_they_cannot_read(self) -> None:
-        from materializer_control_plane.web.datasets import list_datasets_view
+        from midstream.web.datasets import list_datasets_view
 
         listed = list_datasets_view(self.table, self.principal("viewer"))
 
@@ -583,7 +583,7 @@ class DatasetViewTests(unittest.TestCase):
         self.assertTrue(list_datasets_view(self.table, self.principal("manager"))["can_create"])
 
     def test_datasets_are_found_by_name_description_or_table(self) -> None:
-        from materializer_control_plane.web.datasets import list_datasets_view
+        from midstream.web.datasets import list_datasets_view
 
         viewer = self.principal("viewer")
         for query, expected in (("fin", ["finance"]), ("PAYMENTS", ["shop"]), ("orders and", ["shop"]), ("nothing", [])):
@@ -591,7 +591,7 @@ class DatasetViewTests(unittest.TestCase):
                 self.assertEqual(expected, [item["name"] for item in list_datasets_view(self.table, viewer, {"q": query})["datasets"]])
 
     def test_a_dataset_lists_its_tables_with_their_materializations(self) -> None:
-        from materializer_control_plane.web.datasets import get_dataset_view
+        from midstream.web.datasets import get_dataset_view
 
         shop = get_dataset_view(self.table, self.state, self.principal("viewer"), "shop")
 
@@ -605,7 +605,7 @@ class DatasetViewTests(unittest.TestCase):
         self.assertEqual(404, caught.exception.status_code)
 
     def test_a_table_resolves_by_its_sql_name_with_where_it_is_for_readers_only(self) -> None:
-        from materializer_control_plane.web.datasets import get_dataset_table_view
+        from midstream.web.datasets import get_dataset_table_view
 
         readable = get_dataset_table_view(self.table, self.state, self.principal("viewer"), "shop", "orders")
         self.assertEqual(("shop.orders", "mat-1", "Shop orders", True), (readable["qualified_name"], readable["materialization_id"], readable["materialization_name"], readable["readable"]))
@@ -619,7 +619,7 @@ class DatasetViewTests(unittest.TestCase):
         self.assertEqual(404, caught.exception.status_code)
 
     def test_creating_a_dataset_is_validated_and_previewed(self) -> None:
-        from materializer_control_plane.web.datasets import create_dataset_request
+        from midstream.web.datasets import create_dataset_request
 
         manager = self.principal("manager")
         accepted = create_dataset_request(self.table, manager, {"name": "sales", "description": " All of it "}, request=http_request())
@@ -632,7 +632,7 @@ class DatasetViewTests(unittest.TestCase):
             self.assertEqual(status, caught.exception.status_code)
 
     def test_only_an_owner_changes_or_deletes_a_dataset_and_only_once_it_is_empty(self) -> None:
-        from materializer_control_plane.web.datasets import delete_dataset_request, update_dataset_request
+        from midstream.web.datasets import delete_dataset_request, update_dataset_request
 
         admin = self.principal("admin")
         accepted = update_dataset_request(self.table, admin, "shop", {"description": "Sales", "base_revision": 1}, request=http_request())
@@ -652,7 +652,7 @@ class DatasetViewTests(unittest.TestCase):
         self.assertEqual((409, "dataset_not_empty"), (caught.exception.status_code, caught.exception.details["reason"]))
 
     def test_owners_see_and_change_who_may_use_a_dataset(self) -> None:
-        from materializer_control_plane.web.datasets import list_dataset_grants_view, set_dataset_grant_request
+        from midstream.web.datasets import list_dataset_grants_view, set_dataset_grant_request
 
         admin = self.principal("admin")
         listed = list_dataset_grants_view(self.table, admin, "shop")

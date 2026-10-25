@@ -4,12 +4,12 @@ import asyncio
 import threading
 import unittest
 
-from materializer_control_plane.kubernetes.kaspr_apps import (
+from midstream.kubernetes.kaspr_apps import (
     KubernetesKasprAppClient,
     _observation_from_resource,
     _run_config_loader,
 )
-from materializer_control_plane.utils.background_loop import AdapterTimeoutError
+from midstream.utils.background_loop import AdapterTimeoutError
 
 
 def finish_within(seconds: float, function):
@@ -313,7 +313,7 @@ class KubernetesClientMemberTests(unittest.TestCase):
 
     def test_pods_it_may_not_read_leave_the_observation_without_members(self) -> None:
         client = self.client(FakeCoreV1Api(refuse=True))
-        with self.assertLogs("materializer_control_plane.kubernetes.kaspr_apps", level="WARNING") as logs:
+        with self.assertLogs("midstream.kubernetes.kaspr_apps", level="WARNING") as logs:
             first = client.observe(namespace="midstream", name="kaspr-mat-1")
             second = client.observe(namespace="midstream", name="kaspr-mat-1")
         self.assertEqual((None, None), (first.members, second.members))

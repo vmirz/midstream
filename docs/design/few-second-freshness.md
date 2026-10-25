@@ -247,7 +247,7 @@ Principles:
 
 ### 5.1 The tail app: `materializer-tail`
 
-A KasprApp of its own, `manifests/base/tail/`, package `python/src/materializer_control_plane/tail_app/`,
+A KasprApp of its own, `manifests/base/tail/`, package `python/src/midstream/tail_app/`,
 built on the maintenance app's shape (`maintenance_app/`, 02 §2.10a): one agent on a request topic
 keyed by table, one periodic task, no KasprTable, the same image, Kafka user, GCP credentials and
 scheduling as the control plane — plus two WebViews, since Kaspr apps serve HTTP the same way the
@@ -677,7 +677,7 @@ Today `runtime_app/writer/seal.py::run_seal` (lines 142–209) turns a staged li
 row part, unchanged, into a new module:
 
 ```python
-# python/src/materializer_control_plane/lakehouse/rows.py
+# python/src/midstream/lakehouse/rows.py
 @dataclass(frozen=True, slots=True)
 class BuiltRow:
     row: dict[str, Any]          # every column of the table's current schema, metadata first
@@ -1545,8 +1545,8 @@ Each phase ends with the repo's checks: `python -m unittest discover -s python/t
 
 | Change | Files |
 |---|---|
-| New `build_row` / `BuiltRow` | `python/src/materializer_control_plane/lakehouse/rows.py` (new) |
-| `run_seal` uses it; nothing else changes | `python/src/materializer_control_plane/runtime_app/writer/seal.py` |
+| New `build_row` / `BuiltRow` | `python/src/midstream/lakehouse/rows.py` (new) |
+| `run_seal` uses it; nothing else changes | `python/src/midstream/runtime_app/writer/seal.py` |
 | Tests | `python/tests/test_row_builder.py` (new), `python/tests/test_runtime_seal.py` (golden equality), regenerate `web/testdata/iceberg` with `python/tests/console_fixture.py` and confirm `git diff` shows only ids/UUIDs (expected per web 14 §14.2) |
 
 ### Phase 1 — the control plane
@@ -1567,7 +1567,7 @@ Each phase ends with the repo's checks: `python -m unittest discover -s python/t
 
 | Change | Files |
 |---|---|
-| Package | `python/src/materializer_control_plane/tail_app/__init__.py`, `config.py`, `buffer.py` (pure), `consumer.py` (the member's one source consumer + fake seam), `events.py` (the table-events follower), `table_tail.py` (one table: activation and parking, seed, ingest, serve), `routing.py` (owner partition, member map, forwarding), `serve.py` (Parquet), `peek.py` (the head peek: its dedicated consumer, the buffer path, the cache), `auth.py` (session check, `authorize_tail`), `control_plane.py` (schema fetch, session fetch, with the service token), `worker.py` (tables by key, ticks, forget-after, budget), `handlers.py` (thin: `handle_tail_message`, `advance_tail`, `tail_rows_view`, `tail_health_view`, `tail_members_view`, `tail_head_view`) — all new |
+| Package | `python/src/midstream/tail_app/__init__.py`, `config.py`, `buffer.py` (pure), `consumer.py` (the member's one source consumer + fake seam), `events.py` (the table-events follower), `table_tail.py` (one table: activation and parking, seed, ingest, serve), `routing.py` (owner partition, member map, forwarding), `serve.py` (Parquet), `peek.py` (the head peek: its dedicated consumer, the buffer path, the cache), `auth.py` (session check, `authorize_tail`), `control_plane.py` (schema fetch, session fetch, with the service token), `worker.py` (tables by key, ticks, forget-after, budget), `handlers.py` (thin: `handle_tail_message`, `advance_tail`, `tail_rows_view`, `tail_health_view`, `tail_members_view`, `tail_head_view`) — all new |
 | `principal_from_description` | `identity/principals.py` |
 | `describe_consumer_group` | `kafka/admin.py` (decode assignments and Faust `ClientMetadata` from member metadata) |
 | Manifests | `manifests/base/tail/app.yaml` (replicas 2, resources, env incl. `MATERIALIZER_TAIL_SERVICE_TOKEN` from the `materializer-auth` Secret), `tail-worker.yaml` (agent on `materializer-tail-requests`, `partitions: 64`, `declare: true`), `tail-step.yaml` (task every 5 s: forget stale tables, trim, refresh the member map, refresh end offsets and re-evaluate the `backlogged`/`catching_up`/`paused` states), `manifests/base/webviews/tail-rows.yaml`, `tail-health.yaml`, `tail-members.yaml`, `tail-head.yaml` (labelled `kaspr.io/app: materializer-tail`); `manifests/base/kustomization.yaml`; `manifests/dev/kustomization.yaml` (labels by selector, topic names, `MATERIALIZER_TAIL_*` env, the Secret name, package ref) |

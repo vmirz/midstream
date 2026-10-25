@@ -24,9 +24,9 @@ spec:
         map:
           entrypoint: prepare_request
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.http import json_body
-            from materializer_control_plane.web.identity import update_role_request
+            from midstream.identity.authorization import authorize
+            from midstream.web.http import json_body
+            from midstream.web.identity import update_role_request
 
             async def prepare_request(request, role_id, directory_table):
                 principal = authorize(request, directory_table, "roles.manage")
@@ -40,7 +40,7 @@ spec:
           keySelector:
             python: |
               def select_key(value):
-                  from materializer_control_plane.storage.identity import identity_routing_key
+                  from midstream.storage.identity import identity_routing_key
 
                   return identity_routing_key()
           valueSelector:

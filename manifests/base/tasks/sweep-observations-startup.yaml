@@ -17,7 +17,7 @@ spec:
       python: |
         from datetime import UTC, datetime
 
-        from materializer_control_plane.handlers.resource_observation import build_sweep_observation_trigger
+        from midstream.handlers.resource_observation import build_sweep_observation_trigger
 
         def current_timestamp():
             return datetime.now(tz=UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -38,7 +38,7 @@ spec:
           keySelector:
             python: |
               def select_key(value):
-                  from materializer_control_plane.storage import materialization_routing_key
+                  from midstream.storage import materialization_routing_key
 
                   return materialization_routing_key(value["materialization_id"])
           valueSelector:

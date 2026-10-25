@@ -19,10 +19,10 @@ from tail_support import (  # noqa: E402
     tick,
 )
 
-from materializer_control_plane.identity.permissions import PERMISSION_KEYS  # noqa: E402
-from materializer_control_plane.identity.principals import principal_from_description  # noqa: E402
-from materializer_control_plane.tail_app.views import tail_head_view, tail_health_view, tail_members_view, tail_rows_view  # noqa: E402
-from materializer_control_plane.web.errors import WebError  # noqa: E402
+from midstream.identity.permissions import PERMISSION_KEYS  # noqa: E402
+from midstream.identity.principals import principal_from_description  # noqa: E402
+from midstream.tail_app.views import tail_head_view, tail_health_view, tail_members_view, tail_rows_view  # noqa: E402
+from midstream.web.errors import WebError  # noqa: E402
 
 
 class PrincipalFromDescriptionTests(unittest.TestCase):
@@ -53,7 +53,7 @@ class PrincipalFromDescriptionTests(unittest.TestCase):
 
 
 def _administrator():
-    from materializer_control_plane.identity.principals import Grants, Principal
+    from midstream.identity.principals import Grants, Principal
 
     return Principal(kind="user", grants=Grants(group_ids=("admin",), role_ids=("administrator",), permissions=frozenset(), all_permissions=True), user_id="usr-1", email="a@example.com")
 
@@ -215,11 +215,11 @@ class TailSecurityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_no_row_content_reaches_a_log_line(self) -> None:
         self.harness.deliver(tick(self.target, protocol_logging_enabled=True))
-        with self.assertLogs("materializer_control_plane", level=logging.DEBUG) as logged:
+        with self.assertLogs("midstream", level=logging.DEBUG) as logged:
             await self.warm()
             await self.rows(self.reader)
             await tail_head_view(self.harness.request(token=self.reader, rows=5), "mat-1", "orders", worker=self.worker)
-            logging.getLogger("materializer_control_plane.tail_app").info("marker")
+            logging.getLogger("midstream.tail_app").info("marker")
         text = "\n".join(logged.output)
         self.assertIn("tail_served", text)
         self.assertNotIn("secret-value-1234", text)

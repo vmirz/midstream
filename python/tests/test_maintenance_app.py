@@ -18,21 +18,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lakehouse_support import LOCATION, MATERIALIZATION_ID, NAMESPACE  # noqa: E402
 from runtime_support import RuntimeHarness, run  # noqa: E402
 
-from materializer_control_plane.lakehouse.maintenance import live_data_files  # noqa: E402
-from materializer_control_plane.lakehouse.offsets import committed_offsets  # noqa: E402
-from materializer_control_plane.maintenance_app import worker as worker_module  # noqa: E402
-from materializer_control_plane.maintenance_app.compact_worker import compaction_work_root  # noqa: E402
-from materializer_control_plane.maintenance_app.config import MaintenanceAppConfig, get_maintenance_app_config  # noqa: E402
-from materializer_control_plane.maintenance_app.handlers import advance_maintenance, handle_maintenance_message  # noqa: E402
-from materializer_control_plane.maintenance_app.worker import (  # noqa: E402
+from midstream.lakehouse.maintenance import live_data_files  # noqa: E402
+from midstream.lakehouse.offsets import committed_offsets  # noqa: E402
+from midstream.maintenance_app import worker as worker_module  # noqa: E402
+from midstream.maintenance_app.compact_worker import compaction_work_root  # noqa: E402
+from midstream.maintenance_app.config import MaintenanceAppConfig, get_maintenance_app_config  # noqa: E402
+from midstream.maintenance_app.handlers import advance_maintenance, handle_maintenance_message  # noqa: E402
+from midstream.maintenance_app.worker import (  # noqa: E402
     MaintenanceWorker,
     TableMaintenance,
     compact_in_process,
     job_settings,
     reset_worker,
 )
-from materializer_control_plane.models import MaintenanceMessage, MaintenanceTarget, RunningMaintenance  # noqa: E402
-from materializer_control_plane.services.table_maintenance import maintenance_settings  # noqa: E402
+from midstream.models import MaintenanceMessage, MaintenanceTarget, RunningMaintenance  # noqa: E402
+from midstream.services.table_maintenance import maintenance_settings  # noqa: E402
 
 TOPICS = ("orders", "payments")
 SEEDS = {"orders": ({"order_id": "O-0", "amount": 1},), "payments": ({"payment_id": "P-0", "amount": 1.5},)}
@@ -636,7 +636,7 @@ class HandlerTests(unittest.TestCase):
         reset_worker()
 
     def test_a_malformed_message_is_dropped(self) -> None:
-        with self.assertLogs("materializer_control_plane.maintenance_app.handlers", level="WARNING"):
+        with self.assertLogs("midstream.maintenance_app.handlers", level="WARNING"):
             self.assertEqual([], list(handle_maintenance_message({"kind": "maintenance_tick"})))
 
     def test_messages_reach_the_members_worker_and_the_step_drives_it(self) -> None:

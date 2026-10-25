@@ -12,27 +12,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from table_records import build_table_record, table_specs  # noqa: E402
 
-from materializer_control_plane.config import ControlPlaneConfig  # noqa: E402
-from materializer_control_plane.handlers.maintenance import (  # noqa: E402
+from midstream.config import ControlPlaneConfig  # noqa: E402
+from midstream.handlers.maintenance import (  # noqa: E402
     build_table_maintenance_trigger,
     handle_maintenance_work,
 )
-from materializer_control_plane.models import (  # noqa: E402
+from midstream.models import (  # noqa: E402
     MaintenanceMessage,
     Materialization,
     RunningMaintenance,
     SettingOverride,
     SettingsDocument,
 )
-from materializer_control_plane.models.table import MaintenanceRun  # noqa: E402
-from materializer_control_plane.runtime_app.config import RuntimeAppConfig  # noqa: E402
-from materializer_control_plane.services.table_maintenance import (  # noqa: E402
+from midstream.models.table import MaintenanceRun  # noqa: E402
+from midstream.runtime_app.config import RuntimeAppConfig  # noqa: E402
+from midstream.services.table_maintenance import (  # noqa: E402
     MAINTENANCE_SETTING_FIELDS,
     build_table_maintenance_messages,
     last_runs,
 )
-from materializer_control_plane.storage import save_materialization, save_materialization_table  # noqa: E402
-from materializer_control_plane.storage.settings import save_settings_document  # noqa: E402
+from midstream.storage import save_materialization, save_materialization_table  # noqa: E402
+from midstream.storage.settings import save_settings_document  # noqa: E402
 
 
 class FakeTable:
@@ -172,7 +172,7 @@ class TableMaintenanceScheduleTests(unittest.TestCase):
 class MaintenanceMessageTests(unittest.TestCase):
     def test_messages_round_trip_and_refuse_what_is_not_one(self) -> None:
         materialization = build_materialization("mat-1", "orders")
-        from materializer_control_plane.services.table_maintenance import maintenance_target
+        from midstream.services.table_maintenance import maintenance_target
 
         target = maintenance_target(build_table_record(materialization))
         message = MaintenanceMessage(

@@ -27,15 +27,15 @@ from tail_support import (  # noqa: E402
     tick,
 )
 
-from materializer_control_plane.lakehouse.lifecycle import schema_to_json  # noqa: E402
-from materializer_control_plane.lakehouse.schema.infer import infer  # noqa: E402
-from materializer_control_plane.lakehouse.schema.policy import evolve  # noqa: E402
-from materializer_control_plane.tail_app import consumer as consumer_module  # noqa: E402
-from materializer_control_plane.tail_app.consumer import SOURCE_FETCH_MIN_BYTES  # noqa: E402
-from materializer_control_plane.tail_app.ingest import TailSchema  # noqa: E402
-from materializer_control_plane.tail_app.worker import KafkaClients  # noqa: E402
-from materializer_control_plane.tail_app.views import tail_head_view, tail_rows_view  # noqa: E402
-from materializer_control_plane.web.errors import WebError  # noqa: E402
+from midstream.lakehouse.lifecycle import schema_to_json  # noqa: E402
+from midstream.lakehouse.schema.infer import infer  # noqa: E402
+from midstream.lakehouse.schema.policy import evolve  # noqa: E402
+from midstream.tail_app import consumer as consumer_module  # noqa: E402
+from midstream.tail_app.consumer import SOURCE_FETCH_MIN_BYTES  # noqa: E402
+from midstream.tail_app.ingest import TailSchema  # noqa: E402
+from midstream.tail_app.worker import KafkaClients  # noqa: E402
+from midstream.tail_app.views import tail_head_view, tail_rows_view  # noqa: E402
+from midstream.web.errors import WebError  # noqa: E402
 from seal_cases import golden_evolution  # noqa: E402
 
 FIELD_ID = b"PARQUET:field_id"
@@ -247,7 +247,7 @@ class SeedAndServeTests(TailCase):
         from gcs_fakes import FakeGcs  # noqa: F401
         from lakehouse_support import LakeFixture
 
-        from materializer_control_plane.lakehouse.gcs import set_shared_storage_client
+        from midstream.lakehouse.gcs import set_shared_storage_client
 
         lake = LakeFixture({"order_id": "O", "amount": 1})
         self.addCleanup(lake.close)

@@ -167,7 +167,7 @@ Notes:
 ```yaml
 pythonPackages:
   packages:
-    - git+ssh://git@github.com/TotalWineLabs/kaspr-kafka-materializer.git@main#egg=materializer-control-plane&subdirectory=python
+    - git+ssh://git@github.com/TotalWineLabs/kaspr-kafka-materializer.git@main#egg=midstream&subdirectory=python
   installPolicy: { retries: 3, timeout: 600, onFailure: block }
 ```
 
@@ -240,7 +240,7 @@ verticalPodAutoscaler:           # the members' CPU request from their use (§2.
   maxAllowed: { cpu: 1500m }
 config: { topicAllowDeclare: true, brokerRebalanceTimeout: 300 }
 pythonPackages:
-  packages: [ git+ssh://...@main#egg=materializer-control-plane&subdirectory=python ]
+  packages: [ git+ssh://...@main#egg=midstream&subdirectory=python ]
 template:
   pod: { nodeSelector, tolerations, volumes: [github-ssh, gcp-credentials] }
   pythonPackagesInitContainer: { env: [GIT_SSH_COMMAND], volumeMounts: [github-ssh] }

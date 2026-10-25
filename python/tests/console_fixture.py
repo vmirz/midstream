@@ -43,20 +43,20 @@ sys.path.insert(0, str(REPO / "python" / "tests"))
 from lakehouse_support import LOCATION, MATERIALIZATION_LOCATION, NAMESPACE, LakeFixture  # noqa: E402
 from pyiceberg.typedef import Record  # noqa: E402
 
-from materializer_control_plane.lakehouse.commits import commit_schema  # noqa: E402
-from materializer_control_plane.lakehouse.files import build_data_file, read_parquet_footer  # noqa: E402
-from materializer_control_plane.lakehouse.gcs import set_shared_storage_client  # noqa: E402
-from materializer_control_plane.lakehouse.lifecycle import schema_to_json  # noqa: E402
-from materializer_control_plane.lakehouse.maintenance import commit_compaction, live_data_files, plan_compaction  # noqa: E402
-from materializer_control_plane.lakehouse.offsets import committed_offsets  # noqa: E402
-from materializer_control_plane.lakehouse.schema.forkmap import ForkMap  # noqa: E402
-from materializer_control_plane.lakehouse.schema.infer import infer  # noqa: E402
-from materializer_control_plane.lakehouse.schema.policy import evolve  # noqa: E402
-from materializer_control_plane.lakehouse.schema.render import render_schema  # noqa: E402
-from materializer_control_plane.maintenance_app.compact_worker import run as compact  # noqa: E402
-from materializer_control_plane.tail_app.buffer import TableBuffer  # noqa: E402
-from materializer_control_plane.tail_app.ingest import TailSchema, build, decode_value, epoch_ms, stage  # noqa: E402
-from materializer_control_plane.tail_app.serve import build_answer, rows_batch  # noqa: E402
+from midstream.lakehouse.commits import commit_schema  # noqa: E402
+from midstream.lakehouse.files import build_data_file, read_parquet_footer  # noqa: E402
+from midstream.lakehouse.gcs import set_shared_storage_client  # noqa: E402
+from midstream.lakehouse.lifecycle import schema_to_json  # noqa: E402
+from midstream.lakehouse.maintenance import commit_compaction, live_data_files, plan_compaction  # noqa: E402
+from midstream.lakehouse.offsets import committed_offsets  # noqa: E402
+from midstream.lakehouse.schema.forkmap import ForkMap  # noqa: E402
+from midstream.lakehouse.schema.infer import infer  # noqa: E402
+from midstream.lakehouse.schema.policy import evolve  # noqa: E402
+from midstream.lakehouse.schema.render import render_schema  # noqa: E402
+from midstream.maintenance_app.compact_worker import run as compact  # noqa: E402
+from midstream.tail_app.buffer import TableBuffer  # noqa: E402
+from midstream.tail_app.ingest import TailSchema, build, decode_value, epoch_ms, stage  # noqa: E402
+from midstream.tail_app.serve import build_answer, rows_batch  # noqa: E402
 from tail_support import Record as KafkaRecord  # noqa: E402
 
 import pyarrow.parquet as pq  # noqa: E402

@@ -21,10 +21,10 @@ from test_workflow import (  # noqa: E402
     work,
 )
 
-from materializer_control_plane.handlers import handle_work_event_for_routed_output  # noqa: E402
-from materializer_control_plane.kafka.metadata import TopicMetadata  # noqa: E402
-from materializer_control_plane.lakehouse.pointer import POINTER_NAME  # noqa: E402
-from materializer_control_plane.models import (  # noqa: E402
+from midstream.handlers import handle_work_event_for_routed_output  # noqa: E402
+from midstream.kafka.metadata import TopicMetadata  # noqa: E402
+from midstream.lakehouse.pointer import POINTER_NAME  # noqa: E402
+from midstream.models import (  # noqa: E402
     EventCause,
     IdentityRequestOutcome,
     TableClaimResult,
@@ -33,18 +33,18 @@ from materializer_control_plane.models import (  # noqa: E402
     MaterializationWorkEvent,
     TopicChangeRequest,
 )
-from materializer_control_plane.services.table_claims import claim_outcome_work  # noqa: E402
-from materializer_control_plane.table_names import table_name_for_topic  # noqa: E402
+from midstream.services.table_claims import claim_outcome_work  # noqa: E402
+from midstream.table_names import table_name_for_topic  # noqa: E402
 from table_records import table_spec  # noqa: E402
-from materializer_control_plane.schema import StubDiscoveryService  # noqa: E402
-from materializer_control_plane.services import process_request_event  # noqa: E402
-from materializer_control_plane.services.observation import apply_runtime_status_event, build_sweep_observation_outputs  # noqa: E402
-from materializer_control_plane.services.workflow import (  # noqa: E402
+from midstream.schema import StubDiscoveryService  # noqa: E402
+from midstream.services import process_request_event  # noqa: E402
+from midstream.services.observation import apply_runtime_status_event, build_sweep_observation_outputs  # noqa: E402
+from midstream.services.workflow import (  # noqa: E402
     DRAIN_MAX_ATTEMPTS,
     MAX_DESTINATION_CLEANUP_RETRY_ATTEMPTS,
     is_live_drop,
 )
-from materializer_control_plane.storage import (  # noqa: E402
+from midstream.storage import (  # noqa: E402
     get_materialization,
     get_materialization_schema,
     get_materialization_status,
@@ -253,7 +253,7 @@ class AddingTopicsTests(TopicChangeTestCase):
     def test_the_awaited_drain_matches_the_blocking_one(self) -> None:
         import asyncio
 
-        from materializer_control_plane.services import process_work_event_async
+        from midstream.services import process_work_event_async
 
         wait = self.until(self.change(["orders", "payments", "refunds"]), "await_runtime_drained")
 
@@ -300,7 +300,7 @@ class AddingTopicsTests(TopicChangeTestCase):
         self.assertEqual("await_runtime_drained", self.process(work("apply_runtime", work_id="work-req-resume")).step)
 
     def test_heartbeats_and_sweeps_leave_the_drain_alone(self) -> None:
-        from materializer_control_plane.models import RuntimeStatusEvent
+        from midstream.models import RuntimeStatusEvent
 
         self.until(self.change(["orders", "payments", "refunds"]), "await_runtime_drained")
 
@@ -440,8 +440,8 @@ class RemovingTopicsTests(TopicChangeTestCase):
         self.assertEqual({"orders": "active"}, self.states())
 
     def test_a_drop_waits_for_the_maintenance_job_running_on_the_table(self) -> None:
-        from materializer_control_plane.models import RunningMaintenance
-        from materializer_control_plane.storage import get_operation_record
+        from midstream.models import RunningMaintenance
+        from midstream.storage import get_operation_record
 
         self.finish(self.change(["orders"], {"payments": "keep"}))
         drop = self.change(["orders"], {"payments": "drop"}, request_id="req-drop")
@@ -469,8 +469,8 @@ class RemovingTopicsTests(TopicChangeTestCase):
         self.assertEqual({"orders": "active"}, self.states())
 
     def test_a_drop_stops_waiting_for_a_maintenance_app_that_never_answers(self) -> None:
-        from materializer_control_plane.models import RunningMaintenance
-        from materializer_control_plane.storage import get_operation_record, save_operation_record
+        from midstream.models import RunningMaintenance
+        from midstream.storage import get_operation_record, save_operation_record
 
         self.finish(self.change(["orders"], {"payments": "keep"}))
         drop = self.change(["orders"], {"payments": "drop"}, request_id="req-drop")
@@ -498,7 +498,7 @@ class RemovingTopicsTests(TopicChangeTestCase):
         wait = self.until(self.change(["orders"], {"payments": "drop"}), "await_runtime_drained")
         final = self.process(wait)
 
-        with patch("materializer_control_plane.services.workflow.get_metadata_client", return_value=self.metadata):
+        with patch("midstream.services.workflow.get_metadata_client", return_value=self.metadata):
             routed = list(
                 handle_work_event_for_routed_output(
                     final.to_dict(),
@@ -515,7 +515,7 @@ class RemovingTopicsTests(TopicChangeTestCase):
         self.assertEqual([("scheduler", "observe_runtime"), ("work", "drop_table")], work_items)
 
     def test_a_scheduled_live_drop_retry_has_a_request_of_its_own(self) -> None:
-        from materializer_control_plane.services.workflow import build_live_drop_event, scheduled_request_id
+        from midstream.services.workflow import build_live_drop_event, scheduled_request_id
 
         live = build_live_drop_event(MATERIALIZATION_ID, stamp="req-1", requested_at="2026-07-12T01:00:00Z")
 

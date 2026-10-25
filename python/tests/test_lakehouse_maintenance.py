@@ -18,10 +18,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from lakehouse_support import BASE_TIME, LOCATION, LakeFixture  # noqa: E402
 
-from materializer_control_plane.lakehouse.files import build_data_file, read_parquet_footer  # noqa: E402
-from materializer_control_plane.lakehouse.gcs import set_shared_storage_client  # noqa: E402
-from materializer_control_plane.lakehouse.lifecycle import schema_to_json  # noqa: E402
-from materializer_control_plane.lakehouse.maintenance import (  # noqa: E402
+from midstream.lakehouse.files import build_data_file, read_parquet_footer  # noqa: E402
+from midstream.lakehouse.gcs import set_shared_storage_client  # noqa: E402
+from midstream.lakehouse.lifecycle import schema_to_json  # noqa: E402
+from midstream.lakehouse.maintenance import (  # noqa: E402
     CompactionInputGone,
     CompactionMismatch,
     commit_compaction,
@@ -33,10 +33,10 @@ from materializer_control_plane.lakehouse.maintenance import (  # noqa: E402
     referenced_files,
     small_file_count,
 )
-from materializer_control_plane.lakehouse.offsets import committed_offsets  # noqa: E402
-from materializer_control_plane.lakehouse.pointer import POINTER_NAME  # noqa: E402
-from materializer_control_plane.maintenance_app import compact_worker  # noqa: E402
-from materializer_control_plane.maintenance_app.compact_worker import run as run_compaction  # noqa: E402
+from midstream.lakehouse.offsets import committed_offsets  # noqa: E402
+from midstream.lakehouse.pointer import POINTER_NAME  # noqa: E402
+from midstream.maintenance_app import compact_worker  # noqa: E402
+from midstream.maintenance_app.compact_worker import run as run_compaction  # noqa: E402
 import pyarrow as pa  # noqa: E402
 import pyarrow.parquet as pq  # noqa: E402
 from pyiceberg.typedef import Record  # noqa: E402

@@ -1114,8 +1114,8 @@ With the materialization stopped, from a shell with the package installed and GC
 
 ```python
 from datetime import UTC, datetime
-from materializer_control_plane.lakehouse.gcs import shared_storage_client
-from materializer_control_plane.lakehouse.pointer import TablePointer, find_latest_metadata, write_pointer
+from midstream.lakehouse.gcs import shared_storage_client
+from midstream.lakehouse.pointer import TablePointer, find_latest_metadata, write_pointer
 
 LOC = "gs://…/<storage prefix>/<materialization id>/<table>"   # the table record's location
 UUID = "…"                                       # the table record's table_uuid

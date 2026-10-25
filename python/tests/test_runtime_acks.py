@@ -14,7 +14,7 @@ import random
 import unittest
 from unittest.mock import patch
 
-from materializer_control_plane.runtime_app import acks
+from midstream.runtime_app import acks
 
 try:  # pragma: no cover - only where twm-faust is installed
     from faust.transport.consumer import Consumer as _FaustConsumer

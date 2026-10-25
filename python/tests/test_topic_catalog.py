@@ -9,20 +9,20 @@ import types
 import unittest
 from unittest.mock import patch
 
-from materializer_control_plane.config import ControlPlaneConfig
-from materializer_control_plane.kafka.metadata import (
+from midstream.config import ControlPlaneConfig
+from midstream.kafka.metadata import (
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     AIOKafkaMetadataClient,
     TopicListing,
     topic_listing_from_description,
 )
-from materializer_control_plane.services.topic_catalog import (
+from midstream.services.topic_catalog import (
     TopicCatalogCache,
     TopicCatalogUnavailable,
     classify_topic,
 )
-from materializer_control_plane.web.errors import WebError
-from materializer_control_plane.web.topics import analyze_topics_view_async
+from midstream.web.errors import WebError
+from midstream.web.topics import analyze_topics_view_async
 
 
 class FakeClock:
@@ -218,7 +218,7 @@ class TopicCatalogCacheTests(unittest.TestCase):
             await asyncio.sleep(5)
             return []
 
-        with patch("materializer_control_plane.services.topic_catalog.LOAD_TIMEOUT_SECONDS", 0.01):
+        with patch("midstream.services.topic_catalog.LOAD_TIMEOUT_SECONDS", 0.01):
             with self.assertRaisesRegex(TimeoutError, "Kafka did not answer within 0.01s"):
                 asyncio.run(self.cache.get(never_answers, config=self.config))
 
@@ -380,7 +380,7 @@ class MetadataClientDeadlineTests(unittest.TestCase):
     def setUp(self) -> None:
         self.kafka = FakeKafka()
         patcher = patch(
-            "materializer_control_plane.kafka.metadata._topic_partition_type",
+            "midstream.kafka.metadata._topic_partition_type",
             return_value=TopicPartition,
         )
         patcher.start()
@@ -528,7 +528,7 @@ class AnalyzeViewEventLoopTests(unittest.TestCase):
     def setUp(self) -> None:
         self.kafka = FakeKafka()
         patcher = patch(
-            "materializer_control_plane.kafka.metadata._topic_partition_type",
+            "midstream.kafka.metadata._topic_partition_type",
             return_value=TopicPartition,
         )
         patcher.start()
@@ -563,7 +563,7 @@ class AnalyzeViewEventLoopTests(unittest.TestCase):
         asyncio.run(self.analyze({"topics": ["orders"]}))  # both clients started
         self.kafka.hold = {"describe"}
 
-        with patch("materializer_control_plane.services.topic_analysis.ANALYZE_TIMEOUT_SECONDS", DEADLINE):
+        with patch("midstream.services.topic_analysis.ANALYZE_TIMEOUT_SECONDS", DEADLINE):
             with self.assertRaises(WebError) as raised:
                 asyncio.run(self.analyze({"topics": ["orders"]}))
 

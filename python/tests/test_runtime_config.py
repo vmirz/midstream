@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import unittest
 
-from materializer_control_plane.runtime_app.config import RuntimeAppConfig, get_runtime_app_config
+from midstream.runtime_app.config import RuntimeAppConfig, get_runtime_app_config
 
 
 class RuntimeAppConfigTests(unittest.TestCase):

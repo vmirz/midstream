@@ -40,7 +40,7 @@ spec:
       - apply-settings-change
     init:
       python: |
-        from materializer_control_plane.handlers.settings import handle_settings_request_for_output
+        from midstream.handlers.settings import handle_settings_request_for_output
     operations:
       - name: apply-settings-change
         tables:

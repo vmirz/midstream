@@ -39,7 +39,7 @@ carries only runtime settings (§6.7).
 
 Agents cannot decide at runtime which of several static output topics to publish to. Kaspr solves
 this with **predicates on outputs**; this codebase solves the general case with a routed-output
-envelope produced by `materializer_control_plane/scheduler/__init__.py`.
+envelope produced by `midstream/scheduler/__init__.py`.
 
 A handler yields dicts of this shape, and the agent manifest has one output per route with a
 matching `predicate`.

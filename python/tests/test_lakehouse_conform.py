@@ -5,14 +5,14 @@ from __future__ import annotations
 import json
 import unittest
 
-from materializer_control_plane.lakehouse.schema.conform import Conformer, unmapped_text
-from materializer_control_plane.lakehouse.schema.forkmap import ForkMap
-from materializer_control_plane.lakehouse.schema.index import build_index
-from materializer_control_plane.lakehouse.schema.infer import infer
-from materializer_control_plane.lakehouse.schema.policy import SchemaLimits, evolve
-from materializer_control_plane.lakehouse.schema.render import logical_name, render_schema
-from materializer_control_plane.lakehouse.tables import build_schema
-from materializer_control_plane.runtime_app.schema.drift import DriftDetector, RequestDeduper
+from midstream.lakehouse.schema.conform import Conformer, unmapped_text
+from midstream.lakehouse.schema.forkmap import ForkMap
+from midstream.lakehouse.schema.index import build_index
+from midstream.lakehouse.schema.infer import infer
+from midstream.lakehouse.schema.policy import SchemaLimits, evolve
+from midstream.lakehouse.schema.render import logical_name, render_schema
+from midstream.lakehouse.tables import build_schema
+from midstream.runtime_app.schema.drift import DriftDetector, RequestDeduper
 
 
 def schema_of(*records, limits=None):

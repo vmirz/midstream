@@ -16,7 +16,7 @@ describes the code both execute. They still report separately because a runtime 
 image it was created with until its spec is re-applied: after a control-plane upgrade, runtimes
 legitimately lag until they are rolled.
 
-`materializer_control_plane.version.PACKAGE_VERSION` reads the installed distribution metadata, so
+`midstream.version.PACKAGE_VERSION` reads the installed distribution metadata, so
 `pyproject.toml` is the single source of truth. Outside an installed context it reports
 `0.0.0+unknown` rather than a plausible-looking number.
 

@@ -4,7 +4,7 @@ Everything the control plane does is a **bounded workflow step**: consume one wo
 perform a finite amount of work, persist state, emit at most a small number of follow-ups,
 return. There are no long-running orchestrators and no in-memory workflow state.
 
-Source: `python/src/materializer_control_plane/services/workflow.py`,
+Source: `python/src/midstream/services/workflow.py`,
 `services/request_intake.py`, `services/observation.py`, `handlers/workflow_apply.py`,
 `handlers/resource_observation.py`, `services/settings.py`.
 

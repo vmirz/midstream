@@ -80,8 +80,8 @@ spec:
       - execute-maintenance
     init:
       python: |
-        from materializer_control_plane.handlers import maintenance as maintenance_handler
-        from materializer_control_plane.kafka.metadata import get_metadata_client
+        from midstream.handlers import maintenance as maintenance_handler
+        from midstream.kafka.metadata import get_metadata_client
 
         # Shared with the topics-analyze view so broker connections stay warm.
         metadata_client = get_metadata_client()

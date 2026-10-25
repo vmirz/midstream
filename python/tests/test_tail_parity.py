@@ -28,17 +28,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from tail_support import BASE_MS, Record  # noqa: E402
 
-from materializer_control_plane.lakehouse.lifecycle import schema_to_json  # noqa: E402
-from materializer_control_plane.lakehouse.schema.forkmap import ForkMap  # noqa: E402
-from materializer_control_plane.lakehouse.schema.infer import infer  # noqa: E402
-from materializer_control_plane.lakehouse.schema.policy import SchemaLimits, evolve  # noqa: E402
-from materializer_control_plane.lakehouse.tables import build_schema  # noqa: E402
-from materializer_control_plane.runtime_app.writer.batches import staged_line  # noqa: E402
-from materializer_control_plane.runtime_app.writer.context import extract_source_record_metadata, format_timestamp  # noqa: E402
-from materializer_control_plane.runtime_app.writer.seal import SealJob, run_seal  # noqa: E402
-from materializer_control_plane.tail_app.buffer import TableBuffer  # noqa: E402
-from materializer_control_plane.tail_app.ingest import UNDECODABLE, TailSchema, build, decode_value, epoch_ms, stage  # noqa: E402
-from materializer_control_plane.tail_app.serve import build_answer, rows_batch  # noqa: E402
+from midstream.lakehouse.lifecycle import schema_to_json  # noqa: E402
+from midstream.lakehouse.schema.forkmap import ForkMap  # noqa: E402
+from midstream.lakehouse.schema.infer import infer  # noqa: E402
+from midstream.lakehouse.schema.policy import SchemaLimits, evolve  # noqa: E402
+from midstream.lakehouse.tables import build_schema  # noqa: E402
+from midstream.runtime_app.writer.batches import staged_line  # noqa: E402
+from midstream.runtime_app.writer.context import extract_source_record_metadata, format_timestamp  # noqa: E402
+from midstream.runtime_app.writer.seal import SealJob, run_seal  # noqa: E402
+from midstream.tail_app.buffer import TableBuffer  # noqa: E402
+from midstream.tail_app.ingest import UNDECODABLE, TailSchema, build, decode_value, epoch_ms, stage  # noqa: E402
+from midstream.tail_app.serve import build_answer, rows_batch  # noqa: E402
 
 READ_AT = "2026-10-18T10:00:01.250Z"
 LOCATION = "gs://lake/materializer/mat-1/orders"

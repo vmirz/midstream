@@ -31,7 +31,7 @@ and no test catches it — check the id. A new section is §6.
 
 ## 2. Adjustable control-plane setting
 
-1. **Config field** — `python/src/materializer_control_plane/config.py`: a default constant, a
+1. **Config field** — `python/src/midstream/config.py`: a default constant, a
    field on the frozen `ControlPlaneConfig`, and a parse in `get_config()` with the env var
    `MATERIALIZER_CONTROL_PLANE_<KEY_IN_CAPS>` and a `minimum` no looser than the page's bound:
 

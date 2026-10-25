@@ -19,16 +19,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runtime_support import BASE_TIMESTAMP, MEMBER_ID, RuntimeHarness, run  # noqa: E402
 
-from materializer_control_plane.lakehouse.offsets import committed_offsets  # noqa: E402
-from materializer_control_plane.runtime_app.committer import reset_committers  # noqa: E402
-from materializer_control_plane.runtime_app.handlers.status import build_runtime_heartbeat  # noqa: E402
-from materializer_control_plane.runtime_app.state import get_partition_state  # noqa: E402
-from materializer_control_plane.runtime_app.table_state import (  # noqa: E402
+from midstream.lakehouse.offsets import committed_offsets  # noqa: E402
+from midstream.runtime_app.committer import reset_committers  # noqa: E402
+from midstream.runtime_app.handlers.status import build_runtime_heartbeat  # noqa: E402
+from midstream.runtime_app.state import get_partition_state  # noqa: E402
+from midstream.runtime_app.table_state import (  # noqa: E402
     committed_offsets_key,
     file_decisions_key,
     schema_key,
 )
-from materializer_control_plane.runtime_app.writer import current_session_epoch  # noqa: E402
+from midstream.runtime_app.writer import current_session_epoch  # noqa: E402
 from lakehouse_support import MATERIALIZATION_ID  # noqa: E402
 
 
@@ -272,7 +272,7 @@ class RuntimeFlowTests(unittest.TestCase):
                 await self.runtime.write({"order_id": f"O-{offset}"}, offset=offset)
             await self.runtime.cycle()
 
-        with self.assertLogs("materializer_control_plane.runtime_app.committer", level="INFO") as logs:
+        with self.assertLogs("midstream.runtime_app.committer", level="INFO") as logs:
             run(scenario())
         events = [line.split("protocol_event ", 1)[1] for line in logs.output if "protocol_event " in line]
         names = [json.loads(event)["event"] for event in events]

@@ -10,16 +10,16 @@ import threading
 from typing import Any
 import unittest
 
-from materializer_control_plane.config import ControlPlaneConfig
-from materializer_control_plane.identity.authorization import authenticate, authorize, bearer_token, directory_ready, request_context
-from materializer_control_plane.identity.directory import DirectoryView
-from materializer_control_plane.identity.passwords import (
+from midstream.config import ControlPlaneConfig
+from midstream.identity.authorization import authenticate, authorize, bearer_token, directory_ready, request_context
+from midstream.identity.directory import DirectoryView
+from midstream.identity.passwords import (
     hash_password,
     needs_rehash,
     password_problem,
     verify_password,
 )
-from materializer_control_plane.identity.permissions import (
+from midstream.identity.permissions import (
     ADMIN_GROUP_ID,
     ALL_PERMISSIONS,
     BUILT_IN_GROUPS,
@@ -32,15 +32,15 @@ from materializer_control_plane.identity.permissions import (
     dataset_grantable,
     expand_permissions,
 )
-from materializer_control_plane.identity.principals import clear_grants_cache, grants_for_groups
-from materializer_control_plane.identity.secrets import (
+from midstream.identity.principals import clear_grants_cache, grants_for_groups
+from midstream.identity.secrets import (
     BootstrapAdmin,
     IdentitySecrets,
     identity_secrets_from_environment,
     signing_key,
 )
-from materializer_control_plane.identity.tokens import InvalidToken, SessionClaims, issue_token, peek_claims, read_token
-from materializer_control_plane.models.identity import (
+from midstream.identity.tokens import InvalidToken, SessionClaims, issue_token, peek_claims, read_token
+from midstream.models.identity import (
     AccessToken,
     AuditEntry,
     ClaimRelease,
@@ -60,13 +60,13 @@ from materializer_control_plane.models.identity import (
     UserActivity,
     IDENTITY_ACTIONS,
 )
-from materializer_control_plane.services.identity import (
+from midstream.services.identity import (
     IdentityRejection,
     _HANDLERS,
     apply_identity_request,
     preview_identity_request,
 )
-from materializer_control_plane.storage.identity import (
+from midstream.storage.identity import (
     find_user_by_email,
     get_directory_state,
     get_group,
@@ -84,15 +84,15 @@ from materializer_control_plane.storage.identity import (
     save_user,
     save_user_email,
 )
-from materializer_control_plane.web.errors import WebError
+from midstream.web.errors import WebError
 
 import asyncio
 import json
 from unittest.mock import patch
 
-from materializer_control_plane.identity.tokens import peek_claims as _peek
-from materializer_control_plane.storage.identity import append_audit_entry, save_request_outcome
-from materializer_control_plane.web import auth, identity as views
+from midstream.identity.tokens import peek_claims as _peek
+from midstream.storage.identity import append_audit_entry, save_request_outcome
+from midstream.web import auth, identity as views
 
 NOW = "2026-10-13T12:00:00Z"
 NOW_EPOCH = int(datetime(2026, 10, 13, 12, tzinfo=UTC).timestamp())
@@ -179,7 +179,7 @@ def directory() -> tuple[FakeTable, FakeTable]:
         updated_at=NOW,
         updated_by="system",
     )
-    from materializer_control_plane.storage.identity import save_group
+    from midstream.storage.identity import save_group
 
     save_group(table, managers)
     store_user(table, make_user("manager", "manager@example.com", groups=["grp-managers", "editor"]))
@@ -198,8 +198,8 @@ SHOP = "ds-000000000001"
 
 def store_dataset(table: FakeTable, dataset_id: str, *, name: str = "shop", grants: dict[str, tuple[str, str]] | None = None) -> None:
     """A dataset and its grants, by principal id: (user or group, role id)."""
-    from materializer_control_plane.models.identity import Dataset, DatasetGrant
-    from materializer_control_plane.storage.identity import save_dataset, save_dataset_grant, save_dataset_name
+    from midstream.models.identity import Dataset, DatasetGrant
+    from midstream.storage.identity import save_dataset, save_dataset_grant, save_dataset_name
 
     save_dataset(table, Dataset(dataset_id=dataset_id, name=name, created_at=NOW, created_by="system", updated_at=NOW, updated_by="system"))
     save_dataset_name(table, name, dataset_id, updated_at=NOW)
@@ -497,7 +497,7 @@ class StorageTests(unittest.TestCase):
 
     def test_audit_reads_day_by_day_newest_first_with_a_cursor(self) -> None:
         table = FakeTable()
-        from materializer_control_plane.storage.identity import append_audit_entry
+        from midstream.storage.identity import append_audit_entry
 
         for index, moment in enumerate(("2026-10-11T09:00:00Z", "2026-10-12T09:00:00Z", "2026-10-13T08:00:00Z", "2026-10-13T09:00:00Z")):
             append_audit_entry(table, AuditEntry(entry_id=f"aud-{index}", occurred_at=moment, action="user.created"))
@@ -617,7 +617,7 @@ class AuthorizationTests(unittest.TestCase):
         token = session_token(self.viewer)
         self.assertFalse(self.authorize(http_request(token), None).can("materializations.create"))
         save_user(self.table, replace(self.viewer, group_ids=["editor"]))
-        from materializer_control_plane.storage.identity import save_directory_state
+        from midstream.storage.identity import save_directory_state
 
         save_directory_state(self.table, DirectoryState(revision=get_directory_state(self.table).revision + 1, updated_at=NOW))
         self.assertTrue(self.authorize(http_request(token), None).can("materializations.create"))
@@ -932,7 +932,7 @@ class SessionEventTests(unittest.TestCase):
             updated_at=NOW,
         )
         save_sign_in_guard(self.table, SignInGuard(email="old@example.com", failed_attempts=1, last_failed_at="2026-10-01T00:00:00Z"), updated_at=NOW)
-        from materializer_control_plane.storage.identity import append_audit_entry
+        from midstream.storage.identity import append_audit_entry
 
         append_audit_entry(self.audit, AuditEntry(entry_id="aud-old", occurred_at="2026-01-01T00:00:00Z", action="user.created"))
         append_audit_entry(self.audit, AuditEntry(entry_id="aud-new", occurred_at="2026-10-12T00:00:00Z", action="user.created"))
@@ -1009,7 +1009,7 @@ class SignInTests(unittest.TestCase):
         self.assertEqual(self.sign_in({"email": "viewer@example.com", "password": "wrong password"}).status, 401)
 
     def test_a_flood_of_sign_ins_is_turned_away_rather_than_queued(self) -> None:
-        with patch("materializer_control_plane.identity.passwords.MAX_QUEUED_HASHES", 0):
+        with patch("midstream.identity.passwords.MAX_QUEUED_HASHES", 0):
             result = self.sign_in({"email": "viewer@example.com", "password": PASSWORD})
         self.assertEqual(result.status, 429)
         self.assertEqual(result.body["error"]["details"]["reason"], "busy")
@@ -1081,8 +1081,8 @@ class SessionTests(unittest.TestCase):
             auth.sign_out(self.table, http_request(self.token), {"scope": "session"}, secrets=SECRETS, now=NOW_EPOCH)
 
     def test_change_password(self) -> None:
-        with patch("materializer_control_plane.identity.authorization.get_identity_secrets", return_value=SECRETS), patch(
-            "materializer_control_plane.identity.authorization._now", return_value=NOW_EPOCH
+        with patch("midstream.identity.authorization.get_identity_secrets", return_value=SECRETS), patch(
+            "midstream.identity.authorization._now", return_value=NOW_EPOCH
         ):
             request = http_request(self.token)
             with self.assertRaises(WebError) as wrong:
@@ -1094,7 +1094,7 @@ class SessionTests(unittest.TestCase):
             accepted = run(
                 auth.change_password(self.table, request, {"current_password": PASSWORD, "new_password": "a brand new passphrase"}, config=CONFIG)
             )
-            with patch("materializer_control_plane.identity.passwords.MAX_QUEUED_HASHES", 0), self.assertRaises(WebError) as busy:
+            with patch("midstream.identity.passwords.MAX_QUEUED_HASHES", 0), self.assertRaises(WebError) as busy:
                 run(auth.change_password(self.table, request, {"current_password": PASSWORD, "new_password": "a brand new passphrase"}, config=CONFIG))
             self.assertEqual((busy.exception.status_code, busy.exception.details["reason"]), (429, "busy"))
         event = accepted.request_event.to_dict()
@@ -1226,7 +1226,7 @@ class DirectoryViewTests(unittest.TestCase):
         self.assertNotIn("long enough password", json.dumps(event))
 
     def test_setting_a_password_while_hashing_is_busy_asks_to_try_again(self) -> None:
-        with patch("materializer_control_plane.identity.passwords.MAX_QUEUED_HASHES", 0):
+        with patch("midstream.identity.passwords.MAX_QUEUED_HASHES", 0):
             with self.assertRaises(WebError) as create:
                 run(views.create_user_request(
                     self.table,
@@ -1326,7 +1326,7 @@ class AccessTokenTests(unittest.TestCase):
         return authorize(http_request(session_token(user)), self.table, None, secrets=SECRETS, now=NOW_EPOCH)
 
     def make(self, user: User, body: dict | None = None) -> dict:
-        from materializer_control_plane.web.tokens import create_access_token_request
+        from midstream.web.tokens import create_access_token_request
 
         acceptance = create_access_token_request(
             self.principal_of(user),
@@ -1354,7 +1354,7 @@ class AccessTokenTests(unittest.TestCase):
         self.assertTrue(response["token"].startswith("tok_"))
         stored = json.dumps(self.table.data)
         # The secret is URL-safe base64, so it may hold "_" itself: split as the control plane does.
-        from materializer_control_plane.identity.access_tokens import parse_token
+        from midstream.identity.access_tokens import parse_token
 
         token_id, secret = parse_token(response["token"])
         self.assertEqual(response["token_id"], token_id)
@@ -1372,7 +1372,7 @@ class AccessTokenTests(unittest.TestCase):
         self.assertEqual(["token.created"], [entry.action for entry in self.audit_entries()])
 
     def test_a_token_cannot_carry_what_its_owner_lacks(self) -> None:
-        from materializer_control_plane.web.tokens import create_access_token_request
+        from midstream.web.tokens import create_access_token_request
 
         with self.assertRaises(WebError) as caught:
             create_access_token_request(
@@ -1429,7 +1429,7 @@ class AccessTokenTests(unittest.TestCase):
         self.assertEqual("token_revoked", caught.exception.details["reason"])
 
     def test_a_token_cannot_make_another(self) -> None:
-        from materializer_control_plane.web.tokens import create_access_token_request
+        from midstream.web.tokens import create_access_token_request
 
         token = self.make(self.viewer)["token"]
         with self.assertRaises(WebError) as caught:
@@ -1437,7 +1437,7 @@ class AccessTokenTests(unittest.TestCase):
         self.assertEqual("session_required", caught.exception.details["reason"])
 
     def test_people_see_and_revoke_only_their_own_tokens(self) -> None:
-        from materializer_control_plane.web.tokens import my_access_tokens_view, revoke_access_token_request
+        from midstream.web.tokens import my_access_tokens_view, revoke_access_token_request
 
         mine = self.make(self.viewer)
         self.make(self.admin)
@@ -1456,7 +1456,7 @@ class AccessTokenTests(unittest.TestCase):
         self.assertEqual("revoke_access_token", accepted.request_event.action)
 
     def test_tokens_go_with_their_owner_and_old_revoked_ones_are_cleaned_up(self) -> None:
-        from materializer_control_plane.storage.identity import get_access_token
+        from midstream.storage.identity import get_access_token
 
         response = self.make(self.viewer)
         apply(self.table, self.audit, "revoke_access_token", "viewer", {"token_id": response["token_id"]})

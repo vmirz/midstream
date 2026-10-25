@@ -12,13 +12,13 @@ import subprocess
 import types
 import unittest
 
-from materializer_control_plane.handlers.maintenance import (
+from midstream.handlers.maintenance import (
     MAINTENANCE_STEP_TRIGGERS,
     MAINTENANCE_STEPS,
 )
-from materializer_control_plane.models import MaterializationWorkEvent
-from materializer_control_plane.models.events import WORK_STEPS
-from materializer_control_plane.services.workflow import WORKFLOW_APPLY_STEPS
+from midstream.models import MaterializationWorkEvent
+from midstream.models.events import WORK_STEPS
+from midstream.services.workflow import WORKFLOW_APPLY_STEPS
 
 MANIFEST_ROOT = Path(__file__).resolve().parents[2] / "manifests" / "base" / "agents"
 
@@ -624,7 +624,7 @@ class AuthorizationWiringTests(unittest.TestCase):
             import yaml  # noqa: F401
         except ImportError:
             self.skipTest("pyyaml is required to read manifests")
-        from materializer_control_plane.identity.permissions import PERMISSION_KEYS
+        from midstream.identity.permissions import PERMISSION_KEYS
 
         checked = 0
         for document in self._webviews():
@@ -667,8 +667,8 @@ class AuthorizationWiringTests(unittest.TestCase):
 
     def _check_tail_view(self, name: str, operation: dict, source: str) -> None:
         """A tail app view binds no table, and hands the request to a handler that authorizes it."""
-        from materializer_control_plane.identity.permissions import PERMISSION_KEYS
-        from materializer_control_plane.tail_app import views as tail_views
+        from midstream.identity.permissions import PERMISSION_KEYS
+        from midstream.tail_app import views as tail_views
 
         self.assertFalse(operation.get("tables"), f"{name}: the tail app has no tables to bind")
         called = {_called_name(node) for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)}
@@ -691,7 +691,7 @@ class AuthorizationWiringTests(unittest.TestCase):
             import yaml  # noqa: F401
         except ImportError:
             self.skipTest("pyyaml is required to read manifests")
-        from materializer_control_plane.tail_app.handlers import error_body
+        from midstream.tail_app.handlers import error_body
 
         views = {document["metadata"]["name"]: document for document in self._webviews()}
         for name in ("tail-rows", "tail-head"):
@@ -1081,7 +1081,7 @@ class MaintenanceTriggerTests(unittest.TestCase):
 
     def test_every_trigger_builder_produces_a_valid_work_event(self) -> None:
         """Runs the exact call the cron task makes, so a rejected step fails here, not in a pod."""
-        from materializer_control_plane.handlers import maintenance as maintenance_handler
+        from midstream.handlers import maintenance as maintenance_handler
 
         for step, builder_name in sorted(MAINTENANCE_STEP_TRIGGERS.items()):
             with self.subTest(step=step):

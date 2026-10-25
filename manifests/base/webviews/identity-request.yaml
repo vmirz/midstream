@@ -22,8 +22,8 @@ spec:
         map:
           entrypoint: get_request
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.identity import identity_request_view
+            from midstream.identity.authorization import authorize
+            from midstream.web.identity import identity_request_view
 
             def get_request(request, request_id, directory_table):
                 principal = authorize(request, directory_table, None, allow_password_change=True)

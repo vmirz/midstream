@@ -28,8 +28,8 @@ spec:
         map:
           entrypoint: prepare_request
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.materializations import create_materialization
+            from midstream.identity.authorization import authorize
+            from midstream.web.materializations import create_materialization
 
             async def prepare_request(request, control_plane_table, settings_table, directory_table):
                 principal = authorize(request, directory_table, "materializations.create")
@@ -55,7 +55,7 @@ spec:
           keySelector:
             python: |
               def select_key(value):
-                  from materializer_control_plane.storage import materialization_routing_key
+                  from midstream.storage import materialization_routing_key
 
                   return materialization_routing_key(value["request_event"]["materialization_id"])
           valueSelector:

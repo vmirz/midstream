@@ -22,8 +22,8 @@ spec:
         map:
           entrypoint: handle
           python: |
-            from materializer_control_plane.identity.authorization import authorize
-            from materializer_control_plane.web.catalog import catalog_errors, catalog_not_supported_view
+            from midstream.identity.authorization import authorize
+            from midstream.web.catalog import catalog_errors, catalog_not_supported_view
 
             def handle(request, namespace, table, directory_table):
                 with catalog_errors():

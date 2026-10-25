@@ -17,7 +17,7 @@ spec:
       - apply-runtime-status
     init:
       python: |
-        from materializer_control_plane.handlers.runtime_status import handle_runtime_status
+        from midstream.handlers.runtime_status import handle_runtime_status
     operations:
       - name: apply-runtime-status
         tables:

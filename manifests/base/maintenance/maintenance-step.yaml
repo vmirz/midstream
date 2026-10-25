@@ -17,7 +17,7 @@ spec:
       - send-table-events
     init:
       python: |
-        from materializer_control_plane.maintenance_app.handlers import advance_maintenance
+        from midstream.maintenance_app.handlers import advance_maintenance
     operations:
       - name: advance-maintenance
         map:

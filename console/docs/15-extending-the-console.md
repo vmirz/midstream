@@ -229,7 +229,7 @@ plain deployment setting, and belongs in the console's Deployment list (`console
 `routes/settings.ts`).
 
 **A control-plane or runtime setting** is described by the control plane's catalog
-(`python/src/materializer_control_plane/settings/catalog.py`), not here. The console renders it
+(`python/src/midstream/settings/catalog.py`), not here. The console renders it
 without a change; see the main handbook, [17 §17.13](../../docs/handbook/17-settings.md).
 
 **A new section**: add it to `SETTINGS_SECTIONS` in `features/settings/sections.ts`, with its

@@ -14,14 +14,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from table_records import build_table_record, table_specs  # noqa: E402
 
-from materializer_control_plane.config import ControlPlaneConfig, get_config  # noqa: E402
-from materializer_control_plane import config as control_plane_config  # noqa: E402
-from materializer_control_plane.handlers.maintenance import handle_maintenance_work  # noqa: E402
-from materializer_control_plane.handlers.resource_observation import (  # noqa: E402
+from midstream.config import ControlPlaneConfig, get_config  # noqa: E402
+from midstream import config as control_plane_config  # noqa: E402
+from midstream.handlers.maintenance import handle_maintenance_work  # noqa: E402
+from midstream.handlers.resource_observation import (  # noqa: E402
     build_sweep_observation_trigger,
     handle_observation_work_for_output,
 )
-from materializer_control_plane.models import (  # noqa: E402
+from midstream.models import (  # noqa: E402
     LAG_POINTS_KEPT,
     ConsumerLag,
     EventCause,
@@ -38,22 +38,22 @@ from materializer_control_plane.models import (  # noqa: E402
     RuntimeHealth,
     TopicLag,
 )
-from materializer_control_plane.observation.reader import KasprAppObservationInput  # noqa: E402
-from materializer_control_plane.runtime import (  # noqa: E402
+from midstream.observation.reader import KasprAppObservationInput  # noqa: E402
+from midstream.runtime import (  # noqa: E402
     build_dedicated_runtime_template_input,
     render_dedicated_runtime_resources,
     spec_hash,
 )
-from materializer_control_plane.services import process_request_event  # noqa: E402
-from materializer_control_plane.services.autoscaling import (  # noqa: E402
+from midstream.services import process_request_event  # noqa: E402
+from midstream.services.autoscaling import (  # noqa: E402
     CALM_POINTS,
     AutoscalePolicy,
     autoscale_after_lag,
     plan_autoscale,
     scaled_materialization,
 )
-from materializer_control_plane.services.retention import purge_materialization_records  # noqa: E402
-from materializer_control_plane.storage import (  # noqa: E402
+from midstream.services.retention import purge_materialization_records  # noqa: E402
+from midstream.storage import (  # noqa: E402
     get_materialization,
     get_runtime_autoscale,
     save_materialization,
@@ -184,7 +184,7 @@ class AutoscaleDecisionTests(unittest.TestCase):
 
 class ScaledRenderTests(unittest.TestCase):
     def setUp(self) -> None:
-        patcher = patch("materializer_control_plane.runtime.templates.get_installed_package_revision", return_value="pkg-rev-1")
+        patcher = patch("midstream.runtime.templates.get_installed_package_revision", return_value="pkg-rev-1")
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -315,7 +315,7 @@ class AutoscaleAfterLagTests(unittest.TestCase):
 
 class ScaledSweepTests(unittest.TestCase):
     def setUp(self) -> None:
-        patcher = patch("materializer_control_plane.runtime.templates.get_installed_package_revision", return_value="pkg-rev-1")
+        patcher = patch("midstream.runtime.templates.get_installed_package_revision", return_value="pkg-rev-1")
         patcher.start()
         self.addCleanup(patcher.stop)
         self.table = FakeTable()

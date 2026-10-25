@@ -7,7 +7,7 @@ part in a few paragraphs and points to the handbook for depth.
 Where this document and the code disagree, the implementation is authoritative, in this order:
 
 1. `manifests/`
-2. `python/src/materializer_control_plane/`
+2. `python/src/midstream/`
 3. `python/tests/`
 
 > **Looking for more depth?** `docs/handbook/` is an 18-document reference manual: full field
@@ -92,7 +92,7 @@ One wheel, pinned to an exact git commit (handbook 01, 16).
 
 | Path | Contents |
 |---|---|
-| `python/src/materializer_control_plane/` | The package. `models/` (immutable models with `to_dict`/`from_dict`), `storage/` (table keys, envelopes), `services/` (workflow, request intake, observation, table events), `handlers/` (thin Kaspr adapters), `web/` (WebView logic, the REST catalog views), `lakehouse/` (pointer catalog, table lifecycle, commits, schema policy, maintenance, REST protocol), `runtime/` (template rendering, naming, bindings), `runtime_app/` (writer, pipeline, committer, templates), `maintenance_app/` (ticks, job slots, the compaction child), `tail_app/` (the live tail: ticks, one consumer per member, buffers, answers, routing), `observation/`, `schema/` (discovery), `kubernetes/`, `kafka/`, `scheduler/`, `settings/`, `identity/` |
+| `python/src/midstream/` | The package. `models/` (immutable models with `to_dict`/`from_dict`), `storage/` (table keys, envelopes), `services/` (workflow, request intake, observation, table events), `handlers/` (thin Kaspr adapters), `web/` (WebView logic, the REST catalog views), `lakehouse/` (pointer catalog, table lifecycle, commits, schema policy, maintenance, REST protocol), `runtime/` (template rendering, naming, bindings), `runtime_app/` (writer, pipeline, committer, templates), `maintenance_app/` (ticks, job slots, the compaction child), `tail_app/` (the live tail: ticks, one consumer per member, buffers, answers, routing), `observation/`, `schema/` (discovery), `kubernetes/`, `kafka/`, `scheduler/`, `settings/`, `identity/` |
 | `python/tests/` | The `unittest` suite: the executable specification |
 | `manifests/base/` | The control plane's CRDs: app, agents, tasks, tables, webviews, RBAC; `maintenance/`, the maintenance app's; `tail/` and `webviews/tail-*.yaml`, the tail app's |
 | `manifests/{dev,staging,prod}/` | Overlays; `dev` adds `develop-` prefixes and renames |
