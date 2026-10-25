@@ -1,0 +1,37 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: permissions-list
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: permissions-list
+  description: "Return the permission catalog: categories, and each permission with what it implies."
+  request:
+    method: GET
+    path: /permissions
+  processors:
+    pipeline:
+      - list-permissions
+    operations:
+      - name: list-permissions
+        tables:
+          - name: directory
+            paramName: directory_table
+        map:
+          entrypoint: list_permissions
+          python: |
+            from materializer_control_plane.identity.authorization import authorize
+            from materializer_control_plane.web.identity import permissions_view
+
+            def list_permissions(request, directory_table):
+                principal = authorize(request, directory_table, None)
+                return permissions_view(principal)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

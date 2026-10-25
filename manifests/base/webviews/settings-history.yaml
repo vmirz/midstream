@@ -1,0 +1,52 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: settings-history
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: settings-history
+  description: List the recorded changes of one settings scope, newest first.
+  request:
+    method: GET
+    path: /settings/{scope}/history
+  processors:
+    pipeline:
+      - read-settings-history
+    operations:
+      - name: read-settings-history
+        tables:
+          - name: settings
+            paramName: settings_table
+          - name: directory
+            paramName: directory_table
+        map:
+          entrypoint: read_settings_history
+          python: |
+            from materializer_control_plane.identity.authorization import authorize
+            from materializer_control_plane.web.settings import settings_history_view
+
+            def read_query_params(request):
+                if hasattr(request, "query_params"):
+                    return request.query_params
+                if hasattr(request, "query"):
+                    return request.query
+                if hasattr(request, "rel_url"):
+                    return request.rel_url.query
+                return {}
+
+            def read_settings_history(request, scope, settings_table, directory_table):
+                authorize(request, directory_table, "settings.view")
+                return settings_history_view(
+                    settings_table,
+                    scope,
+                    limit=read_query_params(request).get("limit"),
+                )
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

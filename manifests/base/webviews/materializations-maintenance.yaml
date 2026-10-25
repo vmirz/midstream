@@ -1,0 +1,76 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: materializations-maintenance
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: materializations-maintenance
+  description: Ask the maintenance app to run one table maintenance job now, on one of a materialization's tables or on each.
+  request:
+    method: POST
+    path: /materializations/{materialization_id}/maintenance
+  processors:
+    pipeline:
+      - prepare-maintenance
+      - send-maintenance-request
+      - return-response
+    operations:
+      - name: prepare-maintenance
+        tables:
+          - name: state
+            paramName: control_plane_table
+          - name: directory
+            paramName: directory_table
+          - name: settings
+            paramName: settings_table
+        map:
+          entrypoint: prepare_maintenance
+          python: |
+            from materializer_control_plane.identity.authorization import authorize
+            from materializer_control_plane.web.http import json_body
+            from materializer_control_plane.web.materializations import request_maintenance
+
+            async def prepare_maintenance(request, materialization_id, control_plane_table, directory_table, settings_table):
+                principal = authorize(request, directory_table, "materializations.maintain")
+                body = await json_body(request)
+                return request_maintenance(
+                    control_plane_table,
+                    materialization_id,
+                    body,
+                    submitted_by=principal.attribution,
+                    settings_table=settings_table,
+                )
+      # One message for each table the request names, keyed by the table, so the maintenance member
+      # that maintains it runs the job.
+      - name: send-maintenance-request
+        topicSend:
+          name: materializer-maintenance-requests
+          passThrough: true
+          valueSerializer: json
+          keySelector:
+            python: |
+              def select_key(value):
+                  return value["key"]
+          valueSelector:
+            python: |
+              def select_value(value):
+                  return value["message"]
+      - name: return-response
+        map:
+          python: |
+            def return_response(value):
+                return value["response"]
+  response:
+    contentType: application/json
+    statusCodeSelector:
+      onSuccess:
+        python: |
+          def status_code(data):
+              return 202
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

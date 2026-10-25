@@ -1,0 +1,34 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: tail-health
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-tail
+spec:
+  name: tail-health
+  description: "This member of the tail app: its tables, partitions, buffers, lag and pauses."
+  request:
+    method: GET
+    path: /tail/v1/health
+  processors:
+    pipeline:
+      - answer
+    operations:
+      - name: answer
+        map:
+          entrypoint: answer
+          python: |
+            from materializer_control_plane.tail_app.handlers import tail_health
+
+            async def answer(request):
+                # Authorizes the caller first, through the control plane: the console's credential,
+                # and "materializations.view_details" (tail_app/auth.py::authorize_tail).
+                return await tail_health(request)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

@@ -1,0 +1,53 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: catalog-table-commit
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: catalog-table-commit
+  description: "Iceberg REST catalog: commit an engine's changes to a table."
+  request:
+    method: POST
+    path: /catalog/v1/namespaces/{namespace}/tables/{table}
+  processors:
+    pipeline:
+      - handle
+    operations:
+      - name: handle
+        tables:
+          - name: state
+            paramName: control_plane_table
+          - name: directory
+            paramName: directory_table
+          - name: settings
+            paramName: settings_table
+        map:
+          entrypoint: handle
+          python: |
+            from materializer_control_plane.identity.authorization import authorize
+            from materializer_control_plane.web.http import json_body
+            from materializer_control_plane.web.catalog import catalog_errors, catalog_commit_view
+
+            async def handle(request, namespace, table, control_plane_table, directory_table, settings_table):
+                with catalog_errors():
+                    principal = authorize(request, directory_table, "catalog.write", any_dataset=True)
+                    body = await json_body(request)
+                return await catalog_commit_view(
+                    namespace,
+                    table,
+                    body,
+                    control_plane_table,
+                    committed_by=principal.attribution,
+                    directory_table=directory_table,
+                    principal=principal,
+                    settings_table=settings_table,
+                )
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

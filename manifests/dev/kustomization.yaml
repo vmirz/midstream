@@ -1,0 +1,1247 @@
+namePrefix: develop-
+
+resources:
+  - ./../base
+
+patches:
+  - target:
+      kind: KasprApp
+      name: materializer-control-plane
+    patch: |-
+      - op: replace
+        path: /spec/pythonPackages/packages/0
+        value: git+ssh://git@github.com/TotalWineLabs/kaspr-kafka-materializer.git@develop#egg=materializer-control-plane&subdirectory=python
+      - op: replace
+        path: /spec/template/kasprContainer/env
+        value:
+          - name: MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE
+            value: kafka-sql
+          - name: MATERIALIZER_CONTROL_PLANE_DEFAULT_LIST_LIMIT
+            value: "30"
+          - name: MATERIALIZER_CONTROL_PLANE_DELETED_RETENTION_HOURS
+            value: "24"
+          - name: MATERIALIZER_CONTROL_PLANE_DEFAULT_RUNTIME_STORAGE_SIZE
+            value: 64Mi
+          - name: MATERIALIZER_CONTROL_PLANE_DEFAULT_RUNTIME_REPLICAS
+            value: "1"
+          # The gs:// prefix every materialization's tables are created under.
+          - name: MATERIALIZER_CONTROL_PLANE_DEFAULT_DESTINATION_URI
+            value: ""
+          - name: MATERIALIZER_CONTROL_PLANE_RUNTIME_NAME_PREFIX
+            value: develop
+          - name: MATERIALIZER_CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION
+            value: v1
+          - name: GOOGLE_APPLICATION_CREDENTIALS
+            value: /app/gcp/google_application_credentials.json
+          - name: MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC
+            value: |-
+              replicas: 16
+              bootstrapServers: crs-kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092
+              authentication:
+                type: scram-sha-512
+                username: materializer-control-plane-user
+                passwordSecret:
+                  secretName: materializer-control-plane-user
+                  passwordKey: password
+              storage:
+                type: persistent-claim
+                class: default
+                size: 64Mi
+                deleteClaim: true
+              # Two cores let a seal run beside the worker (handbook 12 §12.10); the members request what
+              # they use, resized in place (handbook 02 §2.10c).
+              resources:
+                requests:
+                  cpu: 0.5
+                  memory: 1Gi
+                limits:
+                  cpu: 2
+                  memory: 1Gi
+              verticalPodAutoscaler:
+                enabled: true
+                updateMode: InPlaceOrRecreate
+                controlledResources: [cpu]
+                controlledValues: RequestsOnly
+                minAllowed:
+                  cpu: 100m
+                maxAllowed:
+                  cpu: 1500m
+              config:
+                brokerRebalanceTimeout: 300
+              pythonPackages:
+                packages:
+                  - git+ssh://git@github.com/TotalWineLabs/kaspr-kafka-materializer.git@develop#egg=materializer-control-plane&subdirectory=python
+              template:
+                pod:
+                  nodeSelector:
+                    app: sipapi
+                  tolerations:
+                    - effect: NoSchedule
+                      key: app
+                      operator: Equal
+                      value: twmapp
+                  volumes:
+                    - name: github-ssh
+                      secret:
+                        defaultMode: 256
+                        secretName: github-deploy-key
+                        items:
+                          - key: id_ed25519
+                            path: id_ed25519
+                          - key: known_hosts
+                            path: known_hosts
+                    - name: gcp-credentials
+                      secret:
+                        secretName: kafka-materializer-gcp-credentials
+                        items:
+                          - key: google_application_credentials.json
+                            path: google_application_credentials.json
+                pythonPackagesInitContainer:
+                  env:
+                    - name: GIT_SSH_COMMAND
+                      value: >-
+                        ssh -i /var/run/secrets/github-ssh/id_ed25519
+                        -o IdentitiesOnly=yes
+                        -o UserKnownHostsFile="/tmp/github_known_hosts /var/run/secrets/github-ssh/known_hosts"
+                        -o StrictHostKeyChecking=accept-new
+                  volumeMounts:
+                    - name: github-ssh
+                      mountPath: /var/run/secrets/github-ssh
+                      readOnly: true
+                kasprContainer:
+                  env:
+                    - name: MATERIALIZER_RUNTIME_MEMBER_ID
+                      valueFrom:
+                        fieldRef:
+                          fieldPath: metadata.name
+                    - name: GOOGLE_APPLICATION_CREDENTIALS
+                      value: /app/gcp/google_application_credentials.json
+                    - name: MATERIALIZER_PROTOCOL_LOGGING_ENABLED
+                      value: "true"                      
+                  volumeMounts:
+                    - name: gcp-credentials
+                      mountPath: /app/gcp
+                      readOnly: true
+          - name: MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_REQUESTS_TOPIC
+            value: develop-materialization-requests
+          - name: MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_WORK_TOPIC
+            value: develop-materialization-work
+          - name: MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_STATUS_TOPIC
+            value: develop-materialization-status
+          - name: MATERIALIZER_CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC
+            value: develop-materialization-schema-authority-updates
+          - name: MATERIALIZER_CONTROL_PLANE_TABLE_EVENTS_TOPIC
+            value: develop-materialization-table-events
+          - name: MATERIALIZER_CONTROL_PLANE_STORAGE_PREFIX
+            value: develop
+          - name: MATERIALIZER_CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC
+            value: develop-materializer-settings-requests
+          - name: MATERIALIZER_CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC
+            value: develop-materializer-identity-requests
+          # Sign-in, from this environment's own Secret, so a session from one environment is
+          # never accepted by another.
+          - name: MATERIALIZER_AUTH_SIGNING_KEY
+            valueFrom:
+              secretKeyRef:
+                name: develop-materializer-auth
+                key: signing-key
+                optional: true
+          - name: MATERIALIZER_AUTH_PREVIOUS_SIGNING_KEY
+            valueFrom:
+              secretKeyRef:
+                name: develop-materializer-auth
+                key: previous-signing-key
+                optional: true
+          - name: MATERIALIZER_AUTH_SERVICE_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: develop-materializer-auth
+                key: service-token
+                optional: true
+          - name: MATERIALIZER_AUTH_BOOTSTRAP_ADMIN_EMAIL
+            valueFrom:
+              secretKeyRef:
+                name: develop-materializer-auth
+                key: bootstrap-admin-email
+                optional: true
+          - name: MATERIALIZER_AUTH_BOOTSTRAP_ADMIN_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: develop-materializer-auth
+                key: bootstrap-admin-password
+                optional: true
+          - name: MATERIALIZER_PROTOCOL_LOGGING_ENABLED
+            value: "true"
+  # The tail app: its own KasprApp, agent, task and WebViews, on this environment's topics, calling
+  # this environment's control plane with this environment's service credential.
+  - target:
+      kind: KasprApp
+      name: materializer-tail
+    patch: |-
+      - op: replace
+        path: /spec/pythonPackages/packages/0
+        value: git+ssh://git@github.com/TotalWineLabs/kaspr-kafka-materializer.git@develop#egg=materializer-control-plane&subdirectory=python
+      - op: replace
+        path: /spec/template/kasprContainer/env/1/value
+        value: develop-materializer-tail
+      - op: replace
+        path: /spec/template/kasprContainer/env/2/value
+        value: http://develop-materializer-control-plane-app-api:6065
+      - op: replace
+        path: /spec/template/kasprContainer/env/3/valueFrom/secretKeyRef/name
+        value: develop-materializer-auth
+      - op: replace
+        path: /spec/template/kasprContainer/env/4/value
+        value: develop-materialization-table-events
+      - op: replace
+        path: /spec/template/kasprContainer/env/5/value
+        value: develop-materializer-tail-requests
+  - target:
+      kind: KasprAgent
+      labelSelector: kaspr.io/app=materializer-tail
+    patch: |-
+      - op: add
+        path: /metadata/labels/kaspr.io~1app
+        value: develop-materializer-tail
+  - target:
+      kind: KasprTask
+      labelSelector: kaspr.io/app=materializer-tail
+    patch: |-
+      - op: add
+        path: /metadata/labels/kaspr.io~1app
+        value: develop-materializer-tail
+  - target:
+      kind: KasprWebView
+      labelSelector: kaspr.io/app=materializer-tail
+    patch: |-
+      - op: add
+        path: /metadata/labels/kaspr.io~1app
+        value: develop-materializer-tail
+  - target:
+      kind: KasprAgent
+      name: tail-worker
+    patch: |-
+      - op: add
+        path: /spec/input/topic/name
+        value: develop-materializer-tail-requests
+  # The maintenance app: its own KasprApp, agent and task, on this environment's topics.
+  - target:
+      kind: KasprApp
+      name: materializer-maintenance
+    patch: |-
+      - op: replace
+        path: /spec/pythonPackages/packages/0
+        value: git+ssh://git@github.com/TotalWineLabs/kaspr-kafka-materializer.git@develop#egg=materializer-control-plane&subdirectory=python
+      - op: replace
+        path: /spec/template/kasprContainer/env/1/value
+        value: develop-materializer-maintenance
+  - target:
+      kind: KasprAgent
+      labelSelector: kaspr.io/app=materializer-maintenance
+    patch: |-
+      - op: add
+        path: /metadata/labels/kaspr.io~1app
+        value: develop-materializer-maintenance
+  - target:
+      kind: KasprTask
+      labelSelector: kaspr.io/app=materializer-maintenance
+    patch: |-
+      - op: add
+        path: /metadata/labels/kaspr.io~1app
+        value: develop-materializer-maintenance
+  - target:
+      kind: KasprAgent
+      name: maintenance-worker
+    patch: |-
+      - op: add
+        path: /spec/input/topic/name
+        value: develop-materializer-maintenance-requests
+      - op: add
+        path: /spec/output/topics/0/name
+        value: develop-materialization-table-events
+  - target:
+      kind: KasprTask
+      name: maintenance-step
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materialization-table-events
+  - target:
+      kind: RoleBinding
+      name: materializer-control-plane-kasprapp-manager
+    patch: |-
+      - op: replace
+        path: /subjects/0/name
+        value: develop-materializer-control-plane-app
+  - target:
+      kind: KasprAgent
+      labelSelector: kaspr.io/app=materializer-control-plane
+    patch: |-
+      - op: add
+        path: /metadata/labels/kaspr.io~1app
+        value: develop-materializer-control-plane
+  - target:
+      kind: KasprWebView
+      labelSelector: kaspr.io/app=materializer-control-plane
+    patch: |-
+      - op: add
+        path: /metadata/labels/kaspr.io~1app
+        value: develop-materializer-control-plane
+  - target:
+      kind: KasprTask
+      labelSelector: kaspr.io/app=materializer-control-plane
+    patch: |-
+      - op: add
+        path: /metadata/labels/kaspr.io~1app
+        value: develop-materializer-control-plane
+  - target:
+      kind: KasprTable
+      labelSelector: kaspr.io/app=materializer-control-plane
+    patch: |-
+      - op: add
+        path: /metadata/labels/kaspr.io~1app
+        value: develop-materializer-control-plane
+  - target:
+      kind: KasprAgent
+      name: request-intake
+    patch: |-
+      - op: add
+        path: /spec/input/topic/name
+        value: develop-materialization-requests
+      - op: add
+        path: /spec/output/topics/0/name
+        value: develop-materialization-work
+      - op: add
+        path: /spec/output/topics/1/name
+        value: develop-materializer-identity-requests
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-settings
+  - target:
+      kind: KasprAgent
+      name: resource-observation
+    patch: |-
+      - op: add
+        path: /spec/input/topic/name
+        value: develop-materialization-work
+      - op: add
+        path: /spec/output/topics/0/name
+        value: develop-materialization-work
+      - op: add
+        path: /spec/output/topics/1/name
+        value: develop-materializer-control-plane-app-schedule-requests
+      - op: add
+        path: /spec/processors/operations/1/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/1/tables/1/name
+        value: develop-settings
+  - target:
+      kind: KasprAgent
+      name: maintenance
+    patch: |-
+      - op: add
+        path: /spec/input/topic/name
+        value: develop-materialization-work
+      - op: add
+        path: /spec/output/topics/0/name
+        value: develop-materialization-work
+      - op: add
+        path: /spec/output/topics/1/name
+        value: develop-materializer-maintenance-requests
+      - op: add
+        path: /spec/output/topics/2/name
+        value: develop-materializer-tail-requests
+      - op: add
+        path: /spec/processors/operations/1/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/1/tables/1/name
+        value: develop-settings
+  - target:
+      kind: KasprAgent
+      name: runtime-status
+    patch: |-
+      - op: add
+        path: /spec/input/topic/name
+        value: develop-materialization-status
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+  - target:
+      kind: KasprAgent
+      name: table-events
+    patch: |-
+      - op: add
+        path: /spec/input/topic/name
+        value: develop-materialization-table-events
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-settings
+  - target:
+      kind: KasprAgent
+      name: workflow-apply
+    patch: |-
+      - op: add
+        path: /spec/input/topic/name
+        value: develop-materialization-work
+      - op: add
+        path: /spec/output/topics/0/name
+        value: develop-materialization-work
+      - op: add
+        path: /spec/output/topics/1/name
+        value: develop-materializer-control-plane-app-schedule-requests
+      - op: add
+        path: /spec/processors/operations/1/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/1/tables/1/name
+        value: develop-settings
+  - target:
+      kind: KasprTask
+      name: sweep-observations
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materialization-work
+  - target:
+      kind: KasprTask
+      name: sweep-observations-startup
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materialization-work
+  - target:
+      kind: KasprTask
+      name: purge-deleted-materializations
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materialization-work
+  - target:
+      kind: KasprTask
+      name: refresh-consumer-lag
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materialization-work
+  - target:
+      kind: KasprTask
+      name: schedule-table-maintenance
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materialization-work
+  - target:
+      kind: KasprWebView
+      name: materializations-create
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materialization-requests
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-settings
+  - target:
+      kind: KasprWebView
+      name: materializations-delete
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materialization-requests
+  - target:
+      kind: KasprWebView
+      name: materializations-detail
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+  - target:
+      kind: KasprWebView
+      name: materializations-list
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+  - target:
+      kind: KasprWebView
+      name: materializations-stop
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materialization-requests
+  - target:
+      kind: KasprWebView
+      name: materializations-update
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materialization-requests
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-settings
+  - target:
+      kind: KasprWebView
+      name: materializations-resume
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materialization-requests
+  - target:
+      kind: KasprWebView
+      name: materializations-schema
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+  - target:
+      kind: KasprWebView
+      name: materializations-schema-version
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+  - target:
+      kind: KasprWebView
+      name: materializations-schema-versions
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+  - target:
+      kind: KasprWebView
+      name: materializations-table
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: materializations-maintenance
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/2/name
+        value: develop-settings
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-maintenance-requests
+  - target:
+      kind: KasprWebView
+      name: system-settings
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-settings
+  - target:
+      kind: KasprWebView
+      name: topics-list
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-settings
+  - target:
+      kind: KasprWebView
+      name: topics-analyze
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-settings
+  - target:
+      kind: KasprWebView
+      name: settings-history
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-settings
+  - target:
+      kind: KasprWebView
+      name: settings-read
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-settings
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-state
+  - target:
+      kind: KasprWebView
+      name: settings-update
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-settings
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-settings-requests
+  - target:
+      kind: KasprAgent
+      name: settings-intake
+    patch: |-
+      - op: add
+        path: /spec/input/topic/name
+        value: develop-materializer-settings-requests
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-settings
+  - target:
+      kind: KasprTask
+      name: settings-bootstrap
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-settings-requests
+  # Identity: the identity tables, the identity request topic, and every view that authorizes
+  # against them. A view added to base that reads the identity table needs an entry here too;
+  # tests/test_agent_manifests.py renders this overlay and fails when one is missing.
+  - target:
+      kind: KasprAgent
+      name: identity-intake
+    patch: |-
+      - op: add
+        path: /spec/input/topic/name
+        value: develop-materializer-identity-requests
+      - op: add
+        path: /spec/output/topics/0/name
+        value: develop-materialization-work
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-identity-audit
+      - op: add
+        path: /spec/processors/operations/0/tables/2/name
+        value: develop-settings
+      - op: add
+        path: /spec/processors/operations/0/tables/3/name
+        value: develop-state
+  - target:
+      kind: KasprTask
+      name: identity-bootstrap
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprTask
+      name: identity-maintenance
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: audit-list
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-identity-audit
+      - op: add
+        path: /spec/processors/operations/0/tables/2/name
+        value: develop-settings
+  - target:
+      kind: KasprWebView
+      name: auth-login
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-settings
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: auth-logout
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: auth-password
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-settings
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: auth-refresh
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-settings
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: auth-session
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-settings
+  - target:
+      kind: KasprWebView
+      name: auth-tokens-create
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: auth-tokens-list
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: auth-tokens-revoke
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: catalog-config
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-settings
+  - target:
+      kind: KasprWebView
+      name: catalog-namespaces
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/2/name
+        value: develop-settings
+  - target:
+      kind: KasprWebView
+      name: catalog-namespace
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/2/name
+        value: develop-settings
+  - target:
+      kind: KasprWebView
+      name: catalog-tables
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/2/name
+        value: develop-settings
+  - target:
+      kind: KasprWebView
+      name: catalog-tables-create
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: catalog-table
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/2/name
+        value: develop-settings
+  - target:
+      kind: KasprWebView
+      name: catalog-table-commit
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/2/name
+        value: develop-settings
+  - target:
+      kind: KasprWebView
+      name: catalog-table-drop
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: catalog-table-metrics
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/2/name
+        value: develop-settings
+  - target:
+      kind: KasprWebView
+      name: catalog-transactions
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: auth-sessions
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: groups-create
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: groups-delete
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: groups-detail
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: groups-list
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: groups-update
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: identity-request
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: datasets-list
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: datasets-detail
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-state
+  - target:
+      kind: KasprWebView
+      name: datasets-table
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-state
+  - target:
+      kind: KasprWebView
+      name: datasets-grants
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: datasets-create
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: datasets-update
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: datasets-delete
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-state
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: datasets-grant-update
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: materializations-create
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/2/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: materializations-delete
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: materializations-detail
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: materializations-list
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: materializations-resume
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: materializations-schema-version
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: materializations-schema-versions
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: materializations-schema
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: materializations-stop
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: materializations-update
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/2/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: permissions-list
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: roles-create
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: roles-delete
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: roles-detail
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: roles-list
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: roles-update
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: settings-history
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: settings-read
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/2/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: settings-update
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: system-settings
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: topics-analyze
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: topics-list
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: users-create
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-settings
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: users-delete
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: users-detail
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: users-list
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+  - target:
+      kind: KasprWebView
+      name: users-password
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/0/tables/1/name
+        value: develop-settings
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: users-sign-out
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: users-unlock
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests
+  - target:
+      kind: KasprWebView
+      name: users-update
+    patch: |-
+      - op: add
+        path: /spec/processors/operations/0/tables/0/name
+        value: develop-directory
+      - op: add
+        path: /spec/processors/operations/1/topicSend/name
+        value: develop-materializer-identity-requests

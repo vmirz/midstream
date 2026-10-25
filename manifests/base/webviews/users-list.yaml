@@ -1,0 +1,38 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: users-list
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: users-list
+  description: "List every person with their groups, status and last activity, filtered and sorted."
+  request:
+    method: GET
+    path: /users
+  processors:
+    pipeline:
+      - list-users
+    operations:
+      - name: list-users
+        tables:
+          - name: directory
+            paramName: directory_table
+        map:
+          entrypoint: list_users
+          python: |
+            from materializer_control_plane.identity.authorization import authorize
+            from materializer_control_plane.web.http import query_params
+            from materializer_control_plane.web.identity import list_users_view
+
+            def list_users(request, directory_table):
+                principal = authorize(request, directory_table, "users.view")
+                return list_users_view(directory_table, principal, query_params(request))
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

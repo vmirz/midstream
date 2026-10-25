@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/control-plane/contracts/materializations-list-response.schema.json",
+  "title": "Materializations List Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["items", "limit", "returned"],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/materializationListItem"
+      }
+    },
+    "limit": {
+      "type": "string",
+      "enum": ["10", "30", "100", "all"]
+    },
+    "returned": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "$defs": {
+    "phase": {
+      "type": "string",
+      "enum": [
+        "requested",
+        "discovering",
+        "discovered",
+        "deploying",
+        "running",
+        "paused",
+        "deleting",
+        "deleted",
+        "failed",
+        "degraded"
+      ]
+    },
+    "materializationListItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "materialization_id",
+        "name",
+        "source_topic",
+        "destination_uri",
+        "desired_phase",
+        "observed_phase",
+        "phase_reason",
+        "updated_at"
+      ],
+      "properties": {
+        "materialization_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": ["string", "null"]
+        },
+        "source_topic": {
+          "type": "string",
+          "minLength": 1
+        },
+        "destination_uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "desired_phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "observed_phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "phase_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}

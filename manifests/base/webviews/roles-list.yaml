@@ -1,0 +1,37 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: roles-list
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: roles-list
+  description: "List every role, built-in roles first, with the groups that hold it."
+  request:
+    method: GET
+    path: /roles
+  processors:
+    pipeline:
+      - list-roles
+    operations:
+      - name: list-roles
+        tables:
+          - name: directory
+            paramName: directory_table
+        map:
+          entrypoint: list_roles
+          python: |
+            from materializer_control_plane.identity.authorization import authorize
+            from materializer_control_plane.web.identity import list_roles_view
+
+            def list_roles(request, directory_table):
+                principal = authorize(request, directory_table, "roles.view")
+                return list_roles_view(directory_table, principal)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

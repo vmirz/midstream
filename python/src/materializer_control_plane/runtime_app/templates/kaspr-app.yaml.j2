@@ -1,0 +1,11 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: {{ runtime_app_name }}
+  namespace: {{ namespace }}
+  labels:
+{{ labels | to_yaml(4) }}
+  annotations:
+{{ annotations | to_yaml(4) }}
+spec:
+{{ runtime_spec | to_yaml(2) }}

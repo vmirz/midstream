@@ -1,0 +1,38 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: catalog-transactions
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: catalog-transactions
+  description: "Iceberg REST catalog: multi-table transactions are not supported."
+  request:
+    method: POST
+    path: /catalog/v1/transactions/commit
+  processors:
+    pipeline:
+      - handle
+    operations:
+      - name: handle
+        tables:
+          - name: directory
+            paramName: directory_table
+        map:
+          entrypoint: handle
+          python: |
+            from materializer_control_plane.identity.authorization import authorize
+            from materializer_control_plane.web.catalog import catalog_errors, catalog_not_supported_view
+
+            def handle(request, directory_table):
+                with catalog_errors():
+                    authorize(request, directory_table, "catalog.read", any_dataset=True)
+                return catalog_not_supported_view("transactions")
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

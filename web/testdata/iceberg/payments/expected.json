@@ -1,0 +1,273 @@
+{
+ "location": "gs://lake/materializer/mat-a1b2c3d4e5f6/payments",
+ "metadata_location": "gs://lake/materializer/mat-a1b2c3d4e5f6/payments/metadata/00001-1b5fc40b-0820-4b1e-b7d9-6270277f2fa1.metadata.json",
+ "current_snapshot_id": 1337778467176255472,
+ "current_schema_id": 0,
+ "files": [
+  {
+   "path": "gs://lake/materializer/mat-a1b2c3d4e5f6/payments/data/ts_day=2026-10-17/p00-o0000000000-0000000005-member-0-4f6c62af1b75.parquet",
+   "record_count": 6,
+   "file_size": 5774,
+   "partition_key": "2026-10-17",
+   "timestamp_min": 1792231230000000,
+   "timestamp_max": 1792231530000000
+  }
+ ],
+ "snapshots": [
+  {
+   "snapshot_id": 1337778467176255472,
+   "parent_snapshot_id": null,
+   "sequence_number": 1,
+   "operation": "append",
+   "schema_id": 0
+  }
+ ],
+ "offsets": {
+  "0": 5
+ },
+ "rows": 6,
+ "arrow_rows": [
+  {
+   "_kafka_timestamp": "2026-10-17 10:00:30+00:00",
+   "_kafka_partition": 0,
+   "_kafka_offset": 0,
+   "_kafka_key": "K0",
+   "_kafka_headers": [
+    [
+     "event-type",
+     "test"
+    ]
+   ],
+   "_materialized_at": "2026-10-18 10:00:00+00:00",
+   "_unmapped": null,
+   "payment_id": "P-0",
+   "order_id": "O-0",
+   "amount": 0.25,
+   "method": "transfer"
+  },
+  {
+   "_kafka_timestamp": "2026-10-17 10:01:30+00:00",
+   "_kafka_partition": 0,
+   "_kafka_offset": 1,
+   "_kafka_key": "K1",
+   "_kafka_headers": [
+    [
+     "event-type",
+     "test"
+    ]
+   ],
+   "_materialized_at": "2026-10-18 10:00:00+00:00",
+   "_unmapped": null,
+   "payment_id": "P-1",
+   "order_id": "O-1",
+   "amount": 10.25,
+   "method": "card"
+  }
+ ],
+ "projection": {
+  "0": {
+   "schema_id": 0,
+   "field_count": 4,
+   "fields": [
+    {
+     "field_id": 1,
+     "path": [
+      "_kafka_timestamp"
+     ],
+     "name": "_kafka_timestamp",
+     "type": "timestamptz",
+     "required": false,
+     "since_schema_id": 0,
+     "fork_version": 1,
+     "state": "current",
+     "kind": "metadata",
+     "doc": "Kafka record timestamp; null when Kafka reports none"
+    },
+    {
+     "field_id": 2,
+     "path": [
+      "_kafka_partition"
+     ],
+     "name": "_kafka_partition",
+     "type": "int",
+     "required": true,
+     "since_schema_id": 0,
+     "fork_version": 1,
+     "state": "current",
+     "kind": "metadata",
+     "doc": "Kafka partition"
+    },
+    {
+     "field_id": 3,
+     "path": [
+      "_kafka_offset"
+     ],
+     "name": "_kafka_offset",
+     "type": "long",
+     "required": true,
+     "since_schema_id": 0,
+     "fork_version": 1,
+     "state": "current",
+     "kind": "metadata",
+     "doc": "Kafka offset"
+    },
+    {
+     "field_id": 4,
+     "path": [
+      "_kafka_key"
+     ],
+     "name": "_kafka_key",
+     "type": "string",
+     "required": false,
+     "since_schema_id": 0,
+     "fork_version": 1,
+     "state": "current",
+     "kind": "metadata",
+     "doc": "Kafka record key, UTF-8; base64 prefixed 'b64:' when not UTF-8"
+    },
+    {
+     "field_id": 5,
+     "path": [
+      "_kafka_headers"
+     ],
+     "name": "_kafka_headers",
+     "type": "map<string, string>",
+     "required": false,
+     "since_schema_id": 0,
+     "fork_version": 1,
+     "state": "current",
+     "kind": "metadata",
+     "doc": "Kafka record headers; values UTF-8, base64 prefixed 'b64:' when not UTF-8"
+    },
+    {
+     "field_id": 6,
+     "path": [
+      "_materialized_at"
+     ],
+     "name": "_materialized_at",
+     "type": "timestamptz",
+     "required": true,
+     "since_schema_id": 0,
+     "fork_version": 1,
+     "state": "current",
+     "kind": "metadata",
+     "doc": "When the materializer read the record"
+    },
+    {
+     "field_id": 7,
+     "path": [
+      "_unmapped"
+     ],
+     "name": "_unmapped",
+     "type": "string",
+     "required": false,
+     "since_schema_id": 0,
+     "fork_version": 1,
+     "state": "current",
+     "kind": "metadata",
+     "doc": "JSON object of the values no column could take; null otherwise"
+    },
+    {
+     "field_id": 10,
+     "path": [
+      "payment_id"
+     ],
+     "name": "payment_id",
+     "type": "string",
+     "required": false,
+     "fork_version": 1,
+     "state": "current",
+     "kind": "value",
+     "since_schema_id": 0
+    },
+    {
+     "field_id": 11,
+     "path": [
+      "order_id"
+     ],
+     "name": "order_id",
+     "type": "string",
+     "required": false,
+     "fork_version": 1,
+     "state": "current",
+     "kind": "value",
+     "since_schema_id": 0
+    },
+    {
+     "field_id": 12,
+     "path": [
+      "amount"
+     ],
+     "name": "amount",
+     "type": "double",
+     "required": false,
+     "fork_version": 1,
+     "state": "current",
+     "kind": "value",
+     "since_schema_id": 0
+    },
+    {
+     "field_id": 13,
+     "path": [
+      "method"
+     ],
+     "name": "method",
+     "type": "string",
+     "required": false,
+     "fork_version": 1,
+     "state": "current",
+     "kind": "value",
+     "since_schema_id": 0
+    }
+   ]
+  }
+ },
+ "tail": {
+  "schema_id": 0,
+  "committed": {
+   "0": 5
+  },
+  "answers": [
+   {
+    "file": "tail/tail-0.parquet",
+    "after": {
+     "0": 5
+    },
+    "through": {
+     "0": 7
+    },
+    "end_offsets": {
+     "0": 7
+    },
+    "rows": 2,
+    "bytes": 5558,
+    "schema_id": 0,
+    "settling": 0,
+    "time_min": 1792319520000,
+    "time_max": 1792319580000,
+    "served": [
+     {
+      "_kafka_timestamp": "2026-10-18 10:32:00+00:00",
+      "_kafka_partition": 0,
+      "_kafka_offset": 6,
+      "_kafka_key": "K6",
+      "payment_id": "P-12",
+      "order_id": "O-12",
+      "amount": 120.25,
+      "method": "transfer"
+     },
+     {
+      "_kafka_timestamp": "2026-10-18 10:33:00+00:00",
+      "_kafka_partition": 0,
+      "_kafka_offset": 7,
+      "_kafka_key": "K7",
+      "payment_id": "P-13",
+      "order_id": "O-13",
+      "amount": 130.25,
+      "method": "card"
+     }
+    ]
+   }
+  ]
+ }
+}

@@ -1,0 +1,39 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprAgent
+metadata:
+  name: {{ settings_agent_name }}
+  namespace: {{ namespace }}
+  labels:
+    kaspr.io/app: {{ runtime_app_name }}
+{{ labels | to_yaml(4) }}
+spec:
+  description: Receive live runtime settings from the control plane.
+  input:
+    declare: true
+    topic:
+      name: {{ schema_authority_updates_topic }}
+      valueSerializer: json
+      partitions: 1
+  processors:
+    pipeline:
+      - apply-control-message
+    init:
+      python: |
+        from materializer_control_plane.runtime_app.handlers.runtime_settings import handle_control_message
+    operations:
+      - name: apply-control-message
+        tables:
+          - name: {{ state_table_name }}
+            paramName: state_table
+        map:
+          entrypoint: handle
+          python: |
+            def handle(value, state_table):
+                # "*" addresses every runtime: settings changed while runtimes run.
+                if value.get("materialization_id") not in ({{ materialization_id | tojson }}, "*"):
+                    return None
+                return handle_control_message(
+                    value,
+                    state_table,
+                    materialization_id={{ materialization_id | tojson }},
+                )

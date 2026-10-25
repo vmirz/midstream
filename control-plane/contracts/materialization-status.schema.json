@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/control-plane/contracts/materialization-status.schema.json",
+  "title": "Materialization Status",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "materialization_id",
+    "desired_phase",
+    "observed_phase",
+    "phase_reason",
+    "last_transition_time",
+    "observation_source",
+    "runtime_health",
+    "resource_observation",
+    "status_version"
+  ],
+  "properties": {
+    "materialization_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "desired_phase": {
+      "$ref": "#/$defs/lifecyclePhase"
+    },
+    "observed_phase": {
+      "$ref": "#/$defs/lifecyclePhase"
+    },
+    "phase_reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "phase_message": {
+      "type": ["string", "null"]
+    },
+    "last_transition_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_heartbeat": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "last_resource_observation_time": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "observation_source": {
+      "type": "string",
+      "enum": ["runtime_event", "resource_observation", "hybrid"]
+    },
+    "runtime_health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "reason", "message"],
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["healthy", "degraded", "unknown", "unreachable"]
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "message": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "runtime_progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rows_written": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bytes_written": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "files_written": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "latest_offsets": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[0-9]+$"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "resource_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "namespace",
+        "kaspr_app_name",
+        "resource_exists",
+        "managed_agent_states"
+      ],
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kaspr_app_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resource_exists": {
+          "type": "boolean"
+        },
+        "metadata_generation": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "observed_generation": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "ready_condition": {
+          "$ref": "#/$defs/conditionOrNull"
+        },
+        "progressing_condition": {
+          "$ref": "#/$defs/conditionOrNull"
+        },
+        "rollout_in_progress": {
+          "type": ["boolean", "null"]
+        },
+        "available_members": {
+          "type": ["string", "null"]
+        },
+        "rebalance_required": {
+          "type": ["boolean", "null"]
+        },
+        "rebalancing_members": {
+          "type": ["string", "null"]
+        },
+        "managed_agent_states": {
+          "type": "object",
+          "propertyNames": {
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "managed_agents_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "managed_agents_running": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "managed_agents_paused": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "managed_agents_unknown": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "last_error": {
+      "type": ["string", "null"]
+    },
+    "status_version": {
+      "type": "integer",
+      "const": 1
+    }
+  },
+  "$defs": {
+    "lifecyclePhase": {
+      "type": "string",
+      "enum": [
+        "requested",
+        "discovering",
+        "discovered",
+        "deploying",
+        "running",
+        "paused",
+        "deleting",
+        "deleted",
+        "failed",
+        "degraded"
+      ]
+    },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason", "message", "last_transition_time"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["True", "False", "Unknown"]
+        },
+        "reason": {
+          "type": ["string", "null"]
+        },
+        "message": {
+          "type": ["string", "null"]
+        },
+        "last_transition_time": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        }
+      }
+    },
+    "conditionOrNull": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/condition"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

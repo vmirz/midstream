@@ -1,0 +1,40 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: catalog-config
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: catalog-config
+  description: "Iceberg REST catalog: the catalog's configuration and the endpoints it answers."
+  request:
+    method: GET
+    path: /catalog/v1/config
+  processors:
+    pipeline:
+      - handle
+    operations:
+      - name: handle
+        tables:
+          - name: directory
+            paramName: directory_table
+          - name: settings
+            paramName: settings_table
+        map:
+          entrypoint: handle
+          python: |
+            from materializer_control_plane.identity.authorization import authorize
+            from materializer_control_plane.web.catalog import catalog_errors, catalog_config_view
+
+            def handle(request, directory_table, settings_table):
+                with catalog_errors():
+                    authorize(request, directory_table, "catalog.read", any_dataset=True)
+                return catalog_config_view(settings_table=settings_table)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

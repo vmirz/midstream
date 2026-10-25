@@ -1,0 +1,306 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *)); /* NOSONAR: Tailwind v4 directive */
+
+@theme { /* NOSONAR: Tailwind v4 directive */
+  --font-sans:
+    ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Inter, system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+
+  --radius-control: 0.5rem;
+  --radius-panel: 0.875rem;
+
+  --color-canvas: #ffffff;
+  --color-surface: #ffffff;
+  --color-raised: #fafafa;
+  --color-line: rgba(9, 9, 11, 0.08);
+  --color-line-strong: rgba(9, 9, 11, 0.14);
+  --color-ink: #09090b;
+  --color-ink-muted: #6b7280;
+  --color-ink-faint: #9ca3af;
+  --color-accent: #0a6cff;
+  --color-accent-soft: rgba(10, 108, 255, 0.1);
+
+  --color-phase-running: #059669;
+  --color-phase-pending: #2563eb;
+  --color-phase-paused: #b45309;
+  --color-phase-failed: #dc2626;
+  --color-phase-idle: #6b7280;
+}
+
+.dark {
+  --color-canvas: #08080a;
+  --color-surface: #0f0f12;
+  --color-raised: #151519;
+  --color-line: rgba(255, 255, 255, 0.09);
+  --color-line-strong: rgba(255, 255, 255, 0.16);
+  --color-ink: #f4f4f5;
+  --color-ink-muted: #9ca3af;
+  --color-ink-faint: #6b7280;
+  --color-accent: #3b8cff;
+  --color-accent-soft: rgba(59, 140, 255, 0.14);
+
+  --color-phase-running: #34d399;
+  --color-phase-pending: #60a5fa;
+  --color-phase-paused: #fbbf24;
+  --color-phase-failed: #f87171;
+  --color-phase-idle: #9ca3af;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+    overscroll-behavior-y: none;
+  }
+
+  ::selection {
+    background: var(--color-accent-soft);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  .panel {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-panel);
+  }
+
+  .numeric {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+}
+
+@keyframes console-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.live-dot {
+  animation: console-pulse 2s ease-in-out infinite;
+}
+
+@keyframes console-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.fade-in {
+  animation: console-fade-in 180ms ease-out both;
+}
+
+/*
+ * Catching up: the hourglass beside "records behind" rests, then turns, and rests again. Each turn
+ * is a whole one, so it always rests upright, exactly where it started: resting upside down after
+ * a half turn put the icon on a different sub-pixel grid, which showed as a nudge off centre and a
+ * snap back when the loop began again.
+ */
+@keyframes hourglass-turn {
+  0%,
+  70% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.hourglass-turn {
+  animation: hourglass-turn 3s ease-in-out infinite;
+  transform-origin: 50% 50%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot,
+  .fade-in,
+  .hourglass-turn {
+    animation: none;
+  }
+}
+
+/*
+ * Running indicator: a beam travelling the perimeter of whatever is being filled.
+ *
+ * Drawn as an overlay above the content rather than behind it, so nothing opaque inside the panel
+ * — a header row, the column rail — can sit on top of the edge it runs along.
+ *
+ * The beam rides a motion path rather than a rotating conic gradient. A conic gradient turns at a
+ * constant *angular* rate, which on anything but a square traces the perimeter at a wildly varying
+ * *linear* rate: the head crawls along the long edges and snaps through the corners. On a grid
+ * twice as wide as it is tall that reads as a stutter rather than as motion, which is what made
+ * the old indicator look wrong. `offset-path` moves it at a constant linear speed on every edge —
+ * measured at 39px per 1% of the lap on all four — so the beam travels the way the eye expects
+ * whatever the panel's proportions.
+ *
+ * One lap is deliberately unhurried. The previous 1.6s lap put the head above 2,500px/s on a
+ * full-width grid, which reads as frantic, as if something were going wrong. 5s is around 800px/s
+ * at that size, which reads as "working".
+ *
+ * The base rule is the fallback, for browsers without basic shapes on `offset-path`: the original
+ * conic sweep, reduced to a ring by the standard two-layer XOR mask — one layer over the padding
+ * box, one over the content box, excluded from each other, leaving a band exactly as thick as the
+ * padding. A mask was needed because a cover painted over the middle would have to match the
+ * background of everything underneath, and anything opaque in the panel would sit on top of the
+ * ring and hide it.
+ */
+@keyframes run-sweep {
+  to {
+    transform: translate(-50%, -50%) rotate(1turn);
+  }
+}
+
+@keyframes run-travel {
+  to {
+    offset-distance: 100%;
+  }
+}
+
+@keyframes run-breathe {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.run-ring {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  border-radius: inherit;
+  overflow: hidden;
+  padding: 1.5px;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.run-ring::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 220%;
+  height: 220%;
+  transform: translate(-50%, -50%);
+  /* A long, soft ramp rather than a hard-edged wedge: a rotating highlight hides the uneven
+     angular speed far better than a discrete head does. */
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg 190deg,
+    color-mix(in srgb, var(--color-accent) 45%, transparent) 320deg,
+    var(--color-accent) 358deg,
+    transparent 360deg
+  );
+  animation: run-sweep 4s linear infinite;
+}
+
+@supports (offset-path: inset(0 round 1px)) {
+  /* The beam supersedes the sweep, and with it the mask that made the sweep a ring. */
+  .run-ring {
+    padding: 0;
+    -webkit-mask: none;
+    mask: none;
+    /* A faint constant ring under the beam, so the panel reads as active between passes rather
+       than only at the instant the beam is on a given edge. */
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 22%, transparent);
+  }
+
+  .run-ring::before {
+    display: none;
+  }
+
+  .run-ring::after {
+    content: '';
+    position: absolute;
+    width: 180px;
+    height: 2px;
+    border-radius: 999px;
+    /* Inset by half the beam's thickness. `inset(0 …)` centres it on the border line, which the
+       panel's own `overflow: hidden` then cuts in half; one pixel in, the whole beam is visible. */
+    offset-path: inset(1px round calc(var(--radius-panel) - 1px));
+    offset-rotate: auto;
+    offset-distance: 0%;
+    /* Brightest at the leading edge, fading back into a tail, so the direction of travel reads
+       without the beam needing a hard end. */
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, var(--color-accent) 35%, transparent) 55%,
+      var(--color-accent) 100%
+    );
+    animation: run-travel 5s linear infinite;
+  }
+}
+
+/*
+ * Reduced motion gets no travel at all.
+ *
+ * Slowing a lap down still sends a bright object across the screen, which is the thing being
+ * avoided. A ring that breathes in place carries the same "still working" meaning without moving.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .run-ring::before,
+  .run-ring::after {
+    display: none;
+  }
+
+  .run-ring {
+    padding: 0;
+    -webkit-mask: none;
+    mask: none;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 40%, transparent);
+    animation: run-breathe 2.4s ease-in-out infinite;
+  }
+}

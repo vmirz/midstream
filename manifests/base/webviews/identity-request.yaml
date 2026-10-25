@@ -1,0 +1,37 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: identity-request
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: identity-request
+  description: "Report whether a change to users, groups or roles was applied, refused, or is still pending."
+  request:
+    method: GET
+    path: /identity/requests/{request_id}
+  processors:
+    pipeline:
+      - get-request
+    operations:
+      - name: get-request
+        tables:
+          - name: directory
+            paramName: directory_table
+        map:
+          entrypoint: get_request
+          python: |
+            from materializer_control_plane.identity.authorization import authorize
+            from materializer_control_plane.web.identity import identity_request_view
+
+            def get_request(request, request_id, directory_table):
+                principal = authorize(request, directory_table, None, allow_password_change=True)
+                return identity_request_view(directory_table, principal, request_id)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

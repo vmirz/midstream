@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/control-plane/contracts/runtime-binding.schema.json",
+  "title": "Runtime Binding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "materialization_id",
+    "runtime_mode",
+    "kaspr_app_name",
+    "namespace",
+    "managed_agent_names",
+    "template_version",
+    "last_applied_spec_hash",
+    "last_apply_operation_id"
+  ],
+  "properties": {
+    "materialization_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runtime_mode": {
+      "type": "string",
+      "enum": ["dedicated", "shared"]
+    },
+    "kaspr_app_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "namespace": {
+      "type": "string",
+      "minLength": 1
+    },
+    "managed_agent_names": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "template_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "last_applied_spec_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "last_apply_operation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "resource_profile": {
+      "type": ["string", "null"]
+    },
+    "source_topic": {
+      "type": ["string", "null"]
+    },
+    "destination_uri": {
+      "type": ["string", "null"]
+    },
+    "schema_version": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    },
+    "created_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  }
+}

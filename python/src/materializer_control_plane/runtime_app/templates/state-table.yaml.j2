@@ -1,0 +1,15 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTable
+metadata:
+  name: {{ state_table_name }}
+  namespace: {{ namespace }}
+  labels:
+    kaspr.io/app: {{ runtime_app_name }}
+{{ labels | to_yaml(4) }}
+spec:
+  name: {{ state_table_name }}
+  description: Globally replicated runtime state - each table's schema, committed offsets and file decisions, and live settings.
+  global: true
+  keySerializer: json
+  valueSerializer: json
+  partitions: 1

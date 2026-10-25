@@ -1,0 +1,44 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTask
+metadata:
+  name: settings-bootstrap
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: settings-bootstrap
+  description: At startup, ask the settings agent to give the runtime settings a lineage if they have none, so runtimes follow this control plane's settings and no earlier installation's.
+  onLeader: true
+  processors:
+    pipeline:
+      - build-bootstrap-request
+      - send-bootstrap-request
+    init:
+      python: |
+        from datetime import UTC, datetime
+
+        from materializer_control_plane.handlers.settings import build_settings_bootstrap_request
+
+        def current_timestamp():
+            return datetime.now(tz=UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    operations:
+      - name: build-bootstrap-request
+        map:
+          entrypoint: build_request
+          python: |
+            def build_request():
+                return build_settings_bootstrap_request(requested_at=current_timestamp())
+      - name: send-bootstrap-request
+        topicSend:
+          name: materializer-settings-requests
+          valueSerializer: json
+          keySelector:
+            python: |
+              def select_key(value):
+                  from materializer_control_plane.storage.settings import settings_routing_key
+
+                  return settings_routing_key(value["scope"])
+          valueSelector:
+            python: |
+              def select_value(value):
+                  return value

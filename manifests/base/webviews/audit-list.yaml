@@ -1,0 +1,42 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: audit-list
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: audit-list
+  description: "Return the audit log of sign-ins and changes to users, groups and roles, newest first, a page at a time."
+  request:
+    method: GET
+    path: /audit
+  processors:
+    pipeline:
+      - list-audit
+    operations:
+      - name: list-audit
+        tables:
+          - name: directory
+            paramName: directory_table
+          - name: identity-audit
+            paramName: audit_table
+          - name: settings
+            paramName: settings_table
+        map:
+          entrypoint: list_audit
+          python: |
+            from materializer_control_plane.identity.authorization import authorize
+            from materializer_control_plane.web.http import query_params
+            from materializer_control_plane.web.identity import audit_view
+
+            def list_audit(request, directory_table, audit_table, settings_table):
+                principal = authorize(request, directory_table, "audit.view")
+                return audit_view(audit_table, principal, query_params(request), settings_table=settings_table)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

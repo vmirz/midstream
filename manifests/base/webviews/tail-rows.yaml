@@ -1,0 +1,65 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: tail-rows
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-tail
+spec:
+  name: tail-rows
+  description: "The newest records of a table past the offsets a run has, from Kafka, as one Parquet file in the table's format: for the console alone."
+  request:
+    method: GET
+    path: /tail/v1/materializations/{materialization_id}/tables/{table}
+  processors:
+    pipeline:
+      - answer
+    operations:
+      - name: answer
+        map:
+          entrypoint: answer
+          python: |
+            from materializer_control_plane.tail_app.handlers import tail_rows
+
+            async def answer(request, materialization_id, table):
+                # Authorizes the caller first, through the control plane: the console's credential,
+                # and "data.query" on the table's dataset (tail_app/auth.py::authorize_tail).
+                return await tail_rows(request, materialization_id, table)
+  response:
+    # Parquet: Kaspr sends the bytes as they are. A refusal is the control plane's error body, as
+    # JSON (Kaspr 0.11.30 and kaspr-operator 0.19.7 or later).
+    contentType: application/octet-stream
+    errorContentType: application/json
+    statusCodeSelector:
+      onSuccess:
+        python: |
+          def status_code(data):
+              from materializer_control_plane.tail_app.handlers import success_status
+
+              return success_status(data)
+    headersSelector:
+      onSuccess:
+        python: |
+          def headers(data):
+              from materializer_control_plane.tail_app.handlers import success_headers
+
+              return success_headers(data)
+      onError:
+        python: |
+          def headers(error):
+              from materializer_control_plane.tail_app.handlers import error_headers
+
+              return error_headers(error)
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              from materializer_control_plane.tail_app.handlers import success_body
+
+              return success_body(data)
+      onError:
+        python: |
+          def body(error):
+              from materializer_control_plane.tail_app.handlers import error_body
+
+              return error_body(error)

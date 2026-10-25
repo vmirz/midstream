@@ -1,0 +1,54 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: materializations-list
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: materializations-list
+  description: List materializations with bounded prefix-scan semantics and optional status filtering.
+  request:
+    method: GET
+    path: /materializations
+  processors:
+    pipeline:
+      - list-materializations
+    operations:
+      - name: list-materializations
+        tables:
+          - name: state
+            paramName: control_plane_table
+          - name: directory
+            paramName: directory_table
+        map:
+          entrypoint: list_materializations
+          python: |
+            from materializer_control_plane.identity.authorization import authorize
+            from materializer_control_plane.web.materializations import list_materializations_view
+
+            def read_query_params(request):
+                if hasattr(request, "query_params"):
+                    return request.query_params
+                if hasattr(request, "query"):
+                    return request.query
+                if hasattr(request, "rel_url"):
+                    return request.rel_url.query
+                return {}
+
+            def list_materializations(request, control_plane_table, directory_table):
+                authorize(request, directory_table, "materializations.view")
+                query_params = read_query_params(request)
+                return list_materializations_view(
+                    control_plane_table,
+                    limit=query_params.get("limit"),
+                    status=query_params.get("status"),
+                    q=query_params.get("q"),
+                )
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

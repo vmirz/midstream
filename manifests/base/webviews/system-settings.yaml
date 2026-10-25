@@ -1,0 +1,39 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: system-settings
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: system-settings
+  description: Report the defaults a new materialization takes, such as its destination, so clients can show them.
+  request:
+    method: GET
+    path: /system/settings
+  processors:
+    pipeline:
+      - read-settings
+    operations:
+      - name: read-settings
+        tables:
+          - name: settings
+            paramName: settings_table
+          - name: directory
+            paramName: directory_table
+        map:
+          entrypoint: read_settings
+          python: |
+            from materializer_control_plane.identity.authorization import authorize
+            from materializer_control_plane.web.system import settings_view
+
+            def read_settings(request, settings_table, directory_table):
+                authorize(request, directory_table, "materializations.view")
+                return settings_view(settings_table=settings_table)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

@@ -1,0 +1,55 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: materializations-schema-versions
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: materializations-schema-versions
+  description: List the archived schemas of one of a materialization's tables.
+  request:
+    method: GET
+    path: /materializations/{materialization_id}/tables/{table_name}/schema/versions
+  processors:
+    pipeline:
+      - list-schema-versions
+    operations:
+      - name: list-schema-versions
+        tables:
+          - name: state
+            paramName: control_plane_table
+          - name: directory
+            paramName: directory_table
+        map:
+          entrypoint: list_schema_versions
+          python: |
+            from materializer_control_plane.identity.authorization import authorize
+            from materializer_control_plane.web.materializations import (
+                list_materialization_schema_versions_view,
+            )
+
+            def list_schema_versions(request, materialization_id, table_name, control_plane_table, directory_table):
+                # The schemas need "dataset.view_schema" on the table's dataset, which the view checks.
+                principal = authorize(request, directory_table, "materializations.view_details")
+                limit = None
+                if hasattr(request, "query_params"):
+                    limit = request.query_params.get("limit")
+                elif hasattr(request, "query"):
+                    limit = request.query.get("limit")
+                elif hasattr(request, "rel_url"):
+                    limit = request.rel_url.query.get("limit")
+                return list_materialization_schema_versions_view(
+                    control_plane_table,
+                    materialization_id,
+                    table_name,
+                    principal=principal,
+                    limit=limit,
+                )
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

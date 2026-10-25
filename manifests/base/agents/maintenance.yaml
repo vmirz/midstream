@@ -1,0 +1,118 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprAgent
+metadata:
+  name: maintenance
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  description: Executes scheduled maintenance work such as retention purges, consumer-lag refresh and the maintenance and tail apps' table ticks.
+  input:
+    topic:
+      name: materialization-work
+      valueSerializer: json
+    declare: true
+  output:
+    topics:
+      # A scheduled step arrives keyed `materialization:__system__` and writes nothing: the work it
+      # finds for a materialization goes back to the work topic keyed by that materialization, so
+      # it is handled in the materialization's own shard of the state table.
+      - name: materialization-work
+        valueSerializer: json
+        keySelector:
+          python: |
+            def select_key(value):
+                return value.get("key")
+        valueSelector:
+          python: |
+            def select_value(value):
+                return value["value"]
+        headersSelector:
+          python: |
+            def select_headers(value):
+                return value.get("headers", {})
+        predicate:
+          python: |
+            def should_send(value):
+                return value is not None and value.get("route") == "work"
+      # Every maintained table's tick, and a cancel for each table on its way out, keyed by table
+      # for the maintenance app (`services/table_maintenance.py`).
+      - name: materializer-maintenance-requests
+        valueSerializer: json
+        # Declared here too: the control plane may tick before the maintenance app first starts.
+        declare: true
+        partitions: 6
+        keySelector:
+          python: |
+            def select_key(value):
+                return value.get("key")
+        valueSelector:
+          python: |
+            def select_value(value):
+                return value["value"]
+        predicate:
+          python: |
+            def should_send(value):
+                return value is not None and value.get("route") == "maintenance"
+      # Every table named to the tail app, a tick when it is tailed and a cancel when it is not,
+      # keyed by table (`services/live_tail.py`). The member that gets a table's partition tails
+      # it, so the partitions bound the tail app's members and changing them moves every table.
+      - name: materializer-tail-requests
+        valueSerializer: json
+        # Declared here too: the control plane may tick before the tail app first starts.
+        declare: true
+        partitions: 64
+        keySelector:
+          python: |
+            def select_key(value):
+                return value.get("key")
+        valueSelector:
+          python: |
+            def select_value(value):
+                return value["value"]
+        predicate:
+          python: |
+            def should_send(value):
+                return value is not None and value.get("route") == "tail"
+  processors:
+    pipeline:
+      - select-maintenance-work
+      - execute-maintenance
+    init:
+      python: |
+        from materializer_control_plane.handlers import maintenance as maintenance_handler
+        from materializer_control_plane.kafka.metadata import get_metadata_client
+
+        # Shared with the topics-analyze view so broker connections stay warm.
+        metadata_client = get_metadata_client()
+    operations:
+      - name: select-maintenance-work
+        filter:
+          entrypoint: select_maintenance_work
+          python: |
+            def select_maintenance_work(value):
+                return value.get("step") in {
+                    "purge_deleted_materializations",
+                    "refresh_consumer_lag",
+                    "record_consumer_lag",
+                    "schedule_table_maintenance",
+                }
+      - name: execute-maintenance
+        tables:
+          - name: state
+            paramName: control_plane_table
+          - name: settings
+            paramName: settings_table
+        map:
+          entrypoint: execute_maintenance
+          python: |
+            # Async so the Kafka lookups wait off the event loop, which also serves the API. Return
+            # the handler's generator as-is: Kaspr sends each routed output it yields, and cannot
+            # iterate an async generator here. Never make this an async generator.
+            async def execute_maintenance(value, control_plane_table, settings_table):
+                return await maintenance_handler.handle_maintenance_work_async(
+                    value,
+                    control_plane_table,
+                    metadata_client=metadata_client,
+                    settings_table=settings_table,
+                )

@@ -1,0 +1,13 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTable
+metadata:
+  name: state
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: state
+  global: true
+  keySerializer: json
+  valueSerializer: json
+  partitions: 3

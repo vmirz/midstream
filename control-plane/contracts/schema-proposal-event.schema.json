@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/control-plane/contracts/schema-proposal-event.schema.json",
+  "title": "Schema Proposal Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "proposal_id",
+    "materialization_id",
+    "runtime_app_ref",
+    "agent_name",
+    "base_schema_version",
+    "proposed_additions",
+    "breaking_changes",
+    "proposed_at"
+  ],
+  "properties": {
+    "proposal_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "materialization_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runtime_app_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agent_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "base_schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "proposed_additions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fieldProposal"
+      }
+    },
+    "breaking_changes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/breakingChange"
+      }
+    },
+    "sample_partition": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "sample_offset": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "raw_sample": {
+      "type": ["object", "array", "string", "number", "boolean", "null"]
+    },
+    "proposed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "fieldProposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field_path", "field_type"],
+      "properties": {
+        "field_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "field_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nullable": {
+          "type": "boolean"
+        },
+        "logical_type": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "breakingChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field_path", "reason"],
+      "properties": {
+        "field_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_type": {
+          "type": ["string", "null"]
+        },
+        "observed_type": {
+          "type": ["string", "null"]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,37 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: users-detail
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: users-detail
+  description: "Return one person's account: groups, effective permissions and their sources, sessions and activity."
+  request:
+    method: GET
+    path: /users/{user_id}
+  processors:
+    pipeline:
+      - get-user
+    operations:
+      - name: get-user
+        tables:
+          - name: directory
+            paramName: directory_table
+        map:
+          entrypoint: get_user
+          python: |
+            from materializer_control_plane.identity.authorization import authorize
+            from materializer_control_plane.web.identity import get_user_view
+
+            def get_user(request, user_id, directory_table):
+                principal = authorize(request, directory_table, "users.view_details")
+                return get_user_view(directory_table, principal, user_id)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

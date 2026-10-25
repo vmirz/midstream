@@ -1,0 +1,14 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTable
+metadata:
+  name: settings
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: settings
+  description: Settings overrides chosen from the console, and the last 100 changes of each scope.
+  global: true
+  keySerializer: json
+  valueSerializer: json
+  partitions: 3

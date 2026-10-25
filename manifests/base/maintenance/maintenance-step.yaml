@@ -1,0 +1,40 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTask
+metadata:
+  name: maintenance-step
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-maintenance
+spec:
+  name: maintenance-step
+  description: Finish the jobs that are done and start those that are due, on every table this member maintains.
+  # Every member: each drives the jobs of its own tables.
+  schedule:
+    interval: 5s
+  processors:
+    pipeline:
+      - advance-maintenance
+      - send-table-events
+    init:
+      python: |
+        from materializer_control_plane.maintenance_app.handlers import advance_maintenance
+    operations:
+      - name: advance-maintenance
+        map:
+          entrypoint: advance
+          python: |
+            # Returns a plain generator of routed table events; a compaction runs on in its child.
+            async def advance():
+                return await advance_maintenance(app=context["app"])
+      - name: send-table-events
+        topicSend:
+          name: materialization-table-events
+          valueSerializer: json
+          keySelector:
+            python: |
+              def select_key(value):
+                  return value["key"]
+          valueSelector:
+            python: |
+              def select_value(value):
+                  return value["value"]

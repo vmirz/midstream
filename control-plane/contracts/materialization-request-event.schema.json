@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/control-plane/contracts/materialization-request-event.schema.json",
+  "title": "Materialization Request Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "request_id",
+    "materialization_id",
+    "action",
+    "submitted_at",
+    "submitted_by",
+    "spec"
+  ],
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "materialization_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "action": {
+      "type": "string",
+      "enum": ["create", "pause", "resume", "delete", "update"]
+    },
+    "submitted_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "submitted_by": {
+      "type": "string",
+      "minLength": 1
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_topic", "destination_uri"],
+      "properties": {
+        "name": {
+          "type": ["string", "null"]
+        },
+        "source_topic": {
+          "type": "string",
+          "minLength": 1
+        },
+        "destination_uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime_mode": {
+          "type": "string",
+          "enum": ["dedicated", "shared"]
+        },
+        "runtime_name": {
+          "type": ["string", "null"]
+        },
+        "namespace": {
+          "type": ["string", "null"]
+        },
+        "resource_profile": {
+          "type": ["string", "null"]
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

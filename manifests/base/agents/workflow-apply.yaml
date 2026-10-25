@@ -1,0 +1,132 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprAgent
+metadata:
+  name: workflow-apply
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  description: Executes bounded control-plane workflow steps and emits follow-up work.
+  input:
+    topic:
+      name: materialization-work
+      valueSerializer: json
+    declare: true
+  output:
+    topics:
+      - name: materialization-work
+        valueSerializer: json
+        keySelector:
+          python: |
+            def select_key(value):
+                return value.get("key")
+        valueSelector:
+          python: |
+            def select_value(value):
+                return value["value"]
+        headersSelector:
+          python: |
+            def select_headers(value):
+                return value.get("headers", {})
+        predicate:
+          python: |
+            def should_send(value):
+                return value is not None and value.get("route") == "work"
+      - name: materializer-control-plane-schedule-requests
+        valueSerializer: json
+        keySelector:
+          python: |
+            def select_key(value):
+                return value.get("key")
+        valueSelector:
+          python: |
+            def select_value(value):
+                return value["value"]
+        headersSelector:
+          python: |
+            def select_headers(value):
+                return value.get("headers", {})
+        predicate:
+          python: |
+            def should_send(value):
+                return value is not None and value.get("route") == "scheduler"
+      - nameSelector:
+          python: |
+            def select_name(value):
+                return value.get("topic")
+        declare: true
+        partitions: 1
+        valueSerializer: json
+        keySelector:
+          python: |
+            def select_key(value):
+                return value.get("key")
+        valueSelector:
+          python: |
+            def select_value(value):
+                return value["value"]
+        headersSelector:
+          python: |
+            def select_headers(value):
+                return value.get("headers", {})
+        predicate:
+          python: |
+            def should_send(value):
+                return value is not None and value.get("route") == "topic"
+  processors:
+    pipeline:
+      - select-work
+      - execute-work
+    init:
+      python: |
+        from materializer_control_plane.handlers import workflow_apply as workflow_apply_handler
+        from materializer_control_plane.kafka import AIOKafkaAdminClient
+        from materializer_control_plane.kubernetes import KubernetesKasprAppClient
+        from materializer_control_plane.schema.discovery import KafkaTopicDiscoveryService
+
+        discovery_service = KafkaTopicDiscoveryService.from_environment()
+        kafka_admin_client = AIOKafkaAdminClient.from_environment()
+        kaspr_app_client = KubernetesKasprAppClient()
+    operations:
+      - name: select-work
+        filter:
+          entrypoint: select_work
+          python: |
+            def select_work(value):
+                # Must match WORKFLOW_APPLY_STEPS in services/workflow.py. A step missing here is
+                # consumed and dropped in silence, which is how destination cleanup once stopped running.
+                return value.get("step") in {
+                    "tables_claimed",
+                    "claim_rejected",
+                    "start_discovery",
+                    "discover_tables",
+                    "create_table",
+                    "apply_runtime",
+                    "await_runtime_drained",
+                    "delete_runtime",
+                    "cleanup_runtime_kafka",
+                    "drop_table",
+                    "purge_materialization_records",
+                }
+      - name: execute-work
+        tables:
+          - name: state
+            paramName: control_plane_table
+          - name: settings
+            paramName: settings_table
+        map:
+          entrypoint: execute_work
+          python: |
+            # Async so no step waits on the network on the event loop that also serves the API:
+            # discovery and the Kubernetes and Kafka admin calls wait on their clients' own threads,
+            # under deadlines, and creating and dropping tables runs on a worker thread.
+            # Return the handler's generator as-is; Kaspr cannot iterate an async generator here.
+            async def execute_work(value, control_plane_table, settings_table):
+                return await workflow_apply_handler.handle_work_event_for_routed_output_async(
+                    value,
+                    control_plane_table,
+                    discovery_service,
+                    kaspr_app_client=kaspr_app_client,
+                    kafka_admin_client=kafka_admin_client,
+                    settings_table=settings_table,
+                )

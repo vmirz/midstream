@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/control-plane/contracts/materialization-work.schema.json",
+  "title": "Materialization Work Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "work_id",
+    "materialization_id",
+    "step",
+    "requested_at",
+    "caused_by",
+    "dedupe_key"
+  ],
+  "properties": {
+    "work_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "materialization_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "step": {
+      "type": "string",
+      "enum": [
+        "start_discovery",
+        "apply_runtime",
+        "delete_runtime",
+        "observe_runtime",
+        "sweep_observations",
+        "repair_state"
+      ]
+    },
+    "requested_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "caused_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "request",
+            "runtime_status",
+            "resource_observation",
+            "scheduler",
+            "repair"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "dedupe_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target_runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "namespace": {
+          "type": "string"
+        },
+        "kaspr_app_name": {
+          "type": "string"
+        }
+      }
+    },
+    "observation_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "scheduled_for": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["one_shot", "sweep"]
+        }
+      }
+    }
+  }
+}

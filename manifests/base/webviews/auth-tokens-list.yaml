@@ -1,0 +1,37 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: auth-tokens-list
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: auth-tokens-list
+  description: List the caller's access tokens, never their secrets.
+  request:
+    method: GET
+    path: /auth/tokens
+  processors:
+    pipeline:
+      - read-tokens
+    operations:
+      - name: read-tokens
+        tables:
+          - name: directory
+            paramName: directory_table
+        map:
+          entrypoint: read_tokens
+          python: |
+            from materializer_control_plane.identity.authorization import authorize
+            from materializer_control_plane.web.tokens import my_access_tokens_view
+
+            def read_tokens(request, directory_table):
+                principal = authorize(request, directory_table, None)
+                return my_access_tokens_view(directory_table, principal)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

@@ -1,0 +1,71 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: auth-login
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: auth-login
+  description: "Check an email and password and start a session; records the sign-in or the failed attempt."
+  request:
+    method: POST
+    path: /auth/login
+  processors:
+    pipeline:
+      - sign-in
+      - send-identity-request
+      - return-response
+    operations:
+      - name: sign-in
+        tables:
+          - name: directory
+            paramName: directory_table
+          - name: settings
+            paramName: settings_table
+        map:
+          entrypoint: sign_in_request
+          python: |
+            from materializer_control_plane.web.auth import sign_in
+            from materializer_control_plane.web.http import json_body
+
+            async def sign_in_request(request, directory_table, settings_table):
+                body = await json_body(request, optional=True)
+                result = await sign_in(directory_table, body, request=request, settings_table=settings_table)
+                return result.to_value()
+      - name: send-identity-request
+        topicSend:
+          name: materializer-identity-requests
+          passThrough: true
+          valueSerializer: json
+          predicate:
+            python: |
+              def has_request(value):
+                  return value.get("request_event") is not None
+          keySelector:
+            python: |
+              def select_key(value):
+                  from materializer_control_plane.storage.identity import identity_routing_key
+
+                  return identity_routing_key()
+          valueSelector:
+            python: |
+              def select_value(value):
+                  return value["request_event"]
+      - name: return-response
+        map:
+          python: |
+            def return_response(value):
+                return {"status": value["status"], "body": value["body"]}
+  response:
+    contentType: application/json
+    statusCodeSelector:
+      onSuccess:
+        python: |
+          def status_code(data):
+              return data["status"]
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data["body"]

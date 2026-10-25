@@ -1,0 +1,47 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprAgent
+metadata:
+  name: maintenance-worker
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-maintenance
+spec:
+  description: Take the control plane's ticks, requests and cancels for the tables this member maintains.
+  # Keyed by table, so each table is one member's; the partitions bound how many members share them.
+  input:
+    topic:
+      name: materializer-maintenance-requests
+      valueSerializer: json
+      partitions: 6
+    declare: true
+  output:
+    topics:
+      - name: materialization-table-events
+        valueSerializer: json
+        keySelector:
+          python: |
+            def select_key(value):
+                return value.get("key")
+        valueSelector:
+          python: |
+            def select_value(value):
+                return value["value"]
+        predicate:
+          python: |
+            def should_send(value):
+                return isinstance(value, dict) and value.get("route") == "events"
+  processors:
+    pipeline:
+      - take-message
+    init:
+      python: |
+        from materializer_control_plane.maintenance_app.handlers import handle_maintenance_message
+    operations:
+      - name: take-message
+        map:
+          entrypoint: take
+          python: |
+            # Answers at once: the jobs run on the maintenance-step task. Returns a plain generator
+            # of the table events the message settles.
+            def take(value):
+                return handle_maintenance_message(value)

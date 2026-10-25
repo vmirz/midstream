@@ -1,0 +1,64 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: roles-delete
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: roles-delete
+  description: "Delete a custom role, removing it from every group, and emit the request the identity agent applies."
+  request:
+    method: DELETE
+    path: /roles/{role_id}
+  processors:
+    pipeline:
+      - prepare-request
+      - send-identity-request
+      - return-response
+    operations:
+      - name: prepare-request
+        tables:
+          - name: directory
+            paramName: directory_table
+        map:
+          entrypoint: prepare_request
+          python: |
+            from materializer_control_plane.identity.authorization import authorize
+            from materializer_control_plane.web.identity import delete_role_request
+
+            def prepare_request(request, role_id, directory_table):
+                principal = authorize(request, directory_table, "roles.manage")
+                return delete_role_request(directory_table, principal, role_id, request=request).to_value()
+      - name: send-identity-request
+        topicSend:
+          name: materializer-identity-requests
+          passThrough: true
+          valueSerializer: json
+          keySelector:
+            python: |
+              def select_key(value):
+                  from materializer_control_plane.storage.identity import identity_routing_key
+
+                  return identity_routing_key()
+          valueSelector:
+            python: |
+              def select_value(value):
+                  return value["request_event"]
+      - name: return-response
+        map:
+          python: |
+            def return_response(value):
+                return value["response"]
+  response:
+    contentType: application/json
+    statusCodeSelector:
+      onSuccess:
+        python: |
+          def status_code(data):
+              return 202
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

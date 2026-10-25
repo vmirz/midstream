@@ -1,0 +1,259 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: materializer-control-plane
+  namespace: kafka-sql
+  labels:
+    app.kubernetes.io/name: materializer-control-plane
+spec:
+  replicas: 1
+  bootstrapServers: crs-kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092
+  authentication:
+    type: scram-sha-512
+    username: materializer-control-plane-user
+    passwordSecret:
+      secretName: materializer-control-plane-user
+      passwordKey: password  
+  storage:
+    type: persistent-claim
+    class: default
+    size: 1Gi
+    deleteClaim: True
+  config:
+    schedulerEnabled: true
+    schedulerCronEnabled: true
+    valueSerializer: json
+    topicAllowDeclare: true
+    webBasePath: /
+    webPort: 6065
+  resources:
+    requests:
+      cpu: 0.5
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 512Mi
+  # The CPU request follows use, resized in place; the limits stay the ceilings and memory stays as
+  # set (handbook 02 §2.10c). The ceiling stays under the CPU limit, so the pod never turns Guaranteed.
+  verticalPodAutoscaler:
+    enabled: true
+    updateMode: InPlaceOrRecreate
+    controlledResources: [cpu]
+    controlledValues: RequestsOnly
+    minAllowed:
+      cpu: 100m
+    maxAllowed:
+      cpu: 900m
+  pythonPackages:
+    packages:
+      - git+ssh://git@github.com/TotalWineLabs/kaspr-kafka-materializer.git@main#egg=materializer-control-plane&subdirectory=python
+    installPolicy:
+      retries: 3
+      timeout: 600
+      onFailure: block
+  template:
+    pod:
+      nodeSelector:
+        app: sipapi
+      tolerations:
+        - effect: NoSchedule
+          key: app
+          operator: Equal
+          value: twmapp      
+      volumes:
+        - name: github-ssh
+          secret:
+            defaultMode: 256
+            secretName: github-deploy-key
+            items:
+              - key: id_ed25519
+                path: id_ed25519
+              - key: known_hosts
+                path: known_hosts
+        - name: gcp-credentials
+          secret:
+            secretName: kafka-materializer-gcp-credentials
+            items:
+              - key: google_application_credentials.json
+                path: google_application_credentials.json
+    pythonPackagesInitContainer:
+      env:
+        - name: GIT_SSH_COMMAND
+          value: >-
+            ssh -i /var/run/secrets/github-ssh/id_ed25519
+            -o IdentitiesOnly=yes
+            -o UserKnownHostsFile="/tmp/github_known_hosts /var/run/secrets/github-ssh/known_hosts"
+            -o StrictHostKeyChecking=accept-new
+      volumeMounts:
+        - name: github-ssh
+          mountPath: /var/run/secrets/github-ssh
+          readOnly: true
+    kasprContainer:
+      env:
+        - name: MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE
+          value: kafka-sql
+        - name: MATERIALIZER_CONTROL_PLANE_DEFAULT_LIST_LIMIT
+          value: "30"
+        - name: MATERIALIZER_CONTROL_PLANE_DELETED_RETENTION_HOURS
+          value: "168"
+        # Every runtime member's persistent volume: it holds only the runtime's state table. The
+        # control plane's own volume is the storage above.
+        - name: MATERIALIZER_CONTROL_PLANE_DEFAULT_RUNTIME_STORAGE_SIZE
+          value: 64Mi
+        - name: MATERIALIZER_CONTROL_PLANE_DEFAULT_RUNTIME_REPLICAS
+          value: "1"
+        # The gs:// prefix every materialization's tables are created under. Set per environment;
+        # left empty, no materialization can be created until it is set on the Settings page.
+        - name: MATERIALIZER_CONTROL_PLANE_DEFAULT_DESTINATION_URI
+          value: ""
+        - name: MATERIALIZER_CONTROL_PLANE_RUNTIME_NAME_PREFIX
+          value: kaspr
+        - name: MATERIALIZER_CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION
+          value: v1
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: /app/gcp/google_application_credentials.json
+        - name: MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC
+          value: |-
+            replicas: 16
+            bootstrapServers: crs-kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092
+            authentication:
+              type: scram-sha-512
+              username: materializer-control-plane-user
+              passwordSecret:
+                secretName: materializer-control-plane-user
+                passwordKey: password
+            storage:
+              type: persistent-claim
+              class: default
+              size: 64Mi
+              deleteClaim: true
+            # Two cores let a seal run beside the worker (handbook 12 §12.10); the members request what
+            # they use, resized in place (handbook 02 §2.10c).
+            resources:
+              requests:
+                cpu: 0.5
+                memory: 1Gi
+              limits:
+                cpu: 2
+                memory: 1Gi
+            verticalPodAutoscaler:
+              enabled: true
+              updateMode: InPlaceOrRecreate
+              controlledResources: [cpu]
+              controlledValues: RequestsOnly
+              minAllowed:
+                cpu: 100m
+              maxAllowed:
+                cpu: 1500m
+            config:
+              topicAllowDeclare: true
+              brokerRebalanceTimeout: 300
+            pythonPackages:
+              packages:
+                - git+ssh://git@github.com/TotalWineLabs/kaspr-kafka-materializer.git@main#egg=materializer-control-plane&subdirectory=python
+            template:
+              pod:
+                nodeSelector:
+                  app: sipapi
+                tolerations:
+                  - effect: NoSchedule
+                    key: app
+                    operator: Equal
+                    value: twmapp
+                volumes:
+                  - name: github-ssh
+                    secret:
+                      defaultMode: 256
+                      secretName: github-deploy-key
+                      items:
+                        - key: id_ed25519
+                          path: id_ed25519
+                        - key: known_hosts
+                          path: known_hosts
+                  - name: gcp-credentials
+                    secret:
+                      secretName: kafka-materializer-gcp-credentials
+                      items:
+                        - key: google_application_credentials.json
+                          path: google_application_credentials.json
+              pythonPackagesInitContainer:
+                env:
+                  - name: GIT_SSH_COMMAND
+                    value: >-
+                      ssh -i /var/run/secrets/github-ssh/id_ed25519
+                      -o IdentitiesOnly=yes
+                      -o UserKnownHostsFile="/tmp/github_known_hosts /var/run/secrets/github-ssh/known_hosts"
+                      -o StrictHostKeyChecking=accept-new
+                volumeMounts:
+                  - name: github-ssh
+                    mountPath: /var/run/secrets/github-ssh
+                    readOnly: true
+              kasprContainer:
+                env:
+                  - name: MATERIALIZER_RUNTIME_MEMBER_ID
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.name
+                  - name: GOOGLE_APPLICATION_CREDENTIALS
+                    value: /app/gcp/google_application_credentials.json
+                  - name: MATERIALIZER_PROTOCOL_LOGGING_ENABLED
+                    value: "true"                    
+                volumeMounts:
+                  - name: gcp-credentials
+                    mountPath: /app/gcp
+                    readOnly: true
+        - name: MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_REQUESTS_TOPIC
+          value: materialization-requests
+        - name: MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_WORK_TOPIC
+          value: materialization-work
+        - name: MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_STATUS_TOPIC
+          value: materialization-status
+        - name: MATERIALIZER_CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC
+          value: materialization-schema-authority-updates
+        - name: MATERIALIZER_CONTROL_PLANE_TABLE_EVENTS_TOPIC
+          value: materialization-table-events
+        # The prefix every materialization's tables are stored under in its destination.
+        - name: MATERIALIZER_CONTROL_PLANE_STORAGE_PREFIX
+          value: materializer
+        - name: MATERIALIZER_CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC
+          value: materializer-settings-requests
+        - name: MATERIALIZER_CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC
+          value: materializer-identity-requests
+        # Sign-in, from the materializer-auth Secret (docs/handbook/18-identity-and-access.md).
+        # Without a signing key nobody can sign in and every request is a guest's.
+        - name: MATERIALIZER_AUTH_SIGNING_KEY
+          valueFrom:
+            secretKeyRef:
+              name: materializer-auth
+              key: signing-key
+              optional: true
+        - name: MATERIALIZER_AUTH_PREVIOUS_SIGNING_KEY
+          valueFrom:
+            secretKeyRef:
+              name: materializer-auth
+              key: previous-signing-key
+              optional: true
+        - name: MATERIALIZER_AUTH_SERVICE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: materializer-auth
+              key: service-token
+              optional: true
+        - name: MATERIALIZER_AUTH_BOOTSTRAP_ADMIN_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: materializer-auth
+              key: bootstrap-admin-email
+              optional: true
+        - name: MATERIALIZER_AUTH_BOOTSTRAP_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: materializer-auth
+              key: bootstrap-admin-password
+              optional: true
+        - name: MATERIALIZER_PROTOCOL_LOGGING_ENABLED
+          value: "true"
+      volumeMounts:
+        - name: gcp-credentials
+          mountPath: /app/gcp
+          readOnly: true

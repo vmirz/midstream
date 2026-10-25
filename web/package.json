@@ -1,0 +1,54 @@
+{
+  "name": "materializer-console",
+  "version": "4.4.0",
+  "private": true,
+  "type": "module",
+  "description": "Real-time console for the Kafka materializer control plane.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,magenta \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "node --watch --env-file-if-exists=.env server/main.ts",
+    "dev:client": "vite",
+    "build": "vite build",
+    "start": "node --env-file-if-exists=.env server/main.ts",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "test": "node --test server src shared"
+  },
+  "dependencies": {
+    "@codemirror/lang-sql": "^6.10.0",
+    "@codemirror/lint": "^6.9.0",
+    "@duckdb/node-api": "1.5.5-r.4",
+    "@fastify/cors": "^11.3.0",
+    "@fastify/static": "^10.1.3",
+    "@google-cloud/storage": "^8.0.1",
+    "@tanstack/react-query": "^5.102.8",
+    "@uiw/react-codemirror": "^4.25.11",
+    "avsc": "^5.7.9",
+    "clsx": "^2.1.1",
+    "fastify": "^5.12.1",
+    "lucide-react": "^1.38.0",
+    "pino": "^10.3.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.3",
+    "tailwind-merge": "^3.6.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.4.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^9.2.1",
+    "pino-pretty": "^13.1.3",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.2"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
+  }
+}

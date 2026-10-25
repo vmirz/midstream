@@ -1,0 +1,27 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTask
+metadata:
+  name: tail-step
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-tail
+spec:
+  name: tail-step
+  description: Keep the tail's loops running, seed the tables being watched, park the idle, trim and bound the buffers.
+  # Every member: each steps its own tables.
+  schedule:
+    interval: 5s
+  processors:
+    pipeline:
+      - advance-tail
+    init:
+      python: |
+        from materializer_control_plane.tail_app.handlers import advance_tail
+    operations:
+      - name: advance-tail
+        map:
+          entrypoint: advance
+          python: |
+            async def advance():
+                await advance_tail(app=context["app"])
+                return None

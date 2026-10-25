@@ -1,0 +1,3681 @@
+{
+ "a_reseal_after_an_offset": {
+  "files": [
+   {
+    "event_time_max": "2026-10-18T23:00:00.000Z",
+    "event_time_min": "2026-10-18T10:00:00.000Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-10-18",
+    "partition_value": {
+     "ts_day": "2026-10-18"
+    },
+    "record_count": 4,
+    "row_groups": [
+     4
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K105",
+      "_kafka_offset": 105,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"$\":\"a bare string\"}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": null,
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": [
+       [
+        "reason",
+        "gdpr"
+       ]
+      ],
+      "_kafka_key": "K106",
+      "_kafka_offset": 106,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": null,
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": [
+       [
+        "bin",
+        "b64:/w=="
+       ],
+       [
+        "no-value",
+        null
+       ]
+      ],
+      "_kafka_key": "b64:AAEC",
+      "_kafka_offset": 107,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O8",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": null,
+      "_kafka_offset": 112,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T23:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": [
+       {
+        "qty": 3,
+        "sku": "c",
+        "tags": []
+       }
+      ],
+      "note": null,
+      "order_id": "O13",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_day=2026-10-18/p03-o0000000105-0000000112-member-0-0123456789abcdef-0.parquet"
+   },
+   {
+    "event_time_max": "2026-10-19T00:00:00.000Z",
+    "event_time_min": "2026-10-19T00:00:00.000Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-10-19",
+    "partition_value": {
+     "ts_day": "2026-10-19"
+    },
+    "record_count": 1,
+    "row_groups": [
+     1
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K109",
+      "_kafka_offset": 109,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T00:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"big\":1180591620717411303424}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O10",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_day=2026-10-19/p03-o0000000109-0000000109-member-0-0123456789abcdef-2.parquet"
+   },
+   {
+    "event_time_max": "2026-10-31T23:59:59.999Z",
+    "event_time_min": "2026-10-31T23:59:59.999Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-10-31",
+    "partition_value": {
+     "ts_day": "2026-10-31"
+    },
+    "record_count": 1,
+    "row_groups": [
+     1
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K110",
+      "_kafka_offset": 110,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-31T23:59:59.999000+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": false,
+      "items": null,
+      "note": null,
+      "order_id": "O11",
+      "v": null,
+      "v__json": "\"text\"",
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_day=2026-10-31/p03-o0000000110-0000000110-member-0-0123456789abcdef-3.parquet"
+   },
+   {
+    "event_time_max": "2026-11-01T00:00:00.000Z",
+    "event_time_min": "2026-11-01T00:00:00.000Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-11-01",
+    "partition_value": {
+     "ts_day": "2026-11-01"
+    },
+    "record_count": 1,
+    "row_groups": [
+     1
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K111",
+      "_kafka_offset": 111,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-11-01T00:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": null,
+       "tier": 7
+      },
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O12",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_day=2026-11-01/p03-o0000000111-0000000111-member-0-0123456789abcdef-4.parquet"
+   },
+   {
+    "event_time_max": null,
+    "event_time_min": null,
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "__null__",
+    "partition_value": {
+     "ts_day": null
+    },
+    "record_count": 1,
+    "row_groups": [
+     1
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K108",
+      "_kafka_offset": 108,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": null,
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"items[1].extra\":1}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": [
+       {
+        "qty": null,
+        "sku": "a",
+        "tags": null
+       },
+       {
+        "qty": null,
+        "sku": "b",
+        "tags": null
+       },
+       null
+      ],
+      "note": null,
+      "order_id": "O9",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_day=__null__/p03-o0000000108-0000000108-member-0-0123456789abcdef-1.parquet"
+   }
+  ],
+  "rows": 8,
+  "schema_id": 3,
+  "unmapped_values": 3
+ },
+ "every_kind_by_day": {
+  "files": [
+   {
+    "event_time_max": "2026-10-18T23:00:00.000Z",
+    "event_time_min": "2026-10-18T10:00:00.000Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-10-18",
+    "partition_value": {
+     "ts_day": "2026-10-18"
+    },
+    "record_count": 9,
+    "row_groups": [
+     9
+    ],
+    "rows": [
+     {
+      "_kafka_headers": [
+       [
+        "event-type",
+        "order.created"
+       ]
+      ],
+      "_kafka_key": "K100",
+      "_kafka_offset": 100,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 1,
+      "amount__v2": null,
+      "big": 1,
+      "customer": {
+       "email": "e@example.com",
+       "tier": 1
+      },
+      "flag": true,
+      "items": [
+       {
+        "qty": 1,
+        "sku": "s",
+        "tags": [
+         "a"
+        ]
+       }
+      ],
+      "note": "x",
+      "order_id": "O1",
+      "v": null,
+      "v__json": "1",
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K101",
+      "_kafka_offset": 101,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": 2.5,
+      "big": null,
+      "customer": {
+       "email": "f@example.com",
+       "tier": null
+      },
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O2",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K102",
+      "_kafka_offset": 102,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": "é漢字",
+      "order_id": "O3",
+      "v": null,
+      "v__json": "{\"z\":[1,2.0,1e+16]}",
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K103",
+      "_kafka_offset": 103,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"amount\":\"many\",\"extra\":{\"x\":1}}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O4",
+      "v": null,
+      "v__json": "1.0",
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K104",
+      "_kafka_offset": 104,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"$\":[1,2]}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": null,
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K105",
+      "_kafka_offset": 105,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"$\":\"a bare string\"}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": null,
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": [
+       [
+        "reason",
+        "gdpr"
+       ]
+      ],
+      "_kafka_key": "K106",
+      "_kafka_offset": 106,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": null,
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": [
+       [
+        "bin",
+        "b64:/w=="
+       ],
+       [
+        "no-value",
+        null
+       ]
+      ],
+      "_kafka_key": "b64:AAEC",
+      "_kafka_offset": 107,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O8",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": null,
+      "_kafka_offset": 112,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T23:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": [
+       {
+        "qty": 3,
+        "sku": "c",
+        "tags": []
+       }
+      ],
+      "note": null,
+      "order_id": "O13",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_day=2026-10-18/p03-o0000000100-0000000112-member-0-0123456789abcdef-0.parquet"
+   },
+   {
+    "event_time_max": "2026-10-19T00:00:00.000Z",
+    "event_time_min": "2026-10-19T00:00:00.000Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-10-19",
+    "partition_value": {
+     "ts_day": "2026-10-19"
+    },
+    "record_count": 1,
+    "row_groups": [
+     1
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K109",
+      "_kafka_offset": 109,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T00:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"big\":1180591620717411303424}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O10",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_day=2026-10-19/p03-o0000000109-0000000109-member-0-0123456789abcdef-2.parquet"
+   },
+   {
+    "event_time_max": "2026-10-31T23:59:59.999Z",
+    "event_time_min": "2026-10-31T23:59:59.999Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-10-31",
+    "partition_value": {
+     "ts_day": "2026-10-31"
+    },
+    "record_count": 1,
+    "row_groups": [
+     1
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K110",
+      "_kafka_offset": 110,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-31T23:59:59.999000+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": false,
+      "items": null,
+      "note": null,
+      "order_id": "O11",
+      "v": null,
+      "v__json": "\"text\"",
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_day=2026-10-31/p03-o0000000110-0000000110-member-0-0123456789abcdef-3.parquet"
+   },
+   {
+    "event_time_max": "2026-11-01T00:00:00.000Z",
+    "event_time_min": "2026-11-01T00:00:00.000Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-11-01",
+    "partition_value": {
+     "ts_day": "2026-11-01"
+    },
+    "record_count": 1,
+    "row_groups": [
+     1
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K111",
+      "_kafka_offset": 111,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-11-01T00:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": null,
+       "tier": 7
+      },
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O12",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_day=2026-11-01/p03-o0000000111-0000000111-member-0-0123456789abcdef-4.parquet"
+   },
+   {
+    "event_time_max": null,
+    "event_time_min": null,
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "__null__",
+    "partition_value": {
+     "ts_day": null
+    },
+    "record_count": 1,
+    "row_groups": [
+     1
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K108",
+      "_kafka_offset": 108,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": null,
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"items[1].extra\":1}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": [
+       {
+        "qty": null,
+        "sku": "a",
+        "tags": null
+       },
+       {
+        "qty": null,
+        "sku": "b",
+        "tags": null
+       },
+       null
+      ],
+      "note": null,
+      "order_id": "O9",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_day=__null__/p03-o0000000108-0000000108-member-0-0123456789abcdef-1.parquet"
+   }
+  ],
+  "rows": 13,
+  "schema_id": 3,
+  "unmapped_values": 6
+ },
+ "every_kind_by_hour": {
+  "files": [
+   {
+    "event_time_max": "2026-10-18T10:00:00.000Z",
+    "event_time_min": "2026-10-18T10:00:00.000Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-10-18-10",
+    "partition_value": {
+     "ts_hour": "2026-10-18-10"
+    },
+    "record_count": 8,
+    "row_groups": [
+     8
+    ],
+    "rows": [
+     {
+      "_kafka_headers": [
+       [
+        "event-type",
+        "order.created"
+       ]
+      ],
+      "_kafka_key": "K100",
+      "_kafka_offset": 100,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 1,
+      "amount__v2": null,
+      "big": 1,
+      "customer": {
+       "email": "e@example.com",
+       "tier": 1
+      },
+      "flag": true,
+      "items": [
+       {
+        "qty": 1,
+        "sku": "s",
+        "tags": [
+         "a"
+        ]
+       }
+      ],
+      "note": "x",
+      "order_id": "O1",
+      "v": null,
+      "v__json": "1",
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K101",
+      "_kafka_offset": 101,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": 2.5,
+      "big": null,
+      "customer": {
+       "email": "f@example.com",
+       "tier": null
+      },
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O2",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K102",
+      "_kafka_offset": 102,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": "é漢字",
+      "order_id": "O3",
+      "v": null,
+      "v__json": "{\"z\":[1,2.0,1e+16]}",
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K103",
+      "_kafka_offset": 103,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"amount\":\"many\",\"extra\":{\"x\":1}}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O4",
+      "v": null,
+      "v__json": "1.0",
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K104",
+      "_kafka_offset": 104,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"$\":[1,2]}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": null,
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K105",
+      "_kafka_offset": 105,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"$\":\"a bare string\"}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": null,
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": [
+       [
+        "reason",
+        "gdpr"
+       ]
+      ],
+      "_kafka_key": "K106",
+      "_kafka_offset": 106,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": null,
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": [
+       [
+        "bin",
+        "b64:/w=="
+       ],
+       [
+        "no-value",
+        null
+       ]
+      ],
+      "_kafka_key": "b64:AAEC",
+      "_kafka_offset": 107,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O8",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_hour=2026-10-18-10/p03-o0000000100-0000000107-member-0-0123456789abcdef-0.parquet"
+   },
+   {
+    "event_time_max": "2026-10-18T23:00:00.000Z",
+    "event_time_min": "2026-10-18T23:00:00.000Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-10-18-23",
+    "partition_value": {
+     "ts_hour": "2026-10-18-23"
+    },
+    "record_count": 1,
+    "row_groups": [
+     1
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": null,
+      "_kafka_offset": 112,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T23:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": [
+       {
+        "qty": 3,
+        "sku": "c",
+        "tags": []
+       }
+      ],
+      "note": null,
+      "order_id": "O13",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_hour=2026-10-18-23/p03-o0000000112-0000000112-member-0-0123456789abcdef-5.parquet"
+   },
+   {
+    "event_time_max": "2026-10-19T00:00:00.000Z",
+    "event_time_min": "2026-10-19T00:00:00.000Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-10-19-00",
+    "partition_value": {
+     "ts_hour": "2026-10-19-00"
+    },
+    "record_count": 1,
+    "row_groups": [
+     1
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K109",
+      "_kafka_offset": 109,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T00:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"big\":1180591620717411303424}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O10",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_hour=2026-10-19-00/p03-o0000000109-0000000109-member-0-0123456789abcdef-2.parquet"
+   },
+   {
+    "event_time_max": "2026-10-31T23:59:59.999Z",
+    "event_time_min": "2026-10-31T23:59:59.999Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-10-31-23",
+    "partition_value": {
+     "ts_hour": "2026-10-31-23"
+    },
+    "record_count": 1,
+    "row_groups": [
+     1
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K110",
+      "_kafka_offset": 110,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-31T23:59:59.999000+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": false,
+      "items": null,
+      "note": null,
+      "order_id": "O11",
+      "v": null,
+      "v__json": "\"text\"",
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_hour=2026-10-31-23/p03-o0000000110-0000000110-member-0-0123456789abcdef-3.parquet"
+   },
+   {
+    "event_time_max": "2026-11-01T00:00:00.000Z",
+    "event_time_min": "2026-11-01T00:00:00.000Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-11-01-00",
+    "partition_value": {
+     "ts_hour": "2026-11-01-00"
+    },
+    "record_count": 1,
+    "row_groups": [
+     1
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K111",
+      "_kafka_offset": 111,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-11-01T00:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": null,
+       "tier": 7
+      },
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O12",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_hour=2026-11-01-00/p03-o0000000111-0000000111-member-0-0123456789abcdef-4.parquet"
+   },
+   {
+    "event_time_max": null,
+    "event_time_min": null,
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "__null__",
+    "partition_value": {
+     "ts_hour": null
+    },
+    "record_count": 1,
+    "row_groups": [
+     1
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K108",
+      "_kafka_offset": 108,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": null,
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"items[1].extra\":1}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": [
+       {
+        "qty": null,
+        "sku": "a",
+        "tags": null
+       },
+       {
+        "qty": null,
+        "sku": "b",
+        "tags": null
+       },
+       null
+      ],
+      "note": null,
+      "order_id": "O9",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_hour=__null__/p03-o0000000108-0000000108-member-0-0123456789abcdef-1.parquet"
+   }
+  ],
+  "rows": 13,
+  "schema_id": 3,
+  "unmapped_values": 6
+ },
+ "every_kind_by_month": {
+  "files": [
+   {
+    "event_time_max": "2026-10-31T23:59:59.999Z",
+    "event_time_min": "2026-10-18T10:00:00.000Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-10",
+    "partition_value": {
+     "ts_month": "2026-10"
+    },
+    "record_count": 11,
+    "row_groups": [
+     11
+    ],
+    "rows": [
+     {
+      "_kafka_headers": [
+       [
+        "event-type",
+        "order.created"
+       ]
+      ],
+      "_kafka_key": "K100",
+      "_kafka_offset": 100,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 1,
+      "amount__v2": null,
+      "big": 1,
+      "customer": {
+       "email": "e@example.com",
+       "tier": 1
+      },
+      "flag": true,
+      "items": [
+       {
+        "qty": 1,
+        "sku": "s",
+        "tags": [
+         "a"
+        ]
+       }
+      ],
+      "note": "x",
+      "order_id": "O1",
+      "v": null,
+      "v__json": "1",
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K101",
+      "_kafka_offset": 101,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": 2.5,
+      "big": null,
+      "customer": {
+       "email": "f@example.com",
+       "tier": null
+      },
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O2",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K102",
+      "_kafka_offset": 102,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": "é漢字",
+      "order_id": "O3",
+      "v": null,
+      "v__json": "{\"z\":[1,2.0,1e+16]}",
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K103",
+      "_kafka_offset": 103,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"amount\":\"many\",\"extra\":{\"x\":1}}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O4",
+      "v": null,
+      "v__json": "1.0",
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K104",
+      "_kafka_offset": 104,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"$\":[1,2]}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": null,
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K105",
+      "_kafka_offset": 105,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"$\":\"a bare string\"}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": null,
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": [
+       [
+        "reason",
+        "gdpr"
+       ]
+      ],
+      "_kafka_key": "K106",
+      "_kafka_offset": 106,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": null,
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": [
+       [
+        "bin",
+        "b64:/w=="
+       ],
+       [
+        "no-value",
+        null
+       ]
+      ],
+      "_kafka_key": "b64:AAEC",
+      "_kafka_offset": 107,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O8",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K109",
+      "_kafka_offset": 109,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T00:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"big\":1180591620717411303424}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O10",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K110",
+      "_kafka_offset": 110,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-31T23:59:59.999000+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": false,
+      "items": null,
+      "note": null,
+      "order_id": "O11",
+      "v": null,
+      "v__json": "\"text\"",
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": null,
+      "_kafka_offset": 112,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T23:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": [
+       {
+        "qty": 3,
+        "sku": "c",
+        "tags": []
+       }
+      ],
+      "note": null,
+      "order_id": "O13",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_month=2026-10/p03-o0000000100-0000000112-member-0-0123456789abcdef-0.parquet"
+   },
+   {
+    "event_time_max": "2026-11-01T00:00:00.000Z",
+    "event_time_min": "2026-11-01T00:00:00.000Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-11",
+    "partition_value": {
+     "ts_month": "2026-11"
+    },
+    "record_count": 1,
+    "row_groups": [
+     1
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K111",
+      "_kafka_offset": 111,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-11-01T00:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": null,
+       "tier": 7
+      },
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O12",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_month=2026-11/p03-o0000000111-0000000111-member-0-0123456789abcdef-2.parquet"
+   },
+   {
+    "event_time_max": null,
+    "event_time_min": null,
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "__null__",
+    "partition_value": {
+     "ts_month": null
+    },
+    "record_count": 1,
+    "row_groups": [
+     1
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K108",
+      "_kafka_offset": 108,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": null,
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"items[1].extra\":1}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": [
+       {
+        "qty": null,
+        "sku": "a",
+        "tags": null
+       },
+       {
+        "qty": null,
+        "sku": "b",
+        "tags": null
+       },
+       null
+      ],
+      "note": null,
+      "order_id": "O9",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_month=__null__/p03-o0000000108-0000000108-member-0-0123456789abcdef-1.parquet"
+   }
+  ],
+  "rows": 13,
+  "schema_id": 3,
+  "unmapped_values": 6
+ },
+ "every_kind_unpartitioned": {
+  "files": [
+   {
+    "event_time_max": "2026-11-01T00:00:00.000Z",
+    "event_time_min": "2026-10-18T10:00:00.000Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": null,
+    "partition_value": {},
+    "record_count": 13,
+    "row_groups": [
+     13
+    ],
+    "rows": [
+     {
+      "_kafka_headers": [
+       [
+        "event-type",
+        "order.created"
+       ]
+      ],
+      "_kafka_key": "K100",
+      "_kafka_offset": 100,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 1,
+      "amount__v2": null,
+      "big": 1,
+      "customer": {
+       "email": "e@example.com",
+       "tier": 1
+      },
+      "flag": true,
+      "items": [
+       {
+        "qty": 1,
+        "sku": "s",
+        "tags": [
+         "a"
+        ]
+       }
+      ],
+      "note": "x",
+      "order_id": "O1",
+      "v": null,
+      "v__json": "1",
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K101",
+      "_kafka_offset": 101,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": 2.5,
+      "big": null,
+      "customer": {
+       "email": "f@example.com",
+       "tier": null
+      },
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O2",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K102",
+      "_kafka_offset": 102,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": "é漢字",
+      "order_id": "O3",
+      "v": null,
+      "v__json": "{\"z\":[1,2.0,1e+16]}",
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K103",
+      "_kafka_offset": 103,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"amount\":\"many\",\"extra\":{\"x\":1}}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O4",
+      "v": null,
+      "v__json": "1.0",
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K104",
+      "_kafka_offset": 104,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"$\":[1,2]}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": null,
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K105",
+      "_kafka_offset": 105,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"$\":\"a bare string\"}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": null,
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": [
+       [
+        "reason",
+        "gdpr"
+       ]
+      ],
+      "_kafka_key": "K106",
+      "_kafka_offset": 106,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": null,
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": [
+       [
+        "bin",
+        "b64:/w=="
+       ],
+       [
+        "no-value",
+        null
+       ]
+      ],
+      "_kafka_key": "b64:AAEC",
+      "_kafka_offset": 107,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O8",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K108",
+      "_kafka_offset": 108,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": null,
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"items[1].extra\":1}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": [
+       {
+        "qty": null,
+        "sku": "a",
+        "tags": null
+       },
+       {
+        "qty": null,
+        "sku": "b",
+        "tags": null
+       },
+       null
+      ],
+      "note": null,
+      "order_id": "O9",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K109",
+      "_kafka_offset": 109,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T00:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": "{\"big\":1180591620717411303424}",
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O10",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K110",
+      "_kafka_offset": 110,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-31T23:59:59.999000+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": false,
+      "items": null,
+      "note": null,
+      "order_id": "O11",
+      "v": null,
+      "v__json": "\"text\"",
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K111",
+      "_kafka_offset": 111,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-11-01T00:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": null,
+       "tier": 7
+      },
+      "flag": null,
+      "items": null,
+      "note": null,
+      "order_id": "O12",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": null,
+      "_kafka_offset": 112,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T23:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": null,
+      "amount__v2": null,
+      "big": null,
+      "customer": null,
+      "flag": null,
+      "items": [
+       {
+        "qty": 3,
+        "sku": "c",
+        "tags": []
+       }
+      ],
+      "note": null,
+      "order_id": "O13",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/p03-o0000000100-0000000112-member-0-0123456789abcdef-0.parquet"
+   }
+  ],
+  "rows": 13,
+  "schema_id": 3,
+  "unmapped_values": 6
+ },
+ "small_row_groups": {
+  "files": [
+   {
+    "event_time_max": "2026-10-18T21:00:00.000Z",
+    "event_time_min": "2026-10-18T00:00:00.000Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-10-18",
+    "partition_value": {
+     "ts_day": "2026-10-18"
+    },
+    "record_count": 20,
+    "row_groups": [
+     11,
+     9
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1000",
+      "_kafka_offset": 1000,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T00:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 0,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m0@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "",
+      "order_id": "M0",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1003",
+      "_kafka_offset": 1003,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T03:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 3,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m3@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnn",
+      "order_id": "M3",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1006",
+      "_kafka_offset": 1006,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T06:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 6,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m6@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnn",
+      "order_id": "M6",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1009",
+      "_kafka_offset": 1009,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T09:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 9,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m9@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnn",
+      "order_id": "M9",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1012",
+      "_kafka_offset": 1012,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T12:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 12,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m12@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnnn",
+      "order_id": "M12",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1015",
+      "_kafka_offset": 1015,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T15:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 15,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m15@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnnnnnn",
+      "order_id": "M15",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1018",
+      "_kafka_offset": 1018,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T18:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 18,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m18@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "n",
+      "order_id": "M18",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1021",
+      "_kafka_offset": 1021,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T21:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 21,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m21@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnn",
+      "order_id": "M21",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1024",
+      "_kafka_offset": 1024,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T00:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 24,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m24@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnn",
+      "order_id": "M24",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1027",
+      "_kafka_offset": 1027,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T03:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 27,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m27@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnn",
+      "order_id": "M27",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1030",
+      "_kafka_offset": 1030,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T06:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 30,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m30@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnnnn",
+      "order_id": "M30",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1033",
+      "_kafka_offset": 1033,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T09:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 33,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m33@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnnnnnnn",
+      "order_id": "M33",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1036",
+      "_kafka_offset": 1036,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T12:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 36,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m36@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "nn",
+      "order_id": "M36",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1039",
+      "_kafka_offset": 1039,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T15:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 39,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m39@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnn",
+      "order_id": "M39",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1042",
+      "_kafka_offset": 1042,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T18:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 42,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m42@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnn",
+      "order_id": "M42",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1045",
+      "_kafka_offset": 1045,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T21:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 45,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m45@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnn",
+      "order_id": "M45",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1048",
+      "_kafka_offset": 1048,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T00:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 48,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m48@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnnnnn",
+      "order_id": "M48",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1051",
+      "_kafka_offset": 1051,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T03:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 51,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m51@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "",
+      "order_id": "M51",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1054",
+      "_kafka_offset": 1054,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T06:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 54,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m54@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnn",
+      "order_id": "M54",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1057",
+      "_kafka_offset": 1057,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-18T09:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 57,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m57@example.com",
+       "tier": 0
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnn",
+      "order_id": "M57",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_day=2026-10-18/p03-o0000001000-0000001057-member-0-0123456789abcdef-0.parquet"
+   },
+   {
+    "event_time_max": "2026-10-19T22:00:00.000Z",
+    "event_time_min": "2026-10-19T01:00:00.000Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-10-19",
+    "partition_value": {
+     "ts_day": "2026-10-19"
+    },
+    "record_count": 20,
+    "row_groups": [
+     10,
+     10
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1001",
+      "_kafka_offset": 1001,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T01:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 1,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m1@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "n",
+      "order_id": "M1",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1004",
+      "_kafka_offset": 1004,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T04:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 4,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m4@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnn",
+      "order_id": "M4",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1007",
+      "_kafka_offset": 1007,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T07:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 7,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m7@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnn",
+      "order_id": "M7",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1010",
+      "_kafka_offset": 1010,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 10,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m10@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnn",
+      "order_id": "M10",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1013",
+      "_kafka_offset": 1013,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T13:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 13,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m13@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnnnn",
+      "order_id": "M13",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1016",
+      "_kafka_offset": 1016,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T16:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 16,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m16@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnnnnnnn",
+      "order_id": "M16",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1019",
+      "_kafka_offset": 1019,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T19:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 19,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m19@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "nn",
+      "order_id": "M19",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1022",
+      "_kafka_offset": 1022,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T22:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 22,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m22@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnn",
+      "order_id": "M22",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1025",
+      "_kafka_offset": 1025,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T01:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 25,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m25@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnn",
+      "order_id": "M25",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1028",
+      "_kafka_offset": 1028,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T04:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 28,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m28@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnn",
+      "order_id": "M28",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1031",
+      "_kafka_offset": 1031,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T07:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 31,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m31@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnnnnn",
+      "order_id": "M31",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1034",
+      "_kafka_offset": 1034,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 34,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m34@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "",
+      "order_id": "M34",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1037",
+      "_kafka_offset": 1037,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T13:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 37,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m37@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnn",
+      "order_id": "M37",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1040",
+      "_kafka_offset": 1040,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T16:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 40,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m40@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnn",
+      "order_id": "M40",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1043",
+      "_kafka_offset": 1043,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T19:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 43,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m43@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnn",
+      "order_id": "M43",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1046",
+      "_kafka_offset": 1046,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T22:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 46,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m46@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnnn",
+      "order_id": "M46",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1049",
+      "_kafka_offset": 1049,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T01:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 49,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m49@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnnnnnn",
+      "order_id": "M49",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1052",
+      "_kafka_offset": 1052,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T04:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 52,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m52@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "n",
+      "order_id": "M52",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1055",
+      "_kafka_offset": 1055,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T07:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 55,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m55@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnn",
+      "order_id": "M55",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1058",
+      "_kafka_offset": 1058,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-19T10:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 58,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m58@example.com",
+       "tier": 1
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnn",
+      "order_id": "M58",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_day=2026-10-19/p03-o0000001001-0000001058-member-0-0123456789abcdef-1.parquet"
+   },
+   {
+    "event_time_max": "2026-10-20T23:00:00.000Z",
+    "event_time_min": "2026-10-20T02:00:00.000Z",
+    "field_ids": {
+     "_kafka_headers": 5,
+     "_kafka_key": 4,
+     "_kafka_offset": 3,
+     "_kafka_partition": 2,
+     "_kafka_timestamp": 1,
+     "_materialized_at": 6,
+     "_unmapped": 7,
+     "amount": 11,
+     "amount__v2": 25,
+     "big": 24,
+     "customer": 12,
+     "flag": 21,
+     "items": 15,
+     "note": 22,
+     "order_id": 10,
+     "v": 23,
+     "v__json": 27,
+     "v__v2": 26
+    },
+    "partition_text": "2026-10-20",
+    "partition_value": {
+     "ts_day": "2026-10-20"
+    },
+    "record_count": 20,
+    "row_groups": [
+     11,
+     9
+    ],
+    "rows": [
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1002",
+      "_kafka_offset": 1002,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T02:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 2,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m2@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nn",
+      "order_id": "M2",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1005",
+      "_kafka_offset": 1005,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T05:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 5,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m5@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnn",
+      "order_id": "M5",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1008",
+      "_kafka_offset": 1008,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T08:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 8,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m8@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnn",
+      "order_id": "M8",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1011",
+      "_kafka_offset": 1011,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T11:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 11,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m11@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnn",
+      "order_id": "M11",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1014",
+      "_kafka_offset": 1014,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T14:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 14,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m14@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnnnnn",
+      "order_id": "M14",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1017",
+      "_kafka_offset": 1017,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T17:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 17,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m17@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "",
+      "order_id": "M17",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1020",
+      "_kafka_offset": 1020,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T20:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 20,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m20@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnn",
+      "order_id": "M20",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1023",
+      "_kafka_offset": 1023,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T23:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 23,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m23@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnn",
+      "order_id": "M23",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1026",
+      "_kafka_offset": 1026,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T02:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 26,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m26@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnn",
+      "order_id": "M26",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1029",
+      "_kafka_offset": 1029,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T05:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 29,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m29@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnnn",
+      "order_id": "M29",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1032",
+      "_kafka_offset": 1032,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T08:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 32,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m32@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnnnnnn",
+      "order_id": "M32",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1035",
+      "_kafka_offset": 1035,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T11:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 35,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m35@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "n",
+      "order_id": "M35",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1038",
+      "_kafka_offset": 1038,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T14:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 38,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m38@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnn",
+      "order_id": "M38",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1041",
+      "_kafka_offset": 1041,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T17:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 41,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m41@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnn",
+      "order_id": "M41",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1044",
+      "_kafka_offset": 1044,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T20:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 44,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m44@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnn",
+      "order_id": "M44",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1047",
+      "_kafka_offset": 1047,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T23:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 47,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m47@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnnnn",
+      "order_id": "M47",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1050",
+      "_kafka_offset": 1050,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T02:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 50,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m50@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnnnnnnnnnn",
+      "order_id": "M50",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1053",
+      "_kafka_offset": 1053,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T05:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 53,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m53@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nn",
+      "order_id": "M53",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1056",
+      "_kafka_offset": 1056,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T08:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 56,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m56@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnn",
+      "order_id": "M56",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     },
+     {
+      "_kafka_headers": null,
+      "_kafka_key": "K1059",
+      "_kafka_offset": 1059,
+      "_kafka_partition": 3,
+      "_kafka_timestamp": "2026-10-20T11:00:00+00:00",
+      "_materialized_at": "2026-10-18T10:00:01.250000+00:00",
+      "_unmapped": null,
+      "amount": 59,
+      "amount__v2": null,
+      "big": null,
+      "customer": {
+       "email": "m59@example.com",
+       "tier": 2
+      },
+      "flag": null,
+      "items": null,
+      "note": "nnnnnnnn",
+      "order_id": "M59",
+      "v": null,
+      "v__json": null,
+      "v__v2": null
+     }
+    ],
+    "uri": "gs://bucket/develop/mat-0123456789ab/orders/data/ts_day=2026-10-20/p03-o0000001002-0000001059-member-0-0123456789abcdef-2.parquet"
+   }
+  ],
+  "rows": 60,
+  "schema_id": 3,
+  "unmapped_values": 0
+ }
+}

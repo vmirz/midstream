@@ -1,0 +1,14 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTable
+metadata:
+  name: identity-audit
+  namespace: kafka-sql
+  labels:
+    kaspr.io/app: materializer-control-plane
+spec:
+  name: identity-audit
+  description: The audit log of sign-ins and changes to users, groups and roles, kept for the configured retention.
+  global: true
+  keySerializer: json
+  valueSerializer: json
+  partitions: 3
