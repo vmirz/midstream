@@ -2,7 +2,7 @@ apiVersion: kaspr.io/v1alpha1
 kind: KasprApp
 metadata:
   name: materializer-control-plane
-  namespace: kafka-sql
+  namespace: midstream
   labels:
     app.kubernetes.io/name: materializer-control-plane
 spec:
@@ -46,7 +46,7 @@ spec:
       cpu: 900m
   pythonPackages:
     packages:
-      - git+ssh://git@github.com/TotalWineLabs/kaspr-kafka-materializer.git@main#egg=materializer-control-plane&subdirectory=python
+      - git+https://github.com/vmirz/midstream.git@main#egg=materializer-control-plane&subdirectory=python
     installPolicy:
       retries: 3
       timeout: 600
@@ -91,7 +91,7 @@ spec:
     kasprContainer:
       env:
         - name: MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE
-          value: kafka-sql
+          value: midstream
         - name: MATERIALIZER_CONTROL_PLANE_DEFAULT_LIST_LIMIT
           value: "30"
         - name: MATERIALIZER_CONTROL_PLANE_DELETED_RETENTION_HOURS
@@ -150,7 +150,7 @@ spec:
               brokerRebalanceTimeout: 300
             pythonPackages:
               packages:
-                - git+ssh://git@github.com/TotalWineLabs/kaspr-kafka-materializer.git@main#egg=materializer-control-plane&subdirectory=python
+                - git+https://github.com/vmirz/midstream.git@main#egg=materializer-control-plane&subdirectory=python
             template:
               pod:
                 nodeSelector:

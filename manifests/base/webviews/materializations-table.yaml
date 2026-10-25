@@ -2,7 +2,7 @@ apiVersion: kaspr.io/v1alpha1
 kind: KasprWebView
 metadata:
   name: materializations-table
-  namespace: kafka-sql
+  namespace: midstream
   labels:
     kaspr.io/app: materializer-control-plane
 spec:
