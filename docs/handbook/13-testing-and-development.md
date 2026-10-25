@@ -64,8 +64,8 @@ kubectl kustomize manifests/dev
 kubectl kustomize manifests/staging
 kubectl kustomize manifests/prod
 
-# the console (web/docs/14)
-cd web && npm run typecheck && npm test && npm run build
+# the console (console/docs/14)
+cd console && npm run typecheck && npm test && npm run build
 ```
 
 **There is no linter, formatter, or type-checker configured.** No `ruff`, `black`, `flake8`,
@@ -175,7 +175,7 @@ The suite uses hand-written fakes, not mocks. Reusing them is the fastest way to
 | `TailHarness`, `FakeKafka`, `FakeConsumer`, `FakeAdmin`, `FakeControlPlane`, `Clock` | `tail_support.py` | Tail app members in one process: topics with offsets that hold no record, a consumer that fetches and seeks as aiokafka does, the group as `DescribeGroups` reports it, the control plane's sessions, schemas and tables, and a clock the test moves |
 
 `console_fixture.py` is not a test: it writes the console's fixture tables — `orders` and
-`payments`, the two tables of one materialization `shop` (`web/testdata/iceberg/{orders,payments}`) —
+`payments`, the two tables of one materialization `shop` (`console/testdata/iceberg/{orders,payments}`) —
 with the library, `python python/tests/console_fixture.py` (web 14 §14.2).
 
 ## 13.4 Adding a test
@@ -298,7 +298,7 @@ Rendering resolves the package pin, which raises `RuntimeError` for an install w
 | A runtime env var | `runtime_app/config.py`, the relevant `.j2` template, `test_runtime_config.py` |
 | An agent or task of the runtime | `runtime/templates.py`, the `.j2` files, observation, `test_runtime_templates.py` |
 | A control-plane agent | `manifests/base/agents/*.yaml`, `handlers/`, RBAC if needed |
-| What the table holds: field ids, partitioning, a summary property | `lakehouse/`, the console's reader (`web/server/iceberg/`), the fixture table (`console_fixture.py`), [11](./11-iceberg-tables-and-storage.md) |
+| What the table holds: field ids, partitioning, a summary property | `lakehouse/`, the console's reader (`console/server/iceberg/`), the fixture table (`console_fixture.py`), [11](./11-iceberg-tables-and-storage.md) |
 | The `develop-` prefix set | `manifests/dev/kustomization.yaml` **and** every explicit patch |
 | An overridable setting | its config field and env var, its entry in `settings/catalog.py` (runtime: also the live fields), `test_settings.py` (`.claude/skills/adding-settings/SKILL.md`) |
 | An operation that reads configuration | bind the `settings` table in its manifest and every overlay (`SettingsWiringTests`) |
@@ -517,7 +517,7 @@ shapes in schema 0, and `promo_code` adding schema 1.
 | Check | Observed |
 |---|---|
 | Create | `destination_uri`, `namespace`, `runtime_name` and `storage_size` each refused `400`, naming the deployment's value; with the destination override set to none, `409 destination_not_configured`, and the setting reset; `POST /topics/analyze` recommending replicas alone |
-| Runtimes | Both in `kafka-sql` as `develop-mat-<id>`, each member's volume `128Mi` (the default then), 72 KiB used once committed; the 3.x runtimes kept `1Gi`, and the control plane and maintenance app their own `1Gi` |
+| Runtimes | Both in `midstream` as `develop-mat-<id>`, each member's volume `128Mi` (the default then), 72 KiB used once committed; the 3.x runtimes kept `1Gi`, and the control plane and maintenance app their own `1Gi` |
 | The 64Mi default | Every runtime re-applied with the write buffer (RocksDB's options file: `write_buffer_size=4194304`, `max_write_buffer_number=2`). A third materialization of `history.orders`: a `64Mi` volume (55 MiB usable), its store 67 KiB and its write-ahead log 10.7 KB after the backfill, every offset once through the catalog; then deleted. The first attempt, a KasprTable `options`, was stored empty: kaspr-operator's CRD prunes it (14 §14.2) |
 | Month partitions | 22 partitions `2025-01` … `2026-10`, three files each (one per Kafka partition); PyIceberg reads the spec as `month` and each partition value as months since 1970, and every file's timestamp bounds lie in its partition |
 | Exactly once | DuckDB 2.0 through the REST catalog, with a token limited to `history`: per Kafka partition of both tables, offsets 0–1,999 once each (count, distinct, sum, sum of squares); rows per day (657 days) and per month (22) as the producer's timestamps give; each shape's fields as counted by era |
@@ -637,8 +637,8 @@ kubectl kustomize manifests/dev  >/dev/null                    # if manifests to
 git status --short                                             # no stray files, no secrets
 ```
 
-If `web/` changed: `cd web && npm test && npm run typecheck && npm run build`, and check the
-change in a browser in both themes ([web 14](../../web/docs/14-testing-and-verification.md)).
+If `console/` changed: `cd console && npm test && npm run typecheck && npm run build`, and check the
+change in a browser in both themes ([web 14](../../console/docs/14-testing-and-verification.md)).
 
 A local overlay directory that is not checked in (a lab environment, say) is rendered by
 `OverlayTopicWiringTests` like any other, and fails it until it carries the same patches as `dev`.

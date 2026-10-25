@@ -29,15 +29,15 @@ kubectl kustomize manifests/base
 kubectl kustomize manifests/dev
 
 # Access the running dev API locally (there is no standalone local web server in this repo)
-kubectl port-forward -n kafka-sql svc/develop-materializer-control-plane-app-api 6065:6065
+kubectl port-forward -n midstream svc/develop-materializer-control-plane-app-api 6065:6065
 
-# Materializer Console (separate npm workspace under /web)
-cd web && npm install && npm run dev   # BFF on :8787, client on :5173
-cd web && npm run typecheck            # both TypeScript projects
-cd web && npm test                     # node --test: reader, run engine, routes
-cd web && npm run build                # production client bundle
+# Materializer Console (separate npm workspace under /console)
+cd console && npm install && npm run dev   # BFF on :8787, client on :5173
+cd console && npm run typecheck            # both TypeScript projects
+cd console && npm test                     # node --test: reader, run engine, routes
+cd console && npm run build                # production client bundle
 
-# Regenerate the console's fixture table (web/testdata/iceberg) after changing what the control plane writes
+# Regenerate the console's fixture table (console/testdata/iceberg) after changing what the control plane writes
 python python/tests/console_fixture.py
 
 # Read a materialization's table by hand (handbook 11 §11.9): DuckDB through the REST catalog,
@@ -65,8 +65,7 @@ python python/tests/console_fixture.py
 - `/python/tests/` — `unittest` suite; use these tests as the source of truth for behavior.
 - `/manifests/base/` — shared Kaspr CRDs: app, agents, tasks, table, roles, webviews.
 - `/manifests/{dev,staging,prod}/` — Kustomize overlays; `dev/` adds `develop-` prefixes and topic/table renames.
-- `/web/` — Materializer Console: a self-contained Node BFF plus React client. It depends on the control plane only through its public HTTP API and is intended to be extractable into its own repository. See `web/README.md`, and `web/docs/README.md` for the full 17-document handbook.
-- `/control-plane/` — design docs, contracts, package-layout notes, and manual cluster test plans (0.x; historical).
+- `/console/` — Materializer Console: a self-contained Node BFF plus React client. It depends on the control plane only through its public HTTP API and is intended to be extractable into its own repository. See `console/README.md`, and `console/docs/README.md` for the full 17-document handbook.
 - `/KAFKA_MATERIALIZER_SOURCE_OF_TRUTH.md` — code-derived, end-to-end reference document for deep architecture and implementation context.
 - `/docs/handbook/` — 19-document deep reference manual. Load the specific document you need rather than the whole set:
   - `01` system overview · `02` deployment/manifests · `03` configuration · `04` HTTP API · `05` data models
@@ -104,7 +103,7 @@ return process_request_event(table, request_event, config=cfg, work_id=work_id)
 ## Guardrails & Boundaries
 - Never commit secrets, kube credentials, GCP credentials, SSH keys, or `.env`-style files.
 - Never move core business logic into inline manifest Python; CRD YAML should stay as a thin harness over package code.
-- Never invent a new linter/test runner/build system; this repo currently uses `pip`, `unittest`, and Kustomize validation for the Python/manifest side, and npm + `tsc` + Vite inside `/web`.
+- Never invent a new linter/test runner/build system; this repo currently uses `pip`, `unittest`, and Kustomize validation for the Python/manifest side, and npm + `tsc` + Vite inside `/console`.
 - Never change topic names, table names, `develop-` overlay prefixes, or Kaspr resource names without updating both manifests and affected tests.
 - Never write a materialization's Iceberg tables except through its committer, the maintenance app's compaction and expiry (`maintenance_app/`), or the REST catalog with `catalog.write`: every commit goes through the catalog pointer's compare-and-swap, the committer's exactly-once accounting relies on the snapshot summaries it writes, and a maintenance commit carries those offsets forward unchanged.
 - Never replace runtime package pinning with floating or implicit refs; runtime template/package revision behavior is intentional and covered by tests.
@@ -112,7 +111,7 @@ return process_request_event(table, request_event, config=cfg, work_id=work_id)
 - Always run the relevant `python -m unittest ...` command for touched Python code and `kubectl kustomize ...` for touched manifests before finishing.
 - If a change affects WebView or workflow behavior, update or add the nearest existing `python/tests/test_*.py` case instead of relying on manual reasoning only.
 - There is no standalone local control-plane server in the repo; prefer unit tests and manifest rendering unless you are intentionally working against the running cluster via port-forward.
-- Never import from `python/` inside `/web`, or from `/web` inside `python/`. The console must stay extractable; it talks to the control plane over HTTP only.
+- Never import from `python/` inside `/console`, or from `/console` inside `python/`. The console must stay extractable; it talks to the control plane over HTTP only.
 - Every WebView must authorize its caller before doing anything: `principal = authorize(request, directory_table, "<permission>")` — with `dataset=` for a dataset permission on a dataset in the path — with the `directory` table bound (and patched in every overlay). Every console `/api` route declares `permit('<permission>')`, `permitAnywhere('<dataset permission>')` plus a per-dataset check, or `signedIn()`. `AuthorizationWiringTests` enforces the control-plane half.
 - A table's name in its dataset is claimed by the directory before the table exists (`claim_tables`, sent by request intake) and released when it leaves the catalog; never create a table without a claim, and never write claims except through `identity-intake`. The console's live views read with the service credential and must be cut down per person (`visibleDetail`) before they are sent.
 - Never write or delete a materialization's records in the `state` table while handling an event keyed by anything but that materialization (`materialization_routing_key`): a write lands in the handled event's shard, so the copy would strand there. Scheduled steps on `__system__` events only read and hand their work on, keyed by the materialization (handbook 06 §6.4); `ShardRoutingTests` checks them.

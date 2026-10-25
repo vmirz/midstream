@@ -558,7 +558,7 @@ No ([14 §14.7](./14-known-gaps-and-roadmap.md)).
 python -m unittest discover -s python/tests -p 'test_*.py'
 python -m compileall -q python/src
 kubectl kustomize manifests/base >/dev/null && kubectl kustomize manifests/dev >/dev/null
-cd web && npm run typecheck && npm test && npm run build
+cd console && npm run typecheck && npm test && npm run build
 ```
 
 **Which linter should I use?**

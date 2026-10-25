@@ -9,7 +9,7 @@ legitimately differ:
 |-----------|-------------|-------------|
 | Control plane | `python/pyproject.toml` | `GET /system/version` |
 | Runtime (per materialization) | `python/pyproject.toml` — same distribution | its status events → `status.runtime_version` |
-| Web console | `web/package.json` | `GET /api/config` → `version` |
+| Web console | `console/package.json` | `GET /api/config` → `version` |
 
 The control plane and every runtime app are the **same Python distribution**, so one number
 describes the code both execute. They still report separately because a runtime keeps serving the
@@ -20,7 +20,7 @@ legitimately lag until they are rolled.
 `pyproject.toml` is the single source of truth. Outside an installed context it reports
 `0.0.0+unknown` rather than a plausible-looking number.
 
-The console reads `web/package.json` the same way. `CONSOLE_VERSION` still overrides it, which is
+The console reads `console/package.json` the same way. `CONSOLE_VERSION` still overrides it, which is
 useful when a build system wants to stamp something more specific.
 
 > **Not the same as `template_version`.** The runtime binding's `template_version` (`v1`) versions

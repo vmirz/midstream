@@ -123,7 +123,7 @@ return None                                     # ← failure recorded, swallow
 
 A deadline that passes (`AdapterTimeoutError`) is "anything else": the step is recorded as
 `<step>_failed`, and `last_error` names the call and the deadline, e.g.
-`Kubernetes apply of KasprApp kafka-sql/kaspr-mat-1 timed out after 90s`. No step retries a timeout:
+`Kubernetes apply of KasprApp midstream/kaspr-mat-1 timed out after 90s`. No step retries a timeout:
 `cleanup_runtime_kafka` retries only a consumer group that still has members, and a timeout is not
 that (§7.5). A table drop retries every failed pass, timeouts included (§7.10).
 

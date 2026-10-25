@@ -1,11 +1,10 @@
 # Kafka Materializer Source of Truth
 
-This document explains the `kaspr-kafka-materializer` repository as it exists in code at 4.4.1: one
+This document explains the Midstream repository as it exists in code at 4.4.1: one
 long-form narrative for engineering, design discussion and LLM-assisted changes. It covers every
 part in a few paragraphs and points to the handbook for depth.
 
-If this document conflicts with older planning notes under `control-plane/`, treat the current
-implementation as authoritative in this order:
+Where this document and the code disagree, the implementation is authoritative, in this order:
 
 1. `manifests/`
 2. `python/src/materializer_control_plane/`
@@ -14,11 +13,11 @@ implementation as authoritative in this order:
 > **Looking for more depth?** `docs/handbook/` is an 18-document reference manual: full field
 > tables, decision tables, worked examples, an operations runbook, a test map and a known-gaps
 > register. Start at [`docs/handbook/README.md`](./docs/handbook/README.md) and load only the
-> document you need; this file cites it as `handbook <n>`. The console has its own, `web/docs/`.
+> document you need; this file cites it as `handbook <n>`. The console has its own, `console/docs/`.
 
 ## 1. What this project is
 
-`kaspr-kafka-materializer` continuously materializes JSON records from Kafka topics into **Apache
+Midstream continuously materializes JSON records from Kafka topics into **Apache
 Iceberg tables, one per source topic**, in Google Cloud Storage, exactly once. A materialization
 reads one or more topics with one dedicated runtime, and its topics can be changed later. It has a
 self-service HTTP API, a schema that evolves by itself, table maintenance by an app of its own, an Iceberg REST catalog
@@ -81,7 +80,7 @@ heartbeats ─▶ materialization-status ─▶ runtime-status agent ─┘   �
   code, served to the console alone. The console shows them beside the snapshot, each record once,
   within seconds of being produced (the **live tail**, handbook 19). It keeps no state and never
   writes a table; the control plane ticks it.
-- **Console** — `/web`, a Node BFF and a React client. It talks to the control plane over HTTP only
+- **Console** — `/console`, a Node BFF and a React client. It talks to the control plane over HTTP only
   and reads the tables itself; it is meant to be extractable into its own repository.
 
 Every app runs the same Python package (`materializer-control-plane`): the runtime side under
@@ -97,9 +96,8 @@ One wheel, pinned to an exact git commit (handbook 01, 16).
 | `python/tests/` | The `unittest` suite: the executable specification |
 | `manifests/base/` | The control plane's CRDs: app, agents, tasks, tables, webviews, RBAC; `maintenance/`, the maintenance app's; `tail/` and `webviews/tail-*.yaml`, the tail app's |
 | `manifests/{dev,staging,prod}/` | Overlays; `dev` adds `develop-` prefixes and renames |
-| `web/` | The Materializer Console and its handbook (`web/docs/`) |
+| `console/` | The Materializer Console and its handbook (`console/docs/`) |
 | `docs/handbook/` | The reference manual |
-| `control-plane/` | 0.x design docs and contracts; historical |
 
 ## 4. Stack
 
@@ -355,7 +353,7 @@ cuts its shared live views down to what each person may see.
 
 ## 14. The console
 
-`web/` — a Fastify BFF and a React client (web 01). Its live store polls the control plane and fans
+`console/` — a Fastify BFF and a React client (web 01). Its live store polls the control plane and fans
 out snapshots over SSE. For data it reads each table itself: pointer, metadata and Avro manifests
 from GCS (exact 64-bit ids, cached because they never change), so totals and time pruning cost no
 data reads; data files through DuckDB, by field id, folding fork families into logical columns.
@@ -380,7 +378,7 @@ python -m pip install -r requirements-dev.txt
 python -m unittest discover -s python/tests -p 'test_*.py' -v
 python -m compileall python/src
 kubectl kustomize manifests/base && kubectl kustomize manifests/dev
-cd web && npm install && npm run typecheck && npm test && npm run build
+cd console && npm install && npm run typecheck && npm test && npm run build
 python python/tests/console_fixture.py      # regenerate the console's fixture table
 ```
 

@@ -6,7 +6,7 @@ changes are stored, and how each component picks them up without a restart.
 Source: `settings/catalog.py`, `settings/effective.py`, `services/settings.py`,
 `storage/settings.py`, `models/settings.py`, `web/settings.py`, `handlers/settings.py`,
 `runtime_app/live_settings.py`, `runtime_app/handlers/runtime_settings.py`; console:
-`web/server/settings/`, `web/server/routes/settings.ts`, `web/src/features/settings/`.
+`console/server/settings/`, `console/server/routes/settings.ts`, `console/src/features/settings/`.
 
 ## 17.1 The model in one paragraph
 
@@ -49,7 +49,7 @@ Three **scopes** hold overrides, one `SettingsDocument` each:
 |---|---|---|
 | `control-plane` | The control plane's agents and API | The control plane: `CONTROL_PLANE_SETTINGS` in `settings/catalog.py` |
 | `runtime` | Every runtime, delivered while they run (§17.7) | The control plane: `RUNTIME_SETTINGS`, which must equal `LIVE_SETTING_FIELDS` in `runtime_app/live_settings.py` |
-| `console` | The web console | The console: `web/server/settings/catalog.ts`. The control plane stores these values without knowing them, so the console can add a setting without a control-plane release |
+| `console` | The web console | The console: `console/server/settings/catalog.ts`. The control plane stores these values without knowing them, so the console can add a setting without a control-plane release |
 
 ### Control plane (`control-plane`)
 
@@ -237,7 +237,7 @@ table is created and not updated after: the maintenance app's expiry follows the
 
 ### The console (`console`)
 
-See the console handbook, [03 — Configuration](../../web/docs/03-configuration-reference.md).
+See the console handbook, [03 — Configuration](../../console/docs/03-configuration-reference.md).
 Twenty-nine of its settings are overridable — refresh cadence, chart and rate windows, query and
 export limits, the Data explorer switch, log level, request timeout, how often it re-checks a
 session and how many sign-in attempts one address may make — and everything that is sized with
@@ -473,7 +473,7 @@ re-applies every runtime within about two minutes, and each re-apply delivers th
 
 The console stores its overrides in the `console` scope and reads them back:
 
-- at start, every 30 seconds after, and right after a save (`web/server/settings/store.ts`);
+- at start, every 30 seconds after, and right after a save (`console/server/settings/store.ts`);
 - each stored value is validated against the console's own catalog, and one this console does not
   accept — written by an older or newer console — is ignored and logged;
 - valid overrides become the live values behind the console's `config` object, so every replica
@@ -580,9 +580,9 @@ To fix it, once per environment, stop the control plane for longer than the sess
 that the broker drops the member. Its next join then runs a full assignment:
 
 ```bash
-kubectl patch kasprapp develop-materializer-control-plane -n kafka-sql --type merge -p '{"spec":{"replicas":0}}'
+kubectl patch kasprapp develop-materializer-control-plane -n midstream --type merge -p '{"spec":{"replicas":0}}'
 # wait until the pod is gone, then longer than K_BROKER_SESSION_TIMEOUT (120 s by default)
-kubectl patch kasprapp develop-materializer-control-plane -n kafka-sql --type merge -p '{"spec":{"replicas":1}}'
+kubectl patch kasprapp develop-materializer-control-plane -n midstream --type merge -p '{"spec":{"replicas":1}}'
 ```
 
 Runtimes keep running meanwhile. The console shows settings read-only until the control plane
@@ -621,4 +621,4 @@ Control plane or runtime:
    that every primary setting has a description.
 
 The console: see the console handbook,
-[15 — Extending the console](../../web/docs/15-extending-the-console.md).
+[15 — Extending the console](../../console/docs/15-extending-the-console.md).

@@ -10,8 +10,8 @@ Source: `identity/` (`permissions.py`, `principals.py`, `authorization.py`, `tok
 `web/identity.py`, `web/datasets.py`, `web/tokens.py`, `services/table_claims.py`; manifests
 `tables/{directory,identity-audit}.yaml`, `agents/identity-intake.yaml`, `tasks/identity-*.yaml`,
 `webviews/{auth,users,groups,roles,permissions,audit,identity,datasets}-*.yaml`; console:
-`web/server/auth/`, `web/server/routes/{auth,identity,datasets}.ts`, `web/shared/access.ts`,
-`web/src/features/{auth,access,datasets}/`, `web/src/lib/auth.tsx`.
+`console/server/auth/`, `console/server/routes/{auth,identity,datasets}.ts`, `console/shared/access.ts`,
+`console/src/features/{auth,access,datasets}/`, `console/src/lib/auth.tsx`.
 
 ## 18.1 The model in one paragraph
 
@@ -161,7 +161,7 @@ dataset_id)` answers on a dataset; `can(p)` without one answers across the deplo
 `can_anywhere(p)` whether `p` is held on at least one dataset. `GET /auth/session` reports the
 compact form: `dataset_permissions`, by dataset id, only what grants add beyond `permissions`, and
 `dataset_limit`. The console checks a permission on a dataset from it without a round trip
-(`web/shared/access.ts`).
+(`console/shared/access.ts`).
 
 `identity/principals.py::cached_grants` caches the result per person and **directory revision**,
 a counter in the `directory` record that every change to people, groups, roles, datasets or grants
@@ -266,7 +266,7 @@ agent still checks again because another change may land in between.
 **Optimistic concurrency.** User, group and role updates accept `base_revision`, the record's
 `revision` as the client read it; a mismatch is refused with `changed`.
 
-**Waiting.** The console waits up to 10 seconds for the outcome (`web/server/auth/outcomes.ts`)
+**Waiting.** The console waits up to 10 seconds for the outcome (`console/server/auth/outcomes.ts`)
 and answers `200` when applied, `202` when still pending, and the matching error when refused.
 Outcomes are kept for a day. Only the person who sent a request, or someone with `users.view`,
 may read its outcome.
@@ -445,7 +445,7 @@ audit entries older than `audit_log_retention_days` (90), at most 5,000 per pass
 
 ## 18.9 The console
 
-The console (`/web`) is a client of this API like any other, with three additions of its own.
+The console (`/console`) is a client of this API like any other, with three additions of its own.
 
 **The session lives in a cookie.** `POST /api/auth/login` forwards the credentials to the control
 plane and stores the returned token in an `HttpOnly`, `SameSite=Lax` cookie
@@ -480,15 +480,15 @@ rebuilds the principal from its description (`principal_from_description`), and 
 would. It trusts a check for 5 s, and for 60 s while the control plane cannot be reached. The
 service credential reads the tail app's health and member map, never rows ([19 §19.10](./19-live-tail.md)).
 
-The client (`web/src/lib/auth.tsx`) loads the session once and exposes `useAuth()` and
+The client (`console/src/lib/auth.tsx`) loads the session once and exposes `useAuth()` and
 `useCan(permission, datasetId?)`. Navigation, pages and buttons follow permissions — on each
 table's dataset, for a dataset permission; a guest who opens a page
 that needs more is sent to `/sign-in` and returned afterwards; a person with a password to change
 sees only the change-password form. Settings gains **Account** (profile, password, sessions) for
 everyone signed in, and **Users**, **Groups**, **Roles** and **Audit log** for those allowed;
 **Datasets** has an Access tab for each dataset's owners.
-See the console handbook, [11 — Feature reference](../../web/docs/11-feature-reference.md) and
-[12 — Security model](../../web/docs/12-security-model.md).
+See the console handbook, [11 — Feature reference](../../console/docs/11-feature-reference.md) and
+[12 — Security model](../../console/docs/12-security-model.md).
 
 ## 18.10 API
 
@@ -568,7 +568,7 @@ A key or token shorter than 32 characters is ignored and logged.
 **First deployment.**
 
 ```bash
-kubectl create secret generic materializer-auth -n kafka-sql \
+kubectl create secret generic materializer-auth -n midstream \
   --from-literal=signing-key="$(openssl rand -base64 48)" \
   --from-literal=service-token="$(openssl rand -base64 48)" \
   --from-literal=bootstrap-admin-email=you@example.com \
@@ -594,8 +594,8 @@ a developer's included - at a running control plane, copy the value from the Sec
 
 ```bash
 printf 'CONSOLE_SERVICE_TOKEN=%s\n' \
-  "$(kubectl -n kafka-sql get secret materializer-auth -o jsonpath='{.data.service-token}' | base64 -d)" \
-  >> web/.env      # then restart the console; the npm scripts read web/.env at start
+  "$(kubectl -n midstream get secret materializer-auth -o jsonpath='{.data.service-token}' | base64 -d)" \
+  >> console/.env  # then restart the console; the npm scripts read console/.env at start
 ```
 
 To replace it, put a new value (at least 32 characters, `openssl rand -base64 48`) in the
@@ -667,7 +667,7 @@ datasets and grants could not. Restore the changelog rather than recreating the 
 1. Add a `PermissionDefinition` to `PERMISSIONS` in `identity/permissions.py`, with its category,
    label, description, `implies` (within its scope) and `scope` — `dataset` for anything about a
    dataset's tables; add it to the built-in roles that should hold it. A dataset permission also
-   goes in `web/shared/access.ts::DATASET_PERMISSIONS`.
+   goes in `console/shared/access.ts::DATASET_PERMISSIONS`.
 2. Name it in `authorize(...)` in the WebView that needs it — with `dataset=` for a dataset
    permission — and in `permit(...)` (or `permitAnywhere(...)` and a per-dataset check) on the
    console route; gate the UI with `useCan(...)`.

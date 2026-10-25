@@ -9,7 +9,7 @@ Every component is configured by its environment. A setting that is safe to chan
 system runs may also be **overridden** from the Settings page; the override is stored with the
 control plane (`settings` table) and wins until it is reset. Everything else is **fixed by the
 deployment** and only shown, read-only, on the page's **Deployment** section. Background:
-`docs/handbook/17-settings.md`, `web/docs/03-configuration-reference.md` §3.10.
+`docs/handbook/17-settings.md`, `console/docs/03-configuration-reference.md` §3.10.
 
 ## 1. Decide what kind of setting it is
 
@@ -24,7 +24,7 @@ An adjustable setting must be read **where it is used, every time**, never captu
 a constructor; otherwise an override silently does nothing. If the code cannot work that way, the
 setting is fixed.
 
-Pick the **section** it belongs to from `web/src/features/settings/sections.ts`
+Pick the **section** it belongs to from `console/src/features/settings/sections.ts`
 (`materializations`, `deletion`, `schema`, `runtimes`, `jobs`, `live`, `data`, `topics`,
 `diagnostics`, `security`, …). A section id that is not in `SETTINGS_SECTIONS` is never displayed
 and no test catches it — check the id. A new section is §6.
@@ -110,11 +110,11 @@ Runtimes cannot read the control plane's table; overrides are delivered to them
 
 ## 4. Adjustable console setting
 
-1. `web/server/config.ts` — add it to `tunableDeployment` with `int` / `bool` / `str` and its env
+1. `console/server/config.ts` — add it to `tunableDeployment` with `int` / `bool` / `str` and its env
    var `CONSOLE_<NAME>`. It becomes a getter on `config`.
 2. Read `config.<key>` where it is used. Long-lived objects take a getter (`() => config.<key>`),
    as the topic catalog does.
-3. `web/server/settings/catalog.ts` — a `CONSOLE_SETTINGS` entry:
+3. `console/server/settings/catalog.ts` — a `CONSOLE_SETTINGS` entry:
 
    ```ts
    {
@@ -150,7 +150,7 @@ value lives elsewhere.
 ### 5.2 Console
 
 Read it in `config.ts` outside `tunableDeployment` (with `str` / `int` / `bool` / `optional`), and
-add an `entry(...)` to `consoleDeployment()` in `web/server/routes/settings.ts`.
+add an `entry(...)` to `consoleDeployment()` in `console/server/routes/settings.ts`.
 
 ### 5.3 Credentials
 
@@ -163,7 +163,7 @@ values with a logged error, and report only *configured / not configured* in `_d
 
 ## 6. A new section
 
-`web/src/features/settings/sections.ts`, in `SETTINGS_SECTIONS` where it should appear:
+`console/src/features/settings/sections.ts`, in `SETTINGS_SECTIONS` where it should appear:
 
 ```ts
 {
@@ -193,7 +193,7 @@ overridable control-plane setting into the runtime spec env (it changes the spec
 - `docs/handbook/17-settings.md` §17.3 tables (key, env var, default, bounds, effect), and §17.3
   "Never overridable" for fixed ones.
 - `docs/handbook/03-configuration-reference.md` §3.2.1 field table and §3.2.5 list.
-- Console: `web/docs/03-configuration-reference.md` (the variable, and §3.10 for adjustable ones).
+- Console: `console/docs/03-configuration-reference.md` (the variable, and §3.10 for adjustable ones).
 - The doc that owns the behaviour (e.g. `18-identity-and-access.md` §18.11 for security settings).
 
 ## 9. Verify
@@ -203,7 +203,7 @@ python -m unittest python.tests.test_settings python.tests.test_runtime_settings
 python -m unittest discover -s python/tests -p 'test_*.py'
 python -m compileall -q python/src
 kubectl kustomize manifests/base >/dev/null && kubectl kustomize manifests/dev >/dev/null
-cd web && npm test && npm run typecheck && npm run build
+cd console && npm test && npm run typecheck && npm run build
 ```
 
 Then open the Settings page: the setting is in its section with its label, unit and bounds; an

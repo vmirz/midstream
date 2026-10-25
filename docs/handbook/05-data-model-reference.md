@@ -193,7 +193,7 @@ schema migration of the envelope itself, not for optimistic concurrency.
 | `resolved_runtime_name` | `str \| None` | `None` | its runtime's name, generated from its id at creation (`<prefix>-<id>`, length-bounded). 4.0 removed `runtime_name`, the name a request could choose |
 | `runtime_group` | `str \| None` | `None` | reserved for shared mode; unused |
 | `runtime_app_ref` | `str \| None` | `None` | reserved; unused by control-plane code |
-| `namespace` | `str` | `"kafka-sql"` | must not be `""` (but `None` is impossible) — the Kubernetes namespace of the runtime: the deployment's `default_namespace` when it was created |
+| `namespace` | `str` | required | must not be `""` — the Kubernetes namespace of the runtime: the deployment's `default_namespace` when it was created |
 | `created_by` | `str \| None` | `None` | the creator's email (`principal.attribution`); `x-submitted-by` before 0.6.0 |
 | `created_by_id` | `str \| None` | `None` | the creator's user id; `None` for materializations created before accounts |
 | `resource_profile` | `str \| None` | `None` | carried, not consumed |
@@ -239,7 +239,7 @@ readers that only want the topics.
   "runtime_group": null,
   "resolved_runtime_name": "develop-mat-a1b2c3d4e5f6",
   "runtime_app_ref": null,
-  "namespace": "kafka-sql",
+  "namespace": "midstream",
   "desired_phase": "running",
   "created_at": "2026-10-18T10:30:00Z",
   "updated_at": "2026-10-18T10:41:12Z",
@@ -530,7 +530,7 @@ restart instability (08 §8.3, row 3d).
     "latest_offsets": { "orders": { "0": 51234, "1": 50880 }, "payments": { "0": 9120 } }
   },
   "resource_observation": {
-    "namespace": "kafka-sql",
+    "namespace": "midstream",
     "kaspr_app_name": "develop-mat-a1b2c3d4e5f6",
     "resource_exists": true,
     "managed_agent_states": {
