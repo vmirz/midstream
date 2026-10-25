@@ -86,9 +86,9 @@ RUNTIME_SPEC = {
     "template": {
         "kasprContainer": {
             "env": [
-                {"name": "MATERIALIZER_RUNTIME_MEMBER_ID", "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}},
-                {"name": "MATERIALIZER_PROTOCOL_LOGGING_ENABLED", "value": "true"},
-                {"name": "MATERIALIZER_RUNTIME_MAX_OPEN_FILE_AGE_SECONDS", "value": "120"},
+                {"name": "RUNTIME_MEMBER_ID", "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}},
+                {"name": "PROTOCOL_LOGGING_ENABLED", "value": "true"},
+                {"name": "RUNTIME_MAX_OPEN_FILE_AGE_SECONDS", "value": "120"},
             ]
         }
     },
@@ -324,7 +324,7 @@ class EffectiveConfigTests(unittest.TestCase):
                 "control-plane",
                 get_settings_document(self.table, "control-plane"),
                 config=base,
-                environ={"MATERIALIZER_CONTROL_PLANE_DEFAULT_RUNTIME_REPLICAS": "3"},
+                environ={"CONTROL_PLANE_DEFAULT_RUNTIME_REPLICAS": "3"},
             )
         }
         override = described["max_runtime_replicas"]
@@ -340,8 +340,8 @@ class EffectiveConfigTests(unittest.TestCase):
         self.assertEqual(
             runtime_environment(config),
             {
-                "MATERIALIZER_PROTOCOL_LOGGING_ENABLED": "true",
-                "MATERIALIZER_RUNTIME_MAX_OPEN_FILE_AGE_SECONDS": "120",
+                "PROTOCOL_LOGGING_ENABLED": "true",
+                "RUNTIME_MAX_OPEN_FILE_AGE_SECONDS": "120",
             },
         )
         described = {setting.definition.key: setting for setting in describe_settings("runtime", None, config=config)}
@@ -354,7 +354,7 @@ class ApplySettingsChangeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.table = FakeTable()
         self.config = ControlPlaneConfig(runtime_app_spec=RUNTIME_SPEC)
-        self.environ = {"MATERIALIZER_CONTROL_PLANE_MAX_RUNTIME_REPLICAS": "64"}
+        self.environ = {"CONTROL_PLANE_MAX_RUNTIME_REPLICAS": "64"}
 
     def apply(self, request: SettingsChangeRequest, *, at: str = "2026-10-08T10:00:00Z") -> list[dict]:
         return apply_settings_change(self.table, request, config=self.config, environ=self.environ, applied_at=at)
@@ -639,7 +639,7 @@ class SettingsViewTests(unittest.TestCase):
         self.settings = FakeTable()
         self.state = FakeTable()
         self.config = ControlPlaneConfig(runtime_app_spec=RUNTIME_SPEC, default_destination_uri="gs://deployed")
-        self.environ = {"MATERIALIZER_CONTROL_PLANE_DEFAULT_DESTINATION_URI": "gs://deployed"}
+        self.environ = {"CONTROL_PLANE_DEFAULT_DESTINATION_URI": "gs://deployed"}
 
     def accept(self, scope: str, body: dict, **kwargs: Any):
         return update_settings(self.settings, scope, body, submitted_by="jane", config=self.config, environ=self.environ, **kwargs)
@@ -699,7 +699,7 @@ class SettingsViewTests(unittest.TestCase):
             view = settings_scope_view(self.settings, "runtime", control_plane_table=self.state, config=config, now="2026-10-08T10:00:00Z")
             deployment = {item["key"]: item for item in view["deployment"]}
             self.assertEqual(deployment["vertical_autoscaling"]["value"], expected)
-            self.assertEqual(deployment["vertical_autoscaling"]["env_var"], "MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC")
+            self.assertEqual(deployment["vertical_autoscaling"]["env_var"], "CONTROL_PLANE_RUNTIME_APP_SPEC")
 
     def test_console_view_reports_stored_values(self) -> None:
         apply_settings_change(self.settings, change("console", values={"pageRowLimit": 500}), config=self.config)
@@ -710,10 +710,10 @@ class SettingsViewTests(unittest.TestCase):
 
     def test_deployment_reports_credentials_only_as_configured(self) -> None:
         values = {
-            "MATERIALIZER_AUTH_SIGNING_KEY": "k" * 40,
-            "MATERIALIZER_AUTH_SERVICE_TOKEN": "t" * 40,
-            "MATERIALIZER_AUTH_BOOTSTRAP_ADMIN_EMAIL": "root@example.com",
-            "MATERIALIZER_AUTH_BOOTSTRAP_ADMIN_PASSWORD": "a bootstrap password",
+            "AUTH_SIGNING_KEY": "k" * 40,
+            "AUTH_SERVICE_TOKEN": "t" * 40,
+            "AUTH_BOOTSTRAP_ADMIN_EMAIL": "root@example.com",
+            "AUTH_BOOTSTRAP_ADMIN_PASSWORD": "a bootstrap password",
         }
         cases = (
             (identity_secrets_from_environment(values), ("configured", "configured", "configured")),
@@ -783,7 +783,7 @@ class SettingsViewTests(unittest.TestCase):
             config=self.config,
         )
         get_config.cache_clear()
-        with patch.dict(os.environ, {"MATERIALIZER_CONTROL_PLANE_DEFAULT_DESTINATION_URI": "gs://deployed"}):
+        with patch.dict(os.environ, {"CONTROL_PLANE_DEFAULT_DESTINATION_URI": "gs://deployed"}):
             reported = settings_view(settings_table=self.settings)
         get_config.cache_clear()
         self.assertEqual(reported["default_destination_uri"], "gs://chosen")
@@ -924,7 +924,7 @@ class RuntimeSettingsMessageTests(unittest.TestCase):
 def setUpModule() -> None:
     # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
     # reach the configuration without choosing one, so the environment names it for them.
-    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    os.environ.setdefault("CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
     control_plane_config.get_config.cache_clear()
 
 

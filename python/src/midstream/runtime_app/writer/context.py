@@ -18,7 +18,7 @@ PROCESS_EPOCH = uuid.uuid4().hex
 
 
 def current_member_id() -> str:
-    return os.getenv("MATERIALIZER_RUNTIME_MEMBER_ID") or os.getenv("HOSTNAME", "unknown-member")
+    return os.getenv("RUNTIME_MEMBER_ID") or os.getenv("HOSTNAME", "unknown-member")
 
 
 def current_session_epoch() -> str:

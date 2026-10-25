@@ -50,68 +50,68 @@ revision. With no settings table it returns `get_config()` unchanged.
 
 | Field | Env var | Default | Validation |
 |-------|---------|---------|------------|
-| `control_plane_table_name` | `MATERIALIZER_CONTROL_PLANE_TABLE_NAME` | `state` | none |
-| `default_namespace` | `MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE` | the pod's own namespace, read from its service-account mount | the Kubernetes namespace every runtime runs in (a create request cannot choose another); with neither the variable nor the mount, the configuration refuses to load |
-| `default_runtime_name_prefix` | `MATERIALIZER_CONTROL_PLANE_RUNTIME_NAME_PREFIX` | `kaspr` | none; a runtime is named `<prefix>-<materialization_id>`, never by its request |
-| `default_runtime_template_version` | `MATERIALIZER_CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION` | `v1` | none |
-| `runtime_app_spec` | `MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC` | `{}` | must parse to a YAML mapping |
-| `default_list_limit` | `MATERIALIZER_CONTROL_PLANE_DEFAULT_LIST_LIMIT` | `"30"` | one of `10`, `30`, `100`, `all` |
-| `default_destination_uri` | `MATERIALIZER_CONTROL_PLANE_DEFAULT_DESTINATION_URI` | `None` | trimmed, trailing slashes dropped; blank is `None`. Where every new materialization's tables are created; a create request cannot name another. `None`, or a URI that is not `gs://`, refuses every create (`409 destination_not_configured`). Reported by `GET /system/settings` |
-| `default_runtime_replicas` | `MATERIALIZER_CONTROL_PLANE_DEFAULT_RUNTIME_REPLICAS` | `1` | integer, `>= 1`; replicas for a create request that names none |
-| `max_runtime_replicas` | `MATERIALIZER_CONTROL_PLANE_MAX_RUNTIME_REPLICAS` | `64` | integer, `>= 1`; the most a create or update may ask for |
-| `runtime_autoscaling_enabled` | `MATERIALIZER_CONTROL_PLANE_RUNTIME_AUTOSCALING_ENABLED` | `True` | boolean parse; on, a runtime far behind its topics gets more members until it has caught up, unless its materialization turned autoscaling off; off, none does, and scaled runtimes go back to their own count at the next lag measurement (07 §7.12a) |
-| `runtime_autoscale_max_replicas` | `MATERIALIZER_CONTROL_PLANE_RUNTIME_AUTOSCALE_MAX_REPLICAS` | `16` | integer, `>= 1`; the most members autoscaling gives one runtime — fewer when its topics' partitions keep fewer busy, never below its own count. Independent of `max_runtime_replicas` |
-| `runtime_autoscale_target_minutes` | `MATERIALIZER_CONTROL_PLANE_RUNTIME_AUTOSCALE_TARGET_MINUTES` | `30` | integer, `>= 1`; the catch-up time autoscaling scales for: a runtime that would take longer at its pace gets members enough to make it |
-| `runtime_autoscale_min_lag_records` | `MATERIALIZER_CONTROL_PLANE_RUNTIME_AUTOSCALE_MIN_LAG_RECORDS` | `100000` | integer, `>= 1`; the lag floor: no runtime this close is scaled up, and a scaled one goes back after three measurements at or under it |
-| `runtime_autoscale_cooldown_seconds` | `MATERIALIZER_CONTROL_PLANE_RUNTIME_AUTOSCALE_COOLDOWN_SECONDS` | `300` | integer, `>= 60`; the least time between two changes of a runtime's members |
-| `default_runtime_storage_size` | `MATERIALIZER_CONTROL_PLANE_DEFAULT_RUNTIME_STORAGE_SIZE` | `64Mi` | a Kubernetes quantity; every new runtime member's persistent volume, which holds only its state table (10 §10.8). A create request cannot choose another. Not the control plane's own volume, which its KasprApp sets (1Gi) |
-| `default_partition_granularity` | `MATERIALIZER_CONTROL_PLANE_DEFAULT_PARTITION_GRANULARITY` | `day` | `hour`, `day`, `month` or `none`; a new materialization's tables' partitioning when its create request names none |
-| `max_materialization_topics` | `MATERIALIZER_CONTROL_PLANE_MAX_MATERIALIZATION_TOPICS` | `20` | integer, `>= 1`; the most source topics one create request may name — each a table, all read by one runtime. Reported by `GET /system/settings` as `max_topics` |
-| `destination_cleanup_enabled` | `MATERIALIZER_CONTROL_PLANE_DESTINATION_CLEANUP_ENABLED` | `true` | delete drops the table: every object under its location — data, manifests, metadata, the pointer. Disable to keep the table; the delete chain then ends after the Kafka cleanup |
-| `purge_records_on_delete` | `MATERIALIZER_CONTROL_PLANE_PURGE_RECORDS_ON_DELETE` | `true` | delete removes every control-plane record as its final step; disable to leave them for the retention sweep |
-| `deleted_retention_hours` | `MATERIALIZER_CONTROL_PLANE_DELETED_RETENTION_HOURS` | `168` | how long the retention sweep leaves a deleted materialization's records before collecting them |
-| `deleted_purge_batch_limit` | `MATERIALIZER_CONTROL_PLANE_DELETED_PURGE_BATCH_LIMIT` | `50` | integer, `>= 1`; deleted materializations the retention sweep collects per run |
-| `consumer_lag_refresh_batch_limit` | `MATERIALIZER_CONTROL_PLANE_CONSUMER_LAG_REFRESH_BATCH_LIMIT` | `100` | integer, `>= 1`; materializations whose consumer lag one pass measures |
-| `topic_analysis_max_topics` | `MATERIALIZER_CONTROL_PLANE_TOPIC_ANALYSIS_MAX_TOPICS` | `20` | integer, `>= 1`; most topics one `POST /topics/analyze` may inspect |
-| `materialization_requests_topic` | `MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_REQUESTS_TOPIC` | `materialization-requests` | none |
-| `materialization_work_topic` | `MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_WORK_TOPIC` | `materialization-work` | none |
-| `materialization_status_topic` | `MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_STATUS_TOPIC` | `materialization-status` | none |
-| `schema_authority_updates_topic` | `MATERIALIZER_CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC` | `materialization-schema-authority-updates` | none; the runtime control topic: runtime settings (06 §6.7) |
-| `table_events_topic` | `MATERIALIZER_CONTROL_PLANE_TABLE_EVENTS_TOPIC` | `materialization-table-events` | none; what runtimes' committers and the maintenance app publish (06 §6.6) |
-| `storage_prefix` | `MATERIALIZER_CONTROL_PLANE_STORAGE_PREFIX` | `materializer` | trimmed, slashes stripped; the directory under the destination that every materialization's tables are created in: `<destination>/<storage_prefix>/<materialization id>/<table>` (11 §11.1). Not a namespace — a table's namespace is its dataset. Fixed for the deployment; `iceberg_namespace` / `…_ICEBERG_NAMESPACE` before 3.0 |
-| `catalog_base_url` | `MATERIALIZER_CONTROL_PLANE_CATALOG_BASE_URL` | `None` | trimmed, trailing slash dropped; the address engines reach the REST catalog at, shown in the console's connection snippets |
-| `catalog_api_enabled` | `MATERIALIZER_CONTROL_PLANE_CATALOG_API_ENABLED` | `true` | boolean parse; off, every `/catalog` endpoint answers `503` |
-| `catalog_metadata_cache_seconds` | `MATERIALIZER_CONTROL_PLANE_CATALOG_METADATA_CACHE_SECONDS` | `5` | integer, `>= 1`; how long a loaded table is answered again from memory |
-| `discovery_sample_records` | `MATERIALIZER_CONTROL_PLANE_DISCOVERY_SAMPLE_RECORDS` | `200` | integer, `>= 1`; records discovery reads to build schema 0 |
-| `discovery_sample_seconds` | `MATERIALIZER_CONTROL_PLANE_DISCOVERY_SAMPLE_SECONDS` | `5` | integer, `>= 1`; how long discovery waits for them |
-| `settings_requests_topic` | `MATERIALIZER_CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC` | `materializer-settings-requests` | none; the topic the settings WebView publishes changes to |
-| `identity_requests_topic` | `MATERIALIZER_CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC` | `materializer-identity-requests` | none; the topic the identity views and tasks publish to |
-| `session_idle_timeout_minutes` | `MATERIALIZER_CONTROL_PLANE_SESSION_IDLE_TIMEOUT_MINUTES` | `480` | integer, `>= 1`; how long a session lasts unused |
-| `session_max_lifetime_hours` | `MATERIALIZER_CONTROL_PLANE_SESSION_MAX_LIFETIME_HOURS` | `168` | integer, `>= 1`; how long a session lasts however active |
-| `session_refresh_minutes` | `MATERIALIZER_CONTROL_PLANE_SESSION_REFRESH_MINUTES` | `10` | integer, `>= 1`; how often a client renews an active session |
-| `password_min_length` | `MATERIALIZER_CONTROL_PLANE_PASSWORD_MIN_LENGTH` | `12` | integer, `>= 8`; the shortest password anyone may choose or be given |
-| `sign_in_max_failed_attempts` | `MATERIALIZER_CONTROL_PLANE_SIGN_IN_MAX_FAILED_ATTEMPTS` | `10` | integer, `>= 1`; wrong passwords in a row before an email is locked out |
-| `sign_in_lockout_minutes` | `MATERIALIZER_CONTROL_PLANE_SIGN_IN_LOCKOUT_MINUTES` | `15` | integer, `>= 1` |
-| `audit_log_retention_days` | `MATERIALIZER_CONTROL_PLANE_AUDIT_LOG_RETENTION_DAYS` | `90` | integer, `>= 1` |
-| `live_tail_enabled` | `MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_ENABLED` | `True` | boolean parse; on, every materialization's tables are tailed; off, none (19) |
-| `live_tail_max_rows_per_table` | `MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_MAX_ROWS_PER_TABLE` | `250000` | integer, `>= 1000`; one table's uncommitted records the tail holds, and the backlog bound |
-| `live_tail_max_bytes_per_table` | `MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_MAX_BYTES_PER_TABLE` | `268435456` | integer, `>= 8 MiB`; one table's tail memory |
-| `live_tail_retention_seconds` | `MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_RETENTION_SECONDS` | `120` | integer, `>= 10`; how long committed records stay in a tail |
-| `live_tail_fetch_wait_ms` | `MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_FETCH_WAIT_MS` | `200` | integer, `>= 50`; the tail's Kafka fetch wait |
-| `live_tail_max_records_per_second_per_table` | `MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_MAX_RECORDS_PER_SECOND_PER_TABLE` | `5000` | integer, `>= 100`; one table's ingest ceiling |
-| `live_tail_peek_max_rows` | `MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_PEEK_MAX_ROWS` | `1000` | integer, `>= 10`; the most records one head peek reads |
-| `live_tail_idle_seconds` | `MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_IDLE_SECONDS` | `600` | integer, `>= 0`; how long a table stays tailed after its last query; `0` never parks |
-| `protocol_logging_enabled` | `MATERIALIZER_PROTOCOL_LOGGING_ENABLED` | `False` | boolean parse |
-| `protocol_log_slow_wait_seconds` | `MATERIALIZER_PROTOCOL_LOG_SLOW_WAIT_SECONDS` | `30` | integer, `>= 1` |
-| `schema_history_limit` | `MATERIALIZER_CONTROL_PLANE_SCHEMA_HISTORY_LIMIT` | `50` | integer, `>= 1`; schema projections kept per materialization (05 §5.5) |
-| `topic_catalog_ttl_seconds` | `MATERIALIZER_CONTROL_PLANE_TOPIC_CATALOG_TTL_SECONDS` | `15` | integer, `>= 1`; how long `GET /topics` answers from memory |
-| `topic_catalog_min_refresh_seconds` | `MATERIALIZER_CONTROL_PLANE_TOPIC_CATALOG_MIN_REFRESH_SECONDS` | `5` | integer, `>= 1`; floor between topic-list loads, forced and failed ones included |
+| `control_plane_table_name` | `CONTROL_PLANE_TABLE_NAME` | `state` | none |
+| `default_namespace` | `CONTROL_PLANE_DEFAULT_NAMESPACE` | the pod's own namespace, read from its service-account mount | the Kubernetes namespace every runtime runs in (a create request cannot choose another); with neither the variable nor the mount, the configuration refuses to load |
+| `default_runtime_name_prefix` | `CONTROL_PLANE_RUNTIME_NAME_PREFIX` | `kaspr` | none; a runtime is named `<prefix>-<materialization_id>`, never by its request |
+| `default_runtime_template_version` | `CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION` | `v1` | none |
+| `runtime_app_spec` | `CONTROL_PLANE_RUNTIME_APP_SPEC` | `{}` | must parse to a YAML mapping |
+| `default_list_limit` | `CONTROL_PLANE_DEFAULT_LIST_LIMIT` | `"30"` | one of `10`, `30`, `100`, `all` |
+| `default_destination_uri` | `CONTROL_PLANE_DEFAULT_DESTINATION_URI` | `None` | trimmed, trailing slashes dropped; blank is `None`. Where every new materialization's tables are created; a create request cannot name another. `None`, or a URI that is not `gs://`, refuses every create (`409 destination_not_configured`). Reported by `GET /system/settings` |
+| `default_runtime_replicas` | `CONTROL_PLANE_DEFAULT_RUNTIME_REPLICAS` | `1` | integer, `>= 1`; replicas for a create request that names none |
+| `max_runtime_replicas` | `CONTROL_PLANE_MAX_RUNTIME_REPLICAS` | `64` | integer, `>= 1`; the most a create or update may ask for |
+| `runtime_autoscaling_enabled` | `CONTROL_PLANE_RUNTIME_AUTOSCALING_ENABLED` | `True` | boolean parse; on, a runtime far behind its topics gets more members until it has caught up, unless its materialization turned autoscaling off; off, none does, and scaled runtimes go back to their own count at the next lag measurement (07 §7.12a) |
+| `runtime_autoscale_max_replicas` | `CONTROL_PLANE_RUNTIME_AUTOSCALE_MAX_REPLICAS` | `16` | integer, `>= 1`; the most members autoscaling gives one runtime — fewer when its topics' partitions keep fewer busy, never below its own count. Independent of `max_runtime_replicas` |
+| `runtime_autoscale_target_minutes` | `CONTROL_PLANE_RUNTIME_AUTOSCALE_TARGET_MINUTES` | `30` | integer, `>= 1`; the catch-up time autoscaling scales for: a runtime that would take longer at its pace gets members enough to make it |
+| `runtime_autoscale_min_lag_records` | `CONTROL_PLANE_RUNTIME_AUTOSCALE_MIN_LAG_RECORDS` | `100000` | integer, `>= 1`; the lag floor: no runtime this close is scaled up, and a scaled one goes back after three measurements at or under it |
+| `runtime_autoscale_cooldown_seconds` | `CONTROL_PLANE_RUNTIME_AUTOSCALE_COOLDOWN_SECONDS` | `300` | integer, `>= 60`; the least time between two changes of a runtime's members |
+| `default_runtime_storage_size` | `CONTROL_PLANE_DEFAULT_RUNTIME_STORAGE_SIZE` | `64Mi` | a Kubernetes quantity; every new runtime member's persistent volume, which holds only its state table (10 §10.8). A create request cannot choose another. Not the control plane's own volume, which its KasprApp sets (1Gi) |
+| `default_partition_granularity` | `CONTROL_PLANE_DEFAULT_PARTITION_GRANULARITY` | `day` | `hour`, `day`, `month` or `none`; a new materialization's tables' partitioning when its create request names none |
+| `max_materialization_topics` | `CONTROL_PLANE_MAX_MATERIALIZATION_TOPICS` | `20` | integer, `>= 1`; the most source topics one create request may name — each a table, all read by one runtime. Reported by `GET /system/settings` as `max_topics` |
+| `destination_cleanup_enabled` | `CONTROL_PLANE_DESTINATION_CLEANUP_ENABLED` | `true` | delete drops the table: every object under its location — data, manifests, metadata, the pointer. Disable to keep the table; the delete chain then ends after the Kafka cleanup |
+| `purge_records_on_delete` | `CONTROL_PLANE_PURGE_RECORDS_ON_DELETE` | `true` | delete removes every control-plane record as its final step; disable to leave them for the retention sweep |
+| `deleted_retention_hours` | `CONTROL_PLANE_DELETED_RETENTION_HOURS` | `168` | how long the retention sweep leaves a deleted materialization's records before collecting them |
+| `deleted_purge_batch_limit` | `CONTROL_PLANE_DELETED_PURGE_BATCH_LIMIT` | `50` | integer, `>= 1`; deleted materializations the retention sweep collects per run |
+| `consumer_lag_refresh_batch_limit` | `CONTROL_PLANE_CONSUMER_LAG_REFRESH_BATCH_LIMIT` | `100` | integer, `>= 1`; materializations whose consumer lag one pass measures |
+| `topic_analysis_max_topics` | `CONTROL_PLANE_TOPIC_ANALYSIS_MAX_TOPICS` | `20` | integer, `>= 1`; most topics one `POST /topics/analyze` may inspect |
+| `materialization_requests_topic` | `CONTROL_PLANE_MATERIALIZATION_REQUESTS_TOPIC` | `materialization-requests` | none |
+| `materialization_work_topic` | `CONTROL_PLANE_MATERIALIZATION_WORK_TOPIC` | `materialization-work` | none |
+| `materialization_status_topic` | `CONTROL_PLANE_MATERIALIZATION_STATUS_TOPIC` | `materialization-status` | none |
+| `schema_authority_updates_topic` | `CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC` | `materialization-schema-authority-updates` | none; the runtime control topic: runtime settings (06 §6.7) |
+| `table_events_topic` | `CONTROL_PLANE_TABLE_EVENTS_TOPIC` | `materialization-table-events` | none; what runtimes' committers and the maintenance app publish (06 §6.6) |
+| `storage_prefix` | `CONTROL_PLANE_STORAGE_PREFIX` | `materializer` | trimmed, slashes stripped; the directory under the destination that every materialization's tables are created in: `<destination>/<storage_prefix>/<materialization id>/<table>` (11 §11.1). Not a namespace — a table's namespace is its dataset. Fixed for the deployment; `iceberg_namespace` / `…_ICEBERG_NAMESPACE` before 3.0 |
+| `catalog_base_url` | `CONTROL_PLANE_CATALOG_BASE_URL` | `None` | trimmed, trailing slash dropped; the address engines reach the REST catalog at, shown in the console's connection snippets |
+| `catalog_api_enabled` | `CONTROL_PLANE_CATALOG_API_ENABLED` | `true` | boolean parse; off, every `/catalog` endpoint answers `503` |
+| `catalog_metadata_cache_seconds` | `CONTROL_PLANE_CATALOG_METADATA_CACHE_SECONDS` | `5` | integer, `>= 1`; how long a loaded table is answered again from memory |
+| `discovery_sample_records` | `CONTROL_PLANE_DISCOVERY_SAMPLE_RECORDS` | `200` | integer, `>= 1`; records discovery reads to build schema 0 |
+| `discovery_sample_seconds` | `CONTROL_PLANE_DISCOVERY_SAMPLE_SECONDS` | `5` | integer, `>= 1`; how long discovery waits for them |
+| `settings_requests_topic` | `CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC` | `materializer-settings-requests` | none; the topic the settings WebView publishes changes to |
+| `identity_requests_topic` | `CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC` | `materializer-identity-requests` | none; the topic the identity views and tasks publish to |
+| `session_idle_timeout_minutes` | `CONTROL_PLANE_SESSION_IDLE_TIMEOUT_MINUTES` | `480` | integer, `>= 1`; how long a session lasts unused |
+| `session_max_lifetime_hours` | `CONTROL_PLANE_SESSION_MAX_LIFETIME_HOURS` | `168` | integer, `>= 1`; how long a session lasts however active |
+| `session_refresh_minutes` | `CONTROL_PLANE_SESSION_REFRESH_MINUTES` | `10` | integer, `>= 1`; how often a client renews an active session |
+| `password_min_length` | `CONTROL_PLANE_PASSWORD_MIN_LENGTH` | `12` | integer, `>= 8`; the shortest password anyone may choose or be given |
+| `sign_in_max_failed_attempts` | `CONTROL_PLANE_SIGN_IN_MAX_FAILED_ATTEMPTS` | `10` | integer, `>= 1`; wrong passwords in a row before an email is locked out |
+| `sign_in_lockout_minutes` | `CONTROL_PLANE_SIGN_IN_LOCKOUT_MINUTES` | `15` | integer, `>= 1` |
+| `audit_log_retention_days` | `CONTROL_PLANE_AUDIT_LOG_RETENTION_DAYS` | `90` | integer, `>= 1` |
+| `live_tail_enabled` | `CONTROL_PLANE_LIVE_TAIL_ENABLED` | `True` | boolean parse; on, every materialization's tables are tailed; off, none (19) |
+| `live_tail_max_rows_per_table` | `CONTROL_PLANE_LIVE_TAIL_MAX_ROWS_PER_TABLE` | `250000` | integer, `>= 1000`; one table's uncommitted records the tail holds, and the backlog bound |
+| `live_tail_max_bytes_per_table` | `CONTROL_PLANE_LIVE_TAIL_MAX_BYTES_PER_TABLE` | `268435456` | integer, `>= 8 MiB`; one table's tail memory |
+| `live_tail_retention_seconds` | `CONTROL_PLANE_LIVE_TAIL_RETENTION_SECONDS` | `120` | integer, `>= 10`; how long committed records stay in a tail |
+| `live_tail_fetch_wait_ms` | `CONTROL_PLANE_LIVE_TAIL_FETCH_WAIT_MS` | `200` | integer, `>= 50`; the tail's Kafka fetch wait |
+| `live_tail_max_records_per_second_per_table` | `CONTROL_PLANE_LIVE_TAIL_MAX_RECORDS_PER_SECOND_PER_TABLE` | `5000` | integer, `>= 100`; one table's ingest ceiling |
+| `live_tail_peek_max_rows` | `CONTROL_PLANE_LIVE_TAIL_PEEK_MAX_ROWS` | `1000` | integer, `>= 10`; the most records one head peek reads |
+| `live_tail_idle_seconds` | `CONTROL_PLANE_LIVE_TAIL_IDLE_SECONDS` | `600` | integer, `>= 0`; how long a table stays tailed after its last query; `0` never parks |
+| `protocol_logging_enabled` | `PROTOCOL_LOGGING_ENABLED` | `False` | boolean parse |
+| `protocol_log_slow_wait_seconds` | `PROTOCOL_LOG_SLOW_WAIT_SECONDS` | `30` | integer, `>= 1` |
+| `schema_history_limit` | `CONTROL_PLANE_SCHEMA_HISTORY_LIMIT` | `50` | integer, `>= 1`; schema projections kept per materialization (05 §5.5) |
+| `topic_catalog_ttl_seconds` | `CONTROL_PLANE_TOPIC_CATALOG_TTL_SECONDS` | `15` | integer, `>= 1`; how long `GET /topics` answers from memory |
+| `topic_catalog_min_refresh_seconds` | `CONTROL_PLANE_TOPIC_CATALOG_MIN_REFRESH_SECONDS` | `5` | integer, `>= 1`; floor between topic-list loads, forced and failed ones included |
 | `kaspr_app_name` | `K_APP_NAME` (set by Kaspr) | `None` | none; topics prefixed with it are this control plane's own |
 
 1.0 retired `schema_proposals_topic`, `schema_proposal_debounce_seconds` and the three
 `object_manifest_*` fields with what they configured; their variables are ignored.
 
-The identity secrets — `MATERIALIZER_AUTH_SIGNING_KEY`, `…_PREVIOUS_SIGNING_KEY`,
+The identity secrets — `AUTH_SIGNING_KEY`, `…_PREVIOUS_SIGNING_KEY`,
 `…_SERVICE_TOKEN`, `…_BOOTSTRAP_ADMIN_EMAIL`, `…_BOOTSTRAP_ADMIN_PASSWORD`,
 `…_BOOTSTRAP_ADMIN_FIRST_NAME`, `…_BOOTSTRAP_ADMIN_LAST_NAME` — are deliberately **not**
 `ControlPlaneConfig` fields, so no settings view can ever report one. They are read once by
@@ -142,7 +142,7 @@ ValueError: boolean environment values must be one of: 1, 0, true, false, yes, n
 
 **Runtime app spec** (`_load_runtime_app_spec`): `None` or `""` → `{}`. Otherwise parsed with
 `yaml.safe_load`. `None` result → `{}`. Non-mapping result raises
-`ValueError: MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC must parse to a mapping`.
+`ValueError: CONTROL_PLANE_RUNTIME_APP_SPEC must parse to a mapping`.
 
 ### 3.2.3 Derived helper
 
@@ -159,30 +159,30 @@ So `mat-a1b2c3d4e5f6` becomes `kaspr-mat-a1b2c3d4e5f6` in base and
 
 Set in `manifests/base/apps/control-plane.yaml`:
 
-- `MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE`
-- `MATERIALIZER_CONTROL_PLANE_DEFAULT_LIST_LIMIT`
-- `MATERIALIZER_CONTROL_PLANE_RUNTIME_NAME_PREFIX`
-- `MATERIALIZER_CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION`
-- `MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC`
+- `CONTROL_PLANE_DEFAULT_NAMESPACE`
+- `CONTROL_PLANE_DEFAULT_LIST_LIMIT`
+- `CONTROL_PLANE_RUNTIME_NAME_PREFIX`
+- `CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION`
+- `CONTROL_PLANE_RUNTIME_APP_SPEC`
 - the requests, work, status, runtime control and table-events topic variables,
-  `MATERIALIZER_CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC` and
-  `MATERIALIZER_CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC`
-- `MATERIALIZER_CONTROL_PLANE_STORAGE_PREFIX` (`materializer`; dev `develop`)
-- `MATERIALIZER_CONTROL_PLANE_DELETED_RETENTION_HOURS`, `…_DEFAULT_RUNTIME_STORAGE_SIZE`,
+  `CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC` and
+  `CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC`
+- `CONTROL_PLANE_STORAGE_PREFIX` (`materializer`; dev `develop`)
+- `CONTROL_PLANE_DELETED_RETENTION_HOURS`, `…_DEFAULT_RUNTIME_STORAGE_SIZE`,
   `…_DEFAULT_RUNTIME_REPLICAS`, `…_DEFAULT_DESTINATION_URI`
-- `MATERIALIZER_AUTH_SIGNING_KEY`, `…_PREVIOUS_SIGNING_KEY`, `…_SERVICE_TOKEN`,
+- `AUTH_SIGNING_KEY`, `…_PREVIOUS_SIGNING_KEY`, `…_SERVICE_TOKEN`,
   `…_BOOTSTRAP_ADMIN_EMAIL` and `…_BOOTSTRAP_ADMIN_PASSWORD`, from the `materializer-auth` Secret
-- `MATERIALIZER_PROTOCOL_LOGGING_ENABLED` = `"true"`
+- `PROTOCOL_LOGGING_ENABLED` = `"true"`
 - `GOOGLE_APPLICATION_CREDENTIALS` (consumed by the GCS client, not by `ControlPlaneConfig`)
 
 **Not set anywhere** (code defaults apply):
 
-- `MATERIALIZER_CONTROL_PLANE_TABLE_NAME`
-- `MATERIALIZER_PROTOCOL_LOG_SLOW_WAIT_SECONDS`
-- `MATERIALIZER_CONTROL_PLANE_SCHEMA_HISTORY_LIMIT`
-- `MATERIALIZER_CONTROL_PLANE_DEFAULT_PARTITION_GRANULARITY`, `…_DISCOVERY_SAMPLE_RECORDS`,
+- `CONTROL_PLANE_TABLE_NAME`
+- `PROTOCOL_LOG_SLOW_WAIT_SECONDS`
+- `CONTROL_PLANE_SCHEMA_HISTORY_LIMIT`
+- `CONTROL_PLANE_DEFAULT_PARTITION_GRANULARITY`, `…_DISCOVERY_SAMPLE_RECORDS`,
   `…_DISCOVERY_SAMPLE_SECONDS`
-- `MATERIALIZER_CONTROL_PLANE_CATALOG_BASE_URL` — set it per environment to the address engines
+- `CONTROL_PLANE_CATALOG_BASE_URL` — set it per environment to the address engines
   use, or the console's snippets show a placeholder — `…_CATALOG_API_ENABLED`,
   `…_CATALOG_METADATA_CACHE_SECONDS`
 - the seven session, password, lockout and audit settings (Settings page overrides apply instead)
@@ -226,9 +226,9 @@ overrides applied (17 §17.7). The rest (§3.3.2) are constants of the release.
 ### 3.3.1 Live fields
 
 Every one is read from its environment variable when no override applies
-(`LIVE_SETTING_ENV_VARS`, `runtime_app/live_settings.py`): `MATERIALIZER_RUNTIME_<FIELD>` in upper
-case, except the two protocol-logging fields, which read `MATERIALIZER_PROTOCOL_LOGGING_ENABLED`
-and `MATERIALIZER_PROTOCOL_LOG_SLOW_WAIT_SECONDS`.
+(`LIVE_SETTING_ENV_VARS`, `runtime_app/live_settings.py`): `RUNTIME_<FIELD>` in upper
+case, except the two protocol-logging fields, which read `PROTOCOL_LOGGING_ENABLED`
+and `PROTOCOL_LOG_SLOW_WAIT_SECONDS`.
 
 **Batches** (10 §10.3)
 
@@ -317,14 +317,14 @@ every child resource and the commits topic from the app name (02 §2.10).
 
 | Variable | Set by | Consumed by |
 |----------|--------|-------------|
-| `MATERIALIZER_RUNTIME_MEMBER_ID` | Downward API (`metadata.name`) in the runtime app spec | `runtime_app/writer/context.py::current_member_id()` |
+| `RUNTIME_MEMBER_ID` | Downward API (`metadata.name`) in the runtime app spec | `runtime_app/writer/context.py::current_member_id()` |
 | `GOOGLE_APPLICATION_CREDENTIALS` | runtime app spec | the GCS client and PyIceberg's FileIO |
 | `K_STREAM_WAIT_EMPTY` | the generated runtime spec, `false` | Kaspr's `stream_wait_empty`: Faust does not wait, on a rebalance or at shutdown, for delivered records to be acknowledged. The writer holds acknowledgements until rows are in the table (10 §10.7), so waiting would stall both; a record left unacknowledged is read again |
 | `K_STORE_ROCKSDB_WRITE_BUFFER_SIZE`, `K_STORE_ROCKSDB_MAX_WRITE_BUFFER_NUMBER` | the generated runtime spec, `4194304` and `2` | Kaspr's RocksDB write buffer for the state table, the app's one store: flushing every 4 MiB keeps its write-ahead log under 8 MiB on a 64Mi volume (10 §10.8). Kaspr's own default is 64 MiB |
 
 The table's identity — location, namespace, name, partition granularity — reaches the runtime as
 agent arguments in its templates, not as variables. The generated spec's env list is merged with
-the deployment's `MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC` by variable name, the deployment's
+the deployment's `CONTROL_PLANE_RUNTIME_APP_SPEC` by variable name, the deployment's
 entries winning.
 
 `current_member_id()` stamps batch ids and data file names, and names the committer in the
@@ -370,9 +370,9 @@ change and a package release.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `MATERIALIZER_MAINTENANCE_APP_NAME` | `materializer-maintenance` | names the app in its commits and table events |
-| `MATERIALIZER_MAINTENANCE_MAX_CONCURRENT_JOBS` | `1` | long jobs one member runs at once, across its tables |
-| `MATERIALIZER_MAINTENANCE_FORGET_AFTER_SECONDS` | `300` (≥ 60) | a table no tick names for this long is forgotten, its job stopped |
+| `MAINTENANCE_APP_NAME` | `materializer-maintenance` | names the app in its commits and table events |
+| `MAINTENANCE_MAX_CONCURRENT_JOBS` | `1` | long jobs one member runs at once, across its tables |
+| `MAINTENANCE_FORGET_AFTER_SECONDS` | `300` (≥ 60) | a table no tick names for this long is forgotten, its job stopped |
 
 Read from the app's environment (02 §2.10a); what the jobs do comes with the ticks.
 
@@ -380,17 +380,17 @@ Read from the app's environment (02 §2.10a); what the jobs do comes with the ti
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `MATERIALIZER_TAIL_APP_NAME` | `materializer-tail` | the app, as its consumer group and the member map name it |
-| `MATERIALIZER_TAIL_CONTROL_PLANE_URL` | none | the control plane's Service: sessions, schemas, tables |
-| `MATERIALIZER_TAIL_SERVICE_TOKEN` | none | the console's credential, which every request must carry, and the app's own for schemas; at least 32 characters, never a config field |
-| `MATERIALIZER_TAIL_TABLE_EVENTS_TOPIC` | `materialization-table-events` | commits and schema changes |
-| `MATERIALIZER_TAIL_REQUESTS_TOPIC` | `materializer-tail-requests` | ticks and cancels |
-| `MATERIALIZER_TAIL_MEMORY_BUDGET_BYTES` | `2684354560` | resident bytes of a member's tables together |
-| `MATERIALIZER_TAIL_FORGET_AFTER_SECONDS` | `300` | a table no tick names for this long is forgotten |
-| `MATERIALIZER_TAIL_SESSION_CHECK_SECONDS` | `5` | how long a session the control plane answered for is trusted (60 s while it cannot be reached) |
-| `MATERIALIZER_TAIL_SERVE_CONCURRENCY`, `…_PEEK_CONCURRENCY` | `4`, `2` | answers and peeks built at once |
-| `MATERIALIZER_TAIL_MEMBER_MAP_REFRESH_SECONDS` | `15` | how often the member map is read again |
-| `MATERIALIZER_RUNTIME_MEMBER_ID` | the pod's name | the member's name |
+| `TAIL_APP_NAME` | `materializer-tail` | the app, as its consumer group and the member map name it |
+| `TAIL_CONTROL_PLANE_URL` | none | the control plane's Service: sessions, schemas, tables |
+| `TAIL_SERVICE_TOKEN` | none | the console's credential, which every request must carry, and the app's own for schemas; at least 32 characters, never a config field |
+| `TAIL_TABLE_EVENTS_TOPIC` | `materialization-table-events` | commits and schema changes |
+| `TAIL_REQUESTS_TOPIC` | `materializer-tail-requests` | ticks and cancels |
+| `TAIL_MEMORY_BUDGET_BYTES` | `2684354560` | resident bytes of a member's tables together |
+| `TAIL_FORGET_AFTER_SECONDS` | `300` | a table no tick names for this long is forgotten |
+| `TAIL_SESSION_CHECK_SECONDS` | `5` | how long a session the control plane answered for is trusted (60 s while it cannot be reached) |
+| `TAIL_SERVE_CONCURRENCY`, `…_PEEK_CONCURRENCY` | `4`, `2` | answers and peeks built at once |
+| `TAIL_MEMBER_MAP_REFRESH_SECONDS` | `15` | how often the member map is read again |
+| `RUNTIME_MEMBER_ID` | the pod's name | the member's name |
 
 Read once at start (02 §2.10b); the nine `live_tail_*` settings come with every tick (§3.2.1, 17).
 Constants: segments close at `SEGMENT_ROWS` 2,000 rows, `SEGMENT_BYTES` 4 MiB or
@@ -466,7 +466,7 @@ Then re-run `kubectl kustomize manifests/dev` and the unit tests.
 Settings page's Runtimes, Commits, Schema and Maintenance sections; running runtimes apply it within
 seconds, and the maintenance app at its next tick, without a restart.
 To change the deployment value instead, set the env var in the runtime spec
-(`MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC` → `template.kasprContainer.env`). That changes
+(`CONTROL_PLANE_RUNTIME_APP_SPEC` → `template.kasprContainer.env`). That changes
 every runtime's spec hash, so the sweep re-applies, and restarts, every runtime. A compile-time
 field (§3.3.2) still needs a package release, and runtimes pick it up only when their package pin
 advances.

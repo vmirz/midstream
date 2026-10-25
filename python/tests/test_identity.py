@@ -385,20 +385,20 @@ class TokenTests(unittest.TestCase):
     def test_secrets_from_environment(self) -> None:
         secrets = identity_secrets_from_environment(
             {
-                "MATERIALIZER_AUTH_SIGNING_KEY": KEY,
-                "MATERIALIZER_AUTH_PREVIOUS_SIGNING_KEY": "p" * 40,
-                "MATERIALIZER_AUTH_SERVICE_TOKEN": "short",
-                "MATERIALIZER_AUTH_BOOTSTRAP_ADMIN_EMAIL": " Root@Example.com ",
-                "MATERIALIZER_AUTH_BOOTSTRAP_ADMIN_PASSWORD": "pw",
+                "AUTH_SIGNING_KEY": KEY,
+                "AUTH_PREVIOUS_SIGNING_KEY": "p" * 40,
+                "AUTH_SERVICE_TOKEN": "short",
+                "AUTH_BOOTSTRAP_ADMIN_EMAIL": " Root@Example.com ",
+                "AUTH_BOOTSTRAP_ADMIN_PASSWORD": "pw",
             }
         )
         self.assertEqual(len(secrets.signing_keys), 2)
         self.assertIsNone(secrets.service_token, "a short service token is ignored")
         self.assertEqual(secrets.bootstrap_admin.email, "root@example.com")
         self.assertEqual(secrets.bootstrap_admin.first_name, "Admin")
-        lone_previous = identity_secrets_from_environment({"MATERIALIZER_AUTH_PREVIOUS_SIGNING_KEY": "p" * 40})
+        lone_previous = identity_secrets_from_environment({"AUTH_PREVIOUS_SIGNING_KEY": "p" * 40})
         self.assertFalse(lone_previous.can_sign_in)
-        weak = identity_secrets_from_environment({"MATERIALIZER_AUTH_SIGNING_KEY": "too-short"})
+        weak = identity_secrets_from_environment({"AUTH_SIGNING_KEY": "too-short"})
         self.assertFalse(weak.can_sign_in)
 
 

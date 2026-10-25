@@ -161,7 +161,7 @@ by rule 4 it is a major release for every peer.
 | New endpoints: `/datasets`, `/datasets/{dataset}`, its grants and its tables (04 §4.15) | API clients |
 | Permissions have a scope. `dataset.view_schema`, `data.query`, `data.export`, `catalog.read`, `catalog.write`, `dataset.write` and `dataset.manage` hold on a dataset; `materializations.view_schema` and the Data Reader role are gone; new roles Dataset Reader, Writer and Owner, and `datasets.view`, `datasets.create` (18 §18.3) | role editors, anyone relying on Data Reader |
 | The REST catalog's namespaces are datasets, and lists only those the caller may read: engines read `lake.<dataset>.<table>` (11 §11.8). Access tokens can be limited to datasets | external engines, token holders |
-| Tables live at `<destination>/<storage prefix>/<materialization id>/<table>`; `MATERIALIZER_CONTROL_PLANE_ICEBERG_NAMESPACE` is `MATERIALIZER_CONTROL_PLANE_STORAGE_PREFIX` (03 §3.2.1, 11 §11.1) | deployers: rename the variable in every overlay |
+| Tables live at `<destination>/<storage prefix>/<materialization id>/<table>`; `CONTROL_PLANE_ICEBERG_NAMESPACE` is `CONTROL_PLANE_STORAGE_PREFIX` (03 §3.2.1, 11 §11.1) | deployers: rename the variable in every overlay |
 | The `identity` KasprTable is `directory`: it holds datasets, grants and claims too. Every WebView and `identity-intake` bind it as `directory_table` (02 §2.4, §2.8) | deployers: patch the binding in a renaming overlay; the new table starts empty |
 | `request-intake` also sends to the identity requests topic (claims and releases), and `identity-intake` sends `tables_claimed` / `claim_rejected` work events and reads the `state` table (06 §6.4, §6.15; 02 §2.5) | deployers: patch both outputs in a renaming overlay |
 | Table records, the detail and the list carry `dataset` and `dataset_id`; `namespace` is gone from the table summary; a table says whether the caller may read it (`readable`, `queryable`) (05 §5.12, §5.17) | API clients, dashboards |
@@ -255,7 +255,7 @@ off, for all of them (19). It stays compatible with 4.1 and 4.2 peers, so this i
 |---|---|
 | Every running materialization's tables are tailed: those created before 4.1, and those a control plane before 4.3 had switched off, included. A stored `live_tail` is read and dropped | none |
 | A create or `PATCH` that says `live_tail: false` is refused (`400`, `field: "live_tail"`); `true`, which a 4.1 console sends back, changes nothing (04 §4.5, §4.8.1). Answers still carry `live_tail: true`, and `GET /system/settings` `live_tail_default: true`, so a 4.1 console offers Live | API clients |
-| The setting `live_tail_default` is gone, with `MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_DEFAULT`; a stored override of it is never applied | administrators |
+| The setting `live_tail_default` is gone, with `CONTROL_PLANE_LIVE_TAIL_DEFAULT`; a stored override of it is never applied | administrators |
 | The tail app still honours a control plane before 4.3: its `live_tail_off` cancel, and `live_tail: false` on a materialization it resolves | none |
 | Console 4.3: no *Live tail* checkbox in the create dialog, no switch in the edit dialog, no *Live tail* row on the Overview tab. Against a control plane before 4.3 it still honours a materialization switched off there | none |
 

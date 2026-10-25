@@ -263,7 +263,7 @@ def _default_runtime_spec(config: ControlPlaneConfig) -> dict[str, Any]:
             "kasprContainer": {
                 "env": [
                     {
-                        "name": "MATERIALIZER_RUNTIME_MEMBER_ID",
+                        "name": "RUNTIME_MEMBER_ID",
                         "valueFrom": {
                             "fieldRef": {
                                 "fieldPath": "metadata.name",

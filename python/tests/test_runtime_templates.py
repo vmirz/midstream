@@ -61,7 +61,7 @@ def shipped_runtime_app_spec() -> dict:
 
     manifest = Path(__file__).resolve().parents[2] / "manifests" / "base" / "apps" / "control-plane.yaml"
     env = yaml.safe_load(manifest.read_text())["spec"]["template"]["kasprContainer"]["env"]
-    value = next(item["value"] for item in env if item["name"] == "MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC")
+    value = next(item["value"] for item in env if item["name"] == "CONTROL_PLANE_RUNTIME_APP_SPEC")
     return yaml.safe_load(value)
 
 
@@ -130,7 +130,7 @@ class RuntimeTemplateTests(unittest.TestCase):
         spec = app["spec"]
         self.assertEqual(spec["bootstrapServers"], "kafka:9092")
         self.assertEqual(spec["storage"]["class"], "standard")
-        self.assertEqual(spec["template"]["kasprContainer"]["env"][0]["name"], "MATERIALIZER_RUNTIME_MEMBER_ID")
+        self.assertEqual(spec["template"]["kasprContainer"]["env"][0]["name"], "RUNTIME_MEMBER_ID")
         self.assertEqual(
             spec["pythonPackages"]["packages"][0],
             "git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python",
@@ -364,7 +364,7 @@ class RuntimeTemplateTests(unittest.TestCase):
                     "template": {
                         "kasprContainer": {
                             "env": [
-                                {"name": "MATERIALIZER_RUNTIME_MEMBER_ID", "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}},
+                                {"name": "RUNTIME_MEMBER_ID", "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}},
                                 {"name": "GOOGLE_APPLICATION_CREDENTIALS", "value": "/app/gcp/key.json"},
                                 {"name": "K_STREAM_WAIT_EMPTY", "value": "true"},
                             ]
@@ -381,7 +381,7 @@ class RuntimeTemplateTests(unittest.TestCase):
                 "K_STORE_ROCKSDB_MAX_WRITE_BUFFER_NUMBER",
                 "K_STORE_ROCKSDB_WRITE_BUFFER_SIZE",
                 "K_STREAM_WAIT_EMPTY",
-                "MATERIALIZER_RUNTIME_MEMBER_ID",
+                "RUNTIME_MEMBER_ID",
             ],
         )
         self.assertEqual([item for item in env if item["name"] == "K_STREAM_WAIT_EMPTY"], [{"name": "K_STREAM_WAIT_EMPTY", "value": "true"}])
@@ -445,7 +445,7 @@ class RuntimeTemplateTests(unittest.TestCase):
 def setUpModule() -> None:
     # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
     # reach the configuration without choosing one, so the environment names it for them.
-    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    os.environ.setdefault("CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
     control_plane_config.get_config.cache_clear()
 
 

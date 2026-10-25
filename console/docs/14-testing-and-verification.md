@@ -466,7 +466,7 @@ heartbeat: two whose members catch up with a new revision after 2–3 s and 2–
 report it, one that stopped reporting ten minutes ago, and one stopped. It also has switches for
 an apply delay, a publish failure (`500`, as the lab returned before its rebalance), and an
 unreachable mode that drops every connection unanswered. The deployment sets
-`MATERIALIZER_CONTROL_PLANE_MAX_RUNTIME_REPLICAS=16`, a default destination and a runtime spec
+`CONTROL_PLANE_MAX_RUNTIME_REPLICAS=16`, a default destination and a runtime spec
 with two env values, so all three sources (default, deployment, override) appear.
 
 ### Browser flows

@@ -207,7 +207,7 @@ materialization's table, written before the table is created and removed when th
 catalog; what keeps a name unique across the deployment ([18 §18.16](./18-identity-and-access.md)).
 
 **Member id** — Which runtime replica a record, batch or file belongs to: the pod name
-(`MATERIALIZER_RUNTIME_MEMBER_ID`). It appears in batch ids and data file names, and the heartbeat's
+(`RUNTIME_MEMBER_ID`). It appears in batch ids and data file names, and the heartbeat's
 `table.member_id` names the committer.
 
 **Metadata columns** — `_kafka_timestamp`, `_kafka_partition`, `_kafka_offset`, `_kafka_key`,
@@ -291,7 +291,7 @@ a file per partition first, then writes one partition's file at a time, so it ho
 however far its batch spreads ([10 §10.4](./10-runtime-internals.md)).
 
 **Service token** — The console's read-only credential for its shared live views
-(`MATERIALIZER_AUTH_SERVICE_TOKEN` = `CONSOLE_SERVICE_TOKEN`).
+(`AUTH_SERVICE_TOKEN` = `CONSOLE_SERVICE_TOKEN`).
 
 **Session** — One sign-in: a signed token valid at once, expiring after the idle timeout (8 h) unless
 renewed and after the maximum length (7 days) in any case.

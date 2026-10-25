@@ -105,7 +105,7 @@ Faust app on every request; a request for a table it does not own is **forwarded
 owner, named by the **member map** — the app's consumer group as `DescribeGroups` reports it, each
 member's assignment and the URL Faust publishes in its metadata (`K_WEB_HOST`, `K_WEB_PORT`).
 
-- The map is read every `MATERIALIZER_TAIL_MEMBER_MAP_REFRESH_SECONDS` (15) and again when a
+- The map is read every `TAIL_MEMBER_MAP_REFRESH_SECONDS` (15) and again when a
   request names a partition it does not know.
 - A forwarded request carries `X-Tail-Forwarded-By`; a member receiving one for a table it does not
   own answers `409 tail_rebalancing` instead of forwarding again. One hop, never a loop.
@@ -138,7 +138,7 @@ its own partitions.
 and waits up to `wait_ms` (at most 5 s; the console sends its timeout minus 500 ms) for it to become
 answerable. A table nobody asked for in `live_tail_idle_seconds` (600; 0 keeps every table on)
 parks: its buffer is dropped and its partitions leave the consumer. A table no tick has named for
-`MATERIALIZER_TAIL_FORGET_AFTER_SECONDS` (300) is forgotten.
+`TAIL_FORGET_AFTER_SECONDS` (300) is forgotten.
 
 **Seeding.** The schema comes from the control plane (`GET …/tables/{table}/schema?raw=true`: the
 Iceberg schema, fork map, last column id and rejected paths) with the service credential, and from
@@ -205,7 +205,7 @@ no row.
 
 **Bounds.** A table holds at most `live_tail_max_rows_per_table` uncommitted rows and
 `live_tail_max_bytes_per_table` (256 MiB) resident bytes; at either it pauses, and resumes below
-75 %. The member's resident bytes across its tables stay under `MATERIALIZER_TAIL_MEMORY_BUDGET_BYTES`
+75 %. The member's resident bytes across its tables stay under `TAIL_MEMORY_BUDGET_BYTES`
 (2.5 GiB of the 4 GiB limit): past it, retained (committed) segments go first, then the largest
 table pauses. Committed segments are trimmed `live_tail_retention_seconds` after their commit.
 
@@ -275,13 +275,13 @@ JSON (`errorContentType`; Kaspr 0.11.30 and kaspr-operator 0.19.7 or later):
 ## 19.10 Who may read a tail
 
 1. **The console alone.** `X-Materializer-Console` must equal the service token the app was given
-   (`MATERIALIZER_TAIL_SERVICE_TOKEN`, from the same Secret as the control plane's); `403
+   (`TAIL_SERVICE_TOKEN`, from the same Secret as the control plane's); `403
    console_only` otherwise, on all four views.
 2. **The person, checked with the control plane.** The bearer token is resolved with
    `GET /auth/session` and the principal rebuilt from its description
    (`identity/principals.py::principal_from_description`), which decides exactly as the control
    plane would — on every dataset, a token's dataset limit included. A check is trusted for 5 s
-   (`MATERIALIZER_TAIL_SESSION_CHECK_SECONDS`), and for 60 s while the control plane cannot be
+   (`TAIL_SESSION_CHECK_SECONDS`), and for 60 s while the control plane cannot be
    reached; past that, `503 control_plane_unreachable`. At most 10,000 sessions are cached.
 3. **On the table's dataset.** Rows and the peek need `data.query` on the table's dataset; health and
    members need `materializations.view_details`. The service credential reads health and members,
@@ -322,17 +322,17 @@ In brief; web 07 §07.9 has the detail.
 
 | Variable | Default | |
 |---|---|---|
-| `MATERIALIZER_TAIL_APP_NAME` | `materializer-tail` | The KasprApp's name (`develop-` prefixed in dev) |
-| `MATERIALIZER_TAIL_CONTROL_PLANE_URL` | — | The control plane's Service, for sessions, schemas and tables |
-| `MATERIALIZER_TAIL_SERVICE_TOKEN` | — | From the auth Secret's `service-token`; at least 32 characters |
-| `MATERIALIZER_TAIL_TABLE_EVENTS_TOPIC` | `materialization-table-events` | Commits and schema changes |
-| `MATERIALIZER_TAIL_REQUESTS_TOPIC` | `materializer-tail-requests` | Ticks and cancels (also the `tail-worker` agent's input) |
-| `MATERIALIZER_TAIL_MEMORY_BUDGET_BYTES` | 2,684,354,560 | §19.8; keep it well under the pod's limit |
-| `MATERIALIZER_TAIL_FORGET_AFTER_SECONDS` | 300 | §19.6 |
-| `MATERIALIZER_TAIL_SESSION_CHECK_SECONDS` | 5 | §19.10 |
-| `MATERIALIZER_TAIL_SERVE_CONCURRENCY`, `…_PEEK_CONCURRENCY` | 4, 2 | Answers and peeks built at once |
-| `MATERIALIZER_TAIL_MEMBER_MAP_REFRESH_SECONDS` | 15 | §19.5 |
-| `MATERIALIZER_RUNTIME_MEMBER_ID` | the pod's name | The member's name |
+| `TAIL_APP_NAME` | `materializer-tail` | The KasprApp's name (`develop-` prefixed in dev) |
+| `TAIL_CONTROL_PLANE_URL` | — | The control plane's Service, for sessions, schemas and tables |
+| `TAIL_SERVICE_TOKEN` | — | From the auth Secret's `service-token`; at least 32 characters |
+| `TAIL_TABLE_EVENTS_TOPIC` | `materialization-table-events` | Commits and schema changes |
+| `TAIL_REQUESTS_TOPIC` | `materializer-tail-requests` | Ticks and cancels (also the `tail-worker` agent's input) |
+| `TAIL_MEMORY_BUDGET_BYTES` | 2,684,354,560 | §19.8; keep it well under the pod's limit |
+| `TAIL_FORGET_AFTER_SECONDS` | 300 | §19.6 |
+| `TAIL_SESSION_CHECK_SECONDS` | 5 | §19.10 |
+| `TAIL_SERVE_CONCURRENCY`, `…_PEEK_CONCURRENCY` | 4, 2 | Answers and peeks built at once |
+| `TAIL_MEMBER_MAP_REFRESH_SECONDS` | 15 | §19.5 |
+| `RUNTIME_MEMBER_ID` | the pod's name | The member's name |
 
 Kafka is reached with Kaspr's own `K_KAFKA_*` variables. **The control plane's** nine settings
 (`live_tail_*`, Settings › Live tail) are in handbook 17 §17.3; every tick carries them, so a change

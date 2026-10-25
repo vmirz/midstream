@@ -27,7 +27,7 @@ Source: `lakehouse/` — `tables.py` (definition), `pointer.py`, `catalog.py`, `
 ## 11.1 Layout
 
 A materialization's tables live under `<destination_uri>/<storage prefix>/<materialization id>`
-(`materialization_location`): the deployment's storage prefix (`MATERIALIZER_CONTROL_PLANE_STORAGE_PREFIX`,
+(`materialization_location`): the deployment's storage prefix (`CONTROL_PLANE_STORAGE_PREFIX`,
 `develop` on the lab, which keeps deployments sharing a bucket apart) and the materialization's id,
 which names nothing else, so a table dropped and created again elsewhere never meets a half-deleted
 location. Each table is the directory named after it below (`table_location`). The dataset exists only

@@ -312,7 +312,7 @@ materialization and table, `services/table_maintenance.py`) also emits, routed `
   `schema_id`, `metadata_location`;
 - a **`tail_cancel`** for a table `dropping`, or of a materialization `deleting`/`deleted`.
 
-A table no tick has named for `MATERIALIZER_TAIL_FORGET_AFTER_SECONDS` (300) is forgotten: its
+A table no tick has named for `TAIL_FORGET_AFTER_SECONDS` (300) is forgotten: its
 partitions unassigned, its buffer dropped. That is how opt-out and a stopped materialization end a
 tail; the console stops asking the moment the detail says `live_tail: false`.
 
@@ -426,7 +426,7 @@ measures (a few consumer shards per member is the fallback if it matters). Recor
 #### Following the table: `materialization-table-events`
 
 One plain consumer per member (no group, from the latest offset at start; the seed covers anything
-earlier) on `MATERIALIZER_TAIL_TABLE_EVENTS_TOPIC`, applying for owned tables that are active — a
+earlier) on `TAIL_TABLE_EVENTS_TOPIC`, applying for owned tables that are active — a
 parked table fetches its schema and offsets afresh when activated (06 §6.6):
 
 - **`table_committed`** → `payload.offsets` are the table's new committed offsets: advance each
@@ -477,7 +477,7 @@ run older than that is told the tail is unavailable for its snapshot and the con
 and `live_tail_max_bytes_per_table` (256 MiB resident: Arrow batches, compressed raw lines and the
 open segments together). At a bound ingest **pauses** for that table (its partitions are paused on
 the consumer) rather than evicting, so what is buffered stays a contiguous prefix; it resumes at
-75 % of both limits. The member also holds `MATERIALIZER_TAIL_MEMORY_BUDGET_BYTES` (2.5 GiB resident
+75 % of both limits. The member also holds `TAIL_MEMORY_BUDGET_BYTES` (2.5 GiB resident
 across every table); as it is approached, retained segments are dropped first, then the table with
 the largest buffer pauses. Paused partitions are reported in every response (`X-Tail-Status:
 truncated`, `X-Tail-Paused`, `X-Tail-End-Offsets`), in the health view, and logged once per
@@ -547,7 +547,7 @@ newest N records on the topic, as they will look in the table*, on demand, apart
   seeks each to `end(p) − ⌈N / P⌉`, fetches once, unassigns, and hands the records through the
   ingest path's decode and `build_row`; the rows are sorted newest first by Kafka timestamp, then
   offset, and cut to N. Tombstones and undecodable values are treated as ingest treats them. One peek
-  fetch at a time per member (`MATERIALIZER_TAIL_PEEK_CONCURRENCY`, 2); each answer is cached for one
+  fetch at a time per member (`TAIL_PEEK_CONCURRENCY`, 2); each answer is cached for one
   second per table, so several tabs share one read.
 - **Bounds.** `N ≤ live_tail_peek_max_rows` (1,000; the console asks for 200); one seek and one fetch
   per partition, at most `max_partition_fetch_bytes` each. The answer carries `X-Tail-Peek-Offsets`
@@ -562,7 +562,7 @@ newest N records on the topic, as they will look in the table*, on demand, apart
 #### Serving
 
 `GET /tail/v1/materializations/{materialization_id}/tables/{table}?after=…&max_rows=…&max_bytes=…`
-(contract in §6.2), on `MATERIALIZER_TAIL_SERVE_CONCURRENCY` (4) threads per member:
+(contract in §6.2), on `TAIL_SERVE_CONCURRENCY` (4) threads per member:
 
 1. Authorize (below). Resolve the table; forward if another member owns it; `404` if not tailed;
    `503 tail_not_ready` while seeding.
@@ -590,7 +590,7 @@ steady-state answer is a second and a half of records; the whole window is sent 
 The console sends the **person's** session token (`callerOf(request)`, as it does for every change
 it forwards). The tail member resolves it the way the console itself does (`web/server/auth/principal.ts`):
 `GET <control plane>/auth/session` with the bearer, cached by a hash of the token for
-`MATERIALIZER_TAIL_SESSION_CHECK_SECONDS` (5), kept 60 s more if the control plane is unreachable.
+`TAIL_SESSION_CHECK_SECONDS` (5), kept 60 s more if the control plane is unreachable.
 The answer's `principal` (`Principal.describe()`: `permissions`, `all_permissions`,
 `dataset_permissions`, `dataset_limit`, `password_change_required`) is rebuilt into a `Principal` by
 a new helper `identity/principals.py::principal_from_description(payload)`, so the check is the
@@ -618,18 +618,18 @@ lag, pauses, errors, the budget), `GET /tail/v1/members` (the partition → memb
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `MATERIALIZER_TAIL_APP_NAME` | `materializer-tail` | names the member in logs and views |
-| `MATERIALIZER_TAIL_CONTROL_PLANE_URL` | — (required) | in-cluster `http://materializer-control-plane-app-api:6065` (`develop-` prefixed in dev): session checks and schema fetches |
-| `MATERIALIZER_TAIL_SERVICE_TOKEN` | — (from the `materializer-auth` Secret, key `service-token`) | the read-only service credential, for schema fetches only |
-| `MATERIALIZER_TAIL_TABLE_EVENTS_TOPIC` | `materialization-table-events` | the topic it follows (prefixed per overlay) |
-| `MATERIALIZER_TAIL_REQUESTS_TOPIC` | `materializer-tail-requests` | the tick topic, for owner computation (prefixed per overlay) |
-| `MATERIALIZER_TAIL_FORGET_AFTER_SECONDS` | `300` | a table no tick names for this long is dropped |
-| `MATERIALIZER_TAIL_MEMORY_BUDGET_BYTES` | `2684354560` (2.5 GiB) | resident buffer bytes across every table before retained rows are dropped and the largest table pauses |
-| `MATERIALIZER_TAIL_SESSION_CHECK_SECONDS` | `5` | how long a checked session is trusted |
-| `MATERIALIZER_TAIL_SERVE_CONCURRENCY` | `4` | Parquet builds at once per member |
-| `MATERIALIZER_TAIL_PEEK_CONCURRENCY` | `2` | head-peek fetches at once per member |
-| `MATERIALIZER_TAIL_MEMBER_MAP_REFRESH_SECONDS` | `15` | how often the partition → member map is refreshed |
-| `MATERIALIZER_RUNTIME_MEMBER_ID` | the pod name | as the maintenance app |
+| `TAIL_APP_NAME` | `materializer-tail` | names the member in logs and views |
+| `TAIL_CONTROL_PLANE_URL` | — (required) | in-cluster `http://materializer-control-plane-app-api:6065` (`develop-` prefixed in dev): session checks and schema fetches |
+| `TAIL_SERVICE_TOKEN` | — (from the `materializer-auth` Secret, key `service-token`) | the read-only service credential, for schema fetches only |
+| `TAIL_TABLE_EVENTS_TOPIC` | `materialization-table-events` | the topic it follows (prefixed per overlay) |
+| `TAIL_REQUESTS_TOPIC` | `materializer-tail-requests` | the tick topic, for owner computation (prefixed per overlay) |
+| `TAIL_FORGET_AFTER_SECONDS` | `300` | a table no tick names for this long is dropped |
+| `TAIL_MEMORY_BUDGET_BYTES` | `2684354560` (2.5 GiB) | resident buffer bytes across every table before retained rows are dropped and the largest table pauses |
+| `TAIL_SESSION_CHECK_SECONDS` | `5` | how long a checked session is trusted |
+| `TAIL_SERVE_CONCURRENCY` | `4` | Parquet builds at once per member |
+| `TAIL_PEEK_CONCURRENCY` | `2` | head-peek fetches at once per member |
+| `TAIL_MEMBER_MAP_REFRESH_SECONDS` | `15` | how often the partition → member map is refreshed |
+| `RUNTIME_MEMBER_ID` | the pod name | as the maintenance app |
 | `K_KAFKA_*`, `K_WEB_HOST`, `GOOGLE_APPLICATION_CREDENTIALS` | from the KasprApp spec and the operator | the Kafka client (as `kafka/metadata.py::from_environment` reads it), this member's own URL, GCS for the fallback seed |
 
 Resources per member: requests 1 CPU / 2 GiB, limits 2 CPU / 4 GiB (§11.1); `replicas` by §11.1's
@@ -926,7 +926,7 @@ is `data.query` on the dataset; health is `materializations.view_details`.
 ### 6.5 Settings
 
 Control plane (`settings/catalog.py`, `CONTROL_PLANE_SETTINGS`, new section `live-tail`; config
-fields and env vars `MATERIALIZER_CONTROL_PLANE_<KEY>` per the adding-settings skill):
+fields and env vars `CONTROL_PLANE_<KEY>` per the adding-settings skill):
 
 | Key | Kind | Default | Bounds | Description (as shown) |
 |---|---|---|---|---|
@@ -1242,7 +1242,7 @@ panel say so. Offering the tail to engines is possible later and is not in this 
 ### 11.5 Bounds, stated
 
 Per table `live_tail_max_rows_per_table` / `_bytes_per_table`; per request `max_rows` (console:
-`liveTailMaxRows`) and `max_bytes`; per member `MATERIALIZER_TAIL_MEMORY_BUDGET_BYTES`; retention
+`liveTailMaxRows`) and `max_bytes`; per member `TAIL_MEMORY_BUDGET_BYTES`; retention
 `live_tail_retention_seconds`; serve concurrency 4 per member; the session cache bounded (10,000
 entries, as the console's); members ≤ 64. A query reads at most its caps' worth of tail rows plus
 the snapshot files its range selects, as today.
@@ -1570,7 +1570,7 @@ Each phase ends with the repo's checks: `python -m unittest discover -s python/t
 | Package | `python/src/midstream/tail_app/__init__.py`, `config.py`, `buffer.py` (pure), `consumer.py` (the member's one source consumer + fake seam), `events.py` (the table-events follower), `table_tail.py` (one table: activation and parking, seed, ingest, serve), `routing.py` (owner partition, member map, forwarding), `serve.py` (Parquet), `peek.py` (the head peek: its dedicated consumer, the buffer path, the cache), `auth.py` (session check, `authorize_tail`), `control_plane.py` (schema fetch, session fetch, with the service token), `worker.py` (tables by key, ticks, forget-after, budget), `handlers.py` (thin: `handle_tail_message`, `advance_tail`, `tail_rows_view`, `tail_health_view`, `tail_members_view`, `tail_head_view`) — all new |
 | `principal_from_description` | `identity/principals.py` |
 | `describe_consumer_group` | `kafka/admin.py` (decode assignments and Faust `ClientMetadata` from member metadata) |
-| Manifests | `manifests/base/tail/app.yaml` (replicas 2, resources, env incl. `MATERIALIZER_TAIL_SERVICE_TOKEN` from the `materializer-auth` Secret), `tail-worker.yaml` (agent on `materializer-tail-requests`, `partitions: 64`, `declare: true`), `tail-step.yaml` (task every 5 s: forget stale tables, trim, refresh the member map, refresh end offsets and re-evaluate the `backlogged`/`catching_up`/`paused` states), `manifests/base/webviews/tail-rows.yaml`, `tail-health.yaml`, `tail-members.yaml`, `tail-head.yaml` (labelled `kaspr.io/app: materializer-tail`); `manifests/base/kustomization.yaml`; `manifests/dev/kustomization.yaml` (labels by selector, topic names, `MATERIALIZER_TAIL_*` env, the Secret name, package ref) |
+| Manifests | `manifests/base/tail/app.yaml` (replicas 2, resources, env incl. `TAIL_SERVICE_TOKEN` from the `materializer-auth` Secret), `tail-worker.yaml` (agent on `materializer-tail-requests`, `partitions: 64`, `declare: true`), `tail-step.yaml` (task every 5 s: forget stale tables, trim, refresh the member map, refresh end offsets and re-evaluate the `backlogged`/`catching_up`/`paused` states), `manifests/base/webviews/tail-rows.yaml`, `tail-health.yaml`, `tail-members.yaml`, `tail-head.yaml` (labelled `kaspr.io/app: materializer-tail`); `manifests/base/kustomization.yaml`; `manifests/dev/kustomization.yaml` (labels by selector, topic names, `TAIL_*` env, the Secret name, package ref) |
 | Tests | `python/tests/tail_support.py`, `test_tail_buffer.py`, `test_tail_routing.py`, `test_tail_app.py`, `test_tail_parity.py` (new), `test_kafka_admin.py`, `test_agent_manifests.py`, `test_package_layout.py` (the new subpackage imports) |
 | Docs | handbook 02 (§2.10b the tail app), 03 (§3.4 constants), 04 (§4.1: the `/tail/v1` endpoints are the console's alone, documented in 19, not part of the public API), 10 (a section pointing to the new doc), new `docs/handbook/19-live-tail.md` (the model, the contracts, ownership and routing, exactly once, capacity and sizing, operating it), 12 (runbook entries: health and members views, pauses, re-seeds, moves, sizing in §12.10), 14 (limits), README table; `AGENTS.md` project map (`tail_app/`) |
 | **Verification items, first thing** | (a) Kaspr's key serializer for the control plane's `topicSend` keys is `raw` and the producer's partitioner is aiokafka's default: produce one tick and compare its partition with the owner computation (the self-check does this continuously). (b) `describe_consumer_groups` in the installed aiokafka returns member metadata and assignments in a form the decoder handles, and the Faust `ClientMetadata` decompresses with `PartitionAssignor._decompress`; if not, use the FQDN fallback (the pod name from the static member's instance id and this member's own `K_WEB_HOST` suffix). (c) How Kaspr deserializes a `json` agent input and what it does with a value that is not UTF-8 JSON: nothing in `runtime_app/` produces `RuntimeMalformedRecord` today (only `state.py` consumes it), so the writer never sees such a value — mirror that outcome (no row; position advances). (d) Measure the row builder's cost per record and the resident-bytes-per-raw factor on the lab's record shapes, and the re-assign hiccup, to replace §9's and §11.1's estimates |

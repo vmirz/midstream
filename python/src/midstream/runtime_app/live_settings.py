@@ -86,9 +86,9 @@ LIVE_SETTING_ZERO_ALLOWED = frozenset({"seal_schema_wait_seconds", "compaction_h
 #: The environment variable each live setting is read from when no override applies.
 LIVE_SETTING_ENV_VARS: dict[str, str] = {
     key: (
-        f"MATERIALIZER_{key.upper()}"
+        f"{key.upper()}"
         if key.startswith("protocol_")
-        else f"MATERIALIZER_RUNTIME_{key.upper()}"
+        else f"RUNTIME_{key.upper()}"
     )
     for key in LIVE_SETTING_FIELDS
 }

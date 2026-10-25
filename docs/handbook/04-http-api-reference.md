@@ -1175,7 +1175,7 @@ value comes from, plus the deployment's read-only settings:
       "advanced": false,
       "danger": false,
       "effect": "new creates and edits",
-      "env_var": "MATERIALIZER_CONTROL_PLANE_MAX_RUNTIME_REPLICAS",
+      "env_var": "CONTROL_PLANE_MAX_RUNTIME_REPLICAS",
       "value": 16,
       "source": "deployment",
       "default_value": 64,
@@ -1192,7 +1192,7 @@ value comes from, plus the deployment's read-only settings:
       "component": "control-plane",
       "label": "Runtime namespace",
       "description": "Namespace new runtimes deploy into. …",
-      "env_var": "MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE",
+      "env_var": "CONTROL_PLANE_DEFAULT_NAMESPACE",
       "value": "midstream"
     }
   ]

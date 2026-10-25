@@ -214,11 +214,11 @@ class ControlPlaneConfig:
 def _resolve_default_namespace(*, in_cluster_namespace_file: str | None = None) -> str:
     """The namespace the control plane creates runtimes in.
 
-    The deployment names it with `MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE`; without that, a pod
+    The deployment names it with `CONTROL_PLANE_DEFAULT_NAMESPACE`; without that, a pod
     reads its own namespace from the service-account mount Kubernetes gives every pod. With neither,
     the configuration cannot be loaded: no namespace is ever assumed.
     """
-    configured = (os.getenv("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE") or "").strip()
+    configured = (os.getenv("CONTROL_PLANE_DEFAULT_NAMESPACE") or "").strip()
     if configured:
         return configured
     path = IN_CLUSTER_NAMESPACE_FILE if in_cluster_namespace_file is None else in_cluster_namespace_file
@@ -230,7 +230,7 @@ def _resolve_default_namespace(*, in_cluster_namespace_file: str | None = None) 
     if own:
         return own
     raise ValueError(
-        "MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE is not set and no in-cluster namespace file was "
+        "CONTROL_PLANE_DEFAULT_NAMESPACE is not set and no in-cluster namespace file was "
         "found: the control plane needs the namespace its runtimes are created in"
     )
 
@@ -240,285 +240,285 @@ def get_config() -> ControlPlaneConfig:
     """Load and cache the control-plane configuration from the environment."""
     return ControlPlaneConfig(
         control_plane_table_name=os.getenv(
-            "MATERIALIZER_CONTROL_PLANE_TABLE_NAME",
+            "CONTROL_PLANE_TABLE_NAME",
             CONTROL_PLANE_TABLE_NAME,
         ),
         default_namespace=_resolve_default_namespace(),
         default_runtime_name_prefix=os.getenv(
-            "MATERIALIZER_CONTROL_PLANE_RUNTIME_NAME_PREFIX",
+            "CONTROL_PLANE_RUNTIME_NAME_PREFIX",
             DEFAULT_RUNTIME_NAME_PREFIX,
         ),
         default_runtime_template_version=os.getenv(
-            "MATERIALIZER_CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION",
+            "CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION",
             DEFAULT_RUNTIME_TEMPLATE_VERSION,
         ),
         runtime_app_spec=_load_runtime_app_spec(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC")
+            os.getenv("CONTROL_PLANE_RUNTIME_APP_SPEC")
         ),
         default_list_limit=normalize_list_limit(
             os.getenv(
-                "MATERIALIZER_CONTROL_PLANE_DEFAULT_LIST_LIMIT",
+                "CONTROL_PLANE_DEFAULT_LIST_LIMIT",
                 DEFAULT_LIST_LIMIT,
             )
         ),
         materialization_requests_topic=os.getenv(
-            "MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_REQUESTS_TOPIC",
+            "CONTROL_PLANE_MATERIALIZATION_REQUESTS_TOPIC",
             MATERIALIZATION_REQUESTS_TOPIC,
         ),
         materialization_work_topic=os.getenv(
-            "MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_WORK_TOPIC",
+            "CONTROL_PLANE_MATERIALIZATION_WORK_TOPIC",
             MATERIALIZATION_WORK_TOPIC,
         ),
         materialization_status_topic=os.getenv(
-            "MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_STATUS_TOPIC",
+            "CONTROL_PLANE_MATERIALIZATION_STATUS_TOPIC",
             MATERIALIZATION_STATUS_TOPIC,
         ),
         schema_authority_updates_topic=os.getenv(
-            "MATERIALIZER_CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC",
+            "CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC",
             SCHEMA_AUTHORITY_UPDATES_TOPIC,
         ),
         table_events_topic=os.getenv(
-            "MATERIALIZER_CONTROL_PLANE_TABLE_EVENTS_TOPIC",
+            "CONTROL_PLANE_TABLE_EVENTS_TOPIC",
             TABLE_EVENTS_TOPIC,
         ),
         settings_requests_topic=os.getenv(
-            "MATERIALIZER_CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC",
+            "CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC",
             SETTINGS_REQUESTS_TOPIC,
         ),
         protocol_logging_enabled=_parse_bool_env(
-            os.getenv("MATERIALIZER_PROTOCOL_LOGGING_ENABLED"),
+            os.getenv("PROTOCOL_LOGGING_ENABLED"),
             default=PROTOCOL_LOGGING_ENABLED,
         ),
         protocol_log_slow_wait_seconds=_parse_int_env(
-            os.getenv("MATERIALIZER_PROTOCOL_LOG_SLOW_WAIT_SECONDS"),
+            os.getenv("PROTOCOL_LOG_SLOW_WAIT_SECONDS"),
             default=PROTOCOL_LOG_SLOW_WAIT_SECONDS,
             minimum=1,
-            name="MATERIALIZER_PROTOCOL_LOG_SLOW_WAIT_SECONDS",
+            name="PROTOCOL_LOG_SLOW_WAIT_SECONDS",
         ),
         schema_history_limit=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_SCHEMA_HISTORY_LIMIT"),
+            os.getenv("CONTROL_PLANE_SCHEMA_HISTORY_LIMIT"),
             default=SCHEMA_HISTORY_LIMIT,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_SCHEMA_HISTORY_LIMIT",
+            name="CONTROL_PLANE_SCHEMA_HISTORY_LIMIT",
         ),
-        storage_prefix=os.getenv("MATERIALIZER_CONTROL_PLANE_STORAGE_PREFIX", STORAGE_PREFIX).strip().strip("/")
+        storage_prefix=os.getenv("CONTROL_PLANE_STORAGE_PREFIX", STORAGE_PREFIX).strip().strip("/")
         or STORAGE_PREFIX,
         default_partition_granularity=os.getenv(
-            "MATERIALIZER_CONTROL_PLANE_DEFAULT_PARTITION_GRANULARITY",
+            "CONTROL_PLANE_DEFAULT_PARTITION_GRANULARITY",
             DEFAULT_PARTITION_GRANULARITY,
         ).strip(),
         discovery_sample_records=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_DISCOVERY_SAMPLE_RECORDS"),
+            os.getenv("CONTROL_PLANE_DISCOVERY_SAMPLE_RECORDS"),
             default=DISCOVERY_SAMPLE_RECORDS,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_DISCOVERY_SAMPLE_RECORDS",
+            name="CONTROL_PLANE_DISCOVERY_SAMPLE_RECORDS",
         ),
         discovery_sample_seconds=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_DISCOVERY_SAMPLE_SECONDS"),
+            os.getenv("CONTROL_PLANE_DISCOVERY_SAMPLE_SECONDS"),
             default=DISCOVERY_SAMPLE_SECONDS,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_DISCOVERY_SAMPLE_SECONDS",
+            name="CONTROL_PLANE_DISCOVERY_SAMPLE_SECONDS",
         ),
         catalog_api_enabled=_parse_bool_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_CATALOG_API_ENABLED"),
+            os.getenv("CONTROL_PLANE_CATALOG_API_ENABLED"),
             default=CATALOG_API_ENABLED,
         ),
         catalog_metadata_cache_seconds=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_CATALOG_METADATA_CACHE_SECONDS"),
+            os.getenv("CONTROL_PLANE_CATALOG_METADATA_CACHE_SECONDS"),
             default=CATALOG_METADATA_CACHE_SECONDS,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_CATALOG_METADATA_CACHE_SECONDS",
+            name="CONTROL_PLANE_CATALOG_METADATA_CACHE_SECONDS",
         ),
-        catalog_base_url=(os.getenv("MATERIALIZER_CONTROL_PLANE_CATALOG_BASE_URL") or "").strip().rstrip("/") or None,
+        catalog_base_url=(os.getenv("CONTROL_PLANE_CATALOG_BASE_URL") or "").strip().rstrip("/") or None,
         purge_records_on_delete=_parse_bool_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_PURGE_RECORDS_ON_DELETE"),
+            os.getenv("CONTROL_PLANE_PURGE_RECORDS_ON_DELETE"),
             default=PURGE_RECORDS_ON_DELETE,
         ),
         deleted_retention_hours=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_DELETED_RETENTION_HOURS"),
+            os.getenv("CONTROL_PLANE_DELETED_RETENTION_HOURS"),
             default=DELETED_RETENTION_HOURS,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_DELETED_RETENTION_HOURS",
+            name="CONTROL_PLANE_DELETED_RETENTION_HOURS",
         ),
         deleted_purge_batch_limit=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_DELETED_PURGE_BATCH_LIMIT"),
+            os.getenv("CONTROL_PLANE_DELETED_PURGE_BATCH_LIMIT"),
             default=DELETED_PURGE_BATCH_LIMIT,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_DELETED_PURGE_BATCH_LIMIT",
+            name="CONTROL_PLANE_DELETED_PURGE_BATCH_LIMIT",
         ),
         default_runtime_storage_size=os.getenv(
-            "MATERIALIZER_CONTROL_PLANE_DEFAULT_RUNTIME_STORAGE_SIZE",
+            "CONTROL_PLANE_DEFAULT_RUNTIME_STORAGE_SIZE",
             DEFAULT_RUNTIME_STORAGE_SIZE,
         ),
         default_runtime_replicas=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_DEFAULT_RUNTIME_REPLICAS"),
+            os.getenv("CONTROL_PLANE_DEFAULT_RUNTIME_REPLICAS"),
             default=DEFAULT_RUNTIME_REPLICAS,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_DEFAULT_RUNTIME_REPLICAS",
+            name="CONTROL_PLANE_DEFAULT_RUNTIME_REPLICAS",
         ),
         max_runtime_replicas=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_MAX_RUNTIME_REPLICAS"),
+            os.getenv("CONTROL_PLANE_MAX_RUNTIME_REPLICAS"),
             default=MAX_RUNTIME_REPLICAS,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_MAX_RUNTIME_REPLICAS",
+            name="CONTROL_PLANE_MAX_RUNTIME_REPLICAS",
         ),
         runtime_autoscaling_enabled=_parse_bool_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_RUNTIME_AUTOSCALING_ENABLED"),
+            os.getenv("CONTROL_PLANE_RUNTIME_AUTOSCALING_ENABLED"),
             default=RUNTIME_AUTOSCALING_ENABLED,
         ),
         runtime_autoscale_max_replicas=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_RUNTIME_AUTOSCALE_MAX_REPLICAS"),
+            os.getenv("CONTROL_PLANE_RUNTIME_AUTOSCALE_MAX_REPLICAS"),
             default=RUNTIME_AUTOSCALE_MAX_REPLICAS,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_RUNTIME_AUTOSCALE_MAX_REPLICAS",
+            name="CONTROL_PLANE_RUNTIME_AUTOSCALE_MAX_REPLICAS",
         ),
         runtime_autoscale_target_minutes=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_RUNTIME_AUTOSCALE_TARGET_MINUTES"),
+            os.getenv("CONTROL_PLANE_RUNTIME_AUTOSCALE_TARGET_MINUTES"),
             default=RUNTIME_AUTOSCALE_TARGET_MINUTES,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_RUNTIME_AUTOSCALE_TARGET_MINUTES",
+            name="CONTROL_PLANE_RUNTIME_AUTOSCALE_TARGET_MINUTES",
         ),
         runtime_autoscale_min_lag_records=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_RUNTIME_AUTOSCALE_MIN_LAG_RECORDS"),
+            os.getenv("CONTROL_PLANE_RUNTIME_AUTOSCALE_MIN_LAG_RECORDS"),
             default=RUNTIME_AUTOSCALE_MIN_LAG_RECORDS,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_RUNTIME_AUTOSCALE_MIN_LAG_RECORDS",
+            name="CONTROL_PLANE_RUNTIME_AUTOSCALE_MIN_LAG_RECORDS",
         ),
         runtime_autoscale_cooldown_seconds=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_RUNTIME_AUTOSCALE_COOLDOWN_SECONDS"),
+            os.getenv("CONTROL_PLANE_RUNTIME_AUTOSCALE_COOLDOWN_SECONDS"),
             default=RUNTIME_AUTOSCALE_COOLDOWN_SECONDS,
             minimum=60,
-            name="MATERIALIZER_CONTROL_PLANE_RUNTIME_AUTOSCALE_COOLDOWN_SECONDS",
+            name="CONTROL_PLANE_RUNTIME_AUTOSCALE_COOLDOWN_SECONDS",
         ),
         max_materialization_topics=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_MAX_MATERIALIZATION_TOPICS"),
+            os.getenv("CONTROL_PLANE_MAX_MATERIALIZATION_TOPICS"),
             default=MAX_MATERIALIZATION_TOPICS,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_MAX_MATERIALIZATION_TOPICS",
+            name="CONTROL_PLANE_MAX_MATERIALIZATION_TOPICS",
         ),
         default_destination_uri=normalize_destination_uri(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_DEFAULT_DESTINATION_URI")
+            os.getenv("CONTROL_PLANE_DEFAULT_DESTINATION_URI")
         ),
         destination_cleanup_enabled=_parse_bool_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_DESTINATION_CLEANUP_ENABLED"),
+            os.getenv("CONTROL_PLANE_DESTINATION_CLEANUP_ENABLED"),
             default=DESTINATION_CLEANUP_ENABLED,
         ),
         consumer_lag_refresh_batch_limit=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_CONSUMER_LAG_REFRESH_BATCH_LIMIT"),
+            os.getenv("CONTROL_PLANE_CONSUMER_LAG_REFRESH_BATCH_LIMIT"),
             default=CONSUMER_LAG_REFRESH_BATCH_LIMIT,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_CONSUMER_LAG_REFRESH_BATCH_LIMIT",
+            name="CONTROL_PLANE_CONSUMER_LAG_REFRESH_BATCH_LIMIT",
         ),
         topic_analysis_max_topics=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_TOPIC_ANALYSIS_MAX_TOPICS"),
+            os.getenv("CONTROL_PLANE_TOPIC_ANALYSIS_MAX_TOPICS"),
             default=TOPIC_ANALYSIS_MAX_TOPICS,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_TOPIC_ANALYSIS_MAX_TOPICS",
+            name="CONTROL_PLANE_TOPIC_ANALYSIS_MAX_TOPICS",
         ),
         topic_catalog_ttl_seconds=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_TOPIC_CATALOG_TTL_SECONDS"),
+            os.getenv("CONTROL_PLANE_TOPIC_CATALOG_TTL_SECONDS"),
             default=TOPIC_CATALOG_TTL_SECONDS,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_TOPIC_CATALOG_TTL_SECONDS",
+            name="CONTROL_PLANE_TOPIC_CATALOG_TTL_SECONDS",
         ),
         topic_catalog_min_refresh_seconds=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_TOPIC_CATALOG_MIN_REFRESH_SECONDS"),
+            os.getenv("CONTROL_PLANE_TOPIC_CATALOG_MIN_REFRESH_SECONDS"),
             default=TOPIC_CATALOG_MIN_REFRESH_SECONDS,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_TOPIC_CATALOG_MIN_REFRESH_SECONDS",
+            name="CONTROL_PLANE_TOPIC_CATALOG_MIN_REFRESH_SECONDS",
         ),
         kaspr_app_name=os.getenv("K_APP_NAME") or None,
         identity_requests_topic=os.getenv(
-            "MATERIALIZER_CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC",
+            "CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC",
             IDENTITY_REQUESTS_TOPIC,
         ),
         session_idle_timeout_minutes=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_SESSION_IDLE_TIMEOUT_MINUTES"),
+            os.getenv("CONTROL_PLANE_SESSION_IDLE_TIMEOUT_MINUTES"),
             default=SESSION_IDLE_TIMEOUT_MINUTES,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_SESSION_IDLE_TIMEOUT_MINUTES",
+            name="CONTROL_PLANE_SESSION_IDLE_TIMEOUT_MINUTES",
         ),
         session_max_lifetime_hours=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_SESSION_MAX_LIFETIME_HOURS"),
+            os.getenv("CONTROL_PLANE_SESSION_MAX_LIFETIME_HOURS"),
             default=SESSION_MAX_LIFETIME_HOURS,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_SESSION_MAX_LIFETIME_HOURS",
+            name="CONTROL_PLANE_SESSION_MAX_LIFETIME_HOURS",
         ),
         session_refresh_minutes=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_SESSION_REFRESH_MINUTES"),
+            os.getenv("CONTROL_PLANE_SESSION_REFRESH_MINUTES"),
             default=SESSION_REFRESH_MINUTES,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_SESSION_REFRESH_MINUTES",
+            name="CONTROL_PLANE_SESSION_REFRESH_MINUTES",
         ),
         password_min_length=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_PASSWORD_MIN_LENGTH"),
+            os.getenv("CONTROL_PLANE_PASSWORD_MIN_LENGTH"),
             default=PASSWORD_MIN_LENGTH,
             minimum=8,
-            name="MATERIALIZER_CONTROL_PLANE_PASSWORD_MIN_LENGTH",
+            name="CONTROL_PLANE_PASSWORD_MIN_LENGTH",
         ),
         sign_in_max_failed_attempts=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_SIGN_IN_MAX_FAILED_ATTEMPTS"),
+            os.getenv("CONTROL_PLANE_SIGN_IN_MAX_FAILED_ATTEMPTS"),
             default=SIGN_IN_MAX_FAILED_ATTEMPTS,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_SIGN_IN_MAX_FAILED_ATTEMPTS",
+            name="CONTROL_PLANE_SIGN_IN_MAX_FAILED_ATTEMPTS",
         ),
         sign_in_lockout_minutes=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_SIGN_IN_LOCKOUT_MINUTES"),
+            os.getenv("CONTROL_PLANE_SIGN_IN_LOCKOUT_MINUTES"),
             default=SIGN_IN_LOCKOUT_MINUTES,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_SIGN_IN_LOCKOUT_MINUTES",
+            name="CONTROL_PLANE_SIGN_IN_LOCKOUT_MINUTES",
         ),
         audit_log_retention_days=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_AUDIT_LOG_RETENTION_DAYS"),
+            os.getenv("CONTROL_PLANE_AUDIT_LOG_RETENTION_DAYS"),
             default=AUDIT_LOG_RETENTION_DAYS,
             minimum=1,
-            name="MATERIALIZER_CONTROL_PLANE_AUDIT_LOG_RETENTION_DAYS",
+            name="CONTROL_PLANE_AUDIT_LOG_RETENTION_DAYS",
         ),
         live_tail_enabled=_parse_bool_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_ENABLED"),
+            os.getenv("CONTROL_PLANE_LIVE_TAIL_ENABLED"),
             default=LIVE_TAIL_ENABLED,
         ),
         live_tail_max_rows_per_table=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_MAX_ROWS_PER_TABLE"),
+            os.getenv("CONTROL_PLANE_LIVE_TAIL_MAX_ROWS_PER_TABLE"),
             default=LIVE_TAIL_MAX_ROWS_PER_TABLE,
             minimum=1000,
-            name="MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_MAX_ROWS_PER_TABLE",
+            name="CONTROL_PLANE_LIVE_TAIL_MAX_ROWS_PER_TABLE",
         ),
         live_tail_max_bytes_per_table=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_MAX_BYTES_PER_TABLE"),
+            os.getenv("CONTROL_PLANE_LIVE_TAIL_MAX_BYTES_PER_TABLE"),
             default=LIVE_TAIL_MAX_BYTES_PER_TABLE,
             minimum=8 * 1024 * 1024,
-            name="MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_MAX_BYTES_PER_TABLE",
+            name="CONTROL_PLANE_LIVE_TAIL_MAX_BYTES_PER_TABLE",
         ),
         live_tail_retention_seconds=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_RETENTION_SECONDS"),
+            os.getenv("CONTROL_PLANE_LIVE_TAIL_RETENTION_SECONDS"),
             default=LIVE_TAIL_RETENTION_SECONDS,
             minimum=10,
-            name="MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_RETENTION_SECONDS",
+            name="CONTROL_PLANE_LIVE_TAIL_RETENTION_SECONDS",
         ),
         live_tail_fetch_wait_ms=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_FETCH_WAIT_MS"),
+            os.getenv("CONTROL_PLANE_LIVE_TAIL_FETCH_WAIT_MS"),
             default=LIVE_TAIL_FETCH_WAIT_MS,
             minimum=50,
-            name="MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_FETCH_WAIT_MS",
+            name="CONTROL_PLANE_LIVE_TAIL_FETCH_WAIT_MS",
         ),
         live_tail_max_records_per_second_per_table=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_MAX_RECORDS_PER_SECOND_PER_TABLE"),
+            os.getenv("CONTROL_PLANE_LIVE_TAIL_MAX_RECORDS_PER_SECOND_PER_TABLE"),
             default=LIVE_TAIL_MAX_RECORDS_PER_SECOND_PER_TABLE,
             minimum=100,
-            name="MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_MAX_RECORDS_PER_SECOND_PER_TABLE",
+            name="CONTROL_PLANE_LIVE_TAIL_MAX_RECORDS_PER_SECOND_PER_TABLE",
         ),
         live_tail_peek_max_rows=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_PEEK_MAX_ROWS"),
+            os.getenv("CONTROL_PLANE_LIVE_TAIL_PEEK_MAX_ROWS"),
             default=LIVE_TAIL_PEEK_MAX_ROWS,
             minimum=10,
-            name="MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_PEEK_MAX_ROWS",
+            name="CONTROL_PLANE_LIVE_TAIL_PEEK_MAX_ROWS",
         ),
         live_tail_idle_seconds=_parse_int_env(
-            os.getenv("MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_IDLE_SECONDS"),
+            os.getenv("CONTROL_PLANE_LIVE_TAIL_IDLE_SECONDS"),
             default=LIVE_TAIL_IDLE_SECONDS,
             minimum=0,
-            name="MATERIALIZER_CONTROL_PLANE_LIVE_TAIL_IDLE_SECONDS",
+            name="CONTROL_PLANE_LIVE_TAIL_IDLE_SECONDS",
         ),
     )
 
@@ -540,7 +540,7 @@ def _load_runtime_app_spec(raw_value: str | None) -> dict[str, Any]:
         return {}
     if not isinstance(parsed, dict):
         raise ValueError(
-            "MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC must parse to a mapping"
+            "CONTROL_PLANE_RUNTIME_APP_SPEC must parse to a mapping"
         )
     return parsed
 

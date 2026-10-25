@@ -1,6 +1,6 @@
 """The tail app's own configuration, from its environment, and each table's settings, from its ticks.
 
-The app's variables (`MATERIALIZER_TAIL_*`) size the member and wire it to its deployment: they are
+The app's variables (`TAIL_*`) size the member and wire it to its deployment: they are
 read once at start and fixed. What the app does with each table - how much it holds, how long it
 keeps committed records, how fast it reads - is the control plane's live-tail settings, resolved with
 the Settings page's overrides, which every tick carries (`TailSettings.from_tick`): a change applies
@@ -85,21 +85,21 @@ class TailAppConfig:
 
 
 def get_tail_app_config(environ: Mapping[str, str] | None = None) -> TailAppConfig:
-    """The member's configuration: `MATERIALIZER_TAIL_*` and Kaspr's own variables, defaults otherwise."""
+    """The member's configuration: `TAIL_*` and Kaspr's own variables, defaults otherwise."""
     env = os.environ if environ is None else environ
-    url = (env.get("MATERIALIZER_TAIL_CONTROL_PLANE_URL") or "").strip().rstrip("/") or None
+    url = (env.get("TAIL_CONTROL_PLANE_URL") or "").strip().rstrip("/") or None
     return TailAppConfig(
-        app_name=env.get("MATERIALIZER_TAIL_APP_NAME") or APP_NAME,
+        app_name=env.get("TAIL_APP_NAME") or APP_NAME,
         control_plane_url=url,
-        table_events_topic=env.get("MATERIALIZER_TAIL_TABLE_EVENTS_TOPIC") or TABLE_EVENTS_TOPIC,
-        requests_topic=env.get("MATERIALIZER_TAIL_REQUESTS_TOPIC") or REQUESTS_TOPIC,
-        forget_after_seconds=_int(env, "MATERIALIZER_TAIL_FORGET_AFTER_SECONDS", FORGET_AFTER_SECONDS),
-        memory_budget_bytes=_int(env, "MATERIALIZER_TAIL_MEMORY_BUDGET_BYTES", MEMORY_BUDGET_BYTES),
-        session_check_seconds=_int(env, "MATERIALIZER_TAIL_SESSION_CHECK_SECONDS", SESSION_CHECK_SECONDS),
-        serve_concurrency=_int(env, "MATERIALIZER_TAIL_SERVE_CONCURRENCY", SERVE_CONCURRENCY),
-        peek_concurrency=_int(env, "MATERIALIZER_TAIL_PEEK_CONCURRENCY", PEEK_CONCURRENCY),
-        member_map_refresh_seconds=_int(env, "MATERIALIZER_TAIL_MEMBER_MAP_REFRESH_SECONDS", MEMBER_MAP_REFRESH_SECONDS),
-        member_id=env.get("MATERIALIZER_RUNTIME_MEMBER_ID") or env.get("HOSTNAME") or "unknown-member",
+        table_events_topic=env.get("TAIL_TABLE_EVENTS_TOPIC") or TABLE_EVENTS_TOPIC,
+        requests_topic=env.get("TAIL_REQUESTS_TOPIC") or REQUESTS_TOPIC,
+        forget_after_seconds=_int(env, "TAIL_FORGET_AFTER_SECONDS", FORGET_AFTER_SECONDS),
+        memory_budget_bytes=_int(env, "TAIL_MEMORY_BUDGET_BYTES", MEMORY_BUDGET_BYTES),
+        session_check_seconds=_int(env, "TAIL_SESSION_CHECK_SECONDS", SESSION_CHECK_SECONDS),
+        serve_concurrency=_int(env, "TAIL_SERVE_CONCURRENCY", SERVE_CONCURRENCY),
+        peek_concurrency=_int(env, "TAIL_PEEK_CONCURRENCY", PEEK_CONCURRENCY),
+        member_map_refresh_seconds=_int(env, "TAIL_MEMBER_MAP_REFRESH_SECONDS", MEMBER_MAP_REFRESH_SECONDS),
+        member_id=env.get("RUNTIME_MEMBER_ID") or env.get("HOSTNAME") or "unknown-member",
         group_id=env.get("K_APP_NAME") or env.get("KASPR_APP_NAME") or None,
         web_host=env.get("K_WEB_HOST") or env.get("KASPR_WEB_HOST") or None,
         web_port=_int(env, "K_WEB_PORT", WEB_PORT),
@@ -107,17 +107,17 @@ def get_tail_app_config(environ: Mapping[str, str] | None = None) -> TailAppConf
 
 
 def service_token(environ: Mapping[str, str] | None = None) -> str | None:
-    """The read-only service credential (`MATERIALIZER_TAIL_SERVICE_TOKEN`), never a config field.
+    """The read-only service credential (`TAIL_SERVICE_TOKEN`), never a config field.
 
     It is the control plane's service token: the app fetches schemas with it, and it is the console's
     own credential, which every request must carry. One shorter than 32 characters is ignored.
     """
     env = os.environ if environ is None else environ
-    token = (env.get("MATERIALIZER_TAIL_SERVICE_TOKEN") or "").strip()
+    token = (env.get("TAIL_SERVICE_TOKEN") or "").strip()
     if not token:
         return None
     if len(token) < MIN_SECRET_LENGTH:
-        LOGGER.error("MATERIALIZER_TAIL_SERVICE_TOKEN is shorter than %s characters and is ignored", MIN_SECRET_LENGTH)
+        LOGGER.error("TAIL_SERVICE_TOKEN is shorter than %s characters and is ignored", MIN_SECRET_LENGTH)
         return None
     return token
 
@@ -177,7 +177,7 @@ class TailSettings:
 def default_settings(environ: Mapping[str, str] | None = None) -> TailSettings:
     """The settings a table has before any tick: the defaults, with the app's own protocol logging."""
     env = os.environ if environ is None else environ
-    logging_enabled = (env.get("MATERIALIZER_PROTOCOL_LOGGING_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
+    logging_enabled = (env.get("PROTOCOL_LOGGING_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
     return TailSettings(protocol_logging_enabled=logging_enabled)
 
 

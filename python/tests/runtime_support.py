@@ -234,7 +234,7 @@ class RuntimeHarness:
         self._stack = ExitStack()
         for module in CONFIG_READERS:
             self._stack.enter_context(patch(f"{module}.get_runtime_app_config", side_effect=lambda: self.config))
-        self._stack.enter_context(patch.dict(os.environ, {"MATERIALIZER_RUNTIME_MEMBER_ID": MEMBER_ID}))
+        self._stack.enter_context(patch.dict(os.environ, {"RUNTIME_MEMBER_ID": MEMBER_ID}))
         reset_everything()
         set_shared_storage_client(self.lake.client)
         batch_pipeline.sealer = seal_in_process

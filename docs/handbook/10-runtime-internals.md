@@ -27,7 +27,7 @@ app name, e.g. `develop-mat-a0690b63eb78`):
 
 | Resource | Template | Runs on | Does |
 |---|---|---|---|
-| KasprApp `<rt>` | `kaspr-app.yaml.j2` | — | the members; spec from `MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC` plus `replicas` |
+| KasprApp `<rt>` | `kaspr-app.yaml.j2` | — | the members; spec from `CONTROL_PLANE_RUNTIME_APP_SPEC` plus `replicas` |
 | KasprTable `<rt>-state` | `state-table.yaml.j2` | every member (global) | each table's schema, committed offsets, file decisions, totals; live settings (§10.8) |
 | KasprAgent `<rt>-writer` | `writer-agent.yaml.j2` | owners of source partitions | reads every source topic (`input.topic.name: a,b,c`) and stages each record in its topic's table (§10.2); `isolatedPartitions: true` (one actor per topic partition), `noack: true` |
 | KasprAgent `<rt>-committer` | `committer-agent.yaml.j2` | the owner of `<rt>-commits` (1 partition) | commits files and schema changes (§10.6) |
@@ -417,7 +417,7 @@ size, not every runtime member's. It keeps no records of its own:
 - `maintenance-step` (task, every member, every 5 s) finishes what is done on every table - reports
   results, commits a finished compaction, stops one past its time - and then, while a job slot is
   free, starts the next job: a table someone asked for first, then the tables in rotation from where
-  the last step stopped. A member runs `MATERIALIZER_MAINTENANCE_MAX_CONCURRENT_JOBS` (1) long jobs
+  the last step stopped. A member runs `MAINTENANCE_MAX_CONCURRENT_JOBS` (1) long jobs
   - a compaction child or an orphan cleanup - at once across its tables. Quick work (a snapshot
   expiry, a compaction plan that finds nothing) takes no slot, so a step goes on to the next table
   until the slots are full, every table has been visited, or `STEP_BUDGET_SECONDS` (10) of quick
@@ -461,7 +461,7 @@ expiry with nothing to expire) runs once more after a restart.
   replace commit leaves orphans for orphan cleanup, and one that dies after it is done. A job is
   killed at `compaction_timeout_minutes` (30); when the table is cancelled - being dropped, or its
   materialization deleted - reported `cancelled`; and when no tick has named its table for
-  `MATERIALIZER_MAINTENANCE_FORGET_AFTER_SECONDS` (300; its partition moved to another member). When
+  `MAINTENANCE_FORGET_AFTER_SECONDS` (300; its partition moved to another member). When
   a job of several partitions fails, each of them is compacted alone from then on, so one bad
   partition cannot hold the others back. A partition whose own compaction fails backs off from 5
   minutes to 6 hours, and after `compaction_max_attempts` (5) failures in a row is skipped with a
@@ -482,7 +482,7 @@ running and what a drop waits for (07 §7.10). Every job reports a `maintenance_
 naming its table (`job`, `outcome` ∈ `succeeded`, `skipped`, `failed`, `abandoned`, `cancelled`,
 `counts`, `duration_ms`, `partition`, `snapshot_id`, `started_at`), which clears it — a requested job
 always reports, `skipped` with the reason when there was nothing to do. The events carry
-`runtime_app_ref` = `MATERIALIZER_MAINTENANCE_APP_NAME` and the member's name. A tick naming a job no
+`runtime_app_ref` = `MAINTENANCE_APP_NAME` and the member's name. A tick naming a job no
 member runs any more - this member's predecessor's, or one that has run longer than any job can -
 is answered with `maintenance_completed` `abandoned`, so the record lets go of it. Log events:
 `maintenance_compaction_started`, `maintenance_compaction_completed`, `maintenance_compaction_failed`,
@@ -531,7 +531,7 @@ one — the exactly-once machinery makes a rolling restart cost only re-reading.
 
 ## 10.14 Protocol log events
 
-With `MATERIALIZER_PROTOCOL_LOGGING_ENABLED` (or the live setting `protocol_logging_enabled`),
+With `PROTOCOL_LOGGING_ENABLED` (or the live setting `protocol_logging_enabled`),
 members log one structured line per protocol event (`protocol_event {json}`):
 
 | Area | Events |

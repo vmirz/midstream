@@ -100,7 +100,7 @@ def _cp(key: str, **fields: Any) -> SettingDefinition:
     return SettingDefinition(
         key=key,
         scope="control-plane",
-        env_var=fields.pop("env_var", f"MATERIALIZER_CONTROL_PLANE_{key.upper()}"),
+        env_var=fields.pop("env_var", f"CONTROL_PLANE_{key.upper()}"),
         **fields,
     )
 
@@ -433,7 +433,7 @@ CONTROL_PLANE_SETTINGS: tuple[SettingDefinition, ...] = (
         section="diagnostics",
         label="Protocol logging",
         kind="boolean",
-        env_var="MATERIALIZER_PROTOCOL_LOGGING_ENABLED",
+        env_var="PROTOCOL_LOGGING_ENABLED",
         description=(
             "Log one structured line per control-plane protocol event, such as a work step "
             "completing or a table being created."
@@ -1063,7 +1063,7 @@ DEPLOYMENT_SETTINGS: tuple[DeploymentSetting, ...] = (
         "default_namespace",
         "control-plane",
         "Runtime namespace",
-        "MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE",
+        "CONTROL_PLANE_DEFAULT_NAMESPACE",
         "Namespace new runtimes deploy into. It needs the runtimes' role and secrets, so it is set "
         "with the deployment.",
     ),
@@ -1071,7 +1071,7 @@ DEPLOYMENT_SETTINGS: tuple[DeploymentSetting, ...] = (
         "default_runtime_name_prefix",
         "control-plane",
         "Runtime name prefix",
-        "MATERIALIZER_CONTROL_PLANE_RUNTIME_NAME_PREFIX",
+        "CONTROL_PLANE_RUNTIME_NAME_PREFIX",
         "Runtimes are named <prefix>-<materialization id>; deleting one removes the Kafka topics "
         "that start with that name.",
     ),
@@ -1079,46 +1079,46 @@ DEPLOYMENT_SETTINGS: tuple[DeploymentSetting, ...] = (
         "default_runtime_template_version",
         "control-plane",
         "Runtime template version",
-        "MATERIALIZER_CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION",
+        "CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION",
     ),
     DeploymentSetting("kaspr_app_name", "control-plane", "Control-plane app", "K_APP_NAME"),
     DeploymentSetting(
         "materialization_requests_topic",
         "control-plane",
         "Requests topic",
-        "MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_REQUESTS_TOPIC",
+        "CONTROL_PLANE_MATERIALIZATION_REQUESTS_TOPIC",
     ),
     DeploymentSetting(
         "materialization_work_topic",
         "control-plane",
         "Work topic",
-        "MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_WORK_TOPIC",
+        "CONTROL_PLANE_MATERIALIZATION_WORK_TOPIC",
     ),
     DeploymentSetting(
         "materialization_status_topic",
         "control-plane",
         "Status topic",
-        "MATERIALIZER_CONTROL_PLANE_MATERIALIZATION_STATUS_TOPIC",
+        "CONTROL_PLANE_MATERIALIZATION_STATUS_TOPIC",
     ),
     DeploymentSetting(
         "schema_authority_updates_topic",
         "control-plane",
         "Runtime control topic",
-        "MATERIALIZER_CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC",
+        "CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC",
         "Carries settings changes and maintenance requests to running runtimes. Its name predates 1.0.",
     ),
     DeploymentSetting(
         "table_events_topic",
         "control-plane",
         "Table events topic",
-        "MATERIALIZER_CONTROL_PLANE_TABLE_EVENTS_TOPIC",
+        "CONTROL_PLANE_TABLE_EVENTS_TOPIC",
         "Carries every runtime's schema changes, commits and maintenance runs to the control plane.",
     ),
     DeploymentSetting(
         "storage_prefix",
         "control-plane",
         "Storage prefix",
-        "MATERIALIZER_CONTROL_PLANE_STORAGE_PREFIX",
+        "CONTROL_PLANE_STORAGE_PREFIX",
         "The prefix in the destination that every materialization's tables are stored under, which "
         "keeps deployments sharing a bucket apart. Not a namespace: datasets are.",
     ),
@@ -1126,27 +1126,27 @@ DEPLOYMENT_SETTINGS: tuple[DeploymentSetting, ...] = (
         "catalog_base_url",
         "control-plane",
         "Catalog URL",
-        "MATERIALIZER_CONTROL_PLANE_CATALOG_BASE_URL",
+        "CONTROL_PLANE_CATALOG_BASE_URL",
         "The address external engines reach the Iceberg REST catalog at, as the Connect panel shows it.",
     ),
     DeploymentSetting(
         "settings_requests_topic",
         "control-plane",
         "Settings requests topic",
-        "MATERIALIZER_CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC",
+        "CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC",
     ),
     DeploymentSetting(
         "identity_requests_topic",
         "control-plane",
         "Identity requests topic",
-        "MATERIALIZER_CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC",
+        "CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC",
         "Carries every change to users, groups, roles and sessions to the identity agent.",
     ),
     DeploymentSetting(
         "auth_signing_key",
         "control-plane",
         "Session signing key",
-        "MATERIALIZER_AUTH_SIGNING_KEY, MATERIALIZER_AUTH_PREVIOUS_SIGNING_KEY",
+        "AUTH_SIGNING_KEY, AUTH_PREVIOUS_SIGNING_KEY",
         "Signs every session; set from a Secret. Without it nobody can sign in. To rotate it, move "
         "the current key to the previous slot, so sessions it signed keep working.",
     ),
@@ -1154,7 +1154,7 @@ DEPLOYMENT_SETTINGS: tuple[DeploymentSetting, ...] = (
         "auth_service_token",
         "control-plane",
         "Console service token",
-        "MATERIALIZER_AUTH_SERVICE_TOKEN",
+        "AUTH_SERVICE_TOKEN",
         "What the console reads its live views with. It can read, never change; set the same value "
         "as the console's CONSOLE_SERVICE_TOKEN.",
     ),
@@ -1162,7 +1162,7 @@ DEPLOYMENT_SETTINGS: tuple[DeploymentSetting, ...] = (
         "bootstrap_admin_email",
         "control-plane",
         "First administrator",
-        "MATERIALIZER_AUTH_BOOTSTRAP_ADMIN_EMAIL, MATERIALIZER_AUTH_BOOTSTRAP_ADMIN_PASSWORD",
+        "AUTH_BOOTSTRAP_ADMIN_EMAIL, AUTH_BOOTSTRAP_ADMIN_PASSWORD",
         "Made an administrator, with the password from the Secret, whenever no active administrator "
         "exists. They must choose a new password when they first sign in.",
     ),
@@ -1177,7 +1177,7 @@ DEPLOYMENT_SETTINGS: tuple[DeploymentSetting, ...] = (
         "resources",
         "runtime",
         "Resources per replica",
-        "MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC",
+        "CONTROL_PLANE_RUNTIME_APP_SPEC",
         "CPU and memory each runtime member requests and is limited to. A request that vertical "
         "autoscaling controls is only where a member starts.",
     ),
@@ -1185,7 +1185,7 @@ DEPLOYMENT_SETTINGS: tuple[DeploymentSetting, ...] = (
         "vertical_autoscaling",
         "runtime",
         "Vertical autoscaling",
-        "MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC",
+        "CONTROL_PLANE_RUNTIME_APP_SPEC",
         "Whether a VerticalPodAutoscaler sets each runtime's requests from what its members use, and "
         "between which bounds. The limits stay the ceilings unless it controls them too.",
     ),
@@ -1193,7 +1193,7 @@ DEPLOYMENT_SETTINGS: tuple[DeploymentSetting, ...] = (
         "storage_class",
         "runtime",
         "Storage class",
-        "MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC",
+        "CONTROL_PLANE_RUNTIME_APP_SPEC",
     ),
     DeploymentSetting(
         "heartbeat_interval",

@@ -99,35 +99,35 @@ spec:
     kasprContainer:
       env:
         # Names the member in its answers, logs and the members view.
-        - name: MATERIALIZER_RUNTIME_MEMBER_ID
+        - name: RUNTIME_MEMBER_ID
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
-        - name: MATERIALIZER_TAIL_APP_NAME
+        - name: TAIL_APP_NAME
           value: materializer-tail
         # Session checks and schema fetches.
-        - name: MATERIALIZER_TAIL_CONTROL_PLANE_URL
+        - name: TAIL_CONTROL_PLANE_URL
           value: http://materializer-control-plane-app-api:6065
         # The read-only service credential: schema fetches, and the console's own credential every
         # request must carry. The control plane's, from the same Secret.
-        - name: MATERIALIZER_TAIL_SERVICE_TOKEN
+        - name: TAIL_SERVICE_TOKEN
           valueFrom:
             secretKeyRef:
               name: materializer-auth
               key: service-token
               optional: true
-        - name: MATERIALIZER_TAIL_TABLE_EVENTS_TOPIC
+        - name: TAIL_TABLE_EVENTS_TOPIC
           value: materialization-table-events
-        - name: MATERIALIZER_TAIL_REQUESTS_TOPIC
+        - name: TAIL_REQUESTS_TOPIC
           value: materializer-tail-requests
         # Resident buffer bytes across every table before retained records are dropped and the
         # largest table pauses: 2.5 GiB of the 4 GiB limit.
-        - name: MATERIALIZER_TAIL_MEMORY_BUDGET_BYTES
+        - name: TAIL_MEMORY_BUDGET_BYTES
           value: "2684354560"
         # The fallback seed reads a table through its pointer when the control plane cannot answer.
         - name: GOOGLE_APPLICATION_CREDENTIALS
           value: /app/gcp/google_application_credentials.json
-        - name: MATERIALIZER_PROTOCOL_LOGGING_ENABLED
+        - name: PROTOCOL_LOGGING_ENABLED
           value: "true"
       volumeMounts:
         - name: gcp-credentials

@@ -81,7 +81,7 @@ class LiveRuntimeSettingsTests(unittest.TestCase):
         self.addCleanup(reset_runtime_settings)
 
     def test_overrides_apply_over_the_environment(self) -> None:
-        with patch.dict(os.environ, {"MATERIALIZER_RUNTIME_MAX_OPEN_FILE_AGE_SECONDS": "600"}):
+        with patch.dict(os.environ, {"RUNTIME_MAX_OPEN_FILE_AGE_SECONDS": "600"}):
             self.assertEqual(get_runtime_app_config().max_open_file_age_seconds, 600)
             install_runtime_settings(1, {"max_open_file_age_seconds": 120, "protocol_logging_enabled": True})
             config = get_runtime_app_config()

@@ -61,7 +61,7 @@ class ControlPlane:
 
     async def _service_json(self, path: str) -> dict[str, Any]:
         if not self.service_token:
-            raise ControlPlaneError("no service credential is configured (MATERIALIZER_TAIL_SERVICE_TOKEN)")
+            raise ControlPlaneError("no service credential is configured (TAIL_SERVICE_TOKEN)")
         response = await self._get(path, headers={"Authorization": f"Bearer {self.service_token}"})
         if response.status != 200:
             raise ControlPlaneError(f"the control plane answered {response.status} to {path.split('?')[0]}", status=response.status, body=_body(response))
@@ -72,7 +72,7 @@ class ControlPlane:
 
     async def _get(self, path: str, *, headers: dict[str, str]) -> HttpResponse:
         if self.base_url is None:
-            raise ControlPlaneError("no control plane URL is configured (MATERIALIZER_TAIL_CONTROL_PLANE_URL)")
+            raise ControlPlaneError("no control plane URL is configured (TAIL_CONTROL_PLANE_URL)")
         try:
             return await self.http.get(f"{self.base_url}{path}", headers=headers, timeout=self.timeout)
         except HttpUnavailable as error:

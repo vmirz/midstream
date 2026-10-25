@@ -166,7 +166,7 @@ Structured JSON via Pino, `service: materializer-console`.
 | `warn` | `topic catalog refresh failed` | The topic list for the create dialog could not be reloaded; the previous list is served |
 | `warn` | `run failed` | A run failed for a reason other than its statement; `err` has the cause and the user sees the message |
 | `warn` | `run eviction failed` | An expired run's stored result could not be deleted from `CONSOLE_RUN_DIR` |
-| `warn` | `CONSOLE_SERVICE_TOKEN is not set: …` | At start: the live views read the control plane as a guest. Set it to the control plane's `MATERIALIZER_AUTH_SERVICE_TOKEN` |
+| `warn` | `CONSOLE_SERVICE_TOKEN is not set: …` | At start: the live views read the control plane as a guest. Set it to the control plane's `AUTH_SERVICE_TOKEN` |
 | `warn` | `sign-out could not be recorded with the control plane` | The browser was signed out (cookie cleared), but the control plane did not hear it; the session ends at its idle timeout |
 | `warn` | `ignoring stored console settings this console does not accept` | A stored override is unknown to this console or out of its bounds, probably written by another console version; `settings` lists them. The environment's value applies |
 | `debug` | `detail refresh failed` | One materialization's detail failed; others unaffected |
@@ -248,7 +248,7 @@ control plane before 4.3, its live tail switched off there. A statement has *Aut
 The run shows committed rows and keeps asking. *Live is unavailable* (in amber at the status line's right;
 its tooltip carries the reason): the tail app cannot be reached at `CONSOLE_TAIL_URL`, or refuses the
 console — `403 console_only` in the console's log means its `CONSOLE_SERVICE_TOKEN` is not the tail
-app's `MATERIALIZER_TAIL_SERVICE_TOKEN`. *Live is starting* or *Live is reconnecting* for more than a
+app's `TAIL_SERVICE_TOKEN`. *Live is starting* or *Live is reconnecting* for more than a
 minute (the table warming up, or moving between members): a tail app member restarting, or the
 table's topic without a leader. The tail app's health view names the table's state and last error
 (handbook 12 §12.7, 19 §19.16).
@@ -403,7 +403,7 @@ term.
 12. **4.0.0** needs control plane 4.0.0, which takes every materialization's destination,
     namespace, runtime name and storage from the deployment and refuses a create that names one:
     deploy the control plane first, and set its destination (Settings › Materializations ›
-    Destination, or `MATERIALIZER_CONTROL_PLANE_DEFAULT_DESTINATION_URI`) before announcing the
+    Destination, or `CONTROL_PLANE_DEFAULT_DESTINATION_URI`) before announcing the
     upgrade, since without one nobody can create a materialization. Scripts that create through the
     console's API drop those four fields. No migration: existing materializations keep what they
     were created with.

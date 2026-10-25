@@ -733,7 +733,7 @@ The heartbeat carries more than the model keeps — `latest_committed_offsets`, 
 | `materialization_id` | `str` | — | required |
 | `table` | `str` | — | required: the table it is about. An event without one (from a 1.0 runtime) is dropped with a warning |
 | `occurred_at` | `str` | — | required |
-| `runtime_app_ref` | `str \| None` | `None` | the runtime's app name, or the maintenance app's (`MATERIALIZER_MAINTENANCE_APP_NAME`) |
+| `runtime_app_ref` | `str \| None` | `None` | the runtime's app name, or the maintenance app's (`MAINTENANCE_APP_NAME`) |
 | `member_id` | `str \| None` | `None` | the committer member, or the maintenance app's member |
 | `payload` | `dict` | `{}` | by kind (06 §6.6) |
 

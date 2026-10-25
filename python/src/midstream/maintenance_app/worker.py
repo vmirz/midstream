@@ -934,7 +934,7 @@ def reset_worker(worker: MaintenanceWorker | None = None) -> None:
 
 
 def current_member_id() -> str:
-    """This member's name: its pod's, as the manifest sets `MATERIALIZER_RUNTIME_MEMBER_ID`."""
+    """This member's name: its pod's, as the manifest sets `RUNTIME_MEMBER_ID`."""
     from midstream.runtime_app.writer.context import current_member_id as member_id
 
     return member_id()

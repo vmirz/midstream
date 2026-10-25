@@ -1727,7 +1727,7 @@ def _bootstrap(work: _Work) -> _Applied:
     if admin is None:
         LOGGER.warning(
             "No active administrator exists and no bootstrap administrator is configured "
-            "(MATERIALIZER_AUTH_BOOTSTRAP_ADMIN_EMAIL, MATERIALIZER_AUTH_BOOTSTRAP_ADMIN_PASSWORD); "
+            "(AUTH_BOOTSTRAP_ADMIN_EMAIL, AUTH_BOOTSTRAP_ADMIN_PASSWORD); "
             "nobody can manage users"
         )
         return _Applied(directory_changed=changed)

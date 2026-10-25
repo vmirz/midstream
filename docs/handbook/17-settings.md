@@ -53,7 +53,7 @@ Three **scopes** hold overrides, one `SettingsDocument` each:
 
 ### Control plane (`control-plane`)
 
-`…` is `MATERIALIZER_CONTROL_PLANE_`. Each key is also the `ControlPlaneConfig` field it overrides;
+`…` is `CONTROL_PLANE_`. Each key is also the `ControlPlaneConfig` field it overrides;
 the label is what the Settings page calls it, in the section named in bold. A setting marked
 advanced sits behind the section's **Advanced** toggle.
 
@@ -115,7 +115,7 @@ advanced sits behind the section's **Advanced** toggle.
 
 | Key | Env var | Default | Bounds | Label |
 |---|---|---|---|---|
-| `protocol_logging_enabled` | `MATERIALIZER_PROTOCOL_LOGGING_ENABLED` | off | — | Protocol logging |
+| `protocol_logging_enabled` | `PROTOCOL_LOGGING_ENABLED` | off | — | Protocol logging |
 
 **Security**
 
@@ -161,7 +161,7 @@ settings for the next catalog request, the retention settings for the next hourl
 
 ### Runtimes (`runtime`)
 
-`…` is `MATERIALIZER_RUNTIME_`. Every one is a `RuntimeAppConfig` field (03 §3.3.1).
+`…` is `RUNTIME_`. Every one is a `RuntimeAppConfig` field (03 §3.3.1).
 
 **Runtimes**
 
@@ -218,15 +218,15 @@ settings for the next catalog request, the retention settings for the next hourl
 
 | Key | Env var | Default | Bounds | Label |
 |---|---|---|---|---|
-| `protocol_logging_enabled` | `MATERIALIZER_PROTOCOL_LOGGING_ENABLED` | off | — | Protocol logging |
-| `protocol_log_slow_wait_seconds` | `MATERIALIZER_PROTOCOL_LOG_SLOW_WAIT_SECONDS` | 30 | 1–3,600 | Slow wait log interval (advanced) |
+| `protocol_logging_enabled` | `PROTOCOL_LOGGING_ENABLED` | off | — | Protocol logging |
+| `protocol_log_slow_wait_seconds` | `PROTOCOL_LOG_SLOW_WAIT_SECONDS` | 30 | 1–3,600 | Slow wait log interval (advanced) |
 
 Cross-field rules: the soft age may not exceed the ceiling, the minimum rows may not exceed the
 maximum, the small-file size must stay below the target size, and the seal's schema wait may not
 exceed the ceiling.
 
 A runtime's deployment value is read from the environment of the runtime spec
-(`MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC` → `template.kasprContainer.env`), which is what
+(`CONTROL_PLANE_RUNTIME_APP_SPEC` → `template.kasprContainer.env`), which is what
 every runtime pod is started with (`settings/effective.py::runtime_environment`). Each runtime
 applies these values at their point of use (`get_runtime_app_config()`): the roll thresholds at
 the next roll check, the commit settings at the next commit, the schema caps at the next schema
@@ -251,16 +251,16 @@ Reported read-only on the Settings page's **Deployment** section (`DEPLOYMENT_SE
 | Setting | Why it stays with the deployment |
 |---|---|
 | Topic names (seven), `K_APP_NAME`, the state, settings and directory table bindings | Must match the manifests' agent and WebView wiring |
-| `MATERIALIZER_CONTROL_PLANE_STORAGE_PREFIX` | Part of every table's location |
-| `MATERIALIZER_CONTROL_PLANE_CATALOG_BASE_URL` | The address engines reach the control plane at; the console's connection snippets show it |
-| `MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE` | A namespace needs the runtimes' role, service account and secrets |
-| `MATERIALIZER_CONTROL_PLANE_RUNTIME_NAME_PREFIX` | Names every runtime and decides which topics a delete removes |
-| `MATERIALIZER_CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION`, `…_RUNTIME_APP_SPEC` | Shape of the rendered runtime; changing it re-applies — and restarts — every runtime. Shown as **Resources per replica**, **Storage class** and **Vertical autoscaling**; a change to the vertical autoscaling alone restarts none (02 §2.10c) |
+| `CONTROL_PLANE_STORAGE_PREFIX` | Part of every table's location |
+| `CONTROL_PLANE_CATALOG_BASE_URL` | The address engines reach the control plane at; the console's connection snippets show it |
+| `CONTROL_PLANE_DEFAULT_NAMESPACE` | A namespace needs the runtimes' role, service account and secrets |
+| `CONTROL_PLANE_RUNTIME_NAME_PREFIX` | Names every runtime and decides which topics a delete removes |
+| `CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION`, `…_RUNTIME_APP_SPEC` | Shape of the rendered runtime; changing it re-applies — and restarts — every runtime. Shown as **Resources per replica**, **Storage class** and **Vertical autoscaling**; a change to the vertical autoscaling alone restarts none (02 §2.10c) |
 | Credentials, `GOOGLE_APPLICATION_CREDENTIALS`, the session signing keys, the console's service token, the bootstrap administrator | Never through a UI. The page says only whether each identity secret is configured |
 | The runtime's task intervals (heartbeat, pipeline, commit timer) | Rendered into the runtime's tasks; built in |
 | The maintenance app's job slots and forget window (03 §3.4) | Read from its environment at start; they size its pod |
 
-`MATERIALIZER_CONTROL_PLANE_DEFAULT_LIST_LIMIT` is parsed but used by nothing, so it is not shown.
+`CONTROL_PLANE_DEFAULT_LIST_LIMIT` is parsed but used by nothing, so it is not shown.
 
 ## 17.4 Storage
 
@@ -434,7 +434,7 @@ On the runtime side (`runtime_app/handlers/runtime_settings.py`):
 
 **The tail app** gets its settings the same way as the maintenance app, below: every tick carries
 the control plane's live-tail settings resolved that minute (06 §6.18), and the app uses each table's
-latest tick. Its own variables (`MATERIALIZER_TAIL_*`, 19) size its pod and are fixed.
+latest tick. Its own variables (`TAIL_*`, 19) size its pod and are fixed.
 
 **The maintenance app** is a Kaspr app of its own too, but it is not sent deliveries. Every tick
 the control plane sends it (07 §7.13) carries the maintenance settings resolved for that minute —

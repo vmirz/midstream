@@ -35,12 +35,12 @@ class MaintenanceAppConfig:
 
 
 def get_maintenance_app_config(environ: Mapping[str, str] | None = None) -> MaintenanceAppConfig:
-    """The app's configuration: `MATERIALIZER_MAINTENANCE_*` from its environment, defaults otherwise."""
+    """The app's configuration: `MAINTENANCE_*` from its environment, defaults otherwise."""
     env = os.environ if environ is None else environ
     return MaintenanceAppConfig(
-        max_concurrent_jobs=_int(env, "MATERIALIZER_MAINTENANCE_MAX_CONCURRENT_JOBS", MAX_CONCURRENT_JOBS),
-        forget_after_seconds=_int(env, "MATERIALIZER_MAINTENANCE_FORGET_AFTER_SECONDS", FORGET_AFTER_SECONDS),
-        app_name=env.get("MATERIALIZER_MAINTENANCE_APP_NAME") or APP_NAME,
+        max_concurrent_jobs=_int(env, "MAINTENANCE_MAX_CONCURRENT_JOBS", MAX_CONCURRENT_JOBS),
+        forget_after_seconds=_int(env, "MAINTENANCE_FORGET_AFTER_SECONDS", FORGET_AFTER_SECONDS),
+        app_name=env.get("MAINTENANCE_APP_NAME") or APP_NAME,
     )
 
 

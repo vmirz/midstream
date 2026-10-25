@@ -969,15 +969,15 @@ class OverlayTopicWiringTests(unittest.TestCase):
                 tail_worker = next(document for name, document in agents.items() if name.endswith("tail-worker"))
                 table_events = next(document for name, document in agents.items() if name.endswith("table-events"))
                 env = {item["name"]: item for item in apps[tail_app]["spec"]["template"]["kasprContainer"]["env"]}
-                self.assertEqual(tail_worker["spec"]["input"]["topic"]["name"], env["MATERIALIZER_TAIL_REQUESTS_TOPIC"]["value"])
+                self.assertEqual(tail_worker["spec"]["input"]["topic"]["name"], env["TAIL_REQUESTS_TOPIC"]["value"])
                 self.assertEqual(64, tail_worker["spec"]["input"]["topic"]["partitions"])
-                self.assertEqual(table_events["spec"]["input"]["topic"]["name"], env["MATERIALIZER_TAIL_TABLE_EVENTS_TOPIC"]["value"])
-                self.assertEqual(tail_app, env["MATERIALIZER_TAIL_APP_NAME"]["value"])
-                self.assertEqual(f"http://{control_plane}-app-api:6065", env["MATERIALIZER_TAIL_CONTROL_PLANE_URL"]["value"])
+                self.assertEqual(table_events["spec"]["input"]["topic"]["name"], env["TAIL_TABLE_EVENTS_TOPIC"]["value"])
+                self.assertEqual(tail_app, env["TAIL_APP_NAME"]["value"])
+                self.assertEqual(f"http://{control_plane}-app-api:6065", env["TAIL_CONTROL_PLANE_URL"]["value"])
                 cp_env = {item["name"]: item for item in apps[control_plane]["spec"]["template"]["kasprContainer"]["env"]}
                 self.assertEqual(
-                    cp_env["MATERIALIZER_AUTH_SERVICE_TOKEN"]["valueFrom"]["secretKeyRef"],
-                    env["MATERIALIZER_TAIL_SERVICE_TOKEN"]["valueFrom"]["secretKeyRef"],
+                    cp_env["AUTH_SERVICE_TOKEN"]["valueFrom"]["secretKeyRef"],
+                    env["TAIL_SERVICE_TOKEN"]["valueFrom"]["secretKeyRef"],
                     f"{overlay.name}: the tail app reads another service credential than the control plane",
                 )
                 self.assertEqual(
@@ -1057,7 +1057,7 @@ def _runtime_consumed_topics(documents: list[dict]) -> set[str]:
             continue
         container = document.get("spec", {}).get("template", {}).get("kasprContainer", {})
         for entry in container.get("env") or []:
-            if entry.get("name") == "MATERIALIZER_CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC" and entry.get("value"):
+            if entry.get("name") == "CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC" and entry.get("value"):
                 topics.add(entry["value"])
     return topics
 
@@ -1140,7 +1140,7 @@ class VerticalPodAutoscalingTests(unittest.TestCase):
                 name = document["metadata"]["name"]
                 specs[name] = document["spec"]
                 for item in document["spec"]["template"].get("kasprContainer", {}).get("env", []):
-                    if item["name"] == "MATERIALIZER_CONTROL_PLANE_RUNTIME_APP_SPEC":
+                    if item["name"] == "CONTROL_PLANE_RUNTIME_APP_SPEC":
                         specs[f"{name}'s runtime spec"] = yaml.safe_load(item["value"])
             self.assertTrue(any(name.endswith("runtime spec") for name in specs), f"{overlay.name}: no runtime spec")
             for name, spec in specs.items():

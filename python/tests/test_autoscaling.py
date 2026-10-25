@@ -437,7 +437,7 @@ def tearDownModule() -> None:
 def setUpModule() -> None:
     # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
     # reach the configuration without choosing one, so the environment names it for them.
-    os.environ.setdefault("MATERIALIZER_CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    os.environ.setdefault("CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
     control_plane_config.get_config.cache_clear()
 
 

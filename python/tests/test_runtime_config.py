@@ -9,10 +9,10 @@ from midstream.runtime_app.config import RuntimeAppConfig, get_runtime_app_confi
 class RuntimeAppConfigTests(unittest.TestCase):
     def tearDown(self) -> None:
         for key in (
-            "MATERIALIZER_PROTOCOL_LOGGING_ENABLED",
-            "MATERIALIZER_PROTOCOL_LOG_SLOW_WAIT_SECONDS",
-            "MATERIALIZER_RUNTIME_COMMIT_INTERVAL_SECONDS",
-            "MATERIALIZER_RUNTIME_COMPACTION_ENABLED",
+            "PROTOCOL_LOGGING_ENABLED",
+            "PROTOCOL_LOG_SLOW_WAIT_SECONDS",
+            "RUNTIME_COMMIT_INTERVAL_SECONDS",
+            "RUNTIME_COMPACTION_ENABLED",
         ):
             os.environ.pop(key, None)
 
@@ -33,8 +33,8 @@ class RuntimeAppConfigTests(unittest.TestCase):
         self.assertTrue(config.staging_root_path.startswith("/"))
 
     def test_runtime_app_config_reads_protocol_logging_settings(self) -> None:
-        os.environ["MATERIALIZER_PROTOCOL_LOGGING_ENABLED"] = "true"
-        os.environ["MATERIALIZER_PROTOCOL_LOG_SLOW_WAIT_SECONDS"] = "45"
+        os.environ["PROTOCOL_LOGGING_ENABLED"] = "true"
+        os.environ["PROTOCOL_LOG_SLOW_WAIT_SECONDS"] = "45"
 
         config = get_runtime_app_config()
 
@@ -42,8 +42,8 @@ class RuntimeAppConfigTests(unittest.TestCase):
         self.assertEqual(config.protocol_log_slow_wait_seconds, 45)
 
     def test_runtime_app_config_reads_commit_and_maintenance_settings(self) -> None:
-        os.environ["MATERIALIZER_RUNTIME_COMMIT_INTERVAL_SECONDS"] = "12"
-        os.environ["MATERIALIZER_RUNTIME_COMPACTION_ENABLED"] = "false"
+        os.environ["RUNTIME_COMMIT_INTERVAL_SECONDS"] = "12"
+        os.environ["RUNTIME_COMPACTION_ENABLED"] = "false"
 
         config = get_runtime_app_config()
 

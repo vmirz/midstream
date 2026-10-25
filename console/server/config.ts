@@ -129,7 +129,7 @@ const deployment = {
    * The credential the console reads its live views with: the fleet, details, schemas, topics and
    * its own settings. The control plane gives it read access only; everything a person changes is
    * sent with that person's session. Set from the same Secret as the control plane's
-   * MATERIALIZER_AUTH_SERVICE_TOKEN.
+   * AUTH_SERVICE_TOKEN.
    */
   serviceToken: optional('CONSOLE_SERVICE_TOKEN'),
   /** The cookie holding a signed-in browser's session. Renaming it signs everyone out. */
