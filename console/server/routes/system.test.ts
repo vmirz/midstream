@@ -87,7 +87,7 @@ describe('why a run reads no tail', () => {
   it('pre-checks the create dialog’s box from the control plane’s default', () => {
     const base = {
       default_destination_uri: 'gs://lake',
-      default_namespace: 'kafka-sql',
+      default_namespace: 'midstream',
       default_replicas: 1,
       max_replicas: 8,
       default_storage_size: '1Gi',

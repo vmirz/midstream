@@ -189,8 +189,8 @@ per-materialization failures, set **Console log level** to `debug` on the Settin
 
 ```bash
 curl -sS localhost:8787/api/health
-kubectl -n kafka-sql get svc | grep app-api
-kubectl -n kafka-sql port-forward svc/develop-materializer-control-plane-app-api 6065:6065
+kubectl -n midstream get svc | grep app-api
+kubectl -n midstream port-forward svc/develop-materializer-control-plane-app-api 6065:6065
 curl -sS localhost:6065/materializations?limit=10
 ```
 
@@ -287,7 +287,7 @@ The message says what failed:
 | `names … outside its location` / `says it is at …` | The table points at files the console will not read ([12 §12.6](./12-security-model.md#126-paths-a-table-names)) | Find the commit that did it (Table tab › Snapshots) |
 
 ```bash
-kubectl -n kafka-sql logs deploy/materializer-console | grep 'table could not be read'
+kubectl -n midstream logs deploy/materializer-console | grep 'table could not be read'
 ```
 
 The log line carries storage's own error, which the page leaves out.

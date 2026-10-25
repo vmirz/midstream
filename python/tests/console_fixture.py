@@ -1,4 +1,4 @@
-"""Write the console's fixture tables, `web/testdata/iceberg/{orders,payments}`, with the control plane's library.
+"""Write the console's fixture tables, `console/testdata/iceberg/{orders,payments}`, with the control plane's library.
 
 They are the two tables of one materialization, `shop`, reading the topics `orders` and `payments`.
 
@@ -19,7 +19,7 @@ answers - and written under `<out>/<table>/tail/` with what each answer's header
 third with nothing new; payments' holds the payments of two orders in orders' tail, for a join
 across two tails.
 
-    python python/tests/console_fixture.py [--out web/testdata/iceberg]
+    python python/tests/console_fixture.py [--out console/testdata/iceberg]
 
 The console's tests compare against values this writes, and every run makes new ids, so commit the
 tables and their `expected.json` together.
@@ -346,7 +346,7 @@ def copy_table(lake: LakeFixture, target: Path, location: str) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--out", type=Path, default=REPO / "web" / "testdata" / "iceberg")
+    parser.add_argument("--out", type=Path, default=REPO / "console" / "testdata" / "iceberg")
     expected = write_fixture(parser.parse_args().out)
     print(json.dumps({key: expected[key] for key in ("metadata_location", "current_snapshot_id", "rows", "offsets")}, indent=1, default=str))
 

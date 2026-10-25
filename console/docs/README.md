@@ -1,6 +1,6 @@
 # Materializer Console Handbook
 
-A complete, code-derived reference for the web application in `/web`. Every claim here is
+A complete, code-derived reference for the web application in `/console`. Every claim here is
 traceable to a file in this directory; where behaviour is subtle or surprising, the document says
 so explicitly rather than describing the intent.
 
@@ -82,7 +82,7 @@ Load the document you need. Each one is self-contained and cross-links the other
 ## Source map
 
 ```
-web/
+console/
   shared/types.ts              Wire contracts shared by server and client
   shared/fieldPaths.ts         Field naming without the `payload.` root; nested JSON from field paths
   shared/tableNames.ts         Dataset and table name rules, labels, and the table name each topic gets

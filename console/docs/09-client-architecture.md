@@ -1,6 +1,6 @@
 # 09 — Client Architecture
 
-Everything in this document lives under `web/src/`.
+Everything in this document lives under `console/src/`.
 
 ## 9.1 Composition
 

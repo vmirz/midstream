@@ -20,11 +20,11 @@ each part shown and served to a person as far as their roles allow, per dataset 
 
 It is deliberately a **separate application**, not part of the Python package. It depends on the
 control plane only through the public HTTP API — and on the tail app only through its own
-(`/tail/v1`, handbook 19) — so `/web` can be lifted into its own repository by copying the directory
+(`/tail/v1`, handbook 19) — so `/console` can be lifted into its own repository by copying the directory
 and setting `CONTROL_PLANE_URL` (and `CONSOLE_TAIL_URL`).
 
-> **Hard boundary.** Nothing under `/web` may import from `python/`, and nothing in `python/` may
-> import from `/web`. This is stated in the repository `AGENTS.md` and is the single most
+> **Hard boundary.** Nothing under `/console` may import from `python/`, and nothing in `python/` may
+> import from `/console`. This is stated in the repository `AGENTS.md` and is the single most
 > important architectural constraint here.
 
 ## 1.2 Two processes
@@ -156,7 +156,7 @@ properties** in `server/` or `shared/`. TypeScript enforces this at typecheck ti
 ## 1.7 Directory layout and responsibilities
 
 ```
-web/
+console/
 ├── shared/types.ts      Wire contracts. Imported by both halves. Must stay dependency-free.
 ├── server/              Node BFF. No React, no DOM.
 │   ├── main.ts          Composition root — the only file that wires everything together.

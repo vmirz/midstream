@@ -380,9 +380,9 @@ An `overrides` entry pins `uuid` to `^11.1.1`.
 **Why is `@duckdb/node-api` pinned exactly?**
 It publishes prerelease-tagged versions (`1.5.5-r.4`), where a caret range behaves unpredictably.
 
-**Can I move `/web` into its own repository?**
+**Can I move `/console` into its own repository?**
 Yes — that is the design goal. Copy the directory, set `CONTROL_PLANE_URL`, and it works unchanged.
-Nothing under `/web` imports from `python/`.
+Nothing under `/console` imports from `python/`.
 
 ## 17.6 Quick reference
 

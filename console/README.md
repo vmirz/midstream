@@ -64,7 +64,7 @@ npm install
 cp .env.example .env          # point CONTROL_PLANE_URL at your control plane
 
 # In another shell, expose the dev control plane:
-kubectl -n kafka-sql port-forward svc/develop-materializer-control-plane-app-api 6065:6065
+kubectl -n midstream port-forward svc/develop-materializer-control-plane-app-api 6065:6065
 
 npm run dev                   # server on :8787, Vite client on :5173
 ```

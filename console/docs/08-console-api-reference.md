@@ -149,7 +149,7 @@ This endpoint does **not** trigger a refresh, so it is safe to probe frequently.
   "resultRowLimit": 1000000,
   "controlPlaneVersion": "4.0.0",
   "controlPlaneCompatible": true,
-  "materializationDefaults": { "destinationUri": "gs://kafka-materializations", "namespace": "kafka-sql",
+  "materializationDefaults": { "destinationUri": "gs://kafka-materializations", "namespace": "midstream",
     "replicas": 1, "maxReplicas": 64, "storageSize": "64Mi", "partitionGranularity": "day",
     "labelMaxLength": 128, "datasetNameMaxLength": 63, "tableNameMaxLength": 63,
     "reservedNames": ["…"], "reservedNamespaceNames": ["main", "memory", "…"], "maxTopics": 20 },
@@ -970,7 +970,7 @@ never sees, and a change to users, groups or roles is answered once it has been 
 ```
 
 `dataset_permissions` lists, by dataset id, what grants on each dataset add to `permissions`
-(dataset permissions only); `web/shared/access.ts::can(principal, key, datasetId)` answers from it.
+(dataset permissions only); `console/shared/access.ts::can(principal, key, datasetId)` answers from it.
 
 Never refuses: without a usable session it describes a guest, with `sessionError` saying why a
 presented one could not be used. The one exception is a session the console cannot check because
@@ -1033,7 +1033,7 @@ still answers. A `:table` the materialization does not have is a `404` naming it
   "materializationId": "mat-d89c130365f6",
   "table": "orders",
   "record": {
-    "location": "gs://kafka-materializations/develop/kafka-sql/shop-d89c130365f6/orders",
+    "location": "gs://kafka-materializations/develop/midstream/shop-d89c130365f6/orders",
     "partition_granularity": "day", "schema_id": 1, "current_snapshot_id": "5204668659448186455",
     "sequence_number": 57, "snapshots": 57, "last_commit_at": "2026-10-19T05:40:42.627Z",
     "last_commit_duration_ms": 2211, "valid_through": "2025-05-09T19:07:06.794Z",
@@ -1065,7 +1065,7 @@ still answers. A `:table` the materialization does not have is a `404` naming it
     "…": "…"
   },
   "metadataError": null,
-  "connection": { "uri": "https://materialize.local.epilix.com/catalog", "configured": true, "enabled": true }
+  "connection": { "uri": "https://midstream.example.com/catalog", "configured": true, "enabled": true }
 }
 ```
 
@@ -1168,7 +1168,7 @@ Needs `catalog.read` on some dataset. Where engines reach the catalog, for the C
 token page:
 
 ```json
-{ "uri": "https://materialize.local.epilix.com/catalog", "configured": true, "enabled": true }
+{ "uri": "https://midstream.example.com/catalog", "configured": true, "enabled": true }
 ```
 
 | Field | Meaning |

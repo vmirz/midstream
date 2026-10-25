@@ -41,7 +41,7 @@ elsewhere.
 To regenerate it — after a change to what the control plane writes:
 
 ```bash
-python python/tests/console_fixture.py           # writes web/testdata/iceberg/orders
+python python/tests/console_fixture.py           # writes console/testdata/iceberg/orders
 ```
 
 Every run makes new snapshot ids and UUIDs, which some tests name, so commit the table and its
@@ -152,7 +152,7 @@ it into the dataset `history`: *History by day* (`orders_by_day`) and *History b
 |---|---|
 | Create, in the browser | No destination, namespace, runtime name or storage field; Advanced settings naming `gs://kafka-materializations` and `128Mi`, and `64Mi` once that became the default; partitioning offering By hour, By day, By month and Not partitioned. With the destination cleared on the control plane, the alert and **Create** disabled — after the minute the console keeps its defaults |
 | Create, through the API | Each of the four refused `400`, naming the deployment's value; with no destination `409 destination_not_configured`; the topic analysis recommending replicas alone |
-| Runtimes | Both in `kafka-sql`, named `develop-mat-<id>`, each member with a `128Mi` volume (the default then), 72 KiB of it used once committed; the three 3.x runtimes, re-applied by the upgrade, kept their `1Gi`. At the `64Mi` default a third materialization's member had 55 MiB usable, its store 67 KiB with a 4 MiB RocksDB write buffer, and its table every offset once |
+| Runtimes | Both in `midstream`, named `develop-mat-<id>`, each member with a `128Mi` volume (the default then), 72 KiB of it used once committed; the three 3.x runtimes, re-applied by the upgrade, kept their `1Gi`. At the `64Mi` default a third materialization's member had 55 MiB usable, its store 67 KiB with a 4 MiB RocksDB write buffer, and its table every offset once |
 | Month partitions | 22 partitions, `2025-01` to `2026-10`, on the Table tab and in PyIceberg (`month` transform, months since 1970); every file's timestamps inside its partition; DuckDB 2.0 through the REST catalog with a token limited to `history`: each partition's offsets 0–1,999 once, rows per month and per day as produced, every field's count as its shapes say |
 | Dates from the data | The day table's Timeline and field rows: first values on Apr 15, 2025, Sep 1, 2025 and Feb 10, 2026, last values on Aug 31, 2025 and Feb 9, 2026 — the producer's boundaries to the day; the month table's the same months, `Apr 1 – 30, 2025`; schema 0 *Initial · sampled*, schema 1 *data from Apr 15, 2025*; the first records' five fields behind **Show**; a field name opening it in the Fields view |
 | Access | With All Users' grant taken off `history`, the timeline `403` to Rita and Otto and `200` to the owner, and no Schema tab for Rita |

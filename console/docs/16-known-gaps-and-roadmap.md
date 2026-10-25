@@ -126,7 +126,7 @@ Adding any of these is a control-plane change first, then a console change — s
 | Gap | Impact |
 |-----|--------|
 | No `react-hooks` lint | The repository runs no linter by design; `src/features/data/hooks.test.ts` is the narrow substitute |
-| No CI wiring for `/web` | `npm run typecheck && npm test && npm run build` should be added to the pipeline |
+| No CI wiring for `/console` | `npm run typecheck && npm test && npm run build` should be added to the pipeline |
 | No Dockerfile in-repo | [13 §13.1](./13-operations-runbook.md#131-deployment-shape) has an illustrative one |
 | No OpenAPI document | [08](./08-console-api-reference.md) is the contract |
 | No OpenTelemetry instrumentation | Only Pino logs exist today |
@@ -138,7 +138,7 @@ Ordered by value per unit of effort.
 
 ### Near term
 
-1. **CI wiring** — typecheck, build and test for `/web`.
+1. **CI wiring** — typecheck, build and test for `/console`.
 2. **A timeline over the time axis**, from manifest bounds while a run is planned and exact counts once
    it is done.
 3. **OpenTelemetry traces** on control-plane calls and DuckDB queries.

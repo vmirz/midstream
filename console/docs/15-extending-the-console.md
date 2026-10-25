@@ -6,7 +6,7 @@ Recipes for the changes most likely to be asked for, with the constraints that m
 
 | Constraint | Why |
 |------------|-----|
-| No imports between `/web` and `python/` in either direction | The console must stay extractable into its own repository |
+| No imports between `/console` and `python/` in either direction | The console must stay extractable into its own repository |
 | `shared/types.ts` stays dependency-free | It is consumed under two different module resolution modes |
 | No `enum`, `namespace`, or constructor parameter properties in `server/` or `shared/` | Node's type stripping cannot emit code; `erasableSyntaxOnly` enforces it |
 | Server imports use explicit `.ts` extensions and relative paths | There is no bundler on the server side |
@@ -271,7 +271,7 @@ Before considering a change complete:
 - [ ] Light and dark themes both verified
 - [ ] Behaviour verified with the control plane **down** as well as up
 - [ ] No new `process.env` reads outside `config.ts`
-- [ ] No new imports crossing the `/web` ↔ `python/` boundary
+- [ ] No new imports crossing the `/console` ↔ `python/` boundary
 - [ ] Every new route has `permit(...)` or `signedIn()`, and the UI hides what a person cannot do
 - [ ] Verified as a guest, as someone without the permission, and as someone with it
 - [ ] A new tunable is on the Settings page (§15.9a), or deliberately a deployment setting

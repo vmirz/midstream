@@ -1,6 +1,6 @@
 # 04 — Server Internals
 
-Everything in this document lives under `web/server/`. Reading tables and running queries —
+Everything in this document lives under `console/server/`. Reading tables and running queries —
 `iceberg/` (the pointer, metadata and manifests), `data/` (the snapshot's catalog, logical columns,
 DuckDB, GCS) and `runs/` (the run engine) — is in [06](./06-iceberg-tables.md) and
 [07](./07-data-access-and-duckdb.md); `schema/diff.ts` in 06 §6.4; `live/` in

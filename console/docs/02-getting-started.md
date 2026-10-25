@@ -19,7 +19,7 @@ npm -v
 ## 2.2 First run
 
 ```bash
-cd web
+cd console
 npm install
 cp .env.example .env
 ```
@@ -27,7 +27,7 @@ cp .env.example .env
 Edit `.env` and point `CONTROL_PLANE_URL` at a reachable control plane. For the dev cluster:
 
 ```bash
-kubectl -n kafka-sql port-forward svc/develop-materializer-control-plane-app-api 6065:6065
+kubectl -n midstream port-forward svc/develop-materializer-control-plane-app-api 6065:6065
 ```
 
 Then:
@@ -58,7 +58,7 @@ under **Settings → Users** ([18 — Identity and access](../../docs/handbook/1
 For the live views to show details, give the console the control plane's service token:
 
 ```bash
-# web/.env
+# console/.env
 CONSOLE_SERVICE_TOKEN=<the control plane's MATERIALIZER_AUTH_SERVICE_TOKEN>
 ```
 
@@ -131,7 +131,7 @@ Because `useEventStream` tracks connection state, a server restart during develo
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | Header shows `control plane at http://localhost:6065 is unreachable` | No control plane, or wrong URL | Start the port-forward; check `CONTROL_PLANE_URL` |
-| `Cannot find module ... server/main.ts` | You ran `node server/main.ts` from the repository root | `cd web` first, or use an absolute path |
+| `Cannot find module ... server/main.ts` | You ran `node server/main.ts` from the repository root | `cd console` first, or use an absolute path |
 | Blank page and a MIME-type error in the console | The server was started before the client was built, or the client was rebuilt after the server started | `npm run build` then restart the server |
 | Data tab: "Object storage is not reachable" | No ADC credentials, or the destination bucket is not readable | `gcloud auth application-default login`, or set `CONSOLE_DATA_ACCESS_ENABLED=false` to hide the feature |
 | `PORT` already in use | A previous server is still running | `lsof -ti tcp:8787 \| xargs kill` |

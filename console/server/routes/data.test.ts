@@ -133,7 +133,7 @@ function detail(): CpDetail {
       source_topics: ['orders'],
       destination_uri: 'gs://lake',
       runtime_mode: 'dedicated',
-      namespace: 'kafka-sql',
+      namespace: 'midstream',
       datasets: ['sales'],
       live_tail: liveTailOn,
     },

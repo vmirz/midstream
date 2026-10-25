@@ -37,7 +37,7 @@ function detail(): CpDetail {
       source_topics: ['orders', 'payments'],
       destination_uri: 'gs://lake',
       runtime_mode: 'dedicated',
-      namespace: 'kafka-sql',
+      namespace: 'midstream',
       datasets: ['shop'],
     },
     status: {
