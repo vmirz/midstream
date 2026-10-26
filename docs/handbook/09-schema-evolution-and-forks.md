@@ -215,7 +215,7 @@ topic became schema 2 (two forks, two additions) within one commit cycle.
 `max_schema_fields` counts every field id, nested ones and list elements included
 (`SchemaIndex.field_count`). At the cap, new fields are **rejected**: the change is recorded with
 `kind: rejected, reason: schema_field_limit`, the path stops being requested, and its values go to
-`_unmapped`. The console shows "Schema is at its field limit" (web 06).
+`_unmapped`. The console shows "Schema is at its field limit" (console 06).
 
 ## 9.8 `_unmapped`
 
@@ -261,13 +261,13 @@ beside its oldest (§9.6), and a backfill reads partitions at their own pace, so
 year can arrive after one from last week. When the data had each field is in the table: every data
 file's manifest entry counts each column's values and nulls and bounds its `_kafka_timestamp`, so the
 first and last record holding a value of a field are known to within a file — a day in a
-day-partitioned table. The console's Schema tab reads them (web 06 §6.3) and dates each version by
+day-partitioned table. The console's Schema tab reads them (console 06 §6.3) and dates each version by
 its data, schema 0 being *Initial · sampled*; the control plane keeps `since`.
 
 ## 9.10 How readers see forks
 
 Readers of the native table see the forks as they are: `total` (long) and `total__v2` (double), the
-`__json` field, `ref_code`. The console presents a **logical** table instead (web 07):
+`__json` field, `ref_code`. The console presents a **logical** table instead (console 07):
 
 | Native | Logical column | Expression |
 |---|---|---|

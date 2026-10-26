@@ -43,7 +43,7 @@ Two consequences worth remembering:
 |----------|------|---------|--------|
 | `CONTROL_PLANE_URL` | string | `http://localhost:6065` | Base URL. Trailing slashes are stripped |
 | `CONTROL_PLANE_TIMEOUT_MS` | int | `10000` | Per-request timeout via `AbortSignal.timeout` |
-| `CONSOLE_TAIL_URL` | string | unset | The tail app's base URL (handbook 19): in a cluster its Service, `http://materializer-tail-app-api:6065` (`develop-` prefixed in dev); from a laptop, the control plane's host where an HTTPRoute sends `/tail/` to that Service. Trailing slashes are stripped. Unset, the console shows committed rows only. Fixed by the deployment (shown under Deployment) |
+| `CONSOLE_TAIL_URL` | string | unset | The tail app's base URL (handbook 19): in a cluster its Service, `http://<release>-tail-app-api:6065`; from a laptop, the control plane's host where an HTTPRoute sends `/tail/` to that Service. Trailing slashes are stripped. Unset, the console shows committed rows only. Fixed by the deployment (shown under Deployment) |
 
 `CONSOLE_DEFAULT_SUBMITTED_BY` was removed in 0.14.0: changes are attributed to the signed-in
 person by the control plane. Console 1.0 retired `CONSOLE_OBJECT_MANIFEST_ENABLED`,
@@ -214,7 +214,7 @@ deployment detail:
   "controlPlaneVersion": "4.0.0",
   "controlPlaneCompatible": true,
   "materializationDefaults": {
-    "destinationUri": "gs://kafka-materializations",
+    "destinationUri": "gs://my-lake",
     "namespace": "midstream",
     "replicas": 1,
     "maxReplicas": 64,

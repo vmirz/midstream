@@ -2,7 +2,7 @@
 
 **Status:** implemented in 4.1.0 on `feature/live-tail` and validated on the lab, 2026-10-24. What
 was built is described in handbook 19, which supersedes this plan where they differ (its §19.18 lists
-where and why); the lab results are in handbook 13 §13.8e and web 14 §14.4. The plan is kept as the
+where and why); the lab results are in handbook 13 §13.8e and console 14 §14.4. The plan is kept as the
 record of the reasoning.
 
 Written 2026-10-23 against `develop` at 5b45cda (control
@@ -74,7 +74,7 @@ examined (§3).
 | R1 | A record produced to a steady topic shows in the console's Data tab and in SQL runs within 5 s at p95 | The tail is read from Kafka, not from files; budget in §9 sums to 2.7 s p95 | §13.4 lab probe, 300 samples |
 | R2 | No row duplicated or missing while records move into the table, across commits, compaction and runtime restarts | Snapshot and tail are disjoint by offset and contiguous per partition; the tail is pinned to the run's snapshot; compaction and restarts never move offsets backwards | §7; §13.4 disruption matrix |
 | R3 | A freshly read row looks exactly as it will once committed, forks, JSON collapses and `_unmapped` included | One row-building function shared by the seal and the tail; the tail conforms with the table's current schema, as the seal does; one documented deviation, `_materialized_at` (§8) | `test_tail_parity.py`; lab diff of tail rows against committed rows |
-| R4 | Opt-in per materialization, behind the console's existing data access and per-dataset permissions, bounded reads | `live_tail` on the materialization (default on, switchable); `data.query` on the table's dataset checked by the console route and again by the tail app with the person's session; per-table row/byte bounds, a per-member budget and a per-request cap | `test_web.py`, `test_tail_app.py`, `web/server/runs/tail.test.ts` |
+| R4 | Opt-in per materialization, behind the console's existing data access and per-dataset permissions, bounded reads | `live_tail` on the materialization (default on, switchable); `data.query` on the table's dataset checked by the console route and again by the tail app with the person's session; per-table row/byte bounds, a per-member budget and a per-request cap | `test_web.py`, `test_tail_app.py`, `console/server/runs/tail.test.ts` |
 | R5 | No change to the table format or the exactly-once protocol unless argued and flagged | None proposed. The one refactor (§5.3) moves code, not behaviour; the seal's output is byte-identical | `test_runtime_seal.py`, fixture regeneration unchanged |
 
 Out of scope, stated as limits (§11): external engines on the REST catalog and `iceberg_scan` see
@@ -93,7 +93,7 @@ Measured and coded facts the design rests on:
 | A seal runs in a child process, an upload after it; files are announced on `<rt>-commits` and committed `commit_interval_seconds` (30 s) after the last commit | `runtime_app/pipeline.py`, `committer.py::_append_due` |
 | A commit costs 2,003 ms + 18.5 ms per file; p50 3.3 s, p95 10 s on the load test | handbook 13 §13.8 |
 | Commits to one table are spaced ≥ 1 s because GCS throttles a single object past about one update a second; every commit rewrites the pointer and the metadata file | `committer.py::COMMIT_SPACING_SECONDS`, handbook 11 §11.2 (E11) |
-| The console learns of new data only by re-reading the pointer: no older than 2 s for a run, 5 s for the summary | `web/server/config.ts` (`snapshotCacheMs`, `tableMetadataFreshMs`) |
+| The console learns of new data only by re-reading the pointer: no older than 2 s for a run, 5 s for the summary | `console/server/config.ts` (`snapshotCacheMs`, `tableMetadataFreshMs`) |
 | A seal writes one file per partition value it touches; compaction leaves the partition being written alone until it has been quiet for 60 min (month partitions: each file waits that long) | `lakehouse/maintenance.py::plan_compaction`, handbook 11 §11.6 |
 
 Shrinking the batch age and the commit interval to their minima (10 s and 5 s) still leaves
@@ -148,7 +148,7 @@ strictly worse.
 ### 3.4 The console reading Kafka itself (Node, TypeScript conform) — rejected
 
 The BFF already holds the run engine, DuckDB and the snapshot's offsets, and has a TypeScript port of
-the schema walk (`web/server/iceberg/schema.ts`). Rejected on fidelity and boundary grounds: R3
+the schema walk (`console/server/iceberg/schema.ts`). Rejected on fidelity and boundary grounds: R3
 needs the runtime's conversion, and a second implementation of `lakehouse/schema/conform.py` diverges
 in exactly the places that matter — number formatting in JSON-collapsed fields (`json.dumps` vs
 `JSON.stringify`: `1.0`, `1e16`, non-ASCII), `b64:` encoding, candidate ordering across forks. It
@@ -588,7 +588,7 @@ steady-state answer is a second and a half of records; the whole window is sent 
 #### Authorization
 
 The console sends the **person's** session token (`callerOf(request)`, as it does for every change
-it forwards). The tail member resolves it the way the console itself does (`web/server/auth/principal.ts`):
+it forwards). The tail member resolves it the way the console itself does (`console/server/auth/principal.ts`):
 `GET <control plane>/auth/session` with the bearer, cached by a hash of the token for
 `TAIL_SESSION_CHECK_SECONDS` (5), kept 60 s more if the control plane is unreachable.
 The answer's `principal` (`Principal.describe()`: `permissions`, `all_permissions`,
@@ -619,7 +619,7 @@ lag, pauses, errors, the budget), `GET /tail/v1/members` (the partition → memb
 | Variable | Default | Meaning |
 |---|---|---|
 | `TAIL_APP_NAME` | `<release>-tail` | names the member in logs and views |
-| `TAIL_CONTROL_PLANE_URL` | — (required) | in-cluster `http://<release>-control-plane-app-api:6065` (`develop-` prefixed in dev): session checks and schema fetches |
+| `TAIL_CONTROL_PLANE_URL` | — (required) | in-cluster `http://<release>-control-plane-app-api:6065`: session checks and schema fetches |
 | `TAIL_SERVICE_TOKEN` | — (from the `<release>-auth` Secret, key `service-token`) | the read-only service credential, for schema fetches only |
 | `TAIL_TABLE_EVENTS_TOPIC` | `materialization-table-events` | the topic it follows (prefixed per overlay) |
 | `TAIL_REQUESTS_TOPIC` | `<release>-tail-requests` | the tick topic, for owner computation (prefixed per overlay) |
@@ -700,7 +700,7 @@ The console depends on the tail through one HTTP endpoint (§6.2) and stays extr
 
 - **Configuration.** Fixed: `CONSOLE_TAIL_URL`, the tail app's base URL; empty, the feature is off in
   this console. In every deployment the console runs in-cluster and the URL is the Service,
-  `http://materializer-tail-app-api:6065` (`develop-` prefixed in dev). During development and
+  `http://<release>-tail-app-api:6065`. During development and
   testing the console runs on a laptop: the lab's HTTPRoute routes `/tail/*` on the control plane's
   host to the tail Service, and `CONSOLE_TAIL_URL` is that host — the endpoint is still the console's
   alone there (§6.2). Tunable (section `live-tail`, §6.5):
@@ -710,7 +710,7 @@ The console depends on the tail through one HTTP endpoint (§6.2) and stays extr
   console's switch and the control plane's `live_tail_enabled` together (the console already reads
   `GET /system/settings` for the create dialog's defaults; it reads `live_tail_default` from the
   same answer to pre-check the toggle).
-- **A tail client** (`web/server/data/tail.ts`): `fetchTail(caller, {materializationId, table, after, maxRows, timeoutMs})`
+- **A tail client** (`console/server/data/tail.ts`): `fetchTail(caller, {materializationId, table, after, maxRows, timeoutMs})`
   → `{ bytes, through, endOffsets, status, rows, timeMin, timeMax, schemaId, settling, lagMs, member, generatedAt }`
   from the body and headers; non-2xx and timeouts become a `TailOutcome` of `unavailable` with a
   reason (`not_ready`, `rebalancing`, `unavailable_for_snapshot`, `off`, `unreachable`, `forbidden`),
@@ -945,7 +945,7 @@ ticks; none is read while rendering a runtime spec. Cross-field rule: none. Test
 (catalog ↔ config ↔ env), `test_runtime_settings.py`'s spec-hash override dict (the keys do not reach
 the runtime spec).
 
-Console (`web/server/config.ts` `tunableDeployment`, `web/server/settings/catalog.ts`, section `live-tail`):
+Console (`console/server/config.ts` `tunableDeployment`, `console/server/settings/catalog.ts`, section `live-tail`):
 
 | Key | Env | Default | Bounds |
 |---|---|---|---|
@@ -955,7 +955,7 @@ Console (`web/server/config.ts` `tunableDeployment`, `web/server/settings/catalo
 | `liveTailTimeoutMs` | `CONSOLE_LIVE_TAIL_TIMEOUT_MS` | 3,000 | 500–30,000 |
 
 Fixed: `CONSOLE_TAIL_URL` (shown read-only on the Deployment section, `routes/settings.ts::consoleDeployment`).
-New section in `web/src/features/settings/sections.ts`: `{ id: 'live-tail', label: 'Live tail', group: 'platform', permission: 'settings.view', kind: 'settings' }`
+New section in `console/src/features/settings/sections.ts`: `{ id: 'live-tail', label: 'Live tail', group: 'platform', permission: 'settings.view', kind: 'settings' }`
 — the implementer confirms the page renders settings of several scopes under one section id, as
 `materializations` (control plane) and `live` (console) are rendered today, and otherwise splits it.
 The tail app's own variables (§5.1) are deployment-fixed and documented in handbook 19, not shown on
@@ -1068,7 +1068,7 @@ same `arrow_schema(schema)`, zstd Parquet from the same writer.
 ## 9. Latency budget
 
 Produce → visible in the Data tab, Live mode, steady topic, console in the cluster or on a laptop
-against the lab (the lab figures in 13 §13.8 and web 06 §6.2 are from a laptop):
+against the lab (the lab figures in 13 §13.8 and console 06 §6.2 are from a laptop):
 
 | Step | Typical | p95 | Source |
 |---|---|---|---|
@@ -1076,10 +1076,10 @@ against the lab (the lab figures in 13 §13.8 and web 06 §6.2 are from a laptop
 | Owner's fetch returns it (`fetch_max_wait_ms` 200, `fetch_min_bytes` 1) | 100 ms | 250 ms | aiokafka; mean half the wait |
 | Staged line + conform + append (a fetch batch) | 20 ms | 60 ms | ~60–120 µs a record for ~1.4 KB records; measured in phase 2 |
 | Wait for the console's live timer (period 1,500 ms) | 750 ms | 1,430 ms | uniform |
-| `refresh`: pointer read (cached ≤ 2 s) | 5 ms | 200 ms | web 06 §6.2 (41 ms warm) |
+| `refresh`: pointer read (cached ≤ 2 s) | 5 ms | 200 ms | console 06 §6.2 (41 ms warm) |
 | BFF → tail Service → (forward to the owner) → session check (cached 5 s) → select segments → Parquet of a second's records → transfer | 70 ms | 300 ms | pyarrow write ~20–50 ms; a forward hop ~2 ms; in-cluster transfer ~1 ms/MB |
 | BFF: write file, count the new object (local DuckDB), emit | 40 ms | 120 ms | local read |
-| Browser: stream frame, page 1 refetch (local file), render | 120 ms | 300 ms | web 07 §07.5 first page 64 ms warm |
+| Browser: stream frame, page 1 refetch (local file), render | 120 ms | 300 ms | console 07 §07.5 first page 64 ms warm |
 | **Total** | **≈ 1.1 s** | **≈ 2.7 s** | 2.3 s of headroom to 5 s |
 
 The p95 column adds the steps' p95s, which is pessimistic (they are independent). A 1 s refresh
@@ -1323,16 +1323,16 @@ suites green (§13.7).
 
 | File | Covers |
 |---|---|
-| `web/server/data/tail.test.ts` (new) | header parsing, every status mapped to a `TailOutcome`, timeout → `unavailable`, the person's token forwarded, non-2xx JSON-in-bytes bodies parsed; `fetchHead` and the peek's rows shaped through the logical view (forks folded, nested paths named) newest first |
-| `web/server/routes/data.test.ts` (new) | the head route: `data.query` on the table's dataset required, `rows` bounded, the answer's `peek` block from the headers, no run created or touched |
-| `web/server/runs/tail.test.ts` (new; tail Parquet files written by `console_fixture.py`, served by a stub tail server) | browse run: the tail object first, exact counts include it, time pruning on its bounds, paging across the tail/file boundary newest-first and oldest-first; filters count it; statement: `sales.orders` and `iceberg.sales.orders` include the tail rows, a join across two tables each with a tail, the sandbox opens the tail files and nothing else; `asOf` → no tail; `refresh` with the same snapshot fetches only past `through`, appends a segment and bumps `revision`; with a new snapshot starts a new run; `unavailable` → the run completes without a tail and says so; `rebalancing` → same, retried next refresh; a tail file DuckDB cannot read → `unavailable`, not a failed run; a Live browse run of a relative range keeps `range.to` null so the rows its tail appends are not pruned, and the run that replaces it after a commit re-resolves `range.from`; `refresh` of a statement run always answers `replaced: true` |
-| `web/server/routes/materializations.test.ts` (extended) | `live_tail` through create and update schemas |
-| `web/server/settings/catalog.test.ts` (extended) | the four console settings |
-| `web/server/routes/system.test.ts` (extended) | `/api/config` `liveTail` block |
-| `web/src/features/data/hooks.test.ts` (extended) | `pageQueryKey` includes `revision`; the live timer pauses when hidden and while a run is running; it stops on an auth notice and on `tail.status: 'off'`; it never runs for a statement; the statement's *Auto re-run* fires 5 s after the previous run finished and never while one runs; a relative range under Live is sent with an open end and its start re-resolved on each new run; an absolute range with a past end polls nothing |
-| `web/server/data/tail.test.ts` (failure cases) | a connection reset mid-body, a body shorter than `X-Tail-Bytes`, a missing or unparsable `X-Tail-Through`, a `200` whose body is not Parquet → each `unavailable` with a reason, never thrown; `409 tail_backlogged` → `backlogged` with `behind`; `409 tail_rebalancing` and `503 tail_not_ready` → `unavailable` with reasons the status line tells apart |
-| `web/server/runs/tail.test.ts` (failure cases) | a refresh while another refresh of the same run is in flight is serialized, not doubled; a refresh of an expired run → `404` and the client starts a new run; of a cancelled or failed run → a new run; a tail that becomes `off` mid-live (the materialization's `live_tail` turned off) → `tail.status` `off`, no further fetches; the person losing `data.query` on the dataset between refreshes → `ownRun` refuses and the stream closes with the auth reason; the first fetch of a run timing out → the run completes committed-only within the timeout and says `unavailable`; a tail segment file missing from disk → that tail `unavailable`, the committed rows still page |
-| Fixture | `python/tests/console_fixture.py` also writes `web/testdata/iceberg/orders/tail-after-{offsets}.parquet` and a second file for an incremental fetch, with the expected rows (records past the fixture's committed offsets, built with `build_row`), so `iceberg.test.ts` can compare the TypeScript side's reading with Python's, as E5 does for the table |
+| `console/server/data/tail.test.ts` (new) | header parsing, every status mapped to a `TailOutcome`, timeout → `unavailable`, the person's token forwarded, non-2xx JSON-in-bytes bodies parsed; `fetchHead` and the peek's rows shaped through the logical view (forks folded, nested paths named) newest first |
+| `console/server/routes/data.test.ts` (new) | the head route: `data.query` on the table's dataset required, `rows` bounded, the answer's `peek` block from the headers, no run created or touched |
+| `console/server/runs/tail.test.ts` (new; tail Parquet files written by `console_fixture.py`, served by a stub tail server) | browse run: the tail object first, exact counts include it, time pruning on its bounds, paging across the tail/file boundary newest-first and oldest-first; filters count it; statement: `sales.orders` and `iceberg.sales.orders` include the tail rows, a join across two tables each with a tail, the sandbox opens the tail files and nothing else; `asOf` → no tail; `refresh` with the same snapshot fetches only past `through`, appends a segment and bumps `revision`; with a new snapshot starts a new run; `unavailable` → the run completes without a tail and says so; `rebalancing` → same, retried next refresh; a tail file DuckDB cannot read → `unavailable`, not a failed run; a Live browse run of a relative range keeps `range.to` null so the rows its tail appends are not pruned, and the run that replaces it after a commit re-resolves `range.from`; `refresh` of a statement run always answers `replaced: true` |
+| `console/server/routes/materializations.test.ts` (extended) | `live_tail` through create and update schemas |
+| `console/server/settings/catalog.test.ts` (extended) | the four console settings |
+| `console/server/routes/system.test.ts` (extended) | `/api/config` `liveTail` block |
+| `console/src/features/data/hooks.test.ts` (extended) | `pageQueryKey` includes `revision`; the live timer pauses when hidden and while a run is running; it stops on an auth notice and on `tail.status: 'off'`; it never runs for a statement; the statement's *Auto re-run* fires 5 s after the previous run finished and never while one runs; a relative range under Live is sent with an open end and its start re-resolved on each new run; an absolute range with a past end polls nothing |
+| `console/server/data/tail.test.ts` (failure cases) | a connection reset mid-body, a body shorter than `X-Tail-Bytes`, a missing or unparsable `X-Tail-Through`, a `200` whose body is not Parquet → each `unavailable` with a reason, never thrown; `409 tail_backlogged` → `backlogged` with `behind`; `409 tail_rebalancing` and `503 tail_not_ready` → `unavailable` with reasons the status line tells apart |
+| `console/server/runs/tail.test.ts` (failure cases) | a refresh while another refresh of the same run is in flight is serialized, not doubled; a refresh of an expired run → `404` and the client starts a new run; of a cancelled or failed run → a new run; a tail that becomes `off` mid-live (the materialization's `live_tail` turned off) → `tail.status` `off`, no further fetches; the person losing `data.query` on the dataset between refreshes → `ownRun` refuses and the stream closes with the auth reason; the first fetch of a run timing out → the run completes committed-only within the timeout and says `unavailable`; a tail segment file missing from disk → that tail `unavailable`, the committed rows still page |
+| Fixture | `python/tests/console_fixture.py` also writes `console/testdata/iceberg/orders/tail-after-{offsets}.parquet` and a second file for an incremental fetch, with the expected rows (records past the fixture's committed offsets, built with `build_row`), so `iceberg.test.ts` can compare the TypeScript side's reading with Python's, as E5 does for the table |
 
 ### 13.3 Browser (Playwright, per the lab recipes)
 
@@ -1348,7 +1348,7 @@ render and recover; the Live toggle is absent in SQL, whose *Auto re-run* re-run
 completion and stops when turned off; "Last 15 minutes" under Live keeps showing records produced
 after Run was pressed; light and dark themes.
 
-### 13.4 Lab validation (shesuelab)
+### 13.4 Lab validation
 
 Deploy per the lab procedure (overlay → kustomize → chart → helm; the tail app added to the overlay
 as the maintenance app was, with its `kaspr.io/app` label patches by selector, its topic names, env
@@ -1442,7 +1442,7 @@ and package ref; an HTTPRoute rule for `/tail/*` to `midstream-tail-app-api`). S
     `X-Tail-Forwarded-By`, a `rows=1000000` peek and a `..`-bearing table name — each refused as §12
     says, and no log line naming a row.
 
-Record the results in 13 §13.8e and web 14 §14.4, as earlier releases did.
+Record the results in 13 §13.8e and console 14 §14.4, as earlier releases did.
 
 ### 13.5 Failure-mode matrix
 
@@ -1509,7 +1509,7 @@ in handbook 19 before phase 3 starts; a miss re-opens §9 and §11.1:
   items a–c) answered in handbook 19.
 - **Phase 3:** the console rows of §13.5 green; `npm run typecheck && npm test && npm run build`;
   the Playwright pass of §13.3, failure states included; the fixture parity test.
-- **Phase 4:** 13 §13.8e and web 14 §14.4 written from the lab results; handbook 19 and the touched
+- **Phase 4:** 13 §13.8e and console 14 §14.4 written from the lab results; handbook 19 and the touched
   documents updated; versions bumped; nothing in this plan's §17 left undecided.
 
 ---
@@ -1538,7 +1538,7 @@ an older console.
 ## 15. Implementation phases, mapped to files
 
 Each phase ends with the repo's checks: `python -m unittest discover -s python/tests -p 'test_*.py'`,
-`python -m compileall python/src`, `kubectl kustomize manifests/base` and `manifests/dev`, and in `web/`
+`python -m compileall python/src`, `helm lint charts/midstream -f charts/midstream/ci/test-values.yaml`, and in `console/`
 `npm run typecheck && npm test && npm run build`.
 
 ### Phase 0 — the shared row builder
@@ -1547,7 +1547,7 @@ Each phase ends with the repo's checks: `python -m unittest discover -s python/t
 |---|---|
 | New `build_row` / `BuiltRow` | `python/src/midstream/lakehouse/rows.py` (new) |
 | `run_seal` uses it; nothing else changes | `python/src/midstream/runtime_app/writer/seal.py` |
-| Tests | `python/tests/test_row_builder.py` (new), `python/tests/test_runtime_seal.py` (golden equality), regenerate `web/testdata/iceberg` with `python/tests/console_fixture.py` and confirm `git diff` shows only ids/UUIDs (expected per web 14 §14.2) |
+| Tests | `python/tests/test_row_builder.py` (new), `python/tests/test_runtime_seal.py` (golden equality), regenerate `console/testdata/iceberg` with `python/tests/console_fixture.py` and confirm `git diff` shows only ids/UUIDs (expected per console 14 §14.2) |
 
 ### Phase 1 — the control plane
 
@@ -1580,18 +1580,18 @@ Each phase ends with the repo's checks: `python -m unittest discover -s python/t
 
 | Change | Files |
 |---|---|
-| Config and settings | `web/server/config.ts` (`tailUrl` fixed; four tunables), `web/server/settings/catalog.ts`, `web/server/routes/settings.ts` (deployment entry), `web/src/features/settings/sections.ts` |
-| Tail client | `web/server/data/tail.ts` (new: `fetchTail`, `fetchHead`; the peek's rows shaped through the logical view with DuckDB) |
-| Runs: work dir for every run, tail objects, incremental refresh, `tail` + `revision` in snapshots | `web/server/runs/run.ts`, `browse.ts`, `statement.ts`, `store.ts` (`startRun` tail options; `refreshRun`) |
-| Routes | `web/server/routes/data.ts` (`liveTail` in `runSchema`; `POST /api/runs/:runId/refresh`; `GET /api/materializations/:id/tables/:table/head`), `web/server/routes/system.ts` (`/api/config`), `web/server/routes/materializations.ts` (`live_tail` in both schemas) |
-| Types and client | `web/shared/types.ts` (`CpMaterialization.live_tail`, `RunRequest.liveTail`, `RunTail`, `RunSnapshot.tail/revision`, `ConsoleConfig.liveTail`, `CpSystemSettings.live_tail_default`, `HeadPeek`), `web/server/controlPlane/client.ts` (`live_tail` on create/update), `web/src/lib/api.ts` (`refreshRun`, `live_tail`) |
-| UI | `web/src/features/data/useRun.ts` (refresh, revision in keys, the live timer), `DataTab.tsx` (the Live toggle for the browse view, visibility, the statement's *Auto re-run*), `SqlPanel.tsx` (the toggle's place), `timeRange.ts` (open-ended relative ranges under Live), `StatusBar.tsx` (tail states, the peek button), `HeadPeek.tsx` (new: the panel), `viewState.ts` (`live`), `web/src/features/materializations/CreateMaterializationDialog.tsx` (toggle pre-checked from the default), `web/src/features/detail/EditMaterializationDialog.tsx`, `OverviewTab.tsx` |
-| Tests | `web/server/data/tail.test.ts`, `web/server/runs/tail.test.ts` (new), `routes/materializations.test.ts`, `settings/catalog.test.ts`, `routes/system.test.ts`, `src/features/data/hooks.test.ts`; fixture additions in `python/tests/console_fixture.py` and `web/server/iceberg/iceberg.test.ts` |
-| Docs | web 01, 03 (§3.10), 06, 07 (a section on tail objects and incremental refresh), 08 (§8.4, §8.16, new §8.17a), 11 (§11.3 create dialog, §11.4 edit, §11.8 Live), 12 (§12.2 the tail call), 14, 16, 17; handbook 18 §18.9 (the tail call carries the person's session) |
+| Config and settings | `console/server/config.ts` (`tailUrl` fixed; four tunables), `console/server/settings/catalog.ts`, `console/server/routes/settings.ts` (deployment entry), `console/src/features/settings/sections.ts` |
+| Tail client | `console/server/data/tail.ts` (new: `fetchTail`, `fetchHead`; the peek's rows shaped through the logical view with DuckDB) |
+| Runs: work dir for every run, tail objects, incremental refresh, `tail` + `revision` in snapshots | `console/server/runs/run.ts`, `browse.ts`, `statement.ts`, `store.ts` (`startRun` tail options; `refreshRun`) |
+| Routes | `console/server/routes/data.ts` (`liveTail` in `runSchema`; `POST /api/runs/:runId/refresh`; `GET /api/materializations/:id/tables/:table/head`), `console/server/routes/system.ts` (`/api/config`), `console/server/routes/materializations.ts` (`live_tail` in both schemas) |
+| Types and client | `console/shared/types.ts` (`CpMaterialization.live_tail`, `RunRequest.liveTail`, `RunTail`, `RunSnapshot.tail/revision`, `ConsoleConfig.liveTail`, `CpSystemSettings.live_tail_default`, `HeadPeek`), `console/server/controlPlane/client.ts` (`live_tail` on create/update), `console/src/lib/api.ts` (`refreshRun`, `live_tail`) |
+| UI | `console/src/features/data/useRun.ts` (refresh, revision in keys, the live timer), `DataTab.tsx` (the Live toggle for the browse view, visibility, the statement's *Auto re-run*), `SqlPanel.tsx` (the toggle's place), `timeRange.ts` (open-ended relative ranges under Live), `StatusBar.tsx` (tail states, the peek button), `HeadPeek.tsx` (new: the panel), `viewState.ts` (`live`), `console/src/features/materializations/CreateMaterializationDialog.tsx` (toggle pre-checked from the default), `console/src/features/detail/EditMaterializationDialog.tsx`, `OverviewTab.tsx` |
+| Tests | `console/server/data/tail.test.ts`, `console/server/runs/tail.test.ts` (new), `routes/materializations.test.ts`, `settings/catalog.test.ts`, `routes/system.test.ts`, `src/features/data/hooks.test.ts`; fixture additions in `python/tests/console_fixture.py` and `console/server/iceberg/iceberg.test.ts` |
+| Docs | console 01, 03 (§3.10), 06, 07 (a section on tail objects and incremental refresh), 08 (§8.4, §8.16, new §8.17a), 11 (§11.3 create dialog, §11.4 edit, §11.8 Live), 12 (§12.2 the tail call), 14, 16, 17; handbook 18 §18.9 (the tail call carries the person's session) |
 
 ### Phase 4 — lab validation, docs, release
 
-§13.4; 13 §13.8e and web 14 §14.4 entries; `pyproject.toml` and `web/package.json` bumped (§17 D11);
+§13.4; 13 §13.8e and console 14 §14.4 entries; `pyproject.toml` and `console/package.json` bumped (§17 D11);
 `docs/handbook/README.md` reading paths ("Debugging a tail that is behind, moving or unavailable").
 
 ---
@@ -1628,7 +1628,7 @@ Facts this plan relies on, and where each was checked:
   (`routes/data.ts::requireOnTables`, `ownRun`), forwards the person's token on their requests
   (`controlPlane/client.ts::headersFor`, `auth/guard.ts::callerOf`), and checks sessions with the
   control plane cached by token hash (`auth/principal.ts`).
-- Pointer freshness 2 s / 5 s / 5 min — `web/server/config.ts`.
+- Pointer freshness 2 s / 5 s / 5 min — `console/server/config.ts`.
 - The maintenance tick pattern: `services/table_maintenance.py`, `handlers/maintenance.py`,
   `charts/midstream/templates/agents/maintenance.yaml`, `charts/midstream/templates/tasks/schedule-table-maintenance.yaml`;
   the maintenance app's shape — `maintenance_app/`, `charts/midstream/templates/maintenance/`, the dev overlay's

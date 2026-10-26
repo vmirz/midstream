@@ -618,7 +618,7 @@ Inspecting the store:
 
 ```bash
 kafka-console-consumer --bootstrap-server $BROKERS --from-beginning --property print.key=true \
-  --topic midstream-control-plane-app-develop-directory-changelog
+  --topic midstream-control-plane-app-midstream-directory-changelog
 ```
 
 The changelog holds password hashes; treat it as sensitive.
@@ -702,7 +702,7 @@ access. The principal's `kind` is `token`, and changes it makes are attributed t
 dataset reads all of them (14 §14.8).
 
 **Managing them.** The console's Account page lists a person's tokens with their permissions and
-expiry (last use is not tracked), makes new ones — the token is shown once — and revokes them (web 11). A user
+expiry (last use is not tracked), makes new ones — the token is shown once — and revokes them (console 11). A user
 manager can revoke anyone's token through the API. Making and revoking a token are identity requests
 like any directory change — applied by `identity-intake` in order, recorded in the audit log as
 `token.created` and `token.revoked`.

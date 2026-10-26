@@ -99,7 +99,14 @@ keep that safe:
    1–9 for the metadata columns and the snapshot-summary properties of 11 §11.4. Changing either is
    a major change: every table already written, and every reader of it, depends on them.
 
-## 16.4 What 1.0.0 changed
+## The development line before 1.0.0
+
+Midstream's first release is 1.0.0. The code reached it through a development line numbered 0.5 to
+4.4, and the sections below record what each of those milestones changed, because the handbook's
+measurements and lab records cite them (13 §13.8, 14). Those numbers are not releases of Midstream:
+no installation older than 1.0.0 exists to upgrade from, so nothing migrates from them.
+
+## 16.4 What 1.0.0 changed (development line)
 
 Control plane and console **1.0.0** (decision D10) replace the Parquet lake and the schema authority
 with an Iceberg table per materialization: a breaking release for every peer.
@@ -111,13 +118,13 @@ with an Iceberg table per materialization: a breaking release for every peer.
 | The schema is the table's: nested, forked by type, `_unmapped`; the schema endpoints return a projection (04 §4.6.1) | API clients of the schema endpoints |
 | New topic `materialization-table-events`; `materialization-schema-proposals` and the runtime signal topics are gone | deployers: one forced rebalance (§16.3, rule 3), and the rollout of 12 §12.13 |
 | New endpoints: the table, maintenance, access tokens, the REST catalog; new permissions `materializations.maintain`, `catalog.read`, `catalog.write` | API clients, role editors |
-| Console 1.0 requires control plane 1.0: its `/api/config` reports `controlPlaneCompatible`, and the console shows a banner against an older one (web 16) | deployers |
+| Console 1.0 requires control plane 1.0: its `/api/config` reports `controlPlaneCompatible`, and the console shows a banner against an older one (console 16) | deployers |
 
 There is no migration (decision D8): 0.x materializations are deleted and created again, the
 identity and settings stores are kept (12 §12.13). A 0.x materialization record left behind fails
 `apply_runtime` as `table_missing`.
 
-## 16.5 What 2.0.0 changed
+## 16.5 What 2.0.0 changed (development line)
 
 Control plane and console **2.0.0** let a materialization read several topics with one runtime,
 each into an Iceberg table of its own, make the materialization its tables' Iceberg namespace, let
@@ -136,7 +143,7 @@ peer.
 | Schema and table endpoints are per table: `…/tables/{table}/schema`, `…/tables/{table}/schema/versions[/{id}]`, `…/tables/{table}`; maintenance takes an optional `table` (04 §4.6) | API clients |
 | The detail's `table` is `tables` (a list); `materialization.source_topic`/`schema_version` are `tables`/`source_topics`; `latest_offsets` is per table; `consumer_lag` is per topic (05 §5.17) | API clients, dashboards |
 | Status and table events carry per-table fields (`schema_versions`, `tables`, `table_counters`, `table`) (06) | anything reading the topics |
-| Console 2.0 requires control plane 2.0 (`controlPlaneCompatible`): it reads several tables per materialization and joins them in SQL (web 07) | deployers |
+| Console 2.0 requires control plane 2.0 (`controlPlaneCompatible`): it reads several tables per materialization and joins them in SQL (console 07) | deployers |
 | The `maintenance` agent sends work: the retention sweep hands each purge to `workflow-apply`, and the lag refresh hands each measurement to a new `record_consumer_lag` step, both keyed by the materialization. 1.0 saved statuses and deleted records from the `__system__` event, which left copies in the wrong shard of the `state` table (06 §6.4). Its log event `control_plane_retention_purge_completed` is now `control_plane_retention_purge_requested` | deployers (the agent has an output topic: patch it in a renaming overlay, 02 §2.9), log searches |
 
 There is no migration: 1.0 materializations are deleted with the 1.0 control plane — which drops
@@ -151,7 +158,7 @@ a record wherever it scans, logging it once (12 §12.9), and its retention sweep
 says `deleted`. The status copies 1.0's lag refresh left in the `__system__` shard belong to no
 materialization any more; nothing reads them.
 
-## 16.6 What 3.0.0 changed
+## 16.6 What 3.0.0 changed (development line)
 
 Control plane and console **3.0.0** put tables in **datasets** and grant access per dataset. A
 dataset is a named group of tables and their Iceberg namespace, so SQL reads `<dataset>.<table>`; a
@@ -170,7 +177,7 @@ by rule 4 it is a major release for every peer.
 | The `identity` KasprTable is `directory`: it holds datasets, grants and claims too. Every WebView and `identity-intake` bind it as `directory_table` (02 §2.4, §2.8) | deployers: patch the binding in a renaming overlay; the new table starts empty |
 | `request-intake` also sends to the identity requests topic (claims and releases), and `identity-intake` sends `tables_claimed` / `claim_rejected` work events and reads the `state` table (06 §6.4, §6.15; 02 §2.5) | deployers: patch both outputs in a renaming overlay |
 | Table records, the detail and the list carry `dataset` and `dataset_id`; `namespace` is gone from the table summary; a table says whether the caller may read it (`readable`, `queryable`) (05 §5.12, §5.17) | API clients, dashboards |
-| Console 3.0 requires control plane 3.0 (`controlPlaneCompatible`, web 08 §8.4) | deployers |
+| Console 3.0 requires control plane 3.0 (`controlPlaneCompatible`, console 08 §8.4) | deployers |
 
 There is no migration (one release on a clean slate). Before upgrading, delete every 2.0
 materialization with the 2.0 control plane: 3.0 cannot read a 2.0 materialization or table record.
@@ -181,7 +188,7 @@ the auth Secret and must choose a new password; the 2.0 `identity` changelog top
 The control-plane app consumes the new `directory` changelog, so the deploy needs one rebalance
 (rule 3), which kaspr-operator 0.19.4 or later makes on its own.
 
-## 16.7 What 3.1.0 changed
+## 16.7 What 3.1.0 changed (development line)
 
 Control plane and runtime **3.1.0** fix a stall. A committer that outlived a member's restart could
 ignore that member's file announcements for good: nothing of the member's partitions committed
@@ -192,7 +199,7 @@ The change is additive, so this is a minor release. There is no migration, and c
 it. Upgrading re-applies every runtime. The rolling restart that follows also restarts each runtime's
 committer, which clears a runtime that is stuck this way.
 
-## 16.8 What 4.0.0 changed
+## 16.8 What 4.0.0 changed (development line)
 
 Control plane and console **4.0.0** take a materialization's place and scale from the deployment,
 partition tables by month as well, and date schema changes by when the data had them. A create
@@ -205,14 +212,14 @@ request no longer accepts fields it did, so by rule 4 it is a major release.
 | `POST /topics/analyze` recommends replicas only: `storage_size` is gone from each `recommendation` and from `combined` (04 §4.9.1a) | API clients |
 | A new runtime member's volume is `64Mi` (`default_runtime_storage_size`), down from `1Gi`: it holds only the state table, whose RocksDB write buffer is 4 MiB so its write-ahead log stays under 8 MiB; batches are staged on the node's disk (10 §10.3, §10.8; 12 §12.10). The control plane's and the maintenance app's own volumes stay 1Gi | deployers who set `…_DEFAULT_RUNTIME_STORAGE_SIZE` themselves |
 | `partition_granularity` may be `month`: Iceberg's `month(_kafka_timestamp)`, `ts_month=2026-10`. Compaction lets this month's files settle one by one rather than waiting for the month to end; there is no week, which Iceberg has no transform for (11 §11.3, §11.6) | API clients; engines read it as any Iceberg month partition |
-| Console 4.0 requires control plane 4.0. Its create dialog asks for none of the four and says where the tables will go; its Schema tab dates each change by the records' Kafka timestamps, read from the table's manifests (`GET …/schema/timeline`, web 08 and 11), while the API's schema `since` stays the commit time (04 §4.6.1) | deployers |
+| Console 4.0 requires control plane 4.0. Its create dialog asks for none of the four and says where the tables will go; its Schema tab dates each change by the records' Kafka timestamps, read from the table's manifests (`GET …/schema/timeline`, console 08 and 11), while the API's schema `since` stays the commit time (04 §4.6.1) | deployers |
 
 There is no migration. A 3.x materialization keeps what it was created with: its destination,
 namespace, volume and runtime name, which `resolved_runtime_name` already held. Its record's
 `runtime_name` is no longer read. Upgrading re-applies every runtime. On the lab the three 3.x
 runtimes came back on 4.0 with their `1Gi` volumes (2026-10-23).
 
-## 16.9 What 4.1.0 changed
+## 16.9 What 4.1.0 changed (development line)
 
 Control plane, runtime and console **4.1.0** add the live tail: the console shows a table's newest
 records within seconds of their being produced, before the runtime commits them, each exactly once
@@ -228,13 +235,13 @@ beside the committed snapshot (19). Everything is additive, so this is a minor r
 | A restarted control plane answers every request `503 unavailable` (`starting`) until it has read its tables back, where it used to answer from a half-read directory — sessions read as ended, so the console signed its people out (18 §18.7) | API clients: retry a `503` |
 | Runtime settings have a **lineage** (17 §17.7), so runtimes follow a control plane installed afresh, or one whose `settings` table was lost, whatever revisions an earlier one reached. A new KasprTask, `settings-bootstrap` (at startup, on the leader), sends a `bootstrap` request on `<release>-settings-requests`, which the settings agent already consumes — no forced rebalance; the first start begins the lineage and delivers the runtime settings to every runtime under it. Deliveries carry `lineage`, heartbeats `settings_lineage`, and `GET /settings/runtime` the scope's `lineage`; a runtime re-applied after a lineage begins is sent the settings even with none changed. A 4.0 runtime compares revisions alone, as before, and the rollout judges it by its revision | deployers: the task, and its `topicSend` patch in a renaming overlay |
 | The control plane and the tail app no longer create topics by asking about them: on a broker that creates topics on demand, describing a missing topic made it, and a deleted topic came back at the next metadata refresh of a client that had looked up its offsets (19 §19.7). A topic the control plane may not describe now reads as missing in topic analysis | none |
-| The console reads GCS objects with a plain GET of the JSON API, not the client library's download stream, which printed `MaxListenersExceededWarning` twice per object; cached mode writes each data file whole or not at all (web 06) | none |
-| Console 4.1: `CONSOLE_TAIL_URL`, the Data tab's Live mode, a statement's Auto re-run, the head peek, the Live tail switch in the create and edit dialogs, and four settings (web 03). Against a 4.0 control plane it shows committed rows only, as before | deployers |
+| The console reads GCS objects with a plain GET of the JSON API, not the client library's download stream, which printed `MaxListenersExceededWarning` twice per object; cached mode writes each data file whole or not at all (console 06) | none |
+| Console 4.1: `CONSOLE_TAIL_URL`, the Data tab's Live mode, a statement's Auto re-run, the head peek, the Live tail switch in the create and edit dialogs, and four settings (console 03). Against a 4.0 control plane it shows committed rows only, as before | deployers |
 
 There is no migration. Upgrading re-applies every runtime (its package pin changes); the tail app
 starts with an empty group and serves a table once someone asks for it.
 
-## 16.10 What 4.2.0 changed
+## 16.10 What 4.2.0 changed (development line)
 
 Control plane and runtime **4.2.0** give every Kaspr app of the deployment a VerticalPodAutoscaler,
 and the runtimes a second core. Everything is additive, so this is a minor release; console 4.1
@@ -250,7 +257,7 @@ There is no migration. Upgrading restarts the control plane, maintenance and tai
 the new package; their VPAs restart nothing. Every runtime is re-applied and rolls once, since its
 package pin and CPU limit change.
 
-## 16.11 What 4.3.0 changed
+## 16.11 What 4.3.0 changed (development line)
 
 Control plane, runtime and console **4.3.0** give every materialization a live tail: there is no
 switch per materialization any more, and only the deployment's `live_tail_enabled` turns the live tail
@@ -266,7 +273,7 @@ off, for all of them (19). It stays compatible with 4.1 and 4.2 peers, so this i
 
 There is no migration. Upgrading re-applies every runtime (its package pin changes).
 
-## 16.12 What 4.4.0 changed
+## 16.12 What 4.4.0 changed (development line)
 
 Control plane, runtime and console **4.4.0** scale a runtime that is far behind, show one whose
 members keep restarting as unhealthy, and bound a seal's memory. Everything is additive, so this is
@@ -280,11 +287,11 @@ a minor release: a 4.3 console works with it, and a 4.4 console hides what a con
 | A new record, `runtime-autoscale:<id>` (05 §5.6a), written in the materialization's shard on `record_consumer_lag`, which may now send an `apply_runtime` (`caused_by` `runtime-autoscaling`) | none |
 | **Restart health** (08 §8.3, row 3d): each observation reads the runtime's pods. A member crash-looping, killed for memory in the last 30 minutes, or restarted in them after three restarts makes a running materialization `degraded` / `runtime_members_restarting`, with a plain message, and a heartbeat cannot clear it until the restarts age out. The control plane's role gains `get` and `list` on pods (02 §2.7) | deployers: apply the role; without it the restarts go unobserved, logged once |
 | **The seal holds one row group** whatever its batch's size or spread (10 §10.4): its lines are spooled to a file per partition value first, then each file written in turn. Its output is byte for byte what it was; a batch over two years of months now takes 267 MiB where it took 2.1 GiB | none: the shipped 1 GiB per member now holds a backfill (12 §12.10) |
-| Console 4.4: an **Autoscale** switch in the create dialog (Advanced) and the edit dialog; the Overview's *Scaled up to N members*, with why, in the Reconciliation panel, and *Autoscaling* in the Specification; a degraded runtime's health reads **Unhealthy**, its message as the badge's tooltip. `GET /api/config` has `autoscaling`. The Data tab of the release before it: one plain status row (rows, then *N records behind*), Peek, Share and Export under *More actions*, the latest snapshot always, and committed row counts in the lists (web 11) | none |
+| Console 4.4: an **Autoscale** switch in the create dialog (Advanced) and the edit dialog; the Overview's *Scaled up to N members*, with why, in the Reconciliation panel, and *Autoscaling* in the Specification; a degraded runtime's health reads **Unhealthy**, its message as the badge's tooltip. `GET /api/config` has `autoscaling`. The Data tab of the release before it: one plain status row (rows, then *N records behind*), Peek, Share and Export under *More actions*, the latest snapshot always, and committed row counts in the lists (console 11) | none |
 
 There is no migration. Upgrading re-applies every runtime (its package pin changes).
 
-## 16.13 What 4.4.1 changed
+## 16.13 What 4.4.1 changed (development line)
 
 Control plane and runtime **4.4.1** fix how a table's drop waits for a maintenance job. It is a fix
 with no contract change, so a patch release; the console stays 4.4.0.

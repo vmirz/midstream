@@ -1,4 +1,6 @@
 # Every feature on, with the Secrets a real installation names: the shape the render tests check.
+package:
+  source: git              # the development source; the default installs the release from PyPI
 kaspr:
   bootstrapServers: kafka-bootstrap.kafka.svc.cluster.local:9092
   authentication:
@@ -8,6 +10,10 @@ kaspr:
       secretName: midstream-kafka
       passwordKey: password
   storageClass: standard
+  # Shared Kaspr settings; the chart's own keys cannot be overridden (the serializer stays json).
+  config:
+    topicReplicationFactor: 1
+    valueSerializer: raw
   nodeSelector:
     workload: streaming
   tolerations:

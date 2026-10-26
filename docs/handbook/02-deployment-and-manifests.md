@@ -155,20 +155,23 @@ Notes:
 - `topicAllowDeclare: true` lets agents declare their input topics (`declare: true`) instead of
   requiring pre-created topics.
 - `webPort: 6065` and `webBasePath: /` define the HTTP surface.
+- `kaspr.config` adds an installation's shared Kaspr settings to every app and runtime,
+  `topicReplicationFactor` on a small cluster for one; the keys above stay the chart's.
 
 ### Package installation
 
 ```yaml
 pythonPackages:
   packages:
-    - git+https://github.com/vmirz/midstream.git@main#egg=midstream-platform&subdirectory=python
+    - midstream-platform==<appVersion>
   installPolicy: { retries: 3, timeout: 600, onFailure: block }
 ```
 
-Every app installs the package when its pod starts, from `package.source`: `git` installs this
-repository at `package.git.ref` over https (no deploy key: the repository is public); `index`
-installs `midstream-platform==<package.index.version>` from PyPI or `package.index.url`, with
-`package.index.credentialsSecret` for a private index. `onFailure: block` means a failed install
+Every app installs the package when its pod starts, from `package.source`: `index`, the default,
+installs `midstream-platform==<package.index.version>`, the chart's appVersion unless set, from PyPI
+or `package.index.url`, with `package.index.credentialsSecret` for a private index; `git` installs
+this repository at `package.git.ref` over https (no deploy key: the repository is public), for
+development. `onFailure: block` means a failed install
 prevents the app from starting rather than running a stale version. The runtimes get the same block
 through the runtime spec, with the control plane pinning the exact revision (10 §10.1).
 
@@ -218,9 +221,9 @@ verticalPodAutoscaler:           # the members' CPU request from their use (§2.
   controlledValues: RequestsOnly
   minAllowed: { cpu: 100m }
   maxAllowed: { cpu: 1500m }
-config: { topicAllowDeclare: true, brokerRebalanceTimeout: 300 }
+config: { valueSerializer: json, topicAllowDeclare: true, brokerRebalanceTimeout: 300 }   # plus kaspr.config
 pythonPackages:                  # the same block as the apps'; the control plane pins the revision
-  packages: [ git+https://github.com/vmirz/midstream.git@main#egg=midstream-platform&subdirectory=python ]
+  packages: [ midstream-platform==<appVersion> ]
 template:
   pod: { nodeSelector, tolerations, volumes: [gcp-credentials] }
   kasprContainer:
@@ -276,7 +279,7 @@ The control plane adds `K_STREAM_WAIT_EMPTY=false`, `K_STORE_ROCKSDB_WRITE_BUFFE
 | `CONTROL_PLANE_MATERIALIZATION_STATUS_TOPIC` | `materialization-status` |
 | `CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC` | `materialization-schema-authority-updates` (runtime control, 06 §6.7) |
 | `CONTROL_PLANE_TABLE_EVENTS_TOPIC` | `materialization-table-events` |
-| `CONTROL_PLANE_STORAGE_PREFIX` | `materializer` (dev: `develop`): the directory under the destination every materialization's tables are created in, which keeps deployments sharing a bucket apart (`ICEBERG_NAMESPACE` before 3.0; a table's Iceberg namespace is its dataset) |
+| `CONTROL_PLANE_STORAGE_PREFIX` | the release name (`controlPlane.settings.storagePrefix`; `materializer` when unset): the directory under the destination every materialization's tables are created in, which keeps deployments sharing a bucket apart (`ICEBERG_NAMESPACE` before 3.0; a table's Iceberg namespace is its dataset) |
 | `CONTROL_PLANE_DELETED_RETENTION_HOURS`, `…_DEFAULT_RUNTIME_STORAGE_SIZE`, `…_DEFAULT_RUNTIME_REPLICAS` | retention of deleted records; a new runtime's volume per member (`64Mi`: it holds only the state table, 10 §10.8) and default replicas. The control plane's own volume is its KasprApp's `storage` (1Gi), the maintenance app's likewise |
 | `CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC` | `<release>-settings-requests` |
 | `CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC` | `<release>-identity-requests` |
@@ -555,7 +558,7 @@ Observations:
 ## 2.8 Web views
 
 Every WebView attaches to the control plane through
-`metadata.labels["kaspr.io/app"] = materializer-control-plane`. Views that read control-plane
+`metadata.labels["kaspr.io/app"] = <release>-control-plane`. Views that read control-plane
 records bind the `state` table as `control_plane_table`. Views that read configuration bind the
 `settings` table as `settings_table`: `materializations-create`, `materializations-update`,
 `system-settings`, `topics-list`, `topics-analyze`, and the three settings views.
@@ -613,9 +616,8 @@ Full API details: [04 — HTTP API reference](./04-http-api-reference.md).
 
 ## 2.9 Values and derived names
 
-The chart has no overlays: one `values.yaml` holds every default, and an installation changes what it
-needs in a values file of its own (`docs/install.md` §3). What the Kustomize dev overlay once did
-with a name prefix and some eighty patches, the chart does with one derived name:
+One `values.yaml` holds every default, and an installation changes what it needs in a values file of
+its own (`docs/install.md` §3). Every name comes from one derived name:
 `include "midstream.fullname"`, the release name unless `fullnameOverride` says otherwise, prefixes
 every resource, topic and table, and every binding, `topicSend` and label is written in terms of it.
 A template cannot name a topic the agents do not consume unless it spells the suffix wrong, which
@@ -635,7 +637,7 @@ The CPU of every runtime member, the memory of the seals and the compaction chil
 settings are not values: the first two are the runtime spec's `resources` (§2.3, 12 §12.10), the
 last the Settings page's (17).
 
-Two things the overlays got wrong are gone with them: the scheduler topic is derived from the app id
+Two things follow from it: the scheduler topic is derived from the app id
 (14 §14.2), and every installation's runtimes may declare their topics.
 
 ## 2.10 Runtime resources (created at runtime, not in the chart)
@@ -851,7 +853,7 @@ tables — the procedure is 12 §12.13.
 
 **Upgrading to 4.1** adds the tail app and its topic. The control plane only sends to
 `<release>-tail-requests`, so it needs no forced rebalance; the tail app starts with its own
-group. Point the console at it with `CONSOLE_TAIL_URL` (web 03).
+group. Point the console at it with `CONSOLE_TAIL_URL` (console 03).
 
 **Upgrading to 4.2** gives every app a VerticalPodAutoscaler and raises the runtimes' CPU limit to
 two cores (§2.10c). Use kaspr-operator 0.19.5 or later to get the VPAs: an older one ignores the

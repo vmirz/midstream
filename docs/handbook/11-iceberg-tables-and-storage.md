@@ -28,13 +28,13 @@ Source: `lakehouse/` — `tables.py` (definition), `pointer.py`, `catalog.py`, `
 
 A materialization's tables live under `<destination_uri>/<storage prefix>/<materialization id>`
 (`materialization_location`): the deployment's storage prefix (`CONTROL_PLANE_STORAGE_PREFIX`,
-`develop` on the lab, which keeps deployments sharing a bucket apart) and the materialization's id,
+the release name by default, which keeps deployments sharing a bucket apart) and the materialization's id,
 which names nothing else, so a table dropped and created again elsewhere never meets a half-deleted
 location. Each table is the directory named after it below (`table_location`). The dataset exists only
 in the catalog, not in the bucket:
 
 ```
-gs://kafka-materializations/develop/mat-5c8ed527453d/
+gs://my-lake/midstream/mat-5c8ed527453d/
 ├── finance_invoices/           finance.finance_invoices · topic finance.invoices
 └── refunds/                    sales.refunds            · topic sales.refunds
 ```
@@ -47,7 +47,7 @@ deployment (the directory claims it, 18 §18.16) and in its materialization, so 
 below a materialization never collide. A table's dataset and name are fixed once it exists. One table:
 
 ```
-gs://kafka-materializations/develop/mat-5c8ed527453d/finance_invoices/
+gs://my-lake/midstream/mat-5c8ed527453d/finance_invoices/
 ├── data/
 │   ├── ts_day=2026-10-17/
 │   │   ├── p03-o0000000100-0000000199-<member>-<seal>-0.parquet     runtime-written, one Kafka partition
@@ -73,7 +73,7 @@ under `data/`.
  "materialization_id": "mat-4f0c21a9be37", "table_uuid": "…",
  "metadata_location": "gs://…/metadata/00042-….metadata.json",
  "previous_metadata_location": "gs://…/metadata/00041-….metadata.json",
- "sequence": 42, "updated_at": "2026-10-19T03:43:22.501Z", "updated_by": "develop-mat-…-app-0"}
+ "sequence": 42, "updated_at": "2026-10-19T03:43:22.501Z", "updated_by": "midstream-mat-…-app-0"}
 ```
 
 **Commit protocol** (`catalog.py`, spec §5.2): read the pointer and its object generation; validate
@@ -178,7 +178,7 @@ without field ids and would set a name mapping on the table.
 
 Bounds are kept for every primitive column, nested ones in structs included (`statistics_plan`);
 readers rely on ids 1–3: the console decodes them from manifests to know each file's timestamp
-span, Kafka partition and offsets without opening it (web 07).
+span, Kafka partition and offsets without opening it (console 07).
 
 Names: `p<partition>-o<first offset>-<last offset>-<member>-<seal id>-<n>.parquet` for runtime files
 (the seal id makes an upload idempotent: 10 §10.4) and `compact-<job id>-<n>-<random>.parquet` for
@@ -279,7 +279,7 @@ A commit may change what a table holds, never where its files are: a `set-locati
 setting `write.data.path`, `write.metadata.path` or `write.py-location-provider.impl`, is refused
 with `400 BadRequestException` before anything is written (`rest.py::_refuse_moving_files`). The
 location is the materialization's — the runtime writes under it, the drop removes it, and the
-console reads nothing outside it (web 12 §12.6).
+console reads nothing outside it (console 12 §12.6).
 
 Errors use the Iceberg shape clients parse: `{"error": {"message", "type", "code"}}`
 (`catalog_errors` maps refused authorizations too). With `catalog_api_enabled` off every endpoint
@@ -301,7 +301,7 @@ DuckDB, by path (no catalog; the version hint names the latest metadata):
 ```sql
 INSTALL iceberg; LOAD iceberg;
 CREATE SECRET gcs (TYPE GCS, KEY_ID '<HMAC key id>', SECRET '<HMAC secret>');
-SELECT count(*) FROM iceberg_scan('gs://kafka-materializations/develop/mat-bbc480ce42f0/orders');
+SELECT count(*) FROM iceberg_scan('gs://my-lake/midstream/mat-bbc480ce42f0/orders');
 SELECT * FROM iceberg_snapshots('gs://…/mat-bbc480ce42f0/orders');
 ```
 
@@ -331,7 +331,7 @@ rows = catalog.load_table("sales.orders").scan(row_filter="_kafka_offset >= 100"
 a predicate past the data none (E3). PyIceberg 0.12 reads a null list of structs as an empty list —
 a record without `items` comes back with `items = []` — where DuckDB reads it as written
 (14 §14.5). The console's Table tab shows these snippets with the
-deployment's catalog URI filled in (web 11).
+deployment's catalog URI filled in (console 11).
 
 ## 11.10 Failure modes
 
@@ -341,4 +341,4 @@ deployment's catalog URI filled in (web 11).
 | `commit_failed`, repeatedly | the pointer CAS keeps losing (another writer), or GCS refuses writes | the committer's logs; an external engine committing in a tight loop must back off |
 | Data files under `data/` that no snapshot lists | uploads no commit took (a covered or overlapping seal, a crashed member), a compaction that died before its commit | orphan cleanup removes them after `orphan_min_age_hours` |
 | `metadata.json` grows | many snapshots retained | lower `snapshot_retention_hours` or `snapshot_keep_all_minutes` (17) |
-| Delete files appear | an external engine with `catalog.write` committed row-level deletes | the console refuses to read such a snapshot (web 07); engines that apply deletes read it correctly |
+| Delete files appear | an external engine with `catalog.write` committed row-level deletes | the console refuses to read such a snapshot (console 07); engines that apply deletes read it correctly |

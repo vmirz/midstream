@@ -149,7 +149,7 @@ This endpoint does **not** trigger a refresh, so it is safe to probe frequently.
   "resultRowLimit": 1000000,
   "controlPlaneVersion": "4.0.0",
   "controlPlaneCompatible": true,
-  "materializationDefaults": { "destinationUri": "gs://kafka-materializations", "namespace": "midstream",
+  "materializationDefaults": { "destinationUri": "gs://my-lake", "namespace": "midstream",
     "replicas": 1, "maxReplicas": 64, "storageSize": "64Mi", "partitionGranularity": "day",
     "labelMaxLength": 128, "datasetNameMaxLength": 63, "tableNameMaxLength": 63,
     "reservedNames": ["…"], "reservedNamespaceNames": ["main", "memory", "…"], "maxTopics": 20 },
@@ -208,7 +208,7 @@ list cadence. Returns a `FleetSnapshot`.
   "source_topics": ["orders", "payments.v2"],
   "tables": ["sales.orders", "finance.payments_v2"],
   "datasets": ["finance", "sales"],
-  "destination_uri": "gs://kafka-materializations",
+  "destination_uri": "gs://my-lake",
   "desired_phase": "running",
   "observed_phase": "running",
   "phase_reason": "processing",
@@ -358,8 +358,8 @@ Returns a `DetailSnapshot` with `detail` guaranteed non-null (a 404 is thrown ot
   "rowsPerSecond": 701.6,
   "bytesPerSecond": 223108.8,
   "memberRates": {
-    "develop-mat-a1b2c3d4e5f6-app-0": { "rowsPerSecond": 351.2, "bytesPerSecond": 110423.0 },
-    "develop-mat-a1b2c3d4e5f6-app-1": { "rowsPerSecond": 350.4, "bytesPerSecond": 112685.8 }
+    "midstream-mat-a1b2c3d4e5f6-app-0": { "rowsPerSecond": 351.2, "bytesPerSecond": 110423.0 },
+    "midstream-mat-a1b2c3d4e5f6-app-1": { "rowsPerSecond": 350.4, "bytesPerSecond": 112685.8 }
   },
   "lagHistory": [ { "t": 1791428100000, "lag": 107357698 }, { "t": 1791428160000, "lag": 106938384 } ]
 }
@@ -434,7 +434,7 @@ included, metadata columns too (`kind: "metadata"`):
   "source_topic": "materializer-loadtest-orders",
   "schema_id": 1,
   "since": "2026-10-19T05:10:03.256Z",
-  "metadata_location": "gs://kafka-materializations/develop/orders_e13b-d89c130365f6/metadata/00005-5ed08140-….metadata.json",
+  "metadata_location": "gs://my-lake/midstream/orders_e13b-d89c130365f6/metadata/00005-5ed08140-….metadata.json",
   "field_count": 140,
   "fields": [
     { "field_id": 13, "path": ["status"], "name": "status", "type": "string", "required": false,
@@ -1033,7 +1033,7 @@ still answers. A `:table` the materialization does not have is a `404` naming it
   "materializationId": "mat-d89c130365f6",
   "table": "orders",
   "record": {
-    "location": "gs://kafka-materializations/develop/midstream/shop-d89c130365f6/orders",
+    "location": "gs://my-lake/midstream/shop-d89c130365f6/orders",
     "partition_granularity": "day", "schema_id": 1, "current_snapshot_id": "5204668659448186455",
     "sequence_number": 57, "snapshots": 57, "last_commit_at": "2026-10-19T05:40:42.627Z",
     "last_commit_duration_ms": 2211, "valid_through": "2025-05-09T19:07:06.794Z",
@@ -1058,7 +1058,7 @@ still answers. A `:table` the materialization does not have is a `404` naming it
     "smallFileBytes": 67108864,
     "snapshots": [ { "snapshotId": "9221613250211573719", "operation": "append", "addedFiles": 170,
                      "addedRecords": 599062, "validThrough": "2025-05-03T14:44:53.497Z",
-                     "runtime": "develop-mat-d89c130365f6", "current": true, "…": "…" } ],
+                     "runtime": "midstream-mat-d89c130365f6", "current": true, "…": "…" } ],
     "partitions": [ { "key": "2025-11-11", "files": 1, "bytes": 208026, "records": 743,
                       "smallFiles": 1, "compactionDue": false } ],
     "properties": { "history.expire.min-snapshots-to-keep": "20", "materializer.fork-map": "…", "…": "…" },

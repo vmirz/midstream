@@ -173,7 +173,7 @@ seconds, without a restart; the maintenance ones reach the maintenance app with 
 
 **Live mode** — The Data tab's **Live** toggle: while the tab is seen, on its first page and with no
 row open, it asks for the live tail's newest records every 1.5 s and appends them to the run, and a
-new run replaces it when a commit lands (web 11).
+new run replaces it when a commit lands (console 11).
 
 **Live tail** — Every materialization's tables' records past their committed snapshot, served by
 the **tail app** from Kafka within seconds, which a console run reads beside the snapshot so that

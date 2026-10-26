@@ -1,8 +1,8 @@
 # Midstream Console
 
-Real-time web console for the Kafka materializer: its control plane, its runtimes, and the Iceberg
-tables each materialization fills, one per source topic, each in a dataset. Console 3.0 needs
-control plane 3.0.
+The web console of Midstream: its control plane, its runtimes, and the Iceberg tables each
+materialization fills, one per source topic, each in a dataset. The console needs a control plane of
+the same major version.
 
 The console is a self-contained application: a small Node backend-for-frontend (BFF) plus a
 React client. It has **no source dependency on `python/` or `charts/`** — it talks to the

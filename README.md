@@ -6,8 +6,10 @@ topics into Apache Iceberg tables in object storage, exactly once, with schemas 
 themselves, an Iceberg REST catalog any engine can attach, accounts and permissions, and a web
 console that reads the tables directly and follows new records live.
 
-The project is being prepared for its first public release. [docs/install.md](docs/install.md)
-installs it from this repository with the Helm chart under `charts/midstream`.
+Releases are on the [releases page](https://github.com/vmirz/midstream/releases): a Helm chart
+(`oci://ghcr.io/vmirz/charts/midstream`), the Python package (`midstream-platform` on PyPI) and the
+console image (`ghcr.io/vmirz/midstream-console`). [docs/install.md](docs/install.md) takes an empty
+namespace to a first materialization.
 
 ## What is here
 

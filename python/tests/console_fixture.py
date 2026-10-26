@@ -8,7 +8,7 @@ They are the two tables of one materialization, `shop`, reading the topics `orde
 - `payments`: one append of six payments, one for each of the orders O-0 to O-5, for joins.
 
 Every object of a table is written under `<out>/<table>/` with its path below the table's `gs://`
-location kept, which the console's tests read it back from (`web/server/iceberg/testing.ts`).
+location kept, which the console's tests read it back from (`console/server/iceberg/testing.ts`).
 Each `expected.json` records what PyIceberg itself says the current snapshot holds and the control
 plane's projection of each schema (E5).
 

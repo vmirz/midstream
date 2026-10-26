@@ -52,7 +52,7 @@ class ModelRoundTripTests(unittest.TestCase):
             desired_phase="running",
             created_at="2026-07-12T00:00:00Z",
             updated_at="2026-07-12T00:00:00Z",
-            created_by="vmirzoyan",
+            created_by="alice",
             resource_profile="small",
             partition_granularity="hour",
             labels={"domain": "orders"},
@@ -287,7 +287,7 @@ class ModelRoundTripTests(unittest.TestCase):
             materialization_id="mat-123",
             action="create",
             submitted_at="2026-07-12T00:00:00Z",
-            submitted_by="vmirzoyan",
+            submitted_by="alice",
             spec=MaterializationRequestSpec(
                 name="orders-materialization",
                 tables=(TableSpec(name="orders", source_topic="orders", dataset="shop", dataset_id="ds-000000000001"), TableSpec(name="payments", source_topic="payments", dataset="shop", dataset_id="ds-000000000001")),
@@ -315,7 +315,7 @@ class ModelRoundTripTests(unittest.TestCase):
             materialization_id="mat-123",
             action="update",
             submitted_at="2026-07-12T00:00:00Z",
-            submitted_by="vmirzoyan",
+            submitted_by="alice",
             spec=MaterializationRequestSpec(
                 name="shop",
                 tables=(TableSpec(name="orders", source_topic="orders", dataset="shop", dataset_id="ds-000000000001"),),

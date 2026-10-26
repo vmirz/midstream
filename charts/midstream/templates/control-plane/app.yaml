@@ -20,14 +20,10 @@ spec:
     {{- include "midstream.authentication" . | nindent 4 }}
   storage:
     {{- include "midstream.storage" (dict "root" . "size" .Values.controlPlane.storage.size) | nindent 4 }}
+  # Delayed work rides the Kaspr scheduler: observation backoff, retries. kaspr.config adds the
+  # installation's shared settings.
   config:
-    # Delayed work rides the Kaspr scheduler: observation backoff, retries.
-    schedulerEnabled: true
-    schedulerCronEnabled: true
-    valueSerializer: json
-    topicAllowDeclare: true
-    webBasePath: /
-    webPort: {{ .Values.controlPlane.webPort }}
+    {{- include "midstream.kasprConfig" (dict "root" . "fixed" (dict "schedulerEnabled" true "schedulerCronEnabled" true "valueSerializer" "json" "topicAllowDeclare" true "webBasePath" "/" "webPort" .Values.controlPlane.webPort)) | nindent 4 }}
   resources:
     {{- toYaml .Values.controlPlane.resources | nindent 4 }}
   {{- with .Values.controlPlane.verticalPodAutoscaler }}

@@ -1,7 +1,7 @@
 """The names SQL reads tables by, `<dataset>.<table>`, and a materialization's label.
 
 A table's name defaults to one derived from its topic, which the console derives too, to prefill
-it while a materialization is created; its `web/shared/tableNames.test.ts` checks these same vectors.
+it while a materialization is created; its `console/shared/tableNames.test.ts` checks these same vectors.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from midstream.table_names import (
     table_names_for_topics,
 )
 
-#: (topic, table name) — mirrored in `web/shared/tableNames.test.ts`.
+#: (topic, table name) — mirrored in `console/shared/tableNames.test.ts`.
 TABLE_NAME_VECTORS = (
     ("orders", "orders"),
     ("Orders.V2", "orders_v2"),

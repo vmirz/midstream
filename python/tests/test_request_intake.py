@@ -69,7 +69,7 @@ def build_materialization(materialization_id: str, *, desired_phase: str) -> Mat
         desired_phase=desired_phase,
         created_at="2026-07-12T00:00:00Z",
         updated_at="2026-07-12T00:00:00Z",
-        created_by="vmirzoyan",
+        created_by="alice",
     )
 
 
@@ -97,7 +97,7 @@ def build_request_event(materialization_id: str, *, action: str, name: str | Non
         materialization_id=materialization_id,
         action=action,
         submitted_at="2026-07-12T00:02:00Z",
-        submitted_by="vmirzoyan@example.com",
+        submitted_by="alice@example.com",
         submitted_by_id="usr-000000000001",
         spec=MaterializationRequestSpec(
             name=name,
@@ -130,7 +130,7 @@ class RequestIntakeServiceTests(unittest.TestCase):
         (claim,) = result.identity
         self.assertEqual("claim_tables", claim.action)
         self.assertEqual("idr-claim000001", claim.request_id)
-        self.assertEqual(("usr-000000000001", "vmirzoyan@example.com"), (claim.actor_id, claim.actor_email))
+        self.assertEqual(("usr-000000000001", "alice@example.com"), (claim.actor_id, claim.actor_email))
         self.assertEqual("create", claim.payload["purpose"])
         self.assertEqual("req-create", claim.payload["materialization_request_id"])
         self.assertEqual(

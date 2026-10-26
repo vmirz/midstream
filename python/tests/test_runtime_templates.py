@@ -39,7 +39,7 @@ def build_materialization(**overrides) -> Materialization:
         desired_phase="running",
         created_at="2026-07-12T00:00:00Z",
         updated_at="2026-07-12T00:00:00Z",
-        created_by="vmirzoyan",
+        created_by="alice",
     )
     values.update(overrides)
     return Materialization(**values)

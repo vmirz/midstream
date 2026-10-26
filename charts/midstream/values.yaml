@@ -8,10 +8,11 @@
 
 fullnameOverride: ""
 
-# The Python package every Kaspr app installs when its pod starts (handbook 02 §2.3). `git` installs
-# this repository at `ref`; `index` installs `midstream-platform==<version>` from PyPI or the index given.
+# The Python package every Kaspr app installs when its pod starts (handbook 02 §2.3). `index`, the
+# default, installs the release this chart belongs to, `midstream-platform==<appVersion>`, from PyPI or
+# the index given; `git` installs this repository at `ref`, for development.
 package:
-  source: git
+  source: index
   git:
     repository: https://github.com/vmirz/midstream.git
     ref: main
@@ -38,6 +39,11 @@ kaspr:
   #     username: midstream
   #     passwordSecret: {secretName: midstream-kafka, passwordKey: password}
   authentication: {}
+  # Kaspr settings every app and runtime share, as the KasprApp CRD's `config` spells them: for
+  # example `topicReplicationFactor: 1` on a cluster with fewer than three brokers (Kaspr's default
+  # is 3). The keys the chart relies on (serializers, topic declaration, the scheduler, the web port)
+  # stay the chart's.
+  config: {}
   storageClass: ""           # for every persistent claim; empty takes the cluster's default
   # Where every Kaspr pod is placed, the runtimes included: a node selector, tolerations for
   # tainted nodes, and affinity, as Kubernetes spells them. Each app below, and the runtimes, may
@@ -119,7 +125,10 @@ controlPlane:
         cpu: 100m
       maxAllowed:
         cpu: 1500m
+    # The runtime's own Kaspr settings; they win over kaspr.config. The writer reads its records as
+    # JSON, so the serializer is spelled out rather than left to Kaspr's default.
     config:
+      valueSerializer: json
       topicAllowDeclare: true
       brokerRebalanceTimeout: 300
     protocolLogging: true

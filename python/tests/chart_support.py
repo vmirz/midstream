@@ -1,8 +1,7 @@
 """Render the Helm chart for the tests that check what it deploys.
 
-The chart replaces the Kustomize manifests the control plane shipped with: every resource, topic and
-table is named after the release, so the tests render it with `helm template` and read the documents,
-the way the deployment is actually made. Rendering is cached per values file.
+Every resource, topic and table is named after the release, so the tests render the chart with
+`helm template` and read the documents, the way the deployment is actually made. Rendering is cached per values file.
 """
 
 from __future__ import annotations

@@ -23,7 +23,7 @@ maintenance app: `maintenance_app/`, `services/table_maintenance.py`, `lakehouse
 ## 10.1 Anatomy
 
 `runtime/templates.py` renders these resources from `runtime_app/templates/` (`<rt>` is the runtime
-app name, e.g. `develop-mat-a0690b63eb78`):
+app name, e.g. `midstream-mat-a0690b63eb78`):
 
 | Resource | Template | Runs on | Does |
 |---|---|---|---|

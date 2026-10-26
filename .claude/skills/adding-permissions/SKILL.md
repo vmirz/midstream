@@ -1,6 +1,6 @@
 ---
 name: adding-permissions
-description: Add or change a permission, a built-in role or a built-in group in the Kafka materializer, and gate endpoints and console UI on it. Use whenever a task adds a control-plane WebView or console route, a new action someone may or may not be allowed to take, a new page or button that only some people should see, or changes what the default roles and groups (Guest, All Users, Viewer, Editor, Admin) may do.
+description: Add or change a permission, a built-in role or a built-in group in Midstream, and gate endpoints and console UI on it. Use whenever a task adds a control-plane WebView or console route, a new action someone may or may not be allowed to take, a new page or button that only some people should see, or changes what the default roles and groups (Guest, All Users, Viewer, Editor, Admin) may do.
 ---
 
 # Adding permissions and roles

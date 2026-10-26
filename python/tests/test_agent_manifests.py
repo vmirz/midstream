@@ -19,7 +19,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from chart_support import RELEASE, VALUES_FILES, bare, document, documents, python_sources, render  # noqa: E402
+from chart_support import CHART, RELEASE, VALUES_FILES, bare, document, documents, python_sources, render  # noqa: E402
 
 from midstream.handlers.maintenance import (
     MAINTENANCE_STEP_TRIGGERS,
@@ -1104,3 +1104,71 @@ class SchedulingTests(unittest.TestCase):
         (deployment,) = documents("Deployment", minimal)
         self.assertEqual((None, None, None), self._placement(deployment["spec"]["template"]["spec"]))
 
+
+
+MINIMAL_VALUES = next(path for path in VALUES_FILES if path.name == "minimal-values.yaml")
+
+
+def _app_configs(values) -> tuple[dict[str, dict], dict]:
+    """Every KasprApp's `config` by its bare name, and the config of the runtime spec the control plane embeds."""
+    import yaml
+
+    apps = {bare(app["metadata"]["name"]): app["spec"]["config"] for app in documents("KasprApp", values)}
+    env = {item["name"]: item for item in document("KasprApp", "control-plane", values)["spec"]["template"]["kasprContainer"]["env"]}
+    runtime = yaml.safe_load(env["CONTROL_PLANE_RUNTIME_APP_SPEC"]["value"])
+    return apps, runtime
+
+
+class KasprConfigTests(unittest.TestCase):
+    """`kaspr.config` reaches every app and every runtime; the keys the chart relies on stay the chart's.
+
+    On a cluster with fewer than three brokers Kaspr's default `topicReplicationFactor` (3) makes
+    every topic declaration fail, and the first lab installation had no value to set it with.
+    """
+
+    def test_shared_settings_reach_every_app_and_the_runtimes(self) -> None:
+        apps, runtime = _app_configs(VALUES_FILES[0].parent / "test-values.yaml")
+        self.assertEqual({"control-plane", "maintenance", "tail"}, set(apps))
+        for name, config in apps.items():
+            self.assertEqual(1, config.get("topicReplicationFactor"), f"{name} does not carry kaspr.config")
+            self.assertEqual("json", config["valueSerializer"], f"{name}: kaspr.config overrode the chart's serializer")
+            self.assertTrue(config["topicAllowDeclare"], name)
+        self.assertTrue(apps["control-plane"]["schedulerEnabled"])
+        self.assertEqual(6065, apps["control-plane"]["webPort"])
+        self.assertEqual(6065, apps["tail"]["webPort"])
+        self.assertEqual(1, runtime["config"]["topicReplicationFactor"])
+        self.assertEqual("json", runtime["config"]["valueSerializer"], "kaspr.config overrode the runtimes' serializer")
+        self.assertEqual((True, 300), (runtime["config"]["topicAllowDeclare"], runtime["config"]["brokerRebalanceTimeout"]))
+
+    def test_without_shared_settings_the_apps_carry_only_the_charts_keys(self) -> None:
+        apps, runtime = _app_configs(MINIMAL_VALUES)
+        for name, config in apps.items():
+            self.assertNotIn("topicReplicationFactor", config, name)
+            self.assertEqual("json", config["valueSerializer"], name)
+        self.assertEqual({"valueSerializer": "json", "topicAllowDeclare": True, "brokerRebalanceTimeout": 300}, runtime["config"])
+
+
+class PackageSourceTests(unittest.TestCase):
+    """The chart installs the release it belongs to unless an installation chooses the development source.
+
+    A released chart that installed `main` would run whatever the branch held, not the version the
+    chart, the console image and the runtimes' pin were made for.
+    """
+
+    def test_the_default_installs_the_charts_own_version_from_the_index(self) -> None:
+        import yaml
+
+        app_version = yaml.safe_load((CHART / "Chart.yaml").read_text())["appVersion"]
+        expected = [f"midstream-platform=={app_version}"]
+        for app in documents("KasprApp", MINIMAL_VALUES):
+            packages = app["spec"]["pythonPackages"]
+            self.assertEqual(expected, packages["packages"], app["metadata"]["name"])
+            self.assertNotIn("indexUrl", packages, f"{app['metadata']['name']}: PyPI needs no index URL")
+            self.assertNotIn("credentials", packages, app["metadata"]["name"])
+        _, runtime = _app_configs(MINIMAL_VALUES)
+        self.assertEqual(expected, runtime["pythonPackages"]["packages"])
+
+    def test_the_development_source_installs_the_repository_at_its_ref(self) -> None:
+        expected = ["git+https://github.com/vmirz/midstream.git@main#egg=midstream-platform&subdirectory=python"]
+        for app in documents("KasprApp", VALUES_FILES[0].parent / "test-values.yaml"):
+            self.assertEqual(expected, app["spec"]["pythonPackages"]["packages"], app["metadata"]["name"])

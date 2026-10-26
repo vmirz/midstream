@@ -21,8 +21,7 @@ spec:
   storage:
     {{- include "midstream.storage" (dict "root" . "size" .Values.maintenance.storage.size) | nindent 4 }}
   config:
-    valueSerializer: json
-    topicAllowDeclare: true
+    {{- include "midstream.kasprConfig" (dict "root" . "fixed" (dict "valueSerializer" "json" "topicAllowDeclare" true)) | nindent 4 }}
   # A compaction child holds about its memory budget plus a row group; the member itself needs
   # little besides.
   resources:

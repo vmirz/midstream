@@ -53,6 +53,14 @@ midstream-platform=={{ default .Chart.AppVersion .Values.package.index.version }
 {{- end -}}
 {{- end -}}
 
+{{/*
+A KasprApp's `config`: the keys the chart relies on, then kaspr.config for the rest. The chart's
+keys win, so an installation cannot turn off what the apps depend on (handbook 02 §2.3).
+*/}}
+{{- define "midstream.kasprConfig" -}}
+{{- toYaml (merge .fixed (deepCopy .root.Values.kaspr.config)) -}}
+{{- end -}}
+
 {{/* Kaspr's pythonPackages block, the same for every app and for every runtime. */}}
 {{- define "midstream.pythonPackages" -}}
 packages:
@@ -155,7 +163,7 @@ resources:
 verticalPodAutoscaler:
   {{- toYaml .Values.controlPlane.runtime.verticalPodAutoscaler | nindent 2 }}
 config:
-  {{- toYaml .Values.controlPlane.runtime.config | nindent 2 }}
+  {{- toYaml (merge (deepCopy .Values.controlPlane.runtime.config) .Values.kaspr.config) | nindent 2 }}
 pythonPackages:
   {{- include "midstream.pythonPackages" . | nindent 2 }}
 template:

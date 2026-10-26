@@ -234,10 +234,10 @@ readers that only want the topics.
     { "name": "payments", "source_topic": "payments", "dataset": "finance", "dataset_id": "ds-9a0b…" }
   ],
   "source_topics": ["orders", "payments"],
-  "destination_uri": "gs://kafka-materializations",
+  "destination_uri": "gs://my-lake",
   "runtime_mode": "dedicated",
   "runtime_group": null,
-  "resolved_runtime_name": "develop-mat-a1b2c3d4e5f6",
+  "resolved_runtime_name": "midstream-mat-a1b2c3d4e5f6",
   "runtime_app_ref": null,
   "namespace": "midstream",
   "desired_phase": "running",
@@ -344,9 +344,9 @@ and version 1 the retired authority's schema. Neither is read.
 
 ```json
 [
-  "develop-mat-a1b2c3d4e5f6-writer",
-  "develop-mat-a1b2c3d4e5f6-committer",
-  "develop-mat-a1b2c3d4e5f6-settings"
+  "midstream-mat-a1b2c3d4e5f6-writer",
+  "midstream-mat-a1b2c3d4e5f6-committer",
+  "midstream-mat-a1b2c3d4e5f6-settings"
 ]
 ```
 
@@ -531,12 +531,12 @@ restart instability (08 §8.3, row 3d).
   },
   "resource_observation": {
     "namespace": "midstream",
-    "kaspr_app_name": "develop-mat-a1b2c3d4e5f6",
+    "kaspr_app_name": "midstream-mat-a1b2c3d4e5f6",
     "resource_exists": true,
     "managed_agent_states": {
-      "develop-mat-a1b2c3d4e5f6-writer": "running",
-      "develop-mat-a1b2c3d4e5f6-committer": "running",
-      "develop-mat-a1b2c3d4e5f6-settings": "running"
+      "midstream-mat-a1b2c3d4e5f6-writer": "running",
+      "midstream-mat-a1b2c3d4e5f6-committer": "running",
+      "midstream-mat-a1b2c3d4e5f6-settings": "running"
     },
     "metadata_generation": 3,
     "observed_generation": 3,
@@ -572,7 +572,7 @@ The payload is a **free-form dict** — there is no dataclass. Shapes observed i
   "operation_type": "apply_runtime",
   "status": "applied",
   "dedupe_key": "apply_runtime:mat-a1b2c3d4e5f6:req-9f8e7d6c5b4a",
-  "runtime_app_name": "develop-mat-a1b2c3d4e5f6",
+  "runtime_app_name": "midstream-mat-a1b2c3d4e5f6",
   "spec_hash": "3f5a...c91"
 }
 ```

@@ -2,8 +2,8 @@
 
 ## 1.1 What the console is
 
-The Midstream Console is a real-time web application for operating the
-`kaspr-kafka-materializer` control plane. It provides:
+The Midstream Console is a real-time web application for operating the Midstream control plane.
+It provides:
 
 - a live fleet view of every materialization,
 - full lifecycle control (create, stop, resume, edit the label, topics and replica count, delete),
