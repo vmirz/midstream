@@ -1,0 +1,35 @@
+# Every feature on, with the Secrets a real installation names: the shape the render tests check.
+kaspr:
+  bootstrapServers: kafka-bootstrap.kafka.svc.cluster.local:9092
+  authentication:
+    type: scram-sha-512
+    username: midstream
+    passwordSecret:
+      secretName: midstream-kafka
+      passwordKey: password
+  storageClass: standard
+  nodeSelector:
+    workload: streaming
+  tolerations:
+    - key: workload
+      operator: Equal
+      value: streaming
+      effect: NoSchedule
+gcs:
+  credentialsSecret: midstream-gcs
+controlPlane:
+  settings:
+    defaultDestinationUri: gs://example-lake/midstream
+console:
+  persistence:
+    enabled: true
+  hmacSecret: midstream-gcs-hmac
+  env:
+    CONSOLE_DUCKDB_MEMORY_LIMIT: 2GB
+route:
+  enabled: true
+  hostnames: [midstream.example.com]
+  parentRefs:
+    - name: ingress-gateway
+      namespace: istio-system
+      sectionName: https

@@ -1,0 +1,80 @@
+{{- if .Values.route.enabled }}
+# A Gateway API route: the Iceberg REST catalog at /catalog for engines, the console for people.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "midstream.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "midstream.labels" . | nindent 4 }}
+spec:
+  {{- with .Values.route.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.route.parentRefs }}
+  parentRefs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /catalog
+      backendRefs:
+        - name: {{ include "midstream.controlPlane" . }}-app-api
+          port: {{ .Values.controlPlane.webPort }}
+    {{- if .Values.console.enabled }}
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ include "midstream.console" . }}
+          port: {{ .Values.console.port }}
+    {{- end }}
+{{- end }}
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "midstream.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "midstream.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - {{- with .Values.ingress.host }}
+      host: {{ . }}
+      {{- end }}
+      http:
+        paths:
+          - path: /catalog
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "midstream.controlPlane" . }}-app-api
+                port:
+                  number: {{ .Values.controlPlane.webPort }}
+          {{- if .Values.console.enabled }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "midstream.console" . }}
+                port:
+                  number: {{ .Values.console.port }}
+          {{- end }}
+{{- end }}

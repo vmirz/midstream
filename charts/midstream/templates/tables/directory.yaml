@@ -1,0 +1,14 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTable
+metadata:
+  name: {{ include "midstream.fullname" . }}-directory
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: directory
+  description: People, groups, custom roles, datasets, their access grants and table-name claims, sessions, access tokens, sign-in state and the outcome of each directory change.
+  global: true
+  keySerializer: json
+  valueSerializer: json
+  partitions: {{ .Values.tables.partitions }}

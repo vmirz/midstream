@@ -1,0 +1,29 @@
+{{- if .Values.tail.enabled }}
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTask
+metadata:
+  name: {{ include "midstream.fullname" . }}-tail-step
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.tail" . }}
+spec:
+  name: tail-step
+  description: Keep the tail's loops running, seed the tables being watched, park the idle, trim and bound the buffers.
+  # Every member: each steps its own tables.
+  schedule:
+    interval: 5s
+  processors:
+    pipeline:
+      - advance-tail
+    init:
+      python: |
+        from midstream.tail_app.handlers import advance_tail
+    operations:
+      - name: advance-tail
+        map:
+          entrypoint: advance
+          python: |
+            async def advance():
+                await advance_tail(app=context["app"])
+                return None
+{{- end }}

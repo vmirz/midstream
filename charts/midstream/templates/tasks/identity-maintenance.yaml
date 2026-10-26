@@ -1,0 +1,46 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTask
+metadata:
+  name: {{ include "midstream.fullname" . }}-identity-maintenance
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: identity-maintenance
+  description: Ask the identity agent to remove expired sessions, stale sign-in counts and audit entries past retention.
+  onLeader: true
+  schedule:
+    cron: "41 * * * *"
+  processors:
+    pipeline:
+      - build-maintenance-request
+      - send-maintenance-request
+    init:
+      python: |
+        from datetime import UTC, datetime
+
+        from midstream.handlers.identity import build_identity_maintenance_request
+
+        def current_timestamp():
+            return datetime.now(tz=UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    operations:
+      - name: build-maintenance-request
+        map:
+          entrypoint: build_request
+          python: |
+            def build_request():
+                return build_identity_maintenance_request(requested_at=current_timestamp())
+      - name: send-maintenance-request
+        topicSend:
+          name: {{ include "midstream.fullname" . }}-identity-requests
+          valueSerializer: json
+          keySelector:
+            python: |
+              def select_key(value):
+                  from midstream.storage.identity import identity_routing_key
+
+                  return identity_routing_key()
+          valueSelector:
+            python: |
+              def select_value(value):
+                  return value

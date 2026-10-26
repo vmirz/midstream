@@ -1,0 +1,25 @@
+Midstream {{ .Chart.AppVersion }} is being installed as release {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+Watch the apps come up (the first start installs the Python package):
+
+  kubectl -n {{ .Release.Namespace }} get kasprapp -w
+
+The control plane's API, from your machine:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "midstream.controlPlane" . }}-app-api {{ .Values.controlPlane.webPort }}:{{ .Values.controlPlane.webPort }}
+  curl -s localhost:{{ .Values.controlPlane.webPort }}/system/version
+{{- if .Values.console.enabled }}
+
+The console:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "midstream.console" . }} {{ .Values.console.port }}:{{ .Values.console.port }}
+  open http://localhost:{{ .Values.console.port }}
+{{- end }}
+
+Sign in as the bootstrap administrator named in Secret {{ include "midstream.authSecret" . }}; the first sign-in asks for a
+new password. Then create a dataset and a materialization. docs/install.md in the repository has every step.
+{{- if not .Values.controlPlane.settings.defaultDestinationUri }}
+
+No destination is configured yet: set controlPlane.settings.defaultDestinationUri, or Settings › Materializations ›
+Destination in the console, before creating a materialization.
+{{- end }}

@@ -1,0 +1,20 @@
+apiVersion: v2
+name: midstream
+description: >-
+  Midstream, a streaming platform on Kaspr that materializes Kafka topics into Apache Iceberg
+  tables: the control plane, the maintenance and tail apps, and the web console.
+type: application
+version: 4.4.1
+appVersion: "4.4.1"
+kubeVersion: ">=1.29.0-0"
+home: https://github.com/vmirz/midstream
+sources:
+  - https://github.com/vmirz/midstream
+keywords:
+  - kafka
+  - iceberg
+  - kaspr
+  - streaming
+annotations:
+  midstream.io/kaspr-operator: ">=0.19.7"
+  midstream.io/kaspr: ">=0.11.30"

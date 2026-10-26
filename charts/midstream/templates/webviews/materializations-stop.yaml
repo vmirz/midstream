@@ -1,0 +1,72 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-materializations-stop
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: materializations-stop
+  description: Request a stopped desired state (runtime scaled to zero) and emit a request event.
+  request:
+    method: POST
+    path: /materializations/{materialization_id}/stop
+  processors:
+    pipeline:
+      - prepare-stop
+      - send-request-event
+      - return-response
+    operations:
+      - name: prepare-stop
+        tables:
+          - name: {{ include "midstream.fullname" . }}-state
+            paramName: control_plane_table
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+        map:
+          entrypoint: prepare_stop
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.materializations import stop_materialization
+
+            def prepare_stop(request, materialization_id, control_plane_table, directory_table):
+                principal = authorize(request, directory_table, "materializations.stop")
+                acceptance = stop_materialization(
+                    control_plane_table,
+                    materialization_id,
+                    submitted_by=principal.attribution,
+                    submitted_by_id=principal.user_id,
+                )
+                return {"response": acceptance.response, "request_event": acceptance.request_event.to_dict()}
+      - name: send-request-event
+        topicSend:
+          name: {{ include "midstream.fullname" . }}-materialization-requests
+          passThrough: true
+          valueSerializer: json
+          keySelector:
+            python: |
+              def select_key(value):
+                  from midstream.storage import materialization_routing_key
+
+                  return materialization_routing_key(value["request_event"]["materialization_id"])
+          valueSelector:
+            python: |
+              def select_value(value):
+                  return value["request_event"]
+      - name: return-response
+        map:
+          python: |
+            def return_response(value):
+                return value["response"]
+  response:
+    contentType: application/json
+    statusCodeSelector:
+      onSuccess:
+        python: |
+          def status_code(data):
+              return 202
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

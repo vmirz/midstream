@@ -1,0 +1,42 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-audit-list
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: audit-list
+  description: "Return the audit log of sign-ins and changes to users, groups and roles, newest first, a page at a time."
+  request:
+    method: GET
+    path: /audit
+  processors:
+    pipeline:
+      - list-audit
+    operations:
+      - name: list-audit
+        tables:
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+          - name: {{ include "midstream.fullname" . }}-identity-audit
+            paramName: audit_table
+          - name: {{ include "midstream.fullname" . }}-settings
+            paramName: settings_table
+        map:
+          entrypoint: list_audit
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.http import query_params
+            from midstream.web.identity import audit_view
+
+            def list_audit(request, directory_table, audit_table, settings_table):
+                principal = authorize(request, directory_table, "audit.view")
+                return audit_view(audit_table, principal, query_params(request), settings_table=settings_table)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

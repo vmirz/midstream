@@ -1,0 +1,68 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-settings-update
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: settings-update
+  description: Validate a change to one scope's settings and emit the request the settings agent applies.
+  request:
+    method: PATCH
+    path: /settings/{scope}
+  processors:
+    pipeline:
+      - prepare-settings-change
+      - send-settings-request
+      - return-response
+    operations:
+      - name: prepare-settings-change
+        tables:
+          - name: {{ include "midstream.fullname" . }}-settings
+            paramName: settings_table
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+        map:
+          entrypoint: prepare_settings_change
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.settings import update_settings
+
+            async def prepare_settings_change(request, scope, settings_table, directory_table):
+                principal = authorize(request, directory_table, "settings.manage")
+                body = await request.json()
+                acceptance = update_settings(settings_table, scope, body, submitted_by=principal.attribution)
+                return {"response": acceptance.response, "request_event": acceptance.request_event.to_dict()}
+      - name: send-settings-request
+        topicSend:
+          name: {{ include "midstream.fullname" . }}-settings-requests
+          passThrough: true
+          valueSerializer: json
+          keySelector:
+            python: |
+              def select_key(value):
+                  from midstream.storage.settings import settings_routing_key
+
+                  return settings_routing_key(value["request_event"]["scope"])
+          valueSelector:
+            python: |
+              def select_value(value):
+                  return value["request_event"]
+      - name: return-response
+        map:
+          python: |
+            def return_response(value):
+                return value["response"]
+  response:
+    contentType: application/json
+    statusCodeSelector:
+      onSuccess:
+        python: |
+          def status_code(data):
+              return 202
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

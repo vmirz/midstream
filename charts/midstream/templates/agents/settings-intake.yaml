@@ -1,0 +1,53 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprAgent
+metadata:
+  name: {{ include "midstream.fullname" . }}-settings-intake
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  description: Applies accepted settings changes in order and delivers runtime settings to running runtimes.
+  input:
+    topic:
+      name: {{ include "midstream.fullname" . }}-settings-requests
+      valueSerializer: json
+    declare: true
+  output:
+    topics:
+      - valueSerializer: json
+        nameSelector:
+          python: |
+            def select_name(value):
+                return value.get("topic")
+        keySelector:
+          python: |
+            def select_key(value):
+                return value.get("key")
+        valueSelector:
+          python: |
+            def select_value(value):
+                return value["value"]
+        headersSelector:
+          python: |
+            def select_headers(value):
+                return value.get("headers", {})
+        predicate:
+          python: |
+            def should_send(value):
+                return value is not None and value.get("route") == "topic"
+  processors:
+    pipeline:
+      - apply-settings-change
+    init:
+      python: |
+        from midstream.handlers.settings import handle_settings_request_for_output
+    operations:
+      - name: apply-settings-change
+        tables:
+          - name: {{ include "midstream.fullname" . }}-settings
+            paramName: settings_table
+        map:
+          entrypoint: apply_settings_change
+          python: |
+            def apply_settings_change(value, settings_table):
+                yield from handle_settings_request_for_output(value, settings_table)

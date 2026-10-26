@@ -1,0 +1,58 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-topics-list
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: topics-list
+  description: List every Kafka topic with partition facts so clients can offer a topic picker.
+  request:
+    method: GET
+    path: /topics
+  processors:
+    pipeline:
+      - list-topics
+    init:
+      python: |
+        from midstream.kafka.metadata import get_metadata_client
+
+        # Shared with topic analysis and the maintenance agent so broker connections stay warm.
+        metadata_client = get_metadata_client()
+    operations:
+      - name: list-topics
+        tables:
+          - name: {{ include "midstream.fullname" . }}-settings
+            paramName: settings_table
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+        map:
+          entrypoint: list_topics_request
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.topics import list_topics_view
+
+            def read_query_params(request):
+                if hasattr(request, "query_params"):
+                    return request.query_params
+                if hasattr(request, "query"):
+                    return request.query
+                if hasattr(request, "rel_url"):
+                    return request.rel_url.query
+                return {}
+
+            async def list_topics_request(request, settings_table, directory_table):
+                authorize(request, directory_table, "topics.view")
+                return await list_topics_view(
+                    read_query_params(request),
+                    metadata_client=metadata_client,
+                    settings_table=settings_table,
+                )
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

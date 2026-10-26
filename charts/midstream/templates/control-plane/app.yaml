@@ -1,0 +1,127 @@
+# The control plane: the HTTP API and the Iceberg REST catalog, every desired and observed state,
+# table creation and drops, and the reconciliation of every materialization's runtime
+# (handbook 02 §2.3). One per installation; its name, topics and tables derive from the release.
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: {{ include "midstream.controlPlane" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "midstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+spec:
+  # Single-replica by design; the leader-only tasks are guarded besides.
+  replicas: {{ .Values.controlPlane.replicas }}
+  {{- with .Values.kaspr.version }}
+  version: {{ . | quote }}
+  {{- end }}
+  bootstrapServers: {{ required "kaspr.bootstrapServers is required: the Kafka bootstrap address every app and runtime uses" .Values.kaspr.bootstrapServers | quote }}
+  authentication:
+    {{- include "midstream.authentication" . | nindent 4 }}
+  storage:
+    {{- include "midstream.storage" (dict "root" . "size" .Values.controlPlane.storage.size) | nindent 4 }}
+  config:
+    # Delayed work rides the Kaspr scheduler: observation backoff, retries.
+    schedulerEnabled: true
+    schedulerCronEnabled: true
+    valueSerializer: json
+    topicAllowDeclare: true
+    webBasePath: /
+    webPort: {{ .Values.controlPlane.webPort }}
+  resources:
+    {{- toYaml .Values.controlPlane.resources | nindent 4 }}
+  {{- with .Values.controlPlane.verticalPodAutoscaler }}
+  verticalPodAutoscaler:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  pythonPackages:
+    {{- include "midstream.pythonPackages" . | nindent 4 }}
+  template:
+    pod:
+      {{- include "midstream.podScheduling" . | nindent 6 }}
+      {{- include "midstream.gcsVolumes" . | nindent 6 }}
+    kasprContainer:
+      env:
+        # The namespace every runtime is created in: this one.
+        - name: CONTROL_PLANE_DEFAULT_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: CONTROL_PLANE_DEFAULT_LIST_LIMIT
+          value: {{ .Values.controlPlane.settings.defaultListLimit | quote }}
+        - name: CONTROL_PLANE_DELETED_RETENTION_HOURS
+          value: {{ .Values.controlPlane.settings.deletedRetentionHours | quote }}
+        # Every runtime member's persistent volume: it holds only the runtime's state table.
+        - name: CONTROL_PLANE_DEFAULT_RUNTIME_STORAGE_SIZE
+          value: {{ .Values.controlPlane.settings.defaultRuntimeStorageSize | quote }}
+        - name: CONTROL_PLANE_DEFAULT_RUNTIME_REPLICAS
+          value: {{ .Values.controlPlane.settings.defaultRuntimeReplicas | quote }}
+        # The gs:// prefix every materialization's tables are created under. Left empty, no
+        # materialization can be created until it is set on the Settings page.
+        - name: CONTROL_PLANE_DEFAULT_DESTINATION_URI
+          value: {{ .Values.controlPlane.settings.defaultDestinationUri | quote }}
+        - name: CONTROL_PLANE_RUNTIME_NAME_PREFIX
+          value: {{ default (include "midstream.fullname" .) .Values.controlPlane.settings.runtimeNamePrefix | quote }}
+        - name: CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION
+          value: {{ .Values.controlPlane.settings.runtimeTemplateVersion | quote }}
+        # The directory under the destination this installation's tables are stored in: it keeps
+        # installations sharing a bucket apart.
+        - name: CONTROL_PLANE_STORAGE_PREFIX
+          value: {{ default (include "midstream.fullname" .) .Values.controlPlane.settings.storagePrefix | quote }}
+        {{- include "midstream.gcsEnv" . | nindent 8 }}
+        # The spec every materialization's runtime is rendered from.
+        - name: CONTROL_PLANE_RUNTIME_APP_SPEC
+          value: |-
+            {{- include "midstream.runtimeSpec" . | nindent 12 }}
+        - name: CONTROL_PLANE_MATERIALIZATION_REQUESTS_TOPIC
+          value: {{ include "midstream.fullname" . }}-materialization-requests
+        - name: CONTROL_PLANE_MATERIALIZATION_WORK_TOPIC
+          value: {{ include "midstream.fullname" . }}-materialization-work
+        - name: CONTROL_PLANE_MATERIALIZATION_STATUS_TOPIC
+          value: {{ include "midstream.fullname" . }}-materialization-status
+        - name: CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC
+          value: {{ include "midstream.fullname" . }}-materialization-schema-authority-updates
+        - name: CONTROL_PLANE_TABLE_EVENTS_TOPIC
+          value: {{ include "midstream.fullname" . }}-materialization-table-events
+        - name: CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC
+          value: {{ include "midstream.fullname" . }}-settings-requests
+        - name: CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC
+          value: {{ include "midstream.fullname" . }}-identity-requests
+        # Sign-in, from the auth Secret (handbook 18 §18.11). Without a signing key nobody can sign
+        # in and every request is a guest's.
+        - name: AUTH_SIGNING_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "midstream.authSecret" . }}
+              key: signing-key
+              optional: true
+        - name: AUTH_PREVIOUS_SIGNING_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "midstream.authSecret" . }}
+              key: previous-signing-key
+              optional: true
+        - name: AUTH_SERVICE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "midstream.authSecret" . }}
+              key: service-token
+              optional: true
+        - name: AUTH_BOOTSTRAP_ADMIN_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "midstream.authSecret" . }}
+              key: bootstrap-admin-email
+              optional: true
+        - name: AUTH_BOOTSTRAP_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "midstream.authSecret" . }}
+              key: bootstrap-admin-password
+              optional: true
+        - name: PROTOCOL_LOGGING_ENABLED
+          value: {{ .Values.controlPlane.protocolLogging | quote }}
+        {{- with .Values.controlPlane.extraEnv }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- include "midstream.gcsVolumeMounts" . | nindent 6 }}

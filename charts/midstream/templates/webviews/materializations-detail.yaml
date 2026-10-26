@@ -1,0 +1,40 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-materializations-detail
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: materializations-detail
+  description: Return the current control-plane view for one materialization.
+  request:
+    method: GET
+    path: /materializations/{materialization_id}
+  processors:
+    pipeline:
+      - get-detail
+    operations:
+      - name: get-detail
+        tables:
+          - name: {{ include "midstream.fullname" . }}-state
+            paramName: control_plane_table
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+        map:
+          entrypoint: get_detail
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.materializations import get_materialization_detail
+
+            def get_detail(request, materialization_id, control_plane_table, directory_table):
+                principal = authorize(request, directory_table, "materializations.view_details")
+                return get_materialization_detail(control_plane_table, materialization_id, principal=principal)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data
+    statusCodeSelector:

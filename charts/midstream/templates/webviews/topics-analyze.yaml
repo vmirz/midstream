@@ -1,0 +1,52 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-topics-analyze
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: topics-analyze
+  description: Validate Kafka topics and recommend materialization storage size and replica count.
+  request:
+    method: POST
+    path: /topics/analyze
+  processors:
+    pipeline:
+      - analyze-topics
+    init:
+      python: |
+        from midstream.kafka.metadata import get_metadata_client
+
+        # Shared with the maintenance agent so broker connections and metadata stay warm.
+        metadata_client = get_metadata_client()
+    operations:
+      - name: analyze-topics
+        tables:
+          - name: {{ include "midstream.fullname" . }}-settings
+            paramName: settings_table
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+        map:
+          entrypoint: analyze_topics_request
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.topics import analyze_topics_view_async
+
+            # Awaits Kafka rather than waiting on it: this loop also serves every other request.
+            async def analyze_topics_request(request, settings_table, directory_table):
+                authorize(request, directory_table, "topics.view")
+                body = await request.json()
+                return await analyze_topics_view_async(
+                    body,
+                    metadata_client=metadata_client,
+                    settings_table=settings_table,
+                )
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data
+    statusCodeSelector:

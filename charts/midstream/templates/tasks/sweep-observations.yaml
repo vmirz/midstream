@@ -1,0 +1,46 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTask
+metadata:
+  name: {{ include "midstream.fullname" . }}-sweep-observations
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: sweep-observations
+  description: Emit a best-effort periodic trigger that asks the observation agent to scan for stale runtimes.
+  onLeader: true
+  schedule:
+    cron: "*/2 * * * *"
+  processors:
+    pipeline:
+      - build-sweep-trigger
+      - send-sweep-trigger
+    init:
+      python: |
+        from datetime import UTC, datetime
+
+        from midstream.handlers.resource_observation import build_sweep_observation_trigger
+
+        def current_timestamp():
+            return datetime.now(tz=UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    operations:
+      - name: build-sweep-trigger
+        map:
+          entrypoint: build_trigger
+          python: |
+            def build_trigger():
+                return build_sweep_observation_trigger(requested_at=current_timestamp())
+      - name: send-sweep-trigger
+        topicSend:
+          name: {{ include "midstream.fullname" . }}-materialization-work
+          valueSerializer: json
+          keySelector:
+            python: |
+              def select_key(value):
+                  from midstream.storage import materialization_routing_key
+
+                  return materialization_routing_key(value["materialization_id"])
+          valueSelector:
+            python: |
+              def select_value(value):
+                  return value

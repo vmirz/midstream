@@ -1,0 +1,37 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-groups-detail
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: groups-detail
+  description: "Return one group: its roles, the permissions they grant, and its members."
+  request:
+    method: GET
+    path: /groups/{group_id}
+  processors:
+    pipeline:
+      - get-group
+    operations:
+      - name: get-group
+        tables:
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+        map:
+          entrypoint: get_group
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.identity import get_group_view
+
+            def get_group(request, group_id, directory_table):
+                principal = authorize(request, directory_table, "groups.view")
+                return get_group_view(directory_table, principal, group_id)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

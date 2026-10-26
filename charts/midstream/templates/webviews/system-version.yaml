@@ -1,0 +1,32 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-system-version
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: system-version
+  description: Report the control-plane version so the console can show which build is serving the API.
+  request:
+    method: GET
+    path: /system/version
+  processors:
+    pipeline:
+      - read-version
+    operations:
+      - name: read-version
+        map:
+          entrypoint: read_version
+          python: |
+            from midstream.web.system import version_view
+
+            def read_version(request):
+                return version_view()
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

@@ -1,0 +1,14 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTable
+metadata:
+  name: {{ include "midstream.fullname" . }}-settings
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: settings
+  description: Settings overrides chosen from the console, and the last 100 changes of each scope.
+  global: true
+  keySerializer: json
+  valueSerializer: json
+  partitions: {{ .Values.tables.partitions }}

@@ -1,0 +1,38 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-catalog-tables-create
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: catalog-tables-create
+  description: "Iceberg REST catalog: creating tables is not supported (create a materialization instead)."
+  request:
+    method: POST
+    path: /catalog/v1/namespaces/{namespace}/tables
+  processors:
+    pipeline:
+      - handle
+    operations:
+      - name: handle
+        tables:
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+        map:
+          entrypoint: handle
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.catalog import catalog_errors, catalog_not_supported_view
+
+            def handle(request, namespace, directory_table):
+                with catalog_errors():
+                    authorize(request, directory_table, "catalog.read", any_dataset=True)
+                return catalog_not_supported_view("create_table")
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

@@ -1,0 +1,37 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-auth-session
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: auth-session
+  description: "Report who the caller is and what they may do; a guest when they have no usable session."
+  request:
+    method: GET
+    path: /auth/session
+  processors:
+    pipeline:
+      - read-session
+    operations:
+      - name: read-session
+        tables:
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+          - name: {{ include "midstream.fullname" . }}-settings
+            paramName: settings_table
+        map:
+          entrypoint: read_session
+          python: |
+            from midstream.web.auth import session_view
+
+            def read_session(request, directory_table, settings_table):
+                return session_view(directory_table, request, settings_table=settings_table)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

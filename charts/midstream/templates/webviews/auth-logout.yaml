@@ -1,0 +1,68 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-auth-logout
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: auth-logout
+  description: "End the caller's session, one of their other sessions, or all their others."
+  request:
+    method: POST
+    path: /auth/logout
+  processors:
+    pipeline:
+      - sign-out
+      - send-identity-request
+      - return-response
+    operations:
+      - name: sign-out
+        tables:
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+        map:
+          entrypoint: sign_out_request
+          python: |
+            from midstream.web.auth import sign_out
+            from midstream.web.http import json_body
+
+            async def sign_out_request(request, directory_table):
+                body = await json_body(request, optional=True)
+                return sign_out(directory_table, request, body).to_value()
+      - name: send-identity-request
+        topicSend:
+          name: {{ include "midstream.fullname" . }}-identity-requests
+          passThrough: true
+          valueSerializer: json
+          predicate:
+            python: |
+              def has_request(value):
+                  return value.get("request_event") is not None
+          keySelector:
+            python: |
+              def select_key(value):
+                  from midstream.storage.identity import identity_routing_key
+
+                  return identity_routing_key()
+          valueSelector:
+            python: |
+              def select_value(value):
+                  return value["request_event"]
+      - name: return-response
+        map:
+          python: |
+            def return_response(value):
+                return {"status": value["status"], "body": value["body"]}
+  response:
+    contentType: application/json
+    statusCodeSelector:
+      onSuccess:
+        python: |
+          def status_code(data):
+              return data["status"]
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data["body"]

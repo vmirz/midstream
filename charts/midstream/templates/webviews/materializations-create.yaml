@@ -1,0 +1,81 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-materializations-create
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: materializations-create
+  description: Accept a materialization request and emit a request event.
+  request:
+    method: POST
+    path: /materializations
+  processors:
+    pipeline:
+      - prepare-request
+      - send-request-event
+      - return-response
+    operations:
+      - name: prepare-request
+        tables:
+          - name: {{ include "midstream.fullname" . }}-state
+            paramName: control_plane_table
+          - name: {{ include "midstream.fullname" . }}-settings
+            paramName: settings_table
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+        map:
+          entrypoint: prepare_request
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.materializations import create_materialization
+
+            async def prepare_request(request, control_plane_table, settings_table, directory_table):
+                principal = authorize(request, directory_table, "materializations.create")
+                body = await request.json()
+                acceptance = create_materialization(
+                    control_plane_table,
+                    body,
+                    submitted_by=principal.attribution,
+                    submitted_by_id=principal.user_id,
+                    principal=principal,
+                    directory_table=directory_table,
+                    settings_table=settings_table,
+                )
+                return {
+                    "response": acceptance.response,
+                    "request_event": acceptance.request_event.to_dict(),
+                }
+      - name: send-request-event
+        topicSend:
+          name: {{ include "midstream.fullname" . }}-materialization-requests
+          passThrough: true
+          valueSerializer: json
+          keySelector:
+            python: |
+              def select_key(value):
+                  from midstream.storage import materialization_routing_key
+
+                  return materialization_routing_key(value["request_event"]["materialization_id"])
+          valueSelector:
+            python: |
+              def select_value(value):
+                  return value["request_event"]
+      - name: return-response
+        map:
+          python: |
+            def return_response(value):
+                return value["response"]
+  response:
+    contentType: application/json
+    statusCodeSelector:
+      onSuccess:
+        python: |
+          def status_code(data):
+              return 202
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data
