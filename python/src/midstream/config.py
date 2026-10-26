@@ -139,6 +139,10 @@ def normalize_list_limit(limit: str | None) -> str:
 class ControlPlaneConfig:
     """Immutable runtime configuration loaded from environment variables."""
 
+    #: The domain this control plane is (handbook 20): its id names it in the shared console's URLs,
+    #: in SQL and in the federated catalog; its name is what people see. None outside a deployment.
+    domain_id: str | None = None
+    domain_name: str | None = None
     #: The namespace every runtime is created in: the deployment's, or the pod's own
     #: (`_resolve_default_namespace`). Nothing in the code names one.
     default_namespace: str = ""
@@ -235,10 +239,30 @@ def _resolve_default_namespace(*, in_cluster_namespace_file: str | None = None) 
     )
 
 
+def domain_identity_from_environment(environ: Mapping[str, str]) -> tuple[str | None, str | None]:
+    """This deployment's domain id and name, from `DOMAIN_ID` and `DOMAIN_NAME`.
+
+    The chart always sets them. Unset, the control plane is not part of a shared console's registry
+    and reports no domain; an id that cannot name a domain stops the configuration from loading.
+    """
+    from midstream.table_names import domain_id_problem
+
+    domain_id = (environ.get("DOMAIN_ID") or "").strip() or None
+    if domain_id is not None:
+        problem = domain_id_problem(domain_id)
+        if problem is not None:
+            raise ValueError(f"DOMAIN_ID: {problem}")
+    domain_name = (environ.get("DOMAIN_NAME") or "").strip() or domain_id
+    return domain_id, domain_name
+
+
 @lru_cache(maxsize=1)
 def get_config() -> ControlPlaneConfig:
     """Load and cache the control-plane configuration from the environment."""
+    domain_id, domain_name = domain_identity_from_environment(os.environ)
     return ControlPlaneConfig(
+        domain_id=domain_id,
+        domain_name=domain_name,
         control_plane_table_name=os.getenv(
             "CONTROL_PLANE_TABLE_NAME",
             CONTROL_PLANE_TABLE_NAME,

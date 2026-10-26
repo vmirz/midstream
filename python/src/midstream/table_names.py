@@ -94,6 +94,17 @@ RESERVED_DATASET_NAMES = RESERVED_TABLE_NAMES | DUCKDB_CATALOG_NAMES
 
 NAME_RULES = "start with a lowercase letter and use only lowercase letters, digits and underscores"
 
+#: The longest domain id (handbook 20).
+DOMAIN_ID_MAX_LENGTH = 32
+#: Words a domain id cannot be besides a dataset's reservations: the shared console's own URL
+#: segments (`/api`, `/d`, `/catalog`) and the catalog SQL names native tables in.
+CONSOLE_RESERVED_DOMAIN_IDS = frozenset({"api", "d", "catalog", "iceberg"})
+#: What a domain cannot be named: a domain id is a catalog in SQL (`<domain>.<dataset>.<table>`), so
+#: it takes a dataset's reservations too.
+RESERVED_DOMAIN_IDS = RESERVED_DATASET_NAMES | CONSOLE_RESERVED_DOMAIN_IDS
+#: A domain's native tables are `<domain>_iceberg.<dataset>.<table>` in SQL: no domain may end so.
+NATIVE_CATALOG_SUFFIX = "_iceberg"
+
 
 class InvalidNameError(ValueError):
     """Raised when a requested dataset or table name, or a label, cannot be taken."""
@@ -117,6 +128,27 @@ def dataset_name_problem(value: Any) -> str | None:
 def table_name_problem(value: Any) -> str | None:
     """Why `value` cannot name a table, or None when it can."""
     return _name_problem(value, what="table", maximum=TABLE_NAME_MAX_LENGTH, reserved=RESERVED_TABLE_NAMES)
+
+
+def domain_id_problem(value: Any) -> str | None:
+    """Why `value` cannot be a domain's id, or None when it can.
+
+    A domain id is a URL segment of the shared console (`/d/<id>/`), a catalog in its SQL
+    (`<id>.<dataset>.<table>`) and a level of the federated catalog's namespaces, so it follows a
+    dataset name's rule, at most 32 characters, and cannot end `_iceberg`.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return "a domain id is required"
+    if not isinstance(value, str):
+        return "a domain id must be text"
+    name = value.strip()
+    if len(name) > DOMAIN_ID_MAX_LENGTH:
+        return f"a domain id is at most {DOMAIN_ID_MAX_LENGTH} characters"
+    if _NAME_PATTERN.match(name) is None:
+        return f'"{name}" cannot be a domain id: {NAME_RULES}'
+    if name in RESERVED_DOMAIN_IDS or name.endswith(NATIVE_CATALOG_SUFFIX):
+        return f'"{name}" cannot be a domain id: the console\'s URLs or SQL use it'
+    return None
 
 
 def normalize_dataset_name(value: Any, *, field_name: str = "name") -> str:

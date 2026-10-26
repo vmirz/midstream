@@ -1,4 +1,4 @@
-{{- if .Values.tail.enabled }}
+{{- if include "midstream.tailEnabled" . }}
 # The tail app: the newest records of every materialization's tables, read from Kafka before they
 # are committed, for the console (handbook 19). The control plane ticks every table each minute on
 # the tail-requests topic, keyed by table, so each table is owned by the member Kaspr gives its

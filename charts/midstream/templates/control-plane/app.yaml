@@ -1,3 +1,4 @@
+{{- if include "midstream.controlPlaneEnabled" . }}
 # The control plane: the HTTP API and the Iceberg REST catalog, every desired and observed state,
 # table creation and drops, and the reconciliation of every materialization's runtime
 # (handbook 02 §2.3). One per installation; its name, topics and tables derive from the release.
@@ -38,6 +39,11 @@ spec:
       {{- include "midstream.gcsVolumes" . | nindent 6 }}
     kasprContainer:
       env:
+        # Which domain this control plane is (handbook 20): the console checks it against its registry.
+        - name: DOMAIN_ID
+          value: {{ include "midstream.domainId" . | quote }}
+        - name: DOMAIN_NAME
+          value: {{ include "midstream.domainName" . | quote }}
         # The namespace every runtime is created in: this one.
         - name: CONTROL_PLANE_DEFAULT_NAMESPACE
           valueFrom:
@@ -115,9 +121,24 @@ spec:
               name: {{ include "midstream.authSecret" . }}
               key: bootstrap-admin-password
               optional: true
+        # Access tokens are signed with the federation key, the same in every domain (handbook 20).
+        - name: AUTH_FEDERATION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "midstream.authSecret" . }}
+              key: federation-key
+              optional: true
+        - name: AUTH_PREVIOUS_FEDERATION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "midstream.authSecret" . }}
+              key: previous-federation-key
+              optional: true
+        {{- include "midstream.ssoEnv" . | nindent 8 }}
         - name: PROTOCOL_LOGGING_ENABLED
           value: {{ .Values.controlPlane.protocolLogging | quote }}
         {{- with .Values.controlPlane.extraEnv }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- include "midstream.gcsVolumeMounts" . | nindent 6 }}
+{{- end }}

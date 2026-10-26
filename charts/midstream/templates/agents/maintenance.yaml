@@ -1,3 +1,4 @@
+{{- if include "midstream.controlPlaneEnabled" . }}
 apiVersion: kaspr.io/v1alpha1
 kind: KasprAgent
 metadata:
@@ -116,3 +117,4 @@ spec:
                     metadata_client=metadata_client,
                     settings_table=settings_table,
                 )
+{{- end }}

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import unittest
 
+from midstream.config import ControlPlaneConfig, domain_identity_from_environment
+from midstream.identity.secrets import IdentitySecrets, identity_secrets_from_environment
 from midstream.models.events import RuntimeStatusEvent
 from midstream.models.status import (
     MaterializationStatus,
@@ -37,9 +41,29 @@ class PackageVersionTests(unittest.TestCase):
 
     def test_control_plane_reports_its_component_and_version(self) -> None:
         self.assertEqual(
-            version_view(),
-            {"component": "control-plane", "version": PACKAGE_VERSION},
+            version_view(config=ControlPlaneConfig(), secrets=IdentitySecrets()),
+            {"component": "control-plane", "version": PACKAGE_VERSION, "domain": None, "federation_key_id": None},
         )
+
+    def test_control_plane_reports_its_domain_and_the_federation_keys_id_never_the_key(self) -> None:
+        """The shared console checks the domain against its registry, and the key id across domains."""
+        key = "f" * 40
+        secrets = identity_secrets_from_environment({"AUTH_FEDERATION_KEY": key})
+        view = version_view(config=ControlPlaneConfig(domain_id="domain_a", domain_name="Domain A"), secrets=secrets)
+        self.assertEqual(view["domain"], {"id": "domain_a", "name": "Domain A"})
+        self.assertEqual(view["federation_key_id"], hashlib.sha256(key.encode()).hexdigest()[:8])
+        self.assertNotIn(key, json.dumps(view))
+
+    def test_the_domain_comes_from_the_environment_and_must_be_one(self) -> None:
+        self.assertEqual(domain_identity_from_environment({}), (None, None))
+        self.assertEqual(domain_identity_from_environment({"DOMAIN_ID": "domain_b"}), ("domain_b", "domain_b"))
+        self.assertEqual(
+            domain_identity_from_environment({"DOMAIN_ID": " domain_b ", "DOMAIN_NAME": " Domain B "}),
+            ("domain_b", "Domain B"),
+        )
+        for bad in ("Domain-B", "catalog", "orders_iceberg", "select", "1st", "x" * 33):
+            with self.assertRaises(ValueError, msg=bad):
+                domain_identity_from_environment({"DOMAIN_ID": bad})
 
 
 class RuntimeVersionReportingTests(unittest.TestCase):

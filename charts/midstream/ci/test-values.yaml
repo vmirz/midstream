@@ -1,4 +1,8 @@
 # Every feature on, with the Secrets a real installation names: the shape the render tests check.
+# Domain A with the shared console, which also serves Domain B in another cluster (handbook 20).
+domain:
+  id: domain_a
+  name: Domain A
 package:
   source: git              # the development source; the default installs the release from PyPI
 kaspr:
@@ -32,6 +36,21 @@ kaspr:
                 values: [europe-west1-b]
 gcs:
   credentialsSecret: midstream-gcs
+auth:
+  sso:
+    entra:
+      enabled: true             # the tenant and client come from console.sso
+    github:
+      enabled: true
+    google:
+      enabled: true
+      hostedDomains: [example.com]
+    oidc:
+      enabled: true
+      label: Dex
+    firstSignIn: invited
+    allowedEmailDomains: [example.com]
+  passwordSignIn: false
 controlPlane:
   settings:
     defaultDestinationUri: gs://example-lake/midstream
@@ -45,6 +64,40 @@ maintenance:
       value: compaction
       effect: NoSchedule
 console:
+  url: https://midstream.example.com
+  domains:
+    - id: domain_a
+      name: Domain A
+      local: true
+      settingsHome: true
+    - id: domain_b
+      name: Domain B
+      controlPlaneUrl: https://domain-b-api.example.com/
+      tailUrl: https://domain-b-api.example.com
+      serviceTokenSecret:
+        name: domain-b-auth
+        key: service-token
+  sso:
+    entra:
+      enabled: true
+      tenantId: 00000000-0000-0000-0000-000000000000
+      clientId: 11111111-1111-1111-1111-111111111111
+      clientSecretSecret: {name: console-sso, key: entra}
+    github:
+      enabled: true
+      clientId: Iv1.example
+      clientSecretSecret: {name: console-sso, key: github}
+    google:
+      enabled: true
+      clientId: example.apps.googleusercontent.com
+      clientSecretSecret: {name: console-sso, key: google}
+      hostedDomain: example.com
+    oidc:
+      enabled: true
+      issuer: https://dex.example.com/
+      clientId: midstream
+      clientSecretSecret: {name: console-sso, key: oidc}
+      label: Dex
   nodeSelector:
     workload: web
   tolerations:
@@ -59,7 +112,9 @@ console:
     CONSOLE_DUCKDB_MEMORY_LIMIT: 2GB
 route:
   enabled: true
-  hostnames: [midstream.example.com]
+  hostnames: [domain-a-api.example.com]
+  consoleHostnames: [midstream.example.com]
+  redirectFrom: [domain-a-midstream.example.com]
   parentRefs:
     - name: ingress-gateway
       namespace: istio-system

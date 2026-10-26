@@ -1,3 +1,4 @@
+{{- if include "midstream.controlPlaneEnabled" . }}
 apiVersion: kaspr.io/v1alpha1
 kind: KasprAgent
 metadata:
@@ -53,3 +54,4 @@ spec:
           python: |
             def apply_identity_request(value, directory_table, audit_table, settings_table, control_plane_table):
                 return handle_identity_request(value, directory_table, audit_table, settings_table, control_plane_table)
+{{- end }}

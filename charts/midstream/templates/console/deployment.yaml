@@ -1,7 +1,22 @@
 {{- if .Values.console.enabled }}
-# The web console (console/docs): a Node backend-for-frontend and a React client in one process.
-# It reaches the control plane and the tail app through their Services, reads the tables with the
-# GCS credentials, and holds a browser's session in a cookie.
+{{- $domains := include "midstream.consoleDomains" . | fromJsonArray }}
+# The console's domains (handbook 20): who they are and how to reach each. Their service tokens come
+# from Secrets, as CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN below, never from here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "midstream.console" . }}-domains
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "midstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+data:
+  domains.json: |
+    {{- $domains | toPrettyJson | nindent 4 }}
+---
+# The shared console (console/docs): a Node backend-for-frontend and a React client in one process.
+# It reaches every domain's control plane and tail app, reads every domain's tables with the GCS
+# credentials, and holds a browser's sessions, one per domain, in cookies.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -22,6 +37,9 @@ spec:
       labels:
         {{- include "midstream.labels" . | nindent 8 }}
         app.kubernetes.io/component: console
+      annotations:
+        # A change of domains restarts the console, which reads them once.
+        checksum/domains: {{ $domains | toJson | sha256sum }}
     spec:
       {{- with .Values.console.imagePullSecrets }}
       imagePullSecrets:
@@ -56,19 +74,29 @@ spec:
               value: {{ .Values.console.port | quote }}
             - name: HOST
               value: "0.0.0.0"
-            - name: CONTROL_PLANE_URL
-              value: {{ include "midstream.controlPlaneUrl" . }}
-            {{- if .Values.tail.enabled }}
-            - name: CONSOLE_TAIL_URL
-              value: {{ include "midstream.tailUrl" . }}
-            {{- end }}
-            # The control plane's service token: the live views read for everyone with it.
-            - name: CONSOLE_SERVICE_TOKEN
+            # The URL people use: the providers' redirect URIs and the redirects from old hostnames.
+            - name: CONSOLE_URL
+              value: {{ include "midstream.consoleUrl" . | quote }}
+            - name: CONSOLE_DOMAINS_FILE
+              value: /etc/midstream/domains.json
+            # Each domain's service token: the console reads its live views with it.
+            {{- range $domains }}
+            - name: {{ include "midstream.domainTokenEnv" .id }}
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "midstream.authSecret" . }}
+                  {{- if .local }}
+                  name: {{ include "midstream.authSecret" $ }}
                   key: service-token
                   optional: true
+                  {{- else }}
+                  {{- $secret := (index $.Values.console.domains (include "midstream.domainIndex" (dict "domains" $.Values.console.domains "id" .id) | int)).serviceTokenSecret }}
+                  name: {{ $secret.name }}
+                  key: {{ $secret.key }}
+                  {{- end }}
+            {{- end }}
+            {{- with (include "midstream.consoleSsoEnv" . | trim) }}
+            {{- . | nindent 12 }}
+            {{- end }}
             - name: CONSOLE_DATA_DIR
               value: /var/lib/midstream-console
             {{- include "midstream.gcsEnv" . | nindent 12 }}
@@ -100,12 +128,18 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/midstream-console
+            - name: domains
+              mountPath: /etc/midstream
+              readOnly: true
             {{- if .Values.gcs.credentialsSecret }}
             - name: gcp-credentials
               mountPath: /app/gcp
               readOnly: true
             {{- end }}
       volumes:
+        - name: domains
+          configMap:
+            name: {{ include "midstream.console" . }}-domains
         - name: data
           {{- if .Values.console.persistence.enabled }}
           persistentVolumeClaim:

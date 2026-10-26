@@ -401,6 +401,16 @@ class TokenTests(unittest.TestCase):
         weak = identity_secrets_from_environment({"AUTH_SIGNING_KEY": "too-short"})
         self.assertFalse(weak.can_sign_in)
 
+    def test_federation_keys_rotate_like_signing_keys(self) -> None:
+        secrets = identity_secrets_from_environment(
+            {"AUTH_FEDERATION_KEY": "f" * 40, "AUTH_PREVIOUS_FEDERATION_KEY": "g" * 40}
+        )
+        self.assertEqual(len(secrets.federation_keys), 2)
+        self.assertEqual(secrets.current_federation_key, signing_key("f" * 40))
+        self.assertEqual(secrets.federation_key(signing_key("g" * 40).key_id), signing_key("g" * 40))
+        self.assertIsNone(identity_secrets_from_environment({"AUTH_PREVIOUS_FEDERATION_KEY": "g" * 40}).current_federation_key)
+        self.assertIsNone(identity_secrets_from_environment({"AUTH_FEDERATION_KEY": "short"}).current_federation_key)
+
 
 class ModelRoundTripTests(unittest.TestCase):
     def test_every_model_round_trips(self) -> None:

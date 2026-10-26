@@ -1,3 +1,4 @@
+{{- if include "midstream.maintenanceEnabled" . }}
 # The maintenance app: compaction, snapshot expiry and orphan cleanup of every materialization's
 # tables, off the runtimes, so only this app is sized for compaction's memory (handbook 02 §2.10a).
 # The control plane ticks every maintained table each minute on the maintenance-requests topic,
@@ -56,3 +57,4 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- include "midstream.gcsVolumeMounts" . | nindent 6 }}
+{{- end }}

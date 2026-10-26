@@ -9,6 +9,7 @@ from __future__ import annotations
 import unittest
 
 from midstream.table_names import (
+    domain_id_problem,
     TABLE_NAME_MAX_LENGTH,
     InvalidNameError,
     InvalidSourceTopicsError,
@@ -102,6 +103,22 @@ class DatasetAndTableNameTests(unittest.TestCase):
         with self.assertRaises(InvalidNameError) as raised:
             normalize_table_name("Orders", field_name="tables.0.name")
         self.assertEqual("tables.0.name", raised.exception.field_name)
+
+
+class DomainIdTests(unittest.TestCase):
+    """A domain id is a URL segment, a catalog in SQL and a namespace level (handbook 20)."""
+
+    def test_a_domain_id_follows_a_dataset_names_rule_up_to_32_characters(self) -> None:
+        for good in ("domain_a", "sales", "a", "scm_2", "x" * 32):
+            self.assertIsNone(domain_id_problem(good), good)
+        for bad in ("", None, 7, "Domain_A", "domain-a", "1domain", "_a", "x" * 33):
+            self.assertIsNotNone(domain_id_problem(bad), repr(bad))
+
+    def test_a_domain_id_is_not_a_word_the_console_or_sql_uses(self) -> None:
+        for reserved in ("api", "d", "catalog", "iceberg", "main", "memory", "temp", "system", "select", "lake"):
+            self.assertIsNotNone(domain_id_problem(reserved), reserved)
+        # `<domain>_iceberg` names a domain's native tables in SQL.
+        self.assertIn("SQL", domain_id_problem("orders_iceberg"))
 
 
 class MaterializationLabelTests(unittest.TestCase):

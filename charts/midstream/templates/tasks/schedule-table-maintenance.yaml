@@ -1,3 +1,4 @@
+{{- if include "midstream.controlPlaneEnabled" . }}
 apiVersion: kaspr.io/v1alpha1
 kind: KasprTask
 metadata:
@@ -44,3 +45,4 @@ spec:
             python: |
               def select_value(value):
                   return value
+{{- end }}

@@ -1,0 +1,35 @@
+# A domain alone, with no tail app and no console: another release's shared console serves it
+# through its API hostname. Installed from a package index, with an Ingress and another name.
+fullnameOverride: lake
+domain:
+  id: lake_eu
+  name: Lake EU
+package:
+  source: index
+  index:
+    url: https://pypi.example.com/simple
+    credentialsSecret: pypi-credentials
+kaspr:
+  bootstrapServers: kafka:9092
+  authentication:
+    type: scram-sha-512
+    username: lake
+    passwordSecret:
+      secretName: lake-kafka
+      passwordKey: password
+auth:
+  sso:
+    github:
+      enabled: true
+      clientId: Iv1.example
+      clientSecretSecret: {name: lake-sso, key: github}
+console:
+  enabled: false
+  url: https://midstream.example.com
+tail:
+  enabled: false
+ingress:
+  enabled: true
+  className: nginx
+  host: lake-eu-api.example.com
+  redirectFrom: [lake.example.com]

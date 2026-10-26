@@ -1,3 +1,4 @@
+{{- if include "midstream.controlPlaneEnabled" . }}
 apiVersion: kaspr.io/v1alpha1
 kind: KasprAgent
 metadata:
@@ -31,3 +32,4 @@ spec:
             def apply_table_event(value, control_plane_table, settings_table):
                 handle_table_event(value, control_plane_table, settings_table=settings_table)
                 return value
+{{- end }}
