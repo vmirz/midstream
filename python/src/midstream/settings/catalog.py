@@ -464,7 +464,7 @@ CONTROL_PLANE_SETTINGS: tuple[SettingDefinition, ...] = (
         kind="boolean",
         description=(
             "Lets people sign in with their GitHub account, by its primary verified email. The "
-            "deployment must configure the GitHub App first (auth.sso.github)."
+            "deployment must configure the GitHub OAuth App first (auth.sso.github)."
         ),
         effect="new sign-ins",
     ),
@@ -1277,7 +1277,7 @@ DEPLOYMENT_SETTINGS: tuple[DeploymentSetting, ...] = (
         "control-plane",
         "GitHub",
         "AUTH_SSO_GITHUB_CLIENT_ID, AUTH_SSO_GITHUB_CLIENT_SECRET",
-        "The console's GitHub App, whose secret checks that a token was issued to it.",
+        "The console's GitHub OAuth App, whose secret checks that a token was issued to it.",
     ),
     DeploymentSetting(
         "sso_google",

@@ -65,10 +65,11 @@ export function SettingsPage(): ReactNode {
   const home = useConsoleConfig().data?.settingsHome ?? null;
   const location = useLocation();
   // The console's own settings are stored in the settings home, so it is there that seeing and
-  // changing them is decided; inside a domain, the domain decides.
-  const homeAuth = domain || home === null ? auth : consoleAuth.forDomain(home);
+  // changing them is decided; inside a domain, the domain decides. Until the console's config names
+  // the home, nothing is decided - not even by the domain this browser happens to be signed in to.
+  const homeAuth = domain ? auth : home === null ? null : consoleAuth.forDomain(home);
   const can = useCallback(
-    (permission: string, heldIn: 'home' | 'any' = 'home') => (heldIn === 'any' ? auth.can(permission) : homeAuth.can(permission)),
+    (permission: string, heldIn: 'home' | 'any' = 'home') => (heldIn === 'any' ? auth.can(permission) : (homeAuth?.can(permission) ?? false)),
     [auth, homeAuth],
   );
   const sections = useMemo(

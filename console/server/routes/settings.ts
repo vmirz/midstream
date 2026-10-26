@@ -450,7 +450,7 @@ function consoleDeployment(): DeploymentSettingView[] {
       'GitHub',
       config.ssoGithubClientId && config.ssoGithubClientSecret ? `client ${config.ssoGithubClientId}, secret configured` : 'not configured',
       'CONSOLE_SSO_GITHUB_CLIENT_ID, CONSOLE_SSO_GITHUB_CLIENT_SECRET',
-      'This console\'s GitHub App. Each domain needs its client id and secret too, to check that a token was issued to it.',
+      'This console\'s GitHub OAuth App. Each domain needs its client id and secret too, to check that a token was issued to it.',
     ),
     entry(
       'ssoGoogle',
