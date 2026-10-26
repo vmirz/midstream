@@ -7,7 +7,10 @@ import { PageBody } from '@/components/AppShell';
 import { EmptyState, Panel, Spinner } from '@/components/ui/primitives';
 import { api, domainApi, type DomainApi } from './api';
 import { queryClientFor, rootQueryClient } from './queryClient';
+import { domainPath } from './paths';
 import type { ConsoleConfig, ConsoleDomain } from '@shared/types';
+
+export { domainPath, sectionOf, sectionPath, type ShellSection } from './paths';
 
 /**
  * The console's config: every domain it serves, as this person may know each (handbook 20). Kept a
@@ -113,11 +116,6 @@ export function useDomainPath(): (path: string) => string {
   return useMemo(() => (path: string) => domainPath(id, path), [id]);
 }
 
-/** A link inside a domain: `/d/<domain>/<path>`. */
-export function domainPath(domain: string, path = ''): string {
-  return `/d/${encodeURIComponent(domain)}${path.startsWith('/') || path === '' ? path : `/${path}`}`;
-}
-
 /**
  * The domain the address names, for what sits around a page rather than in it - the shell's switcher
  * and navigation: `/d/<domain>/…` names one; every other page is the console's own.
@@ -126,24 +124,4 @@ export function useScopeDomainId(): string | null {
   const { pathname } = useLocation();
   const match = /^\/d\/([^/]+)/.exec(pathname);
   return match ? decodeURIComponent(match[1] as string) : null;
-}
-
-/** The part of the console an address is in: an overview, the lists, search or settings. */
-export type ShellSection = 'overview' | 'materializations' | 'datasets' | 'search' | 'settings';
-
-/** Which part of the console an address is in, whatever its scope. */
-export function sectionOf(pathname: string): ShellSection {
-  const rest = pathname.replace(/^\/d\/[^/]+/, '') || '/';
-  if (rest.startsWith('/materializations')) return 'materializations';
-  if (rest.startsWith('/datasets')) return 'datasets';
-  if (rest.startsWith('/search')) return 'search';
-  if (rest.startsWith('/settings')) return 'settings';
-  return 'overview';
-}
-
-/** Where a section is: in a domain, or across every domain. Search is always the console's. */
-export function sectionPath(section: ShellSection, domain: string | null): string {
-  const path = section === 'overview' ? '' : `/${section}`;
-  if (domain === null || section === 'search') return path || '/';
-  return domainPath(domain, path);
 }

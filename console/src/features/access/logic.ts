@@ -79,3 +79,11 @@ export function describeDetail(value: unknown): string {
   }
   return String(value);
 }
+
+/** How a session was started, as a person would say it. */
+export function describeMethod(method: string): string {
+  if (method === 'password') return 'with a password';
+  const provider = method.startsWith('sso:') ? method.slice(4) : method;
+  const names: Record<string, string> = { entra: 'Microsoft', github: 'GitHub', google: 'Google', oidc: 'single sign-on' };
+  return `through ${names[provider] ?? provider}`;
+}

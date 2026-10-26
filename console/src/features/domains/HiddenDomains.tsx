@@ -21,7 +21,11 @@ export function HiddenDomains({ hidden, what }: { hidden: readonly DomainFleet[]
       <div className="space-y-1">
         {signIn.length > 0 ? (
           <p>
-            <Link to="/sign-in" state={{ from: location }} className="font-medium text-[var(--color-accent)] hover:underline">
+            <Link
+              to={signIn.length === 1 ? `/sign-in/${encodeURIComponent(signIn[0]!.domain)}` : '/sign-in'}
+              state={{ from: location }}
+              className="font-medium text-[var(--color-accent)] hover:underline"
+            >
               Sign in
             </Link>{' '}
             to see the {what} of {names(signIn)}.

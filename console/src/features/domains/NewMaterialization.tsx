@@ -2,7 +2,7 @@ import { Plus } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 
 import { CreateMaterializationDialog } from '../materializations/CreateMaterializationDialog';
-import { Dialog } from '@/components/ui/Dialog';
+import { ChooseDomainDialog } from './ChooseDomainDialog';
 import { Button } from '@/components/ui/primitives';
 import { useConsoleAuth } from '@/lib/auth';
 import { DomainProvider, useDomains, useOptionalDomain } from '@/lib/domains';
@@ -45,30 +45,13 @@ export function NewMaterialization({
         <Plus className="size-4" />
         {label}
       </Button>
-      <Dialog
+      <ChooseDomainDialog
         open={choosing}
         onClose={() => setChoosing(false)}
-        title="Which domain?"
+        domains={creatable}
+        onChoose={setChosen}
         description="A materialization reads topics of its domain's Kafka cluster and writes tables into its datasets."
-      >
-        <ul className="space-y-2">
-          {creatable.map((domain) => (
-            <li key={domain.id}>
-              <button
-                type="button"
-                className="flex w-full items-center justify-between rounded-[var(--radius-control)] border border-[var(--color-line)] px-4 py-3 text-left transition-colors hover:border-[var(--color-accent)] hover:bg-[var(--color-raised)]"
-                onClick={() => {
-                  setChoosing(false);
-                  setChosen(domain);
-                }}
-              >
-                <span className="text-[13px] font-medium">{domain.name}</span>
-                <span className="numeric text-[12px] text-[var(--color-ink-muted)]">{domain.id}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </Dialog>
+      />
       {chosen ? (
         <DomainProvider domain={chosen}>
           <CreateMaterializationDialog

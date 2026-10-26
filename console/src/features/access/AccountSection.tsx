@@ -10,15 +10,17 @@ import { Avatar } from '@/components/Avatar';
 import { Button, Panel, PanelHeader, Skeleton } from '@/components/ui/primitives';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/lib/auth';
-import { useApi } from '@/lib/domains';
+import { useApi, useManyDomains } from '@/lib/domains';
 
 /**
- * Your own account: who you are signed in as, what you may do, your password, your sessions, and
- * the access tokens external engines sign in with.
+ * Your own account in one domain: who you are signed in as, what you may do, your password, your
+ * sessions, and the access tokens external engines sign in with. Where the console serves several
+ * domains, the Account page around it signs out of each.
  */
 export function AccountSection(): ReactNode {
   const api = useApi();
   const auth = useAuth();
+  const manyDomains = useManyDomains();
   const principal = auth.principal;
   const catalog = useCatalog();
   const byKey = permissionMap(catalog.data);
@@ -123,12 +125,14 @@ export function AccountSection(): ReactNode {
 
       {auth.canAnywhere('catalog.read') ? <AccessTokens /> : null}
 
-      <div className="flex justify-end">
-        <Button variant="ghost" onClick={() => void auth.signOut()}>
-          <LogOut className="size-4" />
-          Sign out
-        </Button>
-      </div>
+      {manyDomains ? null : (
+        <div className="flex justify-end">
+          <Button variant="ghost" onClick={() => void auth.signOut()}>
+            <LogOut className="size-4" />
+            Sign out
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

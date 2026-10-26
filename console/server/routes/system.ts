@@ -29,6 +29,7 @@ export async function describeDomain(domain: Domain, auth: RequestAuth | undefin
     status,
     statusMessage: domain.statusMessage,
     version: domain.version,
+    federationKeyId: domain.federationKeyId,
     connected: domain.live.fleetSnapshot().connected,
     liveTail,
     autoscaling,

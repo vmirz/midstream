@@ -11,6 +11,13 @@ import type {
   SettingsScope,
 } from '@shared/types';
 
+/** Who each scope's settings configure, as a heading reads. */
+export const SCOPE_LABELS = {
+  'control-plane': 'Control plane',
+  runtime: 'Runtimes',
+  console: 'This console',
+} as const;
+
 /** An unsaved edit: a new value as typed, or a request to return to the deployment value. */
 export type Draft = { reset: true } | { reset: false; input: string | boolean };
 

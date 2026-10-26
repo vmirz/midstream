@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { CpPermissionCatalog } from '@shared/types';
 
-import { PASSWORD_ALPHABET, describeAgent, describeDetail, expandPermissions, generatePassword } from './logic.ts';
+import { PASSWORD_ALPHABET, describeAgent, describeDetail, describeMethod, expandPermissions, generatePassword } from './logic.ts';
 
 const catalog: CpPermissionCatalog = {
   categories: [{ id: 'data', label: 'Data' }],
@@ -70,5 +70,15 @@ describe('describing sessions and audit details', () => {
     assert.equal(describeDetail(['Viewer', 'Editor']), 'Viewer, Editor');
     assert.equal(describeDetail({ added: ['Editor'], removed: [] }), 'added: Editor; removed: none');
     assert.equal(describeDetail(null), '—');
+  });
+});
+
+describe('describeMethod', () => {
+  it('says how a session was started', () => {
+    assert.equal(describeMethod('password'), 'with a password');
+    assert.equal(describeMethod('sso:entra'), 'through Microsoft');
+    assert.equal(describeMethod('sso:github'), 'through GitHub');
+    assert.equal(describeMethod('sso:oidc'), 'through single sign-on');
+    assert.equal(describeMethod('sso:other'), 'through other');
   });
 });

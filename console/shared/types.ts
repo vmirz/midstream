@@ -1360,6 +1360,11 @@ export interface ConsoleDomain {
   statusMessage: string | null;
   /** Version of its control plane; null while it cannot be reached. */
   version: string | null;
+  /**
+   * The first 8 hex characters of the SHA-256 of the key it signs access tokens with; null while it
+   * cannot be reached. Domains that differ refuse each other's tokens.
+   */
+  federationKeyId: string | null;
   /** Whether the live store reads it now; false shows its last known state as stale. */
   connected: boolean;
   liveTail: ConsoleLiveTail;

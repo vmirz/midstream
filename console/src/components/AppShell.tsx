@@ -1,8 +1,9 @@
 import { Activity, Check, ChevronsUpDown, Database, FolderOpen, Info, Layers, LogIn, LogOut, Moon, PanelLeftClose, PanelLeftOpen, Search, Settings, Sun, UserRound } from 'lucide-react';
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 import { Avatar } from './Avatar';
+import { DomainDot } from './DomainChip';
 import { Dialog } from './ui/Dialog';
 import { Popover } from './ui/Popover';
 import { Button } from './ui/primitives';
@@ -11,6 +12,7 @@ import { useConsoleAuth, type Auth } from '@/lib/auth';
 import { sectionOf, sectionPath, useConsoleConfig, useScopeDomainId, type ShellSection } from '@/lib/domains';
 import { formatRelativeTime } from '@/lib/format';
 import { useTicker, type LiveStatus } from '@/lib/live';
+import { FOCUS_SEARCH_EVENT } from '@/lib/shortcuts';
 import type { ConsoleDomain } from '@shared/types';
 
 /** The pages people work in, in every domain or in one (handbook 20). */
@@ -158,6 +160,7 @@ export function AppShell({ children }: { children: ReactNode }): ReactNode {
   const consoleConfig = useConsoleConfig();
   const domains = consoleConfig.data?.domains ?? [];
   const troubled = domains.filter((domain) => domain.status === 'misconfigured' || domain.status === 'incompatible');
+  useSearchShortcut();
 
   return (
     <div className="flex h-full min-h-0">
@@ -342,6 +345,22 @@ export function AppShell({ children }: { children: ReactNode }): ReactNode {
   );
 }
 
+/** ⌘K or Ctrl+K, anywhere: the search page, its box focused. */
+function useSearchShortcut(): void {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'k') return;
+      event.preventDefault();
+      if (pathname === '/search') window.dispatchEvent(new Event(FOCUS_SEARCH_EVENT));
+      else void navigate('/search');
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [navigate, pathname]);
+}
+
 /**
  * Which part of the console the pages are about: every domain, or one (handbook 20). Choosing keeps
  * the section - the overview, the lists, settings - that is open.
@@ -354,15 +373,7 @@ function DomainSwitcher({ domains, scope, collapsed }: { domains: ConsoleDomain[
   const choose = (domain: string | null): void => {
     void navigate(sectionPath(section === 'search' ? 'overview' : section, domain));
   };
-  const dot = (domain: ConsoleDomain): ReactNode => (
-    <span
-      className={cn(
-        'size-1.5 shrink-0 rounded-full',
-        domain.status === 'ok' && domain.connected ? 'bg-[var(--color-phase-running)]' : domain.status === 'misconfigured' || domain.status === 'incompatible' ? 'bg-[var(--color-phase-failed)]' : 'bg-[var(--color-phase-paused)]',
-      )}
-      title={domain.statusMessage ?? (domain.connected ? 'Live' : 'Reconnecting')}
-    />
-  );
+  const dot = (domain: ConsoleDomain): ReactNode => <DomainDot domain={domain} />;
   const itemClass =
     'flex w-full items-center gap-2.5 rounded-[var(--radius-control)] px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-[var(--color-raised)]';
   return (
