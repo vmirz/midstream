@@ -306,9 +306,10 @@ members stage, seal, upload; the committer commits; table events keep the table 
 3. **The runtime spec hash is invariant to schema changes and settings overrides.** Schemas live
    in the table and settings ride the runtime control topic, so neither redeploys anything
    (`tests/test_runtime_templates.py`, `test_runtime_settings.py`).
-4. **The runtime package revision is pinned to an exact git commit.**
-   `get_installed_package_revision()` reads `direct_url.json` from the installed metadata and fails
-   hard without a commit id. Runtimes never float on a branch.
+4. **Every runtime installs exactly the package the control plane runs.** `installed_package_source()`
+   reads how pip installed it: from git, the runtime pins that commit at that repository; from a
+   package index, that version. A local install is refused, since no pod could repeat it. Runtimes
+   never float on a branch.
 5. **Every commit goes through the pointer's compare-and-swap.** The control plane creates
    `metadata/catalog-pointer.json` and retires it on a drop; between the two only the runtime's
    committer, the maintenance app — and the REST facade, for an engine with `catalog.write` —

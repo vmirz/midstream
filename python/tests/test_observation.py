@@ -9,6 +9,7 @@ import types
 import unittest
 from unittest.mock import patch
 
+from midstream.runtime.templates import PackageSource
 from midstream.handlers import handle_resource_observation, handle_runtime_status
 from midstream.handlers.resource_observation import (
     build_sweep_observation_trigger,
@@ -519,8 +520,8 @@ class StoppedObservationTests(unittest.TestCase):
 class ObservationServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.package_revision_patcher = patch(
-            "midstream.runtime.templates.get_installed_package_revision",
-            return_value="pkg-rev-1",
+            "midstream.runtime.templates.installed_package_source",
+            return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python"),
         )
         self.package_revision_patcher.start()
         self.addCleanup(self.package_revision_patcher.stop)
@@ -1254,8 +1255,8 @@ class AsyncObservationHandlerTests(unittest.TestCase):
 
     def setUp(self) -> None:
         patcher = patch(
-            "midstream.runtime.templates.get_installed_package_revision",
-            return_value="pkg-rev-1",
+            "midstream.runtime.templates.installed_package_source",
+            return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python"),
         )
         patcher.start()
         self.addCleanup(patcher.stop)

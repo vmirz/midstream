@@ -24,6 +24,10 @@ TAIL_EXACTLY_ONCE_SCHEDULES=2000 python -m unittest discover -s python/tests -p 
 # Repo has no configured linter/formatter; use a syntax smoke check instead
 python -m compileall python/src
 
+# One version in pyproject.toml, package.json, its lock file and Chart.yaml (CI fails when they differ)
+python tools/version.py check
+python tools/version.py set 1.2.0-rc.1   # before tagging v1.2.0-rc.1, which releases everything
+
 # Lint and render the Helm chart (the chart tests render it with every file under charts/midstream/ci/)
 helm lint charts/midstream -f charts/midstream/ci/test-values.yaml
 helm template midstream charts/midstream -n midstream -f charts/midstream/ci/test-values.yaml
@@ -102,7 +106,7 @@ return process_request_event(table, request_event, config=cfg, work_id=work_id)
 ## Guardrails & Boundaries
 - Never commit secrets, kube credentials, GCP credentials, SSH keys, or `.env`-style files.
 - Never move core business logic into inline manifest Python; CRD YAML should stay as a thin harness over package code.
-- Never invent a new linter/test runner/build system; this repo currently uses `pip`, `unittest`, and `helm lint`/`helm template` for the Python and chart side, and npm + `tsc` + Vite inside `/console`.
+- Never invent a new linter/test runner/build system; this repo currently uses `pip`, `unittest`, and `helm lint`/`helm template` for the Python and chart side, and npm + `tsc` + Vite inside `/console`. CI (`.github/workflows/ci.yml`) runs exactly these; a `v*` tag releases through `release.yml`.
 - Never change topic names, table names or Kaspr resource names without updating both the chart templates and the affected tests; every deployed name derives from the Helm release name.
 - Never write a materialization's Iceberg tables except through its committer, the maintenance app's compaction and expiry (`maintenance_app/`), or the REST catalog with `catalog.write`: every commit goes through the catalog pointer's compare-and-swap, the committer's exactly-once accounting relies on the snapshot summaries it writes, and a maintenance commit carries those offsets forward unchanged.
 - Never replace runtime package pinning with floating or implicit refs; runtime template/package revision behavior is intentional and covered by tests.

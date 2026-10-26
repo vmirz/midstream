@@ -4,9 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "midstream"
-version = "4.4.1"
+version = "1.0.0rc1"
 description = "Midstream: a streaming platform on Kaspr that materializes Kafka topics into Iceberg tables"
+readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.12"
+keywords = ["kafka", "iceberg", "kaspr", "streaming", "lakehouse"]
+classifiers = [
+	"Development Status :: 4 - Beta",
+	"Intended Audience :: Developers",
+	"License :: OSI Approved :: MIT License",
+	"Programming Language :: Python :: 3",
+	"Programming Language :: Python :: 3.12",
+	"Programming Language :: Python :: 3.13",
+	"Topic :: System :: Distributed Computing",
+]
 dependencies = [
 	"jinja2>=3.1.0",
 	"google-cloud-storage>=2.18.0",
@@ -27,3 +39,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "midstream.runtime_app" = ["templates/*.j2"]
+
+[project.urls]
+Homepage = "https://github.com/vmirz/midstream"
+Repository = "https://github.com/vmirz/midstream"
+Documentation = "https://github.com/vmirz/midstream/tree/main/docs/handbook"
+Changelog = "https://github.com/vmirz/midstream/releases"

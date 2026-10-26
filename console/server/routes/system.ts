@@ -176,12 +176,10 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
 }
 
 /**
- * The oldest control plane this console works with: 4.0, which creates every materialization's
- * tables under the deployment's destination, sized and placed as the deployment says, and
- * partitions them by month as well. Its tables are in datasets - SQL reads `<dataset>.<table>` -
- * and access is granted per dataset, as since 3.0.
+ * The oldest control plane this console works with: Midstream 1.0, the first release. Each release
+ * candidate reports its version as `1.0.0rc<n>`, which parses to the same major.
  */
-export const REQUIRED_CONTROL_PLANE_MAJOR = 4;
+export const REQUIRED_CONTROL_PLANE_MAJOR = 1;
 
 /** Whether a control plane version is one this console works with; null when it is unknown. */
 export function compatibleControlPlane(version: string | null): boolean | null {

@@ -17,6 +17,7 @@ from google.api_core.exceptions import ServiceUnavailable  # noqa: E402
 from gcs_fakes import FakeGcs  # noqa: E402
 from table_records import table_specs  # noqa: E402
 
+from midstream.runtime.templates import PackageSource
 from midstream.config import ControlPlaneConfig  # noqa: E402
 from midstream.handlers import handle_work_event_for_routed_output  # noqa: E402
 from midstream.kafka.admin import ConsumerGroupNotEmptyError  # noqa: E402
@@ -178,7 +179,7 @@ class WorkflowTestCase(unittest.TestCase):
         self.kaspr = FakeKasprAppClient()
         self.config = ControlPlaneConfig(discovery_sample_records=50, discovery_sample_seconds=3)
         self.discovery = StubDiscoveryService(SAMPLE)
-        patcher = patch("midstream.runtime.templates.get_installed_package_revision", return_value="pkg-rev-1")
+        patcher = patch("midstream.runtime.templates.installed_package_source", return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python"))
         patcher.start()
         self.addCleanup(patcher.stop)
         save_materialization(self.table, build_materialization())

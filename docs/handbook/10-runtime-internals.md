@@ -524,10 +524,26 @@ still sends here is dropped.
 
 ## 10.13 Package pinning
 
-The runtime installs the same package revision as the control plane that applied it
-(`package_revision`, resolved from the control plane's own installed commit; 16). A control-plane
-upgrade therefore re-applies every runtime within about two minutes, which rolls its members one by
-one — the exactly-once machinery makes a rolling restart cost only re-reading.
+Every runtime installs exactly the package the control plane runs, however the control plane itself
+was installed. `runtime/templates.py::installed_package_source()` reads the running distribution's
+metadata (PEP 610 `direct_url.json`):
+
+| The control plane was installed | `PackageSource` | The runtime's requirement |
+|---|---|---|
+| from a git repository (`package.source: git`) | `kind: git`, `reference`: the commit | `git+<that repository>@<commit>#egg=midstream&subdirectory=python` |
+| from a package index (`package.source: index`) | `kind: index`, `reference`: the version | `midstream==<version>` |
+| from a local path, an editable checkout say | refused with `RuntimeError` | none: no pod could repeat it |
+
+`_pin_runtime_package()` then rewrites the deployment's runtime spec: every `pythonPackages.packages`
+entry that names this distribution, a git URL at a branch, `midstream==<version>` or just `midstream`,
+becomes that requirement, and one is inserted if none did. The rest of the block, an index URL, its
+credentials and the cache, stays as the chart rendered it. The `reference` is the runtime's
+`control-plane/package-revision` annotation and the Settings page's *Package revision*.
+
+Runtimes therefore never float: a control plane installed from a branch pins its runtimes to the
+commit it is actually running, and one installed from an index to its exact version. A control-plane
+upgrade changes the requirement, the spec hash with it, and the sweep re-applies every runtime
+(07 §7.8); until each is re-applied it keeps running the older package.
 
 ## 10.14 Protocol log events
 

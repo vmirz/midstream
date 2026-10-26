@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 from importlib import metadata as importlib_metadata
 from importlib import resources
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
@@ -18,7 +20,8 @@ from midstream.runtime.naming import resolve_runtime_app_name, runtime_component
 from midstream.runtime_app.config import get_runtime_app_config
 
 PACKAGE_DISTRIBUTION_NAME = "midstream"
-PACKAGE_REPOSITORY_URL = "git+https://github.com/vmirz/midstream.git"
+#: Where a pod finds how pip installed the running package (PEP 610).
+DIRECT_URL_FILE = "direct_url.json"
 #: The runtime's RocksDB write buffer and how many it keeps: its state table's write-ahead log holds
 #: at most their product before a flush (`_default_runtime_spec`).
 STATE_STORE_WRITE_BUFFER_BYTES = 4 * 1024 * 1024
@@ -67,7 +70,7 @@ def build_dedicated_runtime_template_input(
     runtime_app_name = resolve_runtime_app_name(materialization, config=cfg)
     runtime_component_config = get_runtime_app_config()
     component_names = runtime_component_names(runtime_app_name)
-    package_revision = get_installed_package_revision()
+    package_source = installed_package_source()
     resolved_agent_names = (
         [
             component_names["writer_agent_name"],
@@ -100,8 +103,8 @@ def build_dedicated_runtime_template_input(
         "materialization_status_topic": cfg.materialization_status_topic,
         "schema_authority_updates_topic": cfg.schema_authority_updates_topic,
         "table_events_topic": cfg.table_events_topic,
-        "package_revision": package_revision,
-        "runtime_spec": _pin_runtime_package_revision(
+        "package_revision": package_source.reference,
+        "runtime_spec": _pin_runtime_package(
             _merge_runtime_spec(
                 _merge_runtime_spec(
                     _default_runtime_spec(cfg),
@@ -109,7 +112,7 @@ def build_dedicated_runtime_template_input(
                 ),
                 _runtime_scale_spec(materialization, scaled_to_zero=scaled_to_zero),
             ),
-            package_revision,
+            package_source.requirement,
         ),
         "template_version": cfg.default_runtime_template_version,
     }
@@ -221,36 +224,65 @@ def _runtime_template_environment() -> Environment:
     return environment
 
 
-def get_installed_package_revision(
-    package_name: str = PACKAGE_DISTRIBUTION_NAME,
-) -> str:
-    """Return the installed VCS commit for the control-plane package."""
+@dataclass(frozen=True, slots=True)
+class PackageSource:
+    """Where the running package was installed from, which is where its runtimes install it from.
+
+    `kind` is `git` when pip installed it from a repository, with `reference` the exact commit, or
+    `index` when it came from a package index, with `reference` the version. `requirement` is the
+    pip requirement that installs exactly that again: `git+<url>@<commit>#egg=midstream&subdirectory=…`
+    or `midstream==<version>`. Runtimes never float: a branch deploy still pins its commit.
+    """
+
+    kind: str
+    reference: str
+    requirement: str
+
+
+def installed_package_source(package_name: str = PACKAGE_DISTRIBUTION_NAME) -> PackageSource:
+    """How the running package was installed, from its distribution metadata.
+
+    pip records a direct URL (PEP 610) for a git or local install and none for an index install. A
+    local install - an editable checkout, say - cannot be reproduced in a pod, so it is refused.
+    """
     try:
         distribution = importlib_metadata.distribution(package_name)
     except importlib_metadata.PackageNotFoundError as exc:
-        raise RuntimeError(
-            f"installed distribution metadata for {package_name} is required"
-        ) from exc
+        raise RuntimeError(f"installed distribution metadata for {package_name} is required") from exc
 
-    direct_url_text = distribution.read_text("direct_url.json")
+    direct_url_text = distribution.read_text(DIRECT_URL_FILE)
     if not direct_url_text:
-        raise RuntimeError(
-            f"installed distribution metadata for {package_name} is missing direct_url.json"
-        )
+        version = (distribution.version or "").strip()
+        if not version:
+            raise RuntimeError(f"installed distribution metadata for {package_name} has no version")
+        return PackageSource(kind="index", reference=version, requirement=f"{package_name}=={version}")
 
     try:
         direct_url = json.loads(direct_url_text)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"installed distribution metadata for {package_name} has invalid direct_url.json"
-        ) from exc
+        raise RuntimeError(f"installed distribution metadata for {package_name} has invalid {DIRECT_URL_FILE}") from exc
 
-    commit_id = direct_url.get("vcs_info", {}).get("commit_id")
-    if not isinstance(commit_id, str) or not commit_id.strip():
+    url = direct_url.get("url")
+    vcs_info = direct_url.get("vcs_info")
+    if not isinstance(vcs_info, dict):
         raise RuntimeError(
-            f"installed distribution metadata for {package_name} is missing vcs_info.commit_id"
+            f"{package_name} was installed from {url or 'a local path'}, which its runtimes cannot install "
+            "from: install the control plane from a git repository or from a package index"
         )
-    return commit_id.strip()
+    commit_id = vcs_info.get("commit_id")
+    if not isinstance(commit_id, str) or not commit_id.strip() or not isinstance(url, str) or not url.strip():
+        raise RuntimeError(f"installed distribution metadata for {package_name} is missing vcs_info.commit_id or url")
+    commit = commit_id.strip()
+    requirement = f"{vcs_info.get('vcs') or 'git'}+{url.strip()}@{commit}#egg={package_name}"
+    subdirectory = direct_url.get("subdirectory")
+    if isinstance(subdirectory, str) and subdirectory.strip():
+        requirement += f"&subdirectory={subdirectory.strip()}"
+    return PackageSource(kind="git", reference=commit, requirement=requirement)
+
+
+def get_installed_package_revision(package_name: str = PACKAGE_DISTRIBUTION_NAME) -> str:
+    """The exact revision of the running package: its git commit, or its version from an index."""
+    return installed_package_source(package_name).reference
 
 
 def _default_runtime_spec(config: ControlPlaneConfig) -> dict[str, Any]:
@@ -344,10 +376,16 @@ def _runtime_scale_spec(materialization: Materialization, *, scaled_to_zero: boo
     }
 
 
-def _pin_runtime_package_revision(
+def _pin_runtime_package(
     runtime_spec: dict[str, Any],
-    package_revision: str,
+    requirement: str,
 ) -> dict[str, Any]:
+    """Make the runtime install exactly the package the control plane runs.
+
+    The deployment's runtime spec names this distribution however it installs it - a git URL at a
+    branch, `midstream==<version>`, or just `midstream` - and every such entry becomes the exact
+    requirement; the rest of `pythonPackages` (an index, its credentials, the cache) stays as given.
+    """
     normalized = _merge_runtime_spec({}, runtime_spec)
     python_packages = normalized.get("pythonPackages")
     if not isinstance(python_packages, dict):
@@ -360,32 +398,27 @@ def _pin_runtime_package_revision(
     package_pinned = False
     if isinstance(packages, list):
         for package in packages:
-            if _is_runtime_distribution_package(package):
-                resolved_packages.append(_runtime_distribution_package_ref(package_revision))
+            if _names_this_distribution(package):
+                resolved_packages.append(requirement)
                 package_pinned = True
             else:
                 resolved_packages.append(package)
     if not package_pinned:
-        resolved_packages.insert(0, _runtime_distribution_package_ref(package_revision))
+        resolved_packages.insert(0, requirement)
 
     python_packages["packages"] = resolved_packages
     normalized["pythonPackages"] = python_packages
     return normalized
 
 
-def _is_runtime_distribution_package(package: Any) -> bool:
-    return (
-        isinstance(package, str)
-        and f"#egg={PACKAGE_DISTRIBUTION_NAME}" in package
-        and "subdirectory=python" in package
-    )
+_PLAIN_REQUIREMENT = re.compile(rf"^\s*{PACKAGE_DISTRIBUTION_NAME}\s*(?:[\[=<>!~;].*)?$", re.IGNORECASE)
 
 
-def _runtime_distribution_package_ref(package_revision: str) -> str:
-    return (
-        f"{PACKAGE_REPOSITORY_URL}@{package_revision}"
-        f"#egg={PACKAGE_DISTRIBUTION_NAME}&subdirectory=python"
-    )
+def _names_this_distribution(package: Any) -> bool:
+    """Whether a `pythonPackages` entry installs this distribution, from git or from an index."""
+    if not isinstance(package, str):
+        return False
+    return f"#egg={PACKAGE_DISTRIBUTION_NAME}" in package or _PLAIN_REQUIREMENT.match(package) is not None
 
 
 def _to_yaml(value: Any, indent: int) -> str:

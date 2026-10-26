@@ -10,6 +10,7 @@ legitimately differ:
 | Control plane | `python/pyproject.toml` | `GET /system/version` |
 | Runtime (per materialization) | `python/pyproject.toml` — same distribution | its status events → `status.runtime_version` |
 | Web console | `console/package.json` | `GET /api/config` → `version` |
+| Helm chart | `charts/midstream/Chart.yaml` (`version` and `appVersion`) | `helm list` |
 
 The control plane and every runtime app are the **same Python distribution**, so one number
 describes the code both execute. They still report separately because a runtime keeps serving the
@@ -45,8 +46,12 @@ Semantic versioning, per component:
 - **major** — anything an older peer cannot tolerate: a removed or renamed field, a changed event
   shape, a step whose meaning changed.
 
-To cut a release, bump the number in `pyproject.toml` or `package.json` and rebuild. Nothing else
-needs editing — every reporting path derives from those files.
+The four files declare one version, SemVer where SemVer is spoken and PEP 440 in `pyproject.toml`
+(`1.0.0-rc.1` is `1.0.0rc1`); `tools/version.py check` fails CI when they disagree. To cut a release:
+`tools/version.py set 1.2.0`, commit, tag `v1.2.0` and push the tag. The release workflow
+(`.github/workflows/release.yml`) checks the tag against the declared version, runs the tests, and
+publishes the Python package to PyPI, the console image and the chart to GHCR, and a GitHub release;
+a pre-release tag such as `v1.2.0-rc.1` publishes a pre-release and no `latest` image.
 
 ### What "major" means here
 

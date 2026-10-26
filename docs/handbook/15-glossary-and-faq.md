@@ -573,7 +573,7 @@ runtime tests through `runtime_support.RuntimeHarness`.
 `ControlPlaneConfig(...)` or `RuntimeAppConfig(...)` directly; `get_config()` is cached.
 
 **Why can I not render a runtime spec locally?**
-Package pinning raises `RuntimeError` on editable installs ([13 §13.5](./13-testing-and-development.md)).
+Package pinning raises `RuntimeError` on editable installs, which no pod could repeat ([13 §13.5](./13-testing-and-development.md)).
 
 **I renamed a topic and things broke.**
 Topic names live in `config.py` and the chart's templates, derived from the release; see

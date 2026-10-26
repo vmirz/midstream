@@ -281,8 +281,8 @@ print(spec_hash(rendered))
 ```
 
 `iter_rendered_resources` flattens the render in apply order (app → table → agents → tasks).
-Rendering resolves the package pin, which raises `RuntimeError` for an install without a VCS
-`direct_url.json` (an editable install, say; 10 §10.13).
+Rendering resolves the package pin, which raises `RuntimeError` for a local install (an editable
+checkout, say; 10 §10.13): patch `installed_package_source` as the tests do.
 
 ## 13.6 Changes that require a matched update elsewhere
 
