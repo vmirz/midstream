@@ -55,6 +55,7 @@ import type {
   TableView,
   TimeRange,
   TopicCatalogResponse,
+  SsoOutcome,
 } from '@shared/types';
 
 type SessionListener = () => void;
@@ -180,6 +181,8 @@ export const api = {
   session: () => request<ConsoleSession>('/api/auth/session'),
   /** Sign out of every domain this browser has a session in. */
   signOutEverywhere: () => request<{ signed_out: boolean; domains: string[] }>('/api/auth/logout', { method: 'POST', body: '{}' }),
+  /** What a sign-in through a provider did in each domain; kept a few minutes after it. */
+  ssoOutcome: (id: string) => request<SsoOutcome>(`/api/auth/sso/outcomes/${encodeURIComponent(id)}`),
   /** Every domain's fleet, as this person may see each. */
   fleet: () => request<ConsoleFleet>('/api/fleet'),
   /** Materializations, tables and datasets across every domain this person may see. */

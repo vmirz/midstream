@@ -141,6 +141,26 @@ const deployment = {
    * by the ingress, so it is Secure behind TLS and still works on http://localhost.
    */
   cookieSecure: str('CONSOLE_COOKIE_SECURE', 'auto'),
+
+  /**
+   * Single sign-on (handbook 20): this console's registration with each provider. A provider with a
+   * client id and secret is offered on the sign-in page; each domain decides whether it accepts
+   * people from it. The secrets come from Secrets and are never shown.
+   */
+  ssoEntraTenantId: optional('CONSOLE_SSO_ENTRA_TENANT_ID'),
+  ssoEntraClientId: optional('CONSOLE_SSO_ENTRA_CLIENT_ID'),
+  ssoEntraClientSecret: optional('CONSOLE_SSO_ENTRA_CLIENT_SECRET'),
+  ssoGithubClientId: optional('CONSOLE_SSO_GITHUB_CLIENT_ID'),
+  ssoGithubClientSecret: optional('CONSOLE_SSO_GITHUB_CLIENT_SECRET'),
+  ssoGoogleClientId: optional('CONSOLE_SSO_GOOGLE_CLIENT_ID'),
+  ssoGoogleClientSecret: optional('CONSOLE_SSO_GOOGLE_CLIENT_SECRET'),
+  /** A Google Workspace domain the account chooser is limited to; each domain still checks its own. */
+  ssoGoogleHostedDomain: optional('CONSOLE_SSO_GOOGLE_HOSTED_DOMAIN'),
+  ssoOidcIssuer: optional('CONSOLE_SSO_OIDC_ISSUER')?.replace(/\/+$/, '') || null,
+  ssoOidcClientId: optional('CONSOLE_SSO_OIDC_CLIENT_ID'),
+  ssoOidcClientSecret: optional('CONSOLE_SSO_OIDC_CLIENT_SECRET'),
+  ssoOidcLabel: optional('CONSOLE_SSO_OIDC_LABEL'),
+  ssoOidcScopes: str('CONSOLE_SSO_OIDC_SCOPES', 'openid email profile'),
 };
 
 /**

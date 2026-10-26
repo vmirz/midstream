@@ -41,6 +41,11 @@ DIRECTORY_ACTIONS = (
     "update_dataset",
     "delete_dataset",
     "set_dataset_grant",
+    # A sign-in through an identity provider (handbook 20): linking the provider's account to the
+    # person with its email, or making an account for someone this domain has never seen. Each also
+    # records the sign-in, as `sign_in_succeeded` does.
+    "link_identity",
+    "provision_user",
     # Claiming the names a materialization's new tables take in their datasets: sent by request
     # intake, never by the API, and answered to the workflow as well as to whoever waits on it.
     "claim_tables",
@@ -142,7 +147,8 @@ class User:
     """A person who can sign in.
 
     `email` is how they sign in and is unique, without regard to case; `user_id` never changes, so
-    it is what everything else refers to. `group_ids` holds the groups they were added to; every
+    it is what everything else refers to. `last_name` is empty only for someone an identity provider
+    gave a single name. `group_ids` holds the groups they were added to; every
     signed-in person is also in All Users. `session_epoch` rises whenever all their sessions must
     end, and a session issued under an older epoch is refused.
     """
@@ -165,7 +171,7 @@ class User:
     deactivated_by: str | None = None
 
     def __post_init__(self) -> None:
-        _require(self, "user_id", "email", "first_name", "last_name", "created_at", "created_by")
+        _require(self, "user_id", "email", "first_name", "created_at", "created_by")
         _require(self, "updated_at", "updated_by")
         _choice("status", self.status, USER_STATUSES)
         if self.session_epoch < 0:

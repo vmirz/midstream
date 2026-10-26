@@ -86,6 +86,18 @@ PASSWORD_MIN_LENGTH = 12
 SIGN_IN_MAX_FAILED_ATTEMPTS = 10
 SIGN_IN_LOCKOUT_MINUTES = 15
 AUDIT_LOG_RETENTION_DAYS = 90
+# Single sign-on (handbook 20): which providers this domain accepts sign-ins from - each also needs
+# the deployment to configure it (`AUTH_SSO_*`) - what it does the first time someone it has never
+# seen signs in, which email domains may sign in through a provider, and whether people may sign in
+# with a password at all (administrators always may).
+SSO_FIRST_SIGN_IN_POLICIES = ("open", "invited")
+SSO_ENTRA_ENABLED = False
+SSO_GITHUB_ENABLED = False
+SSO_GOOGLE_ENABLED = False
+SSO_OIDC_ENABLED = False
+SSO_FIRST_SIGN_IN = "open"
+SSO_ALLOWED_EMAIL_DOMAINS = ""
+PASSWORD_SIGN_IN_ENABLED = True
 # The live tail (handbook 19): the newest records of a materialization's tables, served from Kafka
 # by the tail app before they are committed. Every materialization has one; `LIVE_TAIL_ENABLED` is
 # the deployment's switch, for all of them. The rest travel with the tail app's
@@ -123,6 +135,40 @@ def normalize_destination_uri(value: str | None) -> str | None:
     if not trimmed:
         return None
     return trimmed.rstrip("/") or trimmed
+
+
+#: One email domain: labels of letters, digits and hyphens, at least two of them.
+EMAIL_DOMAIN_PATTERN = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+#: The most email domains one list may hold.
+MAX_EMAIL_DOMAINS = 50
+
+
+def normalize_email_domains(value: str | None) -> str:
+    """A list of email domains in its stored form: lowercase, comma-separated, each once.
+
+    Commas or whitespace separate them; a leading `@` is dropped. Empty means every domain. Raises
+    `ValueError` naming the first that is not a domain name.
+    """
+    domains: list[str] = []
+    for part in re.split(r"[,\s]+", (value or "").strip().lower()):
+        domain = part.lstrip("@").rstrip(".")
+        if not domain:
+            continue
+        if not EMAIL_DOMAIN_PATTERN.match(domain):
+            raise ValueError(f"{part} is not an email domain such as example.com")
+        if domain not in domains:
+            domains.append(domain)
+    if len(domains) > MAX_EMAIL_DOMAINS:
+        raise ValueError(f"at most {MAX_EMAIL_DOMAINS} email domains")
+    return ",".join(domains)
+
+
+def email_domain_allowed(email: str, allowed: str) -> bool:
+    """Whether an email's domain is among `allowed` (the stored form), or `allowed` is empty."""
+    if not allowed:
+        return True
+    domain = email.rsplit("@", 1)[-1].lower()
+    return domain in allowed.split(",")
 
 
 def normalize_list_limit(limit: str | None) -> str:
@@ -195,6 +241,14 @@ class ControlPlaneConfig:
     sign_in_max_failed_attempts: int = SIGN_IN_MAX_FAILED_ATTEMPTS
     sign_in_lockout_minutes: int = SIGN_IN_LOCKOUT_MINUTES
     audit_log_retention_days: int = AUDIT_LOG_RETENTION_DAYS
+    sso_entra_enabled: bool = SSO_ENTRA_ENABLED
+    sso_github_enabled: bool = SSO_GITHUB_ENABLED
+    sso_google_enabled: bool = SSO_GOOGLE_ENABLED
+    sso_oidc_enabled: bool = SSO_OIDC_ENABLED
+    sso_first_sign_in: str = SSO_FIRST_SIGN_IN
+    #: Comma-separated, in the form `normalize_email_domains` gives; empty for every domain.
+    sso_allowed_email_domains: str = SSO_ALLOWED_EMAIL_DOMAINS
+    password_sign_in_enabled: bool = PASSWORD_SIGN_IN_ENABLED
     live_tail_enabled: bool = LIVE_TAIL_ENABLED
     live_tail_max_rows_per_table: int = LIVE_TAIL_MAX_ROWS_PER_TABLE
     live_tail_max_bytes_per_table: int = LIVE_TAIL_MAX_BYTES_PER_TABLE
@@ -209,6 +263,8 @@ class ControlPlaneConfig:
             raise ValueError(
                 "default_partition_granularity must be one of: " + ", ".join(PARTITION_GRANULARITIES)
             )
+        if self.sso_first_sign_in not in SSO_FIRST_SIGN_IN_POLICIES:
+            raise ValueError("sso_first_sign_in must be one of: " + ", ".join(SSO_FIRST_SIGN_IN_POLICIES))
 
     def runtime_name_for_materialization(self, materialization_id: str) -> str:
         """The name of a materialization's dedicated runtime: always generated, never chosen."""
@@ -498,6 +554,24 @@ def get_config() -> ControlPlaneConfig:
             minimum=1,
             name="CONTROL_PLANE_AUDIT_LOG_RETENTION_DAYS",
         ),
+        sso_entra_enabled=_parse_bool_env(os.getenv("CONTROL_PLANE_SSO_ENTRA_ENABLED"), default=SSO_ENTRA_ENABLED),
+        sso_github_enabled=_parse_bool_env(os.getenv("CONTROL_PLANE_SSO_GITHUB_ENABLED"), default=SSO_GITHUB_ENABLED),
+        sso_google_enabled=_parse_bool_env(os.getenv("CONTROL_PLANE_SSO_GOOGLE_ENABLED"), default=SSO_GOOGLE_ENABLED),
+        sso_oidc_enabled=_parse_bool_env(os.getenv("CONTROL_PLANE_SSO_OIDC_ENABLED"), default=SSO_OIDC_ENABLED),
+        sso_first_sign_in=_parse_choice_env(
+            os.getenv("CONTROL_PLANE_SSO_FIRST_SIGN_IN"),
+            default=SSO_FIRST_SIGN_IN,
+            choices=SSO_FIRST_SIGN_IN_POLICIES,
+            name="CONTROL_PLANE_SSO_FIRST_SIGN_IN",
+        ),
+        sso_allowed_email_domains=_parse_email_domains_env(
+            os.getenv("CONTROL_PLANE_SSO_ALLOWED_EMAIL_DOMAINS"),
+            name="CONTROL_PLANE_SSO_ALLOWED_EMAIL_DOMAINS",
+        ),
+        password_sign_in_enabled=_parse_bool_env(
+            os.getenv("CONTROL_PLANE_PASSWORD_SIGN_IN_ENABLED"),
+            default=PASSWORD_SIGN_IN_ENABLED,
+        ),
         live_tail_enabled=_parse_bool_env(
             os.getenv("CONTROL_PLANE_LIVE_TAIL_ENABLED"),
             default=LIVE_TAIL_ENABLED,
@@ -581,6 +655,22 @@ def _parse_bool_env(raw_value: str | None, *, default: bool) -> bool:
         "boolean environment values must be one of: "
         "1, 0, true, false, yes, no, on, off"
     )
+
+
+def _parse_choice_env(raw_value: str | None, *, default: str, choices: tuple[str, ...], name: str) -> str:
+    if raw_value is None or not raw_value.strip():
+        return default
+    value = raw_value.strip().lower()
+    if value not in choices:
+        raise ValueError(f"{name} must be one of: {', '.join(choices)}")
+    return value
+
+
+def _parse_email_domains_env(raw_value: str | None, *, name: str) -> str:
+    try:
+        return normalize_email_domains(raw_value)
+    except ValueError as error:
+        raise ValueError(f"{name}: {error}") from error
 
 
 def _parse_int_env(

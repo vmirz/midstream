@@ -437,6 +437,40 @@ function consoleDeployment(): DeploymentSettingView[] {
     entry('serveClient', 'Serves the web app', config.serveClient, 'CONSOLE_SERVE_CLIENT'),
     entry('sessionCookieName', 'Session cookies', `${config.sessionCookieName}_<domain>`, 'CONSOLE_SESSION_COOKIE', 'One per domain. Renaming them signs everyone out.'),
     entry(
+      'ssoEntra',
+      'Microsoft Entra ID',
+      config.ssoEntraTenantId && config.ssoEntraClientId && config.ssoEntraClientSecret
+        ? `tenant ${config.ssoEntraTenantId}, client ${config.ssoEntraClientId}, secret configured`
+        : 'not configured',
+      'CONSOLE_SSO_ENTRA_TENANT_ID, CONSOLE_SSO_ENTRA_CLIENT_ID, CONSOLE_SSO_ENTRA_CLIENT_SECRET',
+      'This console\'s app registration; each domain accepts it only with the same tenant and client (auth.sso.entra) and its Sign-in setting on.',
+    ),
+    entry(
+      'ssoGithub',
+      'GitHub',
+      config.ssoGithubClientId && config.ssoGithubClientSecret ? `client ${config.ssoGithubClientId}, secret configured` : 'not configured',
+      'CONSOLE_SSO_GITHUB_CLIENT_ID, CONSOLE_SSO_GITHUB_CLIENT_SECRET',
+      'This console\'s GitHub App. Each domain needs its client id and secret too, to check that a token was issued to it.',
+    ),
+    entry(
+      'ssoGoogle',
+      'Google',
+      config.ssoGoogleClientId && config.ssoGoogleClientSecret
+        ? `client ${config.ssoGoogleClientId}, secret configured${config.ssoGoogleHostedDomain ? `, hosted domain ${config.ssoGoogleHostedDomain}` : ''}`
+        : 'not configured',
+      'CONSOLE_SSO_GOOGLE_CLIENT_ID, CONSOLE_SSO_GOOGLE_CLIENT_SECRET, CONSOLE_SSO_GOOGLE_HOSTED_DOMAIN',
+      'This console\'s OAuth client at Google.',
+    ),
+    entry(
+      'ssoOidc',
+      config.ssoOidcLabel ? `Single sign-on (${config.ssoOidcLabel})` : 'Other single sign-on',
+      config.ssoOidcIssuer && config.ssoOidcClientId && config.ssoOidcClientSecret
+        ? `${config.ssoOidcIssuer}, client ${config.ssoOidcClientId}, secret configured`
+        : 'not configured',
+      'CONSOLE_SSO_OIDC_ISSUER, CONSOLE_SSO_OIDC_CLIENT_ID, CONSOLE_SSO_OIDC_CLIENT_SECRET',
+      'An OpenID Connect issuer this console signs people in with: Okta, Keycloak, Auth0, Dex or any other.',
+    ),
+    entry(
       'cookieSecure',
       'Secure cookie',
       config.cookieSecure,

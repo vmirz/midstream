@@ -8,7 +8,7 @@ metadata:
     kaspr.io/app: {{ include "midstream.controlPlane" . }}
 spec:
   name: auth-login
-  description: "Check an email and password and start a session; records the sign-in or the failed attempt."
+  description: "Start a session, with a password or an identity provider's sign-in; records the sign-in or the failed attempt, and waits for an account a first sign-in makes."
   request:
     method: POST
     path: /auth/login
@@ -16,6 +16,7 @@ spec:
     pipeline:
       - sign-in
       - send-identity-request
+      - await-account
       - return-response
     operations:
       - name: sign-in
@@ -53,6 +54,17 @@ spec:
             python: |
               def select_value(value):
                   return value["request_event"]
+      - name: await-account
+        tables:
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+        map:
+          entrypoint: await_account
+          python: |
+            from midstream.web.auth import await_provisioned
+
+            async def await_account(value, directory_table):
+                return await await_provisioned(directory_table, value)
       - name: return-response
         map:
           python: |

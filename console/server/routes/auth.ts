@@ -10,6 +10,7 @@ import { authIn, authOf, callerOf, clearSessionCookie, domainOf, permitAnywhere,
 import { waitForOutcome, refusal } from '../auth/outcomes.ts';
 import { forgetAllSessions, forgetSession, guestAuth, rememberSession } from '../auth/principal.ts';
 import { AttemptLimiter } from '../auth/rateLimit.ts';
+import { ssoProviders } from '../auth/sso.ts';
 import { parseBody } from './materializations.ts';
 import { TOKEN_PERMISSIONS, type AuthState, type ConsoleSession, type CpAccessTokenList, type CpAuthSession, type CpMySessions, type DomainAuth } from '../../shared/types.ts';
 
@@ -55,7 +56,7 @@ export async function registerConsoleAuthRoutes(app: FastifyInstance): Promise<v
       // A session that cannot be checked right now is neither confirmed nor ended.
       sessions[domain.id] = auth.error && auth.token ? { state: null, error: auth.error.message } : { state: auth.state, error: null };
     }
-    return { domains: sessions, providers: [] };
+    return { domains: sessions, providers: ssoProviders() };
   });
 
   /** Sign out of every domain this browser has a session in. */

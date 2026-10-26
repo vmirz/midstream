@@ -97,6 +97,8 @@ interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   signal?: AbortSignal;
+  /** How long to wait for an answer, when not the console's usual timeout. */
+  timeoutMs?: number;
 }
 
 const FORWARDED_LIMIT = 256;
@@ -155,7 +157,7 @@ export class ControlPlaneClient {
 
   private async send(caller: Caller, path: string, options: RequestOptions): Promise<{ status: number; payload: unknown }> {
     const { method = 'GET', body, signal } = options;
-    const timeout = AbortSignal.timeout(config.controlPlaneTimeoutMs);
+    const timeout = AbortSignal.timeout(options.timeoutMs ?? config.controlPlaneTimeoutMs);
     const composed = signal ? AbortSignal.any([signal, timeout]) : timeout;
 
     let response: Response;
@@ -334,6 +336,14 @@ export class ControlPlaneClient {
   /** Check an email and password. 200 carries the session token; other statuses say why not. */
   login(caller: Caller, input: { email: string; password: string }): Promise<CpRawResponse<CpAuthSession>> {
     return this.raw<CpAuthSession>(caller, '/auth/login', { method: 'POST', body: input });
+  }
+
+  /**
+   * Hand the domain what a sign-in provider vouched for (handbook 20); it checks it itself. A first
+   * sign-in waits there while the account is made, so this waits longer than other calls.
+   */
+  ssoLogin(caller: Caller, input: { provider: string; credential: Record<string, string>; nonce: string | null }): Promise<CpRawResponse<CpAuthSession>> {
+    return this.raw<CpAuthSession>(caller, '/auth/login', { method: 'POST', body: input, timeoutMs: Math.max(config.controlPlaneTimeoutMs, 25_000) });
   }
 
   /** Who the caller's session belongs to, or a guest; never refuses. */

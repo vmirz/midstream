@@ -15,12 +15,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from midstream.config import PARTITION_GRANULARITIES, is_gcs_destination_uri, normalize_destination_uri
+from midstream.config import (
+    PARTITION_GRANULARITIES,
+    SSO_FIRST_SIGN_IN_POLICIES,
+    is_gcs_destination_uri,
+    normalize_destination_uri,
+    normalize_email_domains,
+)
 from midstream.runtime_app.live_settings import LIVE_SETTING_ENV_VARS
 from midstream.scale import InvalidScaleError, normalize_storage_size
 
 #: Value kinds a catalog setting can have. The console renders a control for each.
-SETTING_KINDS = ("boolean", "integer", "gcs_uri", "quantity", "enum")
+SETTING_KINDS = ("boolean", "integer", "gcs_uri", "quantity", "enum", "domain_list")
 
 
 
@@ -438,6 +444,90 @@ CONTROL_PLANE_SETTINGS: tuple[SettingDefinition, ...] = (
             "Log one structured line per control-plane protocol event, such as a work step "
             "completing or a table being created."
         ),
+    ),
+    _cp(
+        "sso_entra_enabled",
+        section="sign-in",
+        label="Microsoft Entra ID",
+        kind="boolean",
+        description=(
+            "Lets people sign in with their Microsoft work account. The deployment must configure "
+            "Entra ID first (auth.sso.entra): until it does, turning this on does nothing. Turning it "
+            "off stops new sign-ins through Microsoft; sessions already started run to their end."
+        ),
+        effect="new sign-ins",
+    ),
+    _cp(
+        "sso_github_enabled",
+        section="sign-in",
+        label="GitHub",
+        kind="boolean",
+        description=(
+            "Lets people sign in with their GitHub account, by its primary verified email. The "
+            "deployment must configure the GitHub App first (auth.sso.github)."
+        ),
+        effect="new sign-ins",
+    ),
+    _cp(
+        "sso_google_enabled",
+        section="sign-in",
+        label="Google",
+        kind="boolean",
+        description=(
+            "Lets people sign in with their Google account, within the hosted domains the deployment "
+            "names, if any. The deployment must configure Google first (auth.sso.google)."
+        ),
+        effect="new sign-ins",
+    ),
+    _cp(
+        "sso_oidc_enabled",
+        section="sign-in",
+        label="Other single sign-on",
+        kind="boolean",
+        description=(
+            "Lets people sign in through the OpenID Connect provider the deployment configures "
+            "(auth.sso.oidc): Okta, Keycloak, Auth0, Dex or any other."
+        ),
+        effect="new sign-ins",
+    ),
+    _cp(
+        "sso_first_sign_in",
+        section="sign-in",
+        label="First sign-in",
+        kind="enum",
+        options=SSO_FIRST_SIGN_IN_POLICIES,
+        description=(
+            "What happens when someone this domain has never seen signs in through a provider. open "
+            "makes them an account in All Users, which holds Viewer and reads every dataset made with "
+            "the default grant. invited refuses them until an administrator adds their account, by "
+            "their email. Someone this domain already knows signs in to their account either way."
+        ),
+        effect="new sign-ins",
+    ),
+    _cp(
+        "sso_allowed_email_domains",
+        section="sign-in",
+        label="Allowed email domains",
+        kind="domain_list",
+        nullable=True,
+        description=(
+            "Only people whose email is in one of these domains, such as example.com, may sign in "
+            "through a provider. Empty, any email a provider vouches for may. Password sign-in is "
+            "not affected."
+        ),
+        effect="new sign-ins",
+    ),
+    _cp(
+        "password_sign_in_enabled",
+        section="sign-in",
+        label="Password sign-in",
+        kind="boolean",
+        danger=True,
+        description=(
+            "Whether people may sign in with an email and password. Off, only administrators may, "
+            "so the first administrator can always get in; everyone else signs in through a provider."
+        ),
+        effect="new sign-ins",
     ),
     _cp(
         "session_idle_timeout_minutes",
@@ -1159,6 +1249,51 @@ DEPLOYMENT_SETTINGS: tuple[DeploymentSetting, ...] = (
         "as the console's CONSOLE_SERVICE_TOKEN.",
     ),
     DeploymentSetting(
+        "auth_federation_key",
+        "control-plane",
+        "Federation key",
+        "AUTH_FEDERATION_KEY, AUTH_PREVIOUS_FEDERATION_KEY",
+        "Signs access tokens, with the same value in every domain, so a token made in one is good in "
+        "the others; set from a Secret. Shown by its id, the start of its SHA-256.",
+    ),
+    DeploymentSetting(
+        "domain",
+        "control-plane",
+        "Domain",
+        "DOMAIN_ID, DOMAIN_NAME",
+        "This deployment's domain: its id is its URL segment in the shared console, its catalog in SQL "
+        "and its level of the federated catalog's namespaces.",
+    ),
+    DeploymentSetting(
+        "sso_entra",
+        "control-plane",
+        "Microsoft Entra ID",
+        "AUTH_SSO_ENTRA_TENANT_ID, AUTH_SSO_ENTRA_CLIENT_ID",
+        "The tenant and the console's app registration ID tokens must come from. Turned on or off on "
+        "the Sign-in section.",
+    ),
+    DeploymentSetting(
+        "sso_github",
+        "control-plane",
+        "GitHub",
+        "AUTH_SSO_GITHUB_CLIENT_ID, AUTH_SSO_GITHUB_CLIENT_SECRET",
+        "The console's GitHub App, whose secret checks that a token was issued to it.",
+    ),
+    DeploymentSetting(
+        "sso_google",
+        "control-plane",
+        "Google",
+        "AUTH_SSO_GOOGLE_CLIENT_ID, AUTH_SSO_GOOGLE_HOSTED_DOMAINS",
+        "The console's OAuth client, and the Google Workspace domains people must belong to, if any.",
+    ),
+    DeploymentSetting(
+        "sso_oidc",
+        "control-plane",
+        "Other single sign-on",
+        "AUTH_SSO_OIDC_ISSUER, AUTH_SSO_OIDC_CLIENT_ID",
+        "The OpenID Connect issuer and the console's client there.",
+    ),
+    DeploymentSetting(
         "bootstrap_admin_email",
         "control-plane",
         "First administrator",
@@ -1259,6 +1394,15 @@ def coerce_setting_value(definition: SettingDefinition, raw: Any) -> Any:
                 key=key,
             )
         return raw
+    if definition.kind == "domain_list":
+        if raw is None:
+            return ""
+        if not isinstance(raw, str):
+            raise SettingValueError(f"{definition.label} must be email domains separated by commas", key=key)
+        try:
+            return normalize_email_domains(raw)
+        except ValueError as error:
+            raise SettingValueError(f"{definition.label}: {error}", key=key) from error
     if definition.kind == "quantity":
         if raw in (None, ""):
             raise SettingValueError(f"{definition.label} is required", key=key)

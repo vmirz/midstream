@@ -157,13 +157,17 @@ class SettingsCatalogTests(unittest.TestCase):
             "integer": ("7", 7),
             "gcs_uri": ("gs://lake/root/", "gs://lake/root"),
             "quantity": ("4Gi", "4Gi"),
-            "enum": ("hour", "hour"),
+            "domain_list": ("Example.com, @corp.example.org", "example.com,corp.example.org"),
         }
         config_fields = {item.name for item in fields(ControlPlaneConfig)}
         for definition in CONTROL_PLANE_SETTINGS:
             with self.subTest(key=definition.key):
                 self.assertIn(definition.key, config_fields)
-                raw, expected = samples[definition.kind]
+                if definition.kind == "enum":
+                    # The last option, which no enum here has as its default.
+                    raw = expected = (definition.options or ("",))[-1]
+                else:
+                    raw, expected = samples[definition.kind]
                 if definition.kind == "integer" and definition.minimum is not None and definition.minimum > expected:
                     raw, expected = str(definition.minimum), definition.minimum
                 get_config.cache_clear()

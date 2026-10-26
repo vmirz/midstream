@@ -13,6 +13,7 @@ from typing import Any
 from uuid import uuid4
 
 from midstream.config import ControlPlaneConfig, get_config
+from midstream.identity.providers import get_provider_settings
 from midstream.identity.secrets import get_identity_secrets
 from midstream.models import SETTINGS_SCOPES, SettingFallback, SettingsChangeRequest
 from midstream.observation.progress import MEMBER_STATE_FRESHNESS_SECONDS
@@ -311,6 +312,18 @@ def _deployment_value(key: str, config: ControlPlaneConfig, runtime: Any) -> Any
         if key == "auth_service_token":
             return "configured" if secrets.service_token else "not configured"
         return "configured" if secrets.bootstrap_admin is not None else "not configured"
+    if key == "auth_federation_key":
+        secrets = get_identity_secrets()
+        current = secrets.current_federation_key
+        if current is None:
+            return "not configured: no access token can be made or checked"
+        return f"{current.key_id}, with a previous key" if len(secrets.federation_keys) > 1 else current.key_id
+    if key == "domain":
+        if config.domain_id is None:
+            return "none: not part of a shared console"
+        return f"{config.domain_name} ({config.domain_id})"
+    if key.startswith("sso_"):
+        return _describe_provider(key[len("sso_"):])
     if key == "package_revision":
         try:
             return get_installed_package_revision()
@@ -329,6 +342,21 @@ def _deployment_value(key: str, config: ControlPlaneConfig, runtime: Any) -> Any
         return getattr(runtime, key, None)
     value = getattr(config, key, None)
     return value
+
+
+def _describe_provider(provider: str) -> str:
+    """How the deployment configured an identity provider; never a secret."""
+    settings = get_provider_settings()
+    if not settings.configured(provider):
+        return "not configured"
+    if provider == "entra":
+        return f"tenant {settings.entra_tenant_id}, client {settings.entra_client_id}"
+    if provider == "github":
+        return f"client {settings.github_client_id}, secret configured"
+    if provider == "google":
+        hosted = ", ".join(settings.google_hosted_domains) or "any"
+        return f"client {settings.google_client_id}, hosted domains: {hosted}"
+    return f"{settings.oidc_issuer}, client {settings.oidc_client_id}"
 
 
 def _describe_resources(resources: Any) -> str | None:

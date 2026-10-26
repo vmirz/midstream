@@ -166,7 +166,9 @@ def authenticate(
         issued_at=claims.issued_at,
         signed_in_at=claims.signed_in_at,
         sign_in_method=claims.method,
-        password_change_required=user.must_change_password,
+        # A password someone else chose is replaced before it is used again; a session started
+        # through an identity provider never used it.
+        password_change_required=user.must_change_password and claims.method == "password",
     )
 
 

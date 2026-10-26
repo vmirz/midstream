@@ -72,6 +72,7 @@ from midstream.models.identity import (
     ClaimRelease,
     Dataset,
     DatasetGrant,
+    ExternalIdentity,
     Group,
     IdentityRequest,
     IdentityRequestOutcome,
@@ -94,6 +95,7 @@ from midstream.storage.identity import (
     delete_dataset_grant,
     delete_dataset_name,
     delete_dataset_record,
+    delete_external_identity,
     delete_group_record,
     delete_request_outcome,
     delete_role_record,
@@ -104,6 +106,7 @@ from midstream.storage.identity import (
     delete_user_email,
     delete_user_record,
     find_user_by_email,
+    find_user_by_external_identity,
     get_access_token,
     get_claim_release,
     get_directory_state,
@@ -129,6 +132,7 @@ from midstream.storage.identity import (
     save_dataset_grant,
     save_dataset_name,
     save_directory_state,
+    save_external_identity,
     save_group,
     save_request_outcome,
     save_role,
@@ -749,6 +753,8 @@ def _delete_user(work: _Work) -> _Applied:
         delete_dataset_grant(work.table, grant.dataset_id, grant.principal_type, grant.principal_id)
     delete_user_record(work.table, target.user_id)
     delete_user_email(work.table, target.email)
+    for identity in target.external_identities:
+        delete_external_identity(work.table, identity.provider, identity.subject)
     delete_user_activity(work.table, target.user_id)
     delete_sign_in_guard(work.table, target.email)
     work.audit("user.deleted", target=target, details={"email": target.email, "name": target.display_name})
@@ -1023,11 +1029,19 @@ def _delete_role(work: _Work) -> _Applied:
 
 
 def _sign_in_succeeded(work: _Work) -> _Applied:
-    payload = work.payload
-    user = get_user(work.table, str(payload.get("user_id", "")))
-    session_id = payload.get("session_id")
-    if user is None or not isinstance(session_id, str) or not session_id:
+    user = get_user(work.table, str(work.payload.get("user_id", "")))
+    if user is None:
         return _Applied(directory_changed=False)
+    session_id = _record_sign_in(work, user)
+    return _Applied("session", session_id, directory_changed=False) if session_id else _Applied(directory_changed=False)
+
+
+def _record_sign_in(work: _Work, user: User) -> str | None:
+    """Record the session a sign-in started, and the person's activity; returns its id."""
+    payload = work.payload
+    session_id = payload.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        return None
     created_at = payload.get("created_at") or work.now
     save_session(
         work.table,
@@ -1062,12 +1076,120 @@ def _sign_in_succeeded(work: _Work) -> _Applied:
         actor_email=user.email,
         details={"method": payload.get("method") or "password"},
     )
-    return _Applied("session", session_id, directory_changed=False)
+    return session_id
+
+
+def _external_identity(work: _Work) -> ExternalIdentity:
+    provider = work.payload.get("provider")
+    subject = work.payload.get("subject")
+    if not isinstance(provider, str) or not provider or not isinstance(subject, str) or not subject or len(subject) > 256:
+        raise IdentityRejection("invalid", "A provider sign-in must name its provider and account.")
+    return ExternalIdentity(provider=provider, subject=subject)
+
+
+def _link_identity(work: _Work) -> _Applied:
+    """Link a provider's account to the person whose email it vouched for, and record the sign-in
+    (handbook 20). Nobody but the sign-in view sends it, having checked the provider's credential."""
+    identity = _external_identity(work)
+    user = _require_user(work)
+    if not user.active:
+        raise IdentityRejection("forbidden", "This account is deactivated.")
+    holder = find_user_by_external_identity(work.table, identity.provider, identity.subject)
+    if holder is not None and holder.user_id != user.user_id:
+        raise IdentityRejection("conflict", "That provider account already signs in as someone else.")
+    linked = identity not in user.external_identities
+    if linked:
+        user = replace(
+            user,
+            external_identities=[*user.external_identities, identity],
+            revision=user.revision + 1,
+            updated_at=work.now,
+            updated_by=f"sso:{identity.provider}",
+        )
+        save_user(work.table, user)
+        save_external_identity(work.table, identity.provider, identity.subject, user.user_id, updated_at=work.now)
+        work.audit(
+            "user.identity_linked",
+            target=user,
+            actor_id=user.user_id,
+            actor_email=user.email,
+            details={"provider": identity.provider},
+        )
+    _record_sign_in(work, user)
+    return _Applied("user", user.user_id, directory_changed=linked)
+
+
+def _provision_user(work: _Work) -> _Applied:
+    """Make an account for someone this domain has never seen, at their first provider sign-in, and
+    record the sign-in (handbook 20). Sent only by the sign-in view, under the `open` policy."""
+    identity = _external_identity(work)
+    payload = work.payload
+    user_id = clean_identifier(payload.get("user_id"), field="user_id")
+    email = clean_email(payload.get("email"))
+    first_name = clean_person_name(payload.get("first_name"), field="first_name", label="First name")
+    raw_last = payload.get("last_name")
+    last_name = clean_person_name(raw_last, field="last_name", label="Last name") if isinstance(raw_last, str) and raw_last.strip() else ""
+    view = work.view
+    existing = view.users.get(user_id)
+    if existing is not None:
+        # Two first sign-ins at once: the first made the account.
+        if identity not in existing.external_identities:
+            raise IdentityRejection("already_exists", "That account already exists.", field="user_id")
+        _record_sign_in(work, existing)
+        return _Applied("user", user_id, directory_changed=False)
+    if find_user_by_external_identity(work.table, identity.provider, identity.subject) is not None:
+        raise IdentityRejection("conflict", "That provider account already signs in as someone else.")
+    if view.user_by_email(email) is not None:
+        raise IdentityRejection(
+            "already_exists",
+            f"{email} was given an account a moment ago. Sign in again to use it.",
+            field="email",
+        )
+    creator = f"sso:{identity.provider}"
+    user = User(
+        user_id=user_id,
+        email=email,
+        first_name=first_name,
+        last_name=last_name,
+        external_identities=[identity],
+        created_at=work.now,
+        created_by=creator,
+        updated_at=work.now,
+        updated_by=creator,
+    )
+    save_user(work.table, user)
+    save_user_email(work.table, email, user_id, updated_at=work.now)
+    save_external_identity(work.table, identity.provider, identity.subject, user_id, updated_at=work.now)
+    work.audit(
+        "user.provisioned",
+        target=user,
+        actor_id=user_id,
+        actor_email=email,
+        details={"email": email, "name": user.display_name, "provider": identity.provider},
+    )
+    _record_sign_in(work, user)
+    return _Applied("user", user_id)
+
+
+#: Refusals where nothing was guessed: recorded in the audit log, never counted towards a lockout.
+_UNCOUNTED_REFUSALS = ("password_sign_in_disabled",)
 
 
 def _sign_in_failed(work: _Work) -> _Applied:
     email = normalize_email(str(work.payload.get("email") or ""))
     if not email:
+        return _Applied(directory_changed=False)
+    method = str(work.payload.get("method") or "password")
+    if method.startswith("sso:") or work.payload.get("reason") in _UNCOUNTED_REFUSALS:
+        user = find_user_by_email(work.table, email)
+        work.audit(
+            "session.sign_in_failed",
+            outcome="failure",
+            details={"reason": work.payload.get("reason") or "refused", "method": method},
+            target_type="user" if user is not None else "email",
+            target_id=user.user_id if user is not None else None,
+            target_label=_user_label(user) if user is not None else email,
+        )
         return _Applied(directory_changed=False)
     now = work.now_datetime
     guard = get_sign_in_guard(work.table, email) or SignInGuard(email=email)
@@ -1837,6 +1959,8 @@ _HANDLERS: dict[str, Callable[[_Work], _Applied]] = {
     "update_dataset": _update_dataset,
     "delete_dataset": _delete_dataset,
     "set_dataset_grant": _set_dataset_grant,
+    "link_identity": _link_identity,
+    "provision_user": _provision_user,
     "claim_tables": _claim_tables,
     "release_tables": _release_tables,
     "sign_in_succeeded": _sign_in_succeeded,

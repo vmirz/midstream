@@ -44,6 +44,22 @@ export function initialInput(setting: SettingView): string | boolean {
 }
 
 const GCS_URI = /^gs:\/\/[a-z0-9][a-z0-9._-]*[a-z0-9](\/\S*)?$/;
+/** One email domain, as the control plane checks it (`config.normalize_email_domains`). */
+const EMAIL_DOMAIN = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+const MAX_EMAIL_DOMAINS = 50;
+
+/** Email domains in their stored form, or the first that is not one. */
+export function parseEmailDomains(text: string): { ok: true; value: string } | { ok: false; error: string } {
+  const domains: string[] = [];
+  for (const part of text.trim().toLowerCase().split(/[,\s]+/)) {
+    const domain = part.replace(/^@+/, '').replace(/\.+$/, '');
+    if (!domain) continue;
+    if (!EMAIL_DOMAIN.test(domain)) return { ok: false, error: `${part} is not an email domain such as example.com` };
+    if (!domains.includes(domain)) domains.push(domain);
+  }
+  if (domains.length > MAX_EMAIL_DOMAINS) return { ok: false, error: `At most ${MAX_EMAIL_DOMAINS} email domains` };
+  return { ok: true, value: domains.join(',') };
+}
 const QUANTITY = /^\d+(Ki|Mi|Gi|Ti|K|M|G|T)?$/;
 
 export type Parsed = { ok: true; value: SettingValue } | { ok: false; error: string };
@@ -88,6 +104,8 @@ export function parseInput(setting: SettingView, input: string | boolean): Parse
         ? { ok: true, value: text }
         : { ok: false, error: `One of ${(setting.options ?? []).join(', ')}` };
     }
+    case 'domain_list':
+      return parseEmailDomains(String(input));
     case 'string': {
       const text = String(input).trim();
       if (!text) return { ok: false, error: `${label} cannot be empty` };
@@ -228,8 +246,9 @@ export function unitLabel(setting: SettingView): string | null {
 /** A value as prose: what a setting is, or would be, set to. */
 export function formatValue(setting: Pick<SettingView, 'kind' | 'unit'>, value: SettingValue): string {
   if (value === null || value === undefined || value === '') {
-    return setting.kind === 'gcs_uri' ? 'None' : '—';
+    return setting.kind === 'gcs_uri' ? 'None' : setting.kind === 'domain_list' ? 'Any' : '—';
   }
+  if (setting.kind === 'domain_list') return String(value).split(',').join(', ');
   if (typeof value === 'boolean') return value ? 'On' : 'Off';
   if (typeof value === 'number') {
     if (setting.unit === 'ms') return humanizeMs(value);

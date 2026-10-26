@@ -23,6 +23,7 @@ import { registerMaterializationRoutes } from './routes/materializations.ts';
 import { registerSchemaRoutes } from './routes/schema.ts';
 import { registerTableRoutes } from './routes/table.ts';
 import { registerSearchRoutes } from './routes/search.ts';
+import { registerSsoRoutes } from './routes/sso.ts';
 import { registerConsoleSettingsRoutes, registerSettingsRoutes } from './routes/settings.ts';
 import { registerFleetStreamRoutes, registerStreamRoutes } from './routes/stream.ts';
 import { registerSystemRoutes } from './routes/system.ts';
@@ -69,6 +70,7 @@ async function main(): Promise<void> {
   // domain's fleet, search, runs and the console's own settings.
   await registerSystemRoutes(app);
   await registerConsoleAuthRoutes(app);
+  await registerSsoRoutes(app);
   await registerFleetStreamRoutes(app);
   await registerSearchRoutes(app);
   await registerRunRoutes(app);

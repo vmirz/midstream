@@ -4,6 +4,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
 import { RequirePermission, SessionGate } from './features/auth/AccessGate';
 import { SignInPage } from './features/auth/SignInPage';
+import { SsoOutcomeToast } from './features/auth/SsoOutcome';
 import { DatasetPage } from './features/datasets/DatasetPage';
 import { DatasetsPage } from './features/datasets/DatasetsPage';
 import { DetailPage } from './features/detail/DetailPage';
@@ -21,6 +22,7 @@ import { DomainScope, domainPath, useDomain } from './lib/domains';
 export function App(): ReactNode {
   return (
     <SessionGate>
+      <SsoOutcomeToast />
       <Routes>
         <Route path="/sign-in" element={<SignInPage />} />
         <Route path="/sign-in/:domain" element={<SignInPage />} />

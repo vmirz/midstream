@@ -153,6 +153,8 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'user.unlocked': 'Unlocked a user',
   'user.bootstrapped': 'Made the first administrator',
   'user.bootstrap_restored': 'Restored the bootstrap administrator',
+  'user.provisioned': 'Made an account at a first sign-in',
+  'user.identity_linked': 'Linked a sign-in provider',
   'group.created': 'Created a group',
   'group.updated': 'Changed a group',
   'group.deleted': 'Deleted a group',

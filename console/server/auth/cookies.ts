@@ -31,6 +31,8 @@ export function parseCookies(header: string | undefined): Map<string, string> {
 export interface CookieOptions {
   maxAgeSeconds: number;
   secure: boolean;
+  /** The paths it is sent to; the whole site when not given. */
+  path?: string;
 }
 
 /** The name of a domain's session cookie. */
@@ -43,11 +45,11 @@ export function sessionCookie(domainId: string, value: string, options: CookieOp
   return cookie(sessionCookieName(domainId), value, options);
 }
 
-/** A `Set-Cookie` value: HttpOnly, SameSite=Lax, for the whole site. A max age of 0 deletes it. */
+/** A `Set-Cookie` value: HttpOnly, SameSite=Lax, for the whole site unless a path is given. A max age of 0 deletes it. */
 export function cookie(name: string, value: string, options: CookieOptions): string {
   const parts = [
     `${name}=${encodeURIComponent(value)}`,
-    'Path=/',
+    `Path=${options.path ?? '/'}`,
     'HttpOnly',
     'SameSite=Lax',
     `Max-Age=${Math.max(0, Math.floor(options.maxAgeSeconds))}`,
@@ -70,4 +72,12 @@ export function secureCookie(protocol: string): boolean {
  */
 export function appendCookie(reply: { header(name: string, value: unknown): unknown }, value: string): void {
   reply.header('set-cookie', value);
+}
+
+/**
+ * The cookie binding a sign-in through a provider to the browser that started it. A hyphen keeps it
+ * apart from every domain's session cookie, whose names a domain id - letters, digits and `_` - ends.
+ */
+export function flowCookieName(): string {
+  return `${config.sessionCookieName}-flow`;
 }

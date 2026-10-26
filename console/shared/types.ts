@@ -1445,7 +1445,8 @@ export interface SearchResults {
  */
 export const SETTINGS_SCOPES = ['control-plane', 'runtime', 'console'] as const;
 export type SettingsScope = (typeof SETTINGS_SCOPES)[number];
-export type SettingKind = 'boolean' | 'integer' | 'gcs_uri' | 'quantity' | 'enum' | 'string';
+/** `domain_list`: email domains, comma-separated, such as `example.com,corp.example.org`; empty for any. */
+export type SettingKind = 'boolean' | 'integer' | 'gcs_uri' | 'quantity' | 'enum' | 'string' | 'domain_list';
 export type SettingUnit =
   | 'ms'
   | 'seconds'
@@ -1832,11 +1833,33 @@ export interface DomainAuth {
   error: string | null;
 }
 
+export type SsoProviderId = 'entra' | 'github' | 'google' | 'oidc';
+
 /** A provider the console signs people in with: `entra`, `github`, `google` or `oidc`. */
 export interface SsoProvider {
-  id: 'entra' | 'github' | 'google' | 'oidc';
-  /** The button's words: "Sign in with Microsoft", or the generic provider's own label. */
+  id: SsoProviderId;
+  /** Who the provider is: "Microsoft", "GitHub", "Google", or the generic provider's own label. */
   label: string;
+}
+
+/** How one domain answered a sign-in through a provider. */
+export interface SsoDomainOutcome {
+  domain: string;
+  name: string;
+  /** `signed_in`; `refused`, with the domain's reason; `unreachable` while it cannot be asked. */
+  status: 'signed_in' | 'refused' | 'unreachable';
+  /** The domain's reason: `no_account`, `provider_disabled`, `email_not_allowed`, … */
+  reason: string | null;
+  message: string | null;
+}
+
+/** `GET /api/auth/sso/outcomes/:id`: what a sign-in through a provider did, in every domain. */
+export interface SsoOutcome {
+  provider: SsoProviderId;
+  label: string;
+  /** Why the sign-in went nowhere before any domain was asked: refused at the provider, expired. */
+  error: string | null;
+  domains: SsoDomainOutcome[];
 }
 
 export interface CpSessionRecord {

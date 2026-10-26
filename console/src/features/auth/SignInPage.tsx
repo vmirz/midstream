@@ -3,6 +3,7 @@ import { useState, type FormEvent, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { PasswordInput } from './PasswordInput';
+import { SsoOutcomePanel, useSsoOutcome } from './SsoOutcome';
 import { Button, Field, Input, Select, Spinner } from '@/components/ui/primitives';
 import { ApiError } from '@/lib/api';
 import { useConsoleAuth } from '@/lib/auth';
@@ -51,6 +52,7 @@ export function SignInPage(): ReactNode {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const { outcome } = useSsoOutcome();
 
   if (config.isLoading || consoleAuth.loading) {
     return (
@@ -109,11 +111,20 @@ export function SignInPage(): ReactNode {
         </div>
 
         <div className="panel space-y-4 p-6 shadow-sm">
+          {outcome && !error ? <SsoOutcomePanel outcome={outcome} /> : null}
           {providers.length > 0 ? (
             <div className="space-y-2">
               {providers.map((provider) => (
-                <Button key={provider.id} type="button" className="w-full" disabled>
-                  {provider.label}
+                <Button
+                  key={provider.id}
+                  type="button"
+                  className="w-full"
+                  onClick={() => {
+                    // The provider's pages are a full navigation away, and the way back is the callback.
+                    window.location.assign(`/api/auth/sso/${provider.id}/start?return=${encodeURIComponent(destination(location.state))}`);
+                  }}
+                >
+                  Sign in with {provider.label}
                 </Button>
               ))}
               <p className="flex items-center gap-3 pt-2 text-[11px] tracking-wide text-[var(--color-ink-faint)] uppercase">
