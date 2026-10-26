@@ -35,7 +35,7 @@ spec:
     {{- include "midstream.pythonPackages" . | nindent 4 }}
   template:
     pod:
-      {{- include "midstream.podScheduling" . | nindent 6 }}
+      {{- include "midstream.podScheduling" (dict "root" . "own" .Values.maintenance) | nindent 6 }}
       {{- include "midstream.gcsVolumes" . | nindent 6 }}
     kasprContainer:
       env:

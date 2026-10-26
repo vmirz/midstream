@@ -35,6 +35,10 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.console.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       # The image runs as node (uid 1000); the group lets it write its cache volume.
       securityContext:
         runAsNonRoot: true

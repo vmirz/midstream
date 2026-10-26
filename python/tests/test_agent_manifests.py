@@ -1054,3 +1054,53 @@ class VerticalPodAutoscalingTests(unittest.TestCase):
                         f"{limit}m; at the limit, beside a memory request at its own, the pod turns "
                         "Guaranteed and can no longer be resized in place",
                     )
+
+
+class SchedulingTests(unittest.TestCase):
+    """Every pod can be placed: a node selector, tolerations for tainted nodes and affinity.
+
+    `kaspr.*` places every Kaspr pod, the runtimes included; an app may set its own instead; the
+    console, which is not a Kaspr pod, is placed by `console.*` alone.
+    """
+
+    def _placement(self, pod: dict) -> tuple:
+        return pod.get("nodeSelector"), pod.get("tolerations"), pod.get("affinity")
+
+    def test_kaspr_values_place_every_kaspr_pod_and_an_app_may_choose_its_own(self) -> None:
+        import yaml
+
+        apps = {bare(app["metadata"]["name"]): app for app in documents("KasprApp")}
+        shared = self._placement(apps["control-plane"]["spec"]["template"]["pod"])
+        self.assertEqual({"workload": "streaming"}, shared[0])
+        self.assertEqual("streaming", shared[1][0]["value"])
+        self.assertIn("nodeAffinity", shared[2])
+        self.assertEqual(shared, self._placement(apps["tail"]["spec"]["template"]["pod"]), "the tail app follows kaspr.*")
+        own = self._placement(apps["maintenance"]["spec"]["template"]["pod"])
+        self.assertEqual({"workload": "compaction"}, own[0], "the maintenance app sets its own selector")
+        self.assertEqual("compaction", own[1][0]["value"])
+        self.assertEqual(shared[2], own[2], "an app without its own affinity takes kaspr's")
+        env = {item["name"]: item for item in apps["control-plane"]["spec"]["template"]["kasprContainer"]["env"]}
+        runtime = yaml.safe_load(env["CONTROL_PLANE_RUNTIME_APP_SPEC"]["value"])
+        self.assertEqual(shared, self._placement(runtime["template"]["pod"]), "every runtime follows kaspr.*")
+
+    def test_the_console_is_placed_by_its_own_values(self) -> None:
+        (deployment,) = documents("Deployment")
+        pod = deployment["spec"]["template"]["spec"]
+        self.assertEqual({"workload": "web"}, pod["nodeSelector"])
+        self.assertEqual("web", pod["tolerations"][0]["value"])
+        self.assertNotIn("affinity", pod, "console.affinity is empty in the test values")
+
+    def test_nothing_is_rendered_when_no_placement_is_set(self) -> None:
+        import yaml
+
+        minimal = next(values for values in VALUES_FILES if values.name == "minimal-values.yaml")
+        for app in documents("KasprApp", minimal):
+            pod = app["spec"]["template"].get("pod") or {}
+            self.assertEqual((None, None, None), self._placement(pod), app["metadata"]["name"])
+            for item in app["spec"]["template"]["kasprContainer"]["env"]:
+                if item["name"] == "CONTROL_PLANE_RUNTIME_APP_SPEC":
+                    runtime_pod = yaml.safe_load(item["value"])["template"].get("pod") or {}
+                    self.assertEqual((None, None, None), self._placement(runtime_pod), "the runtime spec")
+        (deployment,) = documents("Deployment", minimal)
+        self.assertEqual((None, None, None), self._placement(deployment["spec"]["template"]["spec"]))
+

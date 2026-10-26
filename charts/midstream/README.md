@@ -27,7 +27,8 @@ helm install midstream charts/midstream -n midstream --create-namespace -f my-va
 | `kaspr.authentication` | required | Kaspr's Kafka client authentication: `type` (`scram-sha-512`, `scram-sha-256`, `plain`), `username`, `passwordSecret` |
 | `kaspr.version` | the operator's default | the Kaspr image version |
 | `kaspr.storageClass` | the cluster's default | the class of every persistent claim |
-| `kaspr.nodeSelector`, `kaspr.tolerations` | none | where every Kaspr pod, runtimes included, is placed |
+| `kaspr.nodeSelector`, `kaspr.tolerations`, `kaspr.affinity` | none | where every Kaspr pod, runtimes included, is placed; `controlPlane`, `maintenance`, `tail` and `controlPlane.runtime` take the same three keys to place their own pods instead |
+| `console.nodeSelector`, `console.tolerations`, `console.affinity` | none | where the console runs; it does not follow `kaspr.*` |
 | `gcs.credentialsSecret` | none | a Secret with a service-account key under `gcs.credentialsKey`; empty uses application default credentials |
 | `auth.existingSecret` | `<release>-auth` | the Secret with `signing-key`, `service-token`, `bootstrap-admin-email`, `bootstrap-admin-password` |
 | `controlPlane.settings.defaultDestinationUri` | none | the `gs://` prefix every materialization's tables go under; required to create one |
