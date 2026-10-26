@@ -4,7 +4,9 @@ Everything in this document lives under `console/server/`. Reading tables and ru
 `iceberg/` (the pointer, metadata and manifests), `data/` (the snapshot's catalog, logical columns,
 DuckDB, GCS) and `runs/` (the run engine) — is in [06](./06-iceberg-tables.md) and
 [07](./07-data-access-and-duckdb.md); `schema/diff.ts` in 06 §6.4; `live/` in
-[05](./05-live-store-and-realtime.md).
+[05](./05-live-store-and-realtime.md). The domains the console serves (`domains/`, §4.10) are what
+nearly everything else hangs off: each has its own control-plane client, live store and topic
+catalog.
 
 ## 4.1 Bootstrap (`main.ts`)
 
@@ -26,24 +28,42 @@ if (config.corsOrigin) await app.register(cors, { origin: config.corsOrigin, cre
 
 app.setErrorHandler(...);
 
-await registerAuthRoutes(app);
-await registerIdentityRoutes(app);
+const served = domains();             // the registry; a registry that breaks a rule stops here
+await registerAuth(app);              // who is calling, in each domain, before every route
+
+// The console's own routes: config, the session everywhere, sign-in through a provider, the
+// catalogs, the merged fleet, search, runs and the console's own settings.
 await registerSystemRoutes(app);
-await registerMaterializationRoutes(app);
-await registerDatasetRoutes(app);
-await registerTopicRoutes(app);
-await registerSchemaRoutes(app);
-await registerTableRoutes(app);
-await registerDataRoutes(app);
-await registerStreamRoutes(app);
-await registerSettingsRoutes(app);
+await registerConsoleAuthRoutes(app);
+await registerSsoRoutes(app);
+await registerCatalogRoutes(app);
+await registerFleetStreamRoutes(app);
+await registerSearchRoutes(app);
+await registerRunRoutes(app);
+await registerConsoleSettingsRoutes(app);
+
+// Everything about one domain, under /api/d/<domain>/.
+await app.register(async (scope) => {
+  await registerAuthRoutes(scope);
+  await registerIdentityRoutes(scope);
+  await registerMaterializationRoutes(scope);
+  await registerDatasetRoutes(scope);
+  await registerTopicRoutes(scope);
+  await registerSchemaRoutes(scope);
+  await registerTableRoutes(scope);
+  await registerDataRoutes(scope);
+  await registerStreamRoutes(scope);
+  await registerSettingsRoutes(scope);
+}, { prefix: '/api/d/:domain' });
 
 if (config.serveClient && existsSync(join(clientDir, 'index.html'))) {
   await app.register(fastifyStatic, { root: clientDir, index: false, wildcard: false });
   app.setNotFoundHandler(...);
 }
 
-liveStore.start();
+consoleSettings().start();            // the console's overrides, from the settings home
+served.start();                       // every domain's live store, topic catalog and identity check
+new RevocationSync(() => served.served()).start();
 process.on('SIGTERM', ...); process.on('SIGINT', ...);
 await app.listen({ port: config.port, host: config.host });
 ```
@@ -56,9 +76,12 @@ Notable decisions:
 | `trustProxy: true` | The console is expected to sit behind an ingress; this makes `request.ip` and protocol detection correct |
 | `logController: new LogController({ disableRequestLogging: true })` | Fastify 5.12 removed the top-level `disableRequestLogging` option in favour of a `LogController` **instance**. Passing a plain object throws `FST_ERR_LOG_INVALID_LOG_CONTROLLER` at startup |
 | Routes registered before static | So `/api/*` always wins over a hypothetical file of the same name |
+| One scope for a domain's routes, prefixed `/api/d/:domain` | A route is written once and serves every domain; `request.domain` says which (§4.9). The console's own routes stay outside it |
+| `registerAuth` before every route | Its `onRequest` hook resolves the domain and the caller before any route or guard runs |
 | `wildcard: false` on static | Lets unmatched paths reach `setNotFoundHandler`, which is what makes SPA deep links work |
-| `liveStore.start()` after routes | Polling begins only once the process is otherwise ready |
-| `consoleSettings.start()` just before it | The console's settings overrides are read from the control plane before the first poll, so the poll cadence they set applies from the start (§4.8) |
+| `served.start()` after routes | Each domain's polling begins only once the process is otherwise ready |
+| `consoleSettings().start()` just before it | The console's settings overrides are read from the settings home's control plane before the first poll, so the poll cadence they set applies from the start (§4.8) |
+| `RevocationSync` last | Hands every domain the access-token revocations it missed, every 5 minutes (§4.11) |
 
 ### Static serving and SPA fallback
 
@@ -85,7 +108,7 @@ browser instead of an honest 404.
 
 ### Shutdown
 
-`SIGTERM` and `SIGINT` stop the live store's timer, close Fastify (draining in-flight requests and
+`SIGTERM` and `SIGINT` stop the revocation sync, every domain's timers and the settings store, close Fastify (draining in-flight requests and
 ending SSE responses), and exit 0. In-flight DuckDB queries are not cancelled; they die with the
 process.
 
@@ -164,15 +187,17 @@ slashes, and anything longer than 128 characters.
 ## 4.5 Control-plane client (`controlPlane/client.ts`)
 
 A thin typed wrapper over the control-plane WebViews. It is the **only** place the console
-performs an outbound HTTP call to the control plane. Every method takes a `Caller` first: who the
-request is made as.
+performs an outbound HTTP call to a control plane. Each domain has its own client,
+`new ControlPlaneClient(controlPlaneUrl, serviceToken)`, made from its registry entry (§4.10); no
+client is shared between domains. Every method takes a `Caller` first: who the request is made as.
 
 | Caller | Sent as | Used for |
 |---|---|---|
-| `SERVICE` (`{ kind: 'service' }`) | `authorization: Bearer <CONSOLE_SERVICE_TOKEN>` | What the console reads once for everyone: the live store's polling, topics, its own settings scope. Read-only on the control plane |
-| `UserCaller` (`{ kind: 'user', token, ip, userAgent }`) | the person's session token, or nothing for a guest | Everything a person asks for or changes: the control plane authorizes the person, not the console |
+| `SERVICE` (`{ kind: 'service' }`) | `authorization: Bearer <the domain's service token>` (`CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN`); nothing when it has none | What the console reads once for everyone: the domain's live store, topics, datasets for search, `/system/version`, and — in the settings home — the console's settings scope. Read-only on the control plane |
+| `UserCaller` (`{ kind: 'user', token, ip, userAgent }`) | the person's session token in that domain, or nothing for a guest | Everything a person asks for or changes: the control plane authorizes the person, not the console |
 
-`callerOf(request)` (`auth/guard.ts`) builds a `UserCaller` from a request.
+`callerOf(request, domain?)` (`auth/guard.ts`) builds a `UserCaller` from a request: in the
+request's own domain, or in the one given, with the caller's session there.
 
 ### Request construction
 
@@ -233,19 +258,21 @@ whatever it returns, the console faithfully relays.
 | `update(caller, id, input)` | `PATCH /materializations/{id}` |
 | `resume(caller, id)` | `POST /materializations/{id}/resume` |
 | `remove(caller, id)` | `DELETE /materializations/{id}` |
+| `datasets`, `dataset`, `createDataset`, `updateDataset`, `deleteDataset`, `datasetGrants`, … | `/datasets…` |
 | `login`, `session`, `refresh`, `logout`, `changePassword`, `mySessions` | `/auth/*` |
-| `accessTokens`, `createAccessToken`, `revokeAccessToken` | `GET`/`POST /auth/tokens`, `DELETE /auth/tokens/{tokenId}` |
+| `ssoLogin(caller, { provider, credential, nonce })` | `POST /auth/login` with what a provider vouched for (handbook 18 §18.17); a 25 s timeout, as the domain may wait for an account it makes |
+| `accessTokens`, `createAccessToken`, `revokeAccessToken` | `GET`/`POST /auth/tokens`, `DELETE /auth/tokens/{tokenId}` — the revoke answers the signed revocation |
+| `tokenRevocations(caller, since)`, `applyTokenRevocations(caller, revocations, source)` | `GET /auth/tokens/revocations`, `POST /auth/tokens/revocations` |
 | `users`, `user`, `createUser`, `updateUser`, `deleteUser`, `setUserPassword`, `signOutUser`, `unlockUser` | `/users…` |
 | `groups`, `group`, `createGroup`, `updateGroup`, `deleteGroup`; `roles`, `role`, `createRole`, `updateRole`, `deleteRole` | `/groups…`, `/roles…` |
 | `permissions`, `audit`, `identityRequest` | `GET /permissions`, `GET /audit`, `GET /identity/requests/{id}` |
 
-`raw()` returns the status and body instead of throwing on a non-2xx answer; `login` uses it,
-since a refused sign-in is an expected answer.
+`raw()` returns the status and body instead of throwing on a non-2xx answer; `login` and
+`ssoLogin` use it, since a refused sign-in is an expected answer.
 
 Every id-taking method calls `assertSafeIdentifier` and then `encodeURIComponent`; a table name
-goes through `encodeURIComponent` too (`tablePath`). The module
-exports a singleton `controlPlane` instance; the class is exported too so tests can point one at a
-different base URL.
+goes through `encodeURIComponent` too (`tablePath`). There is no singleton: a route reaches a
+domain's client as `domainOf(request).controlPlane`, and tests make a client pointed at a stub.
 
 ## 4.6 Route layer (`routes/`)
 
@@ -264,23 +291,40 @@ the offending input.
 
 ### Registration map
 
+The console's own routes, about every domain at once:
+
 | Module | Routes |
 |--------|--------|
 | `system.ts` | `GET /api/health`, `GET /api/config` |
-| `materializations.ts` | `GET /api/materializations`, `POST /api/materializations`, `GET/POST/DELETE /api/materializations/:id…` |
-| `datasets.ts` | `GET`/`POST /api/datasets`, `GET`/`PATCH`/`DELETE /api/datasets/:dataset`, `GET /api/datasets/:dataset/grants`, `PUT /api/datasets/:dataset/grants/:principalId` |
+| `auth.ts` (`registerConsoleAuthRoutes`) | `GET /api/auth/session` (every domain's session), `POST /api/auth/logout` (every domain's, or the ones named) |
+| `sso.ts` | `GET /api/auth/sso/:provider/start`, `GET /api/auth/sso/:provider/callback`, `GET /api/auth/sso/outcomes/:id` |
+| `catalog.ts` | `/catalog/v1/…` (the federated catalog) and `/d/:domain/catalog/*` (each domain's own) — outside `/api`: an engine's base URI |
+| `stream.ts` (`registerFleetStreamRoutes`) | `GET /api/fleet`, `GET /api/stream/fleet` — every domain's fleet, merged |
+| `search.ts` | `GET /api/search` |
+| `data.ts` (`registerRunRoutes`) | `GET /api/runs/:runId`, `POST …/refresh`, `POST …/cancel`, `GET …/rows`, `POST …/profile`, `GET …/export`, `GET /api/stream/runs/:runId` — a run may read several domains |
+| `settings.ts` (`registerConsoleSettingsRoutes`) | `GET`/`PATCH /api/settings`, `GET /api/settings/history` — the console scope, stored in the settings home |
+
+Everything about one domain, each path under `/api/d/:domain`:
+
+| Module | Routes |
+|--------|--------|
+| `materializations.ts` | `GET /materializations`, `POST /materializations`, `GET/PATCH/POST/DELETE /materializations/:id…` |
+| `datasets.ts` | `GET`/`POST /datasets`, `GET`/`PATCH`/`DELETE /datasets/:dataset`, `GET /datasets/:dataset/grants`, `PUT /datasets/:dataset/grants/:principalId` |
 | `schema.ts` | `GET …/tables/:table/schema`, `…/schema/versions`, `…/schema/versions/:schemaId`, `…/schema/diff` |
-| `table.ts` | `GET …/tables/:table`, `POST …/maintenance`, `GET /api/catalog/connection` |
-| `data.ts` | `GET …/data/summary`, `POST …/data/estimate`, `POST …/data/validate`, `POST …/runs`; `GET /api/runs/:runId`, `POST …/cancel`, `GET …/rows`, `POST …/profile`, `GET …/export`, `GET /api/stream/runs/:runId` |
-| `stream.ts` | `GET /api/stream/fleet`, `GET /api/stream/materializations/:id` (a run's stream lives in `data.ts`) |
-| `topics.ts` | `GET /api/topics` |
-| `settings.ts` | `GET /api/settings`, `PATCH /api/settings`, `GET /api/settings/history` |
-| `auth.ts` | `GET /api/auth/session`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/sessions`, `POST /api/auth/password`, `GET`/`POST /api/auth/tokens`, `DELETE /api/auth/tokens/:tokenId` |
-| `identity.ts` | `/api/users…`, `/api/groups…`, `/api/roles…`, `GET /api/permissions`, `GET /api/audit` |
+| `table.ts` | `GET …/tables/:table`, `POST …/maintenance`, `GET /catalog/connection` |
+| `data.ts` (`registerDataRoutes`) | `GET …/data/summary`, `POST …/data/estimate`, `POST …/data/validate`, `POST …/runs`, `GET …/tables/:table/head` |
+| `stream.ts` (`registerStreamRoutes`) | `GET /stream/materializations/:id` |
+| `topics.ts` | `GET /topics` |
+| `settings.ts` (`registerSettingsRoutes`) | `GET`/`PATCH /settings`, `GET /settings/history` — the domain's control-plane and runtime scopes |
+| `auth.ts` (`registerAuthRoutes`) | `GET /auth/session`, `POST /auth/login`, `POST /auth/logout`, `GET /auth/sessions`, `POST /auth/password`, `GET`/`POST /auth/tokens`, `DELETE /auth/tokens/:tokenId` |
+| `identity.ts` | `/users…`, `/groups…`, `/roles…`, `GET /permissions`, `GET /audit` |
 
 Every route declares who may call it in its options: `{ preHandler: permit('<permission>') }`,
 `{ preHandler: permitAnywhere('<permission>') }` for a dataset permission, or `{ preHandler:
-signedIn() }` (§4.9). A route with none of them answers anyone, guests included. A route guarded by
+signedIn() }` (§4.9) — each checked in the route's domain. The console's own routes use
+`permitInHome('<permission>')` (the console's settings: the settings home decides) or
+`permitInSomeDomain('<permission>')` (runs: the run then checks each dataset it reads, in its own
+domain). A route with none of them answers anyone, guests included. A route guarded by
 `permitAnywhere` then checks the datasets its request is about with `requireOnDatasets`.
 
 Full request and response shapes are in
@@ -289,15 +333,16 @@ Full request and response shapes are in
 ### Freshness on read routes
 
 ```ts
-app.get('/api/materializations', async () => {
-  await liveStore.ensureFresh(config.listPollIntervalMs);
-  return liveStore.fleetSnapshot();
+app.get('/materializations', async (request) => {
+  const domain = domainOf(request);
+  await domain.live.ensureFresh(config.listPollIntervalMs);
+  return domain.live.fleetSnapshot();
 });
 ```
 
 Without this, a REST-only consumer would receive whatever the idle 30-second loop last observed —
 including materializations that had already been deleted. The detail route relies on the
-equivalent staleness check inside `liveStore.getDetail`.
+equivalent staleness check inside `LiveStore.getDetail`, and `GET /api/fleet` on each domain's.
 
 ### Server-sent events (`routes/stream.ts`)
 
@@ -374,15 +419,20 @@ stores the overrides with the control plane too: the console keeps no durable st
 | Module | Role |
 |--------|------|
 | `settings/catalog.ts` | `CONSOLE_SETTINGS`: each overridable console setting's key, env var, section, label, description, kind, unit, bounds and effect. `consoleSettingProblem` validates one value; `validConsoleOverrides` splits a stored set into valid and rejected |
-| `settings/store.ts` | `ConsoleSettingsStore`: reads the `console` scope at start, every 30 s and after a save; installs the valid overrides with `applySettingOverrides`; applies a new log level to the logger; describes the scope for the page |
+| `settings/store.ts` | `ConsoleSettingsStore`: reads the `console` scope from the settings home at start, every 30 s and after a save; installs the valid overrides with `applySettingOverrides`; applies a new log level to the logger; describes the scope for the page |
 | `config.ts` | `tunableDeployment` (the 29 overridable settings, as the environment sets them), `deploymentSettings`, and `config`, whose getters return the override in force |
-| `routes/settings.ts` | The three `/api/settings` routes ([08 §8.24](./08-console-api-reference.md)) |
+| `routes/settings.ts` | `/api/settings` — the console scope, in the settings home — and `/api/d/:domain/settings` — a domain's control-plane and runtime scopes ([08 §8.24](./08-console-api-reference.md)) |
 
-**Reading.** `GET /api/settings` reads the two control-plane scopes and refreshes the console
-scope in parallel. If either control-plane read fails, the page is marked read-only, with the
-reason. The console scope still shows what is in force.
+There are two Settings pages, so two sets of routes: the console's own settings are one scope,
+stored in the settings home and guarded by `permitInHome`; each domain's are its own two, guarded
+in that domain.
 
-**Saving.** `PATCH /api/settings` takes one change per scope:
+**Reading.** `GET /api/d/:domain/settings` reads the domain's two control-plane scopes in
+parallel; if either read fails, the page is marked read-only, with the reason. `GET /api/settings`
+refreshes the console scope from the settings home, and describes the console's deployment —
+every domain it serves and how it reaches each — besides.
+
+**Saving.** A `PATCH` takes one change per scope, of the scopes its route serves:
 
 1. Validate console values against the catalog. The control plane validates its own scopes.
 2. Forward the changes in order (control plane, runtime, console), stopping at the first refusal.
@@ -399,21 +449,24 @@ reason. The console scope still shows what is in force.
 **Other replicas** pick a console change up on their next 30-second refresh. A control-plane or
 runtime change needs nothing from the console: the control plane applies it.
 
-**History.** `GET /api/settings/history` reads the three scopes' histories in parallel and merges
-them newest first. A scope that fails is reported in `errors` without hiding the others.
+**History.** Each history route reads its scopes' histories in parallel and merges them newest
+first. A scope that fails is reported in `errors` without hiding the others. The client merges the
+console's history with every domain's it may see, on the console Settings page.
 
 ## 4.9 Authentication and authorization (`auth/`)
 
-The console has no accounts of its own: people, sessions and permissions belong to the control
-plane ([18 — Identity and access](../../docs/handbook/18-identity-and-access.md)). The console
-resolves who is calling, keeps a browser's session in a cookie, and checks each route's
-permission before doing any work.
+The console has no accounts of its own: people, sessions and permissions belong to each domain's
+control plane ([18 — Identity and access](../../docs/handbook/18-identity-and-access.md)). The
+console resolves who is calling in each domain, keeps a browser's session there in a cookie per
+domain, and checks each route's permission, in its domain, before doing any work.
 
 | Module | Role |
 |---|---|
-| `auth/guard.ts` | `registerAuth`: an `onRequest` hook on every `/api/*` request. `permit(permission)`, `permitAnywhere(permission)`, `requireOnDatasets(auth, permission, datasets)`, `signedIn({ allowPasswordChange })`, `authOf`, `callerOf`, the cookie setters, `crossSite`, `watchAccess` |
-| `auth/principal.ts` | `resolveAuth(token)`: asks the control plane's `GET /auth/session` who a token belongs to, and caches the answer by SHA-256 of the token for `CONSOLE_SESSION_CHECK_MS` (5 s). `toAuthState`, `can(principal, permission, datasetId?)` and `canAnywhere` (both `shared/access.ts`), `rememberSession`, `forgetSession`, `forgetAllSessions` |
-| `auth/cookies.ts` | Parsing cookies, and the session cookie: `HttpOnly; SameSite=Lax; Path=/`, `Secure` per `CONSOLE_COOKIE_SECURE` |
+| `auth/guard.ts` | `registerAuth`: an `onRequest` hook on every `/api/*` request. `permit(permission)`, `permitAnywhere(permission)`, `permitInHome`, `permitInSomeDomain`, `requireOnDatasets(auth, permission, datasets)`, `signedIn({ allowPasswordChange })`, `domainOf`, `authOf`, `authIn(request, domain)`, `callerOf`, `presentedToken`, the cookie setters, `crossSite`, `watchAccess` |
+| `auth/principal.ts` | `resolveAuth(domain, token)`: asks the domain's `GET /auth/session` who a token belongs to, and caches the answer by domain and SHA-256 of the token for `CONSOLE_SESSION_CHECK_MS` (5 s); `guestAuth(domain)` the same for a guest. `toAuthState`, `can(principal, permission, datasetId?)` and `canAnywhere` (both `shared/access.ts`), `rememberSession`, `forgetSession`, `forgetAllSessions(domain)` |
+| `auth/cookies.ts` | Parsing cookies; a domain's session cookie, `<CONSOLE_SESSION_COOKIE>_<domain>`, `HttpOnly; SameSite=Lax; Path=/`, `Secure` per `CONSOLE_COOKIE_SECURE`; the provider sign-in's flow cookie, `<CONSOLE_SESSION_COOKIE>-flow`, `Path=/api/auth/sso` |
+| `auth/sso.ts` | Signing in through a provider: the configured providers, pending flows (`state`, `nonce`, PKCE verifier, the flow cookie's hash), the code exchange, GitHub's token revocation, and the outcomes kept 5 minutes (§4.11) |
+| `auth/revocations.ts` | `handOn` (one revocation to every other domain) and `RevocationSync` (§4.11) |
 | `auth/outcomes.ts` | `settle` and `waitForOutcome`: after a user, group or role change, poll `GET /identity/requests/{id}` every 150 ms for up to 10 s; `refusal` maps an outcome to a `ConsoleError` |
 | `auth/rateLimit.ts` | `AttemptLimiter`: sign-in attempts per client address per minute |
 | `auth/testing.ts` | `installTestAuth`, `testPrincipal`: route tests run as any principal without a control plane |
@@ -424,12 +477,16 @@ permission before doing any work.
    `reason: cross_site_request`. `Sec-Fetch-Site` decides when the browser sends it; otherwise the
    `Origin` must name this host (or `CONSOLE_CORS_ORIGIN`).
 2. `/api/health` needs no caller.
-3. The token is read from `Authorization: Bearer` (scripts) or the session cookie, and resolved
-   with `resolveAuth`. A cookie whose session is no longer usable is cleared. A cookie session past
-   its `refresh_after` is renewed with `POST /auth/refresh`, and the new token set in a new cookie;
-   concurrent requests share one renewal.
-4. The result is `request.auth`: the caller's `AuthState` (principal, session), the token, and
-   any error checking it.
+3. Which domains: a path under `/api/d/<domain>/` names one — `404 unknown_domain` for one the
+   console does not serve, `503 domain_misconfigured` for one whose control plane says it is
+   another — and `request.domain` is it. Any other `/api` path is resolved in every domain served.
+4. In each, the token is read from `Authorization: Bearer` (scripts: an access token works in
+   every domain, a session only in its own) or the domain's session cookie, and resolved with `resolveAuth`. A cookie whose session is no longer
+   usable is cleared. A cookie session past its `refresh_after` is renewed with
+   `POST /auth/refresh`, and the new token set in a new cookie; concurrent requests share one
+   renewal.
+5. The result is `request.auths`: by domain id, the caller's `AuthState` (principal, session), the
+   token, and any error checking it. `authOf(request)` is the one for the request's domain.
 
 **Routes.** `permit(permission)` answers `401 unauthenticated` (`sign_in_required`) to a guest
 and `403 forbidden` (with `permission`) to a person who lacks it; a person who must change their
@@ -439,17 +496,72 @@ dataset permission held on at least one dataset; `requireOnDatasets` then answer
 requires a session, any permissions. None of them calls the control plane: they read
 `request.auth`, whose principal carries its `dataset_permissions` and any token `dataset_limit`.
 
-**When the control plane is unreachable,** a session checked within the last
+**When a control plane is unreachable,** a session there checked within the last
 `CONSOLE_SESSION_CHECK_MS` + 60 s keeps being honoured, so a brief outage does not sign everyone
-out; past that, the request fails with `503`.
+out; past that, a request about that domain fails with `503`, and the console's own routes go on
+with the other domains, marking that one unreachable.
 
 **Streams.** An SSE route checks its caller every 30 s (`watchAccess`). When access is gone —
 signed out, deactivated, a permission removed — it sends `event: auth` and closes; the client
 reloads its session.
 
-**Changes.** Mutations are made with the person's own session (`callerOf(request)`), so the control
-plane authorizes them again and records who made them. After a user, group or role change applies,
-every cached session is dropped (`forgetAllSessions`), because what anyone may do may have changed.
+**Changes.** Mutations are made with the person's own session in the route's domain
+(`callerOf(request)`), so that control plane authorizes them again and records who made them. After
+a user, group or role change applies, every cached session of that domain is dropped
+(`forgetAllSessions(domain)`), because what anyone may do there may have changed.
 
 **Runs.** A query run belongs to the person who started it (`ownerId`); another caller asking for
 it gets `404`, as if it did not exist.
+
+## 4.10 Domains (`domains/`)
+
+Every domain the console serves is a `Domain`, made once from the registry
+([20 — Domains and the shared console](../../docs/handbook/20-domains-and-the-shared-console.md)).
+
+| Module | Role |
+|---|---|
+| `domains/registry.ts` | `loadRegistry`: the JSON the chart renders (`CONSOLE_DOMAINS_FILE`), else `CONSOLE_DOMAINS` inline, else one development domain, `local`, at `http://localhost:6065`. `validateRegistry` refuses what the chart refuses — an id that cannot be a domain's (`shared/tableNames.ts::domainIdProblem`), the same id twice, a URL that is not http(s), anything but exactly one settings home — and the console stops at start, naming the rule. Each domain's service token is read from `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN`, never from the file |
+| `domains/domain.ts` | `Domain`: the domain's id, name, settings-home flag, tail URL and service token; its own `ControlPlaneClient`, `LiveStore` and `TopicCatalog`; its status; and what it caches — system settings a minute, datasets half a minute |
+| `domains/index.ts` | `domains()`: the `Domains` of the registry — `all()`, `served()`, `get(id)`, `require(id)` (`404 unknown_domain`), `home`. `consoleSettings()`: the console's settings store, over the home's client. `useDomains` replaces them in route tests (`domains/testing.ts::installTestDomains`) |
+
+**Which domain a control plane is.** Each `Domain` asks its control plane `GET /system/version`
+at start and every minute: its version, the domain it says it is, and its federation key's id. That
+gives its status:
+
+| Status | When | What the console does |
+|---|---|---|
+| `ok` | It answered, as the domain the registry names, with a version this console works with | Serves it |
+| `unreachable` | No answer yet, or the last check failed | Serves it, marked: its views say so, the merged fleet shows what it last read — or, once the caller cannot be checked there, that it is unavailable — with a banner, search answers from what it last read, the federated catalog's listing leaves it out |
+| `misconfigured` | It answered as another domain, or as none | Serves nothing of it (`503 domain_misconfigured`): a wrong URL never shows one domain's data as another's |
+| `incompatible` | Its major version is older than the console's (`REQUIRED_CONTROL_PLANE_MAJOR`) | Serves it, with a banner saying so |
+
+Routes wait on a domain's first check (`domain.ready()`), so a console just started never serves a
+domain it has not identified. `GET /api/config` reports every domain's status, and whether their
+federation keys agree (`federationKeysAgree`): the client says so when two domains would not honour
+each other's access tokens.
+
+## 4.11 Sign-in through a provider, revocations and the catalogs
+
+**Providers (`auth/sso.ts`, `routes/sso.ts`).** The providers are those whose client id and secret
+are configured (`CONSOLE_SSO_*`, [03 §3.3a](./03-configuration-reference.md)); Entra ID's, GitHub's
+and Google's endpoints are fixed, a generic OpenID Connect provider's come from its issuer's
+discovery document. `start` keeps a pending flow by its `state` — nonce, PKCE verifier, return
+path, the flow cookie's SHA-256 — for 10 minutes, at most 10,000 at once, and redirects to the
+provider. `callback` takes the flow (once; same provider; the same browser), exchanges the code,
+and calls `ssoLogin` on every served domain at once. Each domain checks the credential itself and
+answers a session, a refusal or nothing; the console sets a cookie for each session, ends any
+session of that domain the browser held before, revokes a GitHub token, and keeps the outcome 5
+minutes under an id it adds to the redirect (`?signin=<id>`) for the page to show. Flows and
+outcomes are in memory: a console restart forgets them, and the person signs in again.
+
+**Revocations (`auth/revocations.ts`).** Revoking a federated access token in one domain answers a
+signed revocation; the route hands it at once to every other served domain (`handOn`) and answers
+the person when they have. `RevocationSync` then, every 5 minutes, reads each domain's revocations
+since the last pass and applies those another domain is missing — what reaches a domain that was
+down at the time.
+
+**Catalogs (`routes/catalog.ts`).** `/catalog` is one Iceberg REST catalog over every domain: its
+namespaces are `<domain>` and `<domain>.<dataset>`, and every request about a dataset is handed to
+its domain with the namespace cut to the domain's own single level and the caller's bearer token
+unchanged. `/d/<domain>/catalog` hands everything to that domain's catalog as it is. Both keep
+nothing; see [08 §8.30](./08-console-api-reference.md) and handbook 20.

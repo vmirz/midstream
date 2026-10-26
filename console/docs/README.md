@@ -32,7 +32,7 @@ Load the document you need. Each one is self-contained and cross-links the other
 | 16 | [Known gaps and roadmap](./16-known-gaps-and-roadmap.md) | Know what is deliberately missing before you assume a bug |
 | 17 | [Glossary and FAQ](./17-glossary-and-faq.md) | Look up a term or a "why does it do that?" answer |
 
-## The seven facts that explain most behaviour
+## The eight facts that explain most behaviour
 
 1. **The console never writes to the control-plane state table.** Every mutation is a
    pass-through that returns the control plane's `202 Accepted`. The UI then waits for the live
@@ -55,29 +55,40 @@ Load the document you need. Each one is self-contained and cross-links the other
    first page of any table is instant. Everything behind the pointer is immutable, so it is cached
    for the life of the process. See [06](./06-iceberg-tables.md).
 
-5. **Queries read each of a materialization's tables by its canonical name**, `<dataset>.<table>`
-   — one table per source topic, in the dataset chosen for it: `SELECT * FROM sales.orders`, with
-   logical columns (`"customer.email"`, one column per fork family), and `iceberg.sales.orders` with
-   the native ones — and may join them, across datasets. Each statement runs in a DuckDB sandbox
+5. **Queries read each table by its canonical name, with its domain**, `<domain>.<dataset>.<table>`
+   — one table per source topic, in the dataset chosen for it: `SELECT * FROM domain_a.sales.orders`,
+   with logical columns (`"customer.email"`, one column per fork family), and
+   `domain_a_iceberg.sales.orders` with the native ones — and may join them, across datasets and
+   domains. Each statement runs in a DuckDB sandbox
    that can read only the snapshot files of the tables it names; the SQL is also checked as a single
    read-only statement, and results are capped (`shared/tableNames.ts` derives table names as the
    control plane does). See [07](./07-data-access-and-duckdb.md) and [12](./12-security-model.md).
 
-6. **Settings are stored with the control plane, even the console's own.** The Settings page
-   overrides settings of the control plane, its runtimes and this console without a restart. An
+6. **Settings are stored with the control planes, even the console's own.** The console's are kept
+   in the settings home, one domain the deployment names; each domain's Settings page overrides its
+   control plane's and runtimes' settings, the console's Settings page the console's, without a
+   restart. An
    override wins over the environment variable until it is reset. The console reads its overrides
    back every 30 seconds, so every replica converges. See
    [03 §3.10](./03-configuration-reference.md) and [11 §11.8b](./11-feature-reference.md).
 
-7. **Every request has a caller, and the control plane decides what they may do.** A browser
-   signs in through the console, which keeps the control-plane session in an HttpOnly cookie;
+7. **Every request has a caller, and each domain's control plane decides what they may do there.**
+   A browser signs in through the console — through a provider into every domain at once, or with a
+   password into one — and the console keeps each domain's session in an HttpOnly cookie of its own;
    every `/api` route names the permission it needs, and changes travel with the person's own
    session, so the control plane checks them again. Access to data is per dataset: schemas, queries,
    exports and the catalog are checked on the datasets of the tables a request is about, and the
-   shared detail is cut down for each person (`visibleDetail`). Shared live views are read once with
-   a read-only service token. Without a session the caller is a guest, who by default sees the
-   list and status only. See [12](./12-security-model.md) and the control-plane handbook's
+   shared detail is cut down for each person (`visibleDetail`). Shared live views are read once per
+   domain with its read-only service token. Without a session the caller is a guest, who by default
+   sees the list and status only. See [12](./12-security-model.md) and the control-plane handbook's
    [18 — Identity and access](../../docs/handbook/18-identity-and-access.md).
+
+8. **One console serves every domain.** Each domain is a Midstream deployment with its own control
+   plane, accounts and data; the console reaches each through its registry, serves its pages under
+   `/d/<domain>`, and merges the fleet, datasets and search across them. Nothing one domain answers is
+   ever shown as another's: a control plane that says it is another domain is served nothing. See
+   [04 §4.10](./04-server-internals.md) and the control-plane handbook's
+   [20 — Domains and the shared console](../../docs/handbook/20-domains-and-the-shared-console.md).
 
 ## Source map
 

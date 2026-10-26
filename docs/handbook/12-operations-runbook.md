@@ -114,10 +114,11 @@ control plane. Before it:
 - Kaspr 0.11.30 and kaspr-operator 0.19.7 or later, for the tail's views to answer refusals as JSON
   (`errorContentType`); older ones send the same body as bytes, which the console reads too;
 - the auth Secret's `service-token`, which the tail app checks the console's requests against (it
-  is the console's `CONSOLE_SERVICE_TOKEN` already).
+  is the console's service token for the domain already).
 
-After it, give the console `CONSOLE_TAIL_URL` — the tail app's Service,
-`http://$TAIL-app-api:6065` — and restart it. Every materialization has a live tail, those created
+After it, the console reads each domain's tail at its registry entry's `tailUrl` — the tail app's
+Service, `http://$TAIL-app-api:6065`, which the chart sets for its own domain, or the tail's route
+for a domain in another cluster (20 §20.2). Every materialization has a live tail, those created
 before it included.
 
 ### Upgrading to 4.4: autoscaling and restart health
@@ -163,12 +164,16 @@ confirm it: [17 — Settings](./17-settings.md) §17.12.
 The Kaspr operator must be installed and the `kaspr.io` CRDs registered.
 
 Creating the auth Secret (values never echoed; keep a copy of the bootstrap password somewhere
-safe, and give the console the same service token as `CONSOLE_SERVICE_TOKEN`):
+safe; a shared console in another release reads the `service-token` as
+`CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN`, through the Secret its `console.domains[]` entry names, and
+every domain's Secret holds the same `federation-key` — make it once, then copy it into each):
 
 ```bash
+FEDERATION_KEY="$(openssl rand -base64 48)"    # once, for every domain
 kubectl create secret generic midstream-auth -n $NS \
   --from-literal=signing-key="$(openssl rand -base64 48)" \
   --from-literal=service-token="$(openssl rand -base64 48)" \
+  --from-literal=federation-key="$FEDERATION_KEY" \
   --from-literal=bootstrap-admin-email=you@example.com \
   --from-literal=bootstrap-admin-password="$(openssl rand -base64 18)"
 ```
@@ -800,7 +805,8 @@ Every materialization has a live tail; there is no switch for one of them.
 
 - For the deployment: Settings › Live tail › *Live tail* (`live_tail_enabled`). No ticks are sent,
   each member forgets its tables within five minutes, and consoles stop asking within two.
-- For one console: its own *Live tail* setting (`liveTailEnabled`), or no `CONSOLE_TAIL_URL`.
+- For one console: its own *Live tail* setting (`liveTailEnabled`), or no `tailUrl` for the domain
+  in its registry.
 
 Stopping a materialization stops its tail too; resuming brings it back within a minute.
 
@@ -967,9 +973,11 @@ kafka-console-consumer --bootstrap-server $BROKERS --topic $RT-commits --max-mes
 | `401 session_ended` or `session_expired` | Signed out elsewhere, password changed, deactivated, or idle past the timeout | Sign in again |
 | `403 forbidden` naming a permission | The account lacks it | Add them to a group whose roles grant it |
 | `403 password_change_required` | The account must replace a password someone else chose | Change it in the console first |
-| The console shows only the list, never details | `CONSOLE_SERVICE_TOKEN` unset or different from the control plane's | Set it to the Secret's `service-token` |
-| The Data tab has no **Live** toggle | No `CONSOLE_TAIL_URL`; the live tail off in this console or in Settings › Live tail; or the materialization is stopped | Turn on what is off (§12.7) |
-| The Data tab says *Live is unavailable* | The tail app cannot be reached at `CONSOLE_TAIL_URL`, or refuses the console (`403 console_only`: its `TAIL_SERVICE_TOKEN` is not the console's `CONSOLE_SERVICE_TOKEN`) | Fix the URL or the Secret; the console keeps asking |
+| The console shows only the list, never details, in one domain | The console's `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN` for it unset or different from its control plane's | Set it to the domain's Secret's `service-token` (the Secret its `console.domains[]` entry names) |
+| The Data tab has no **Live** toggle | No `tailUrl` for the domain in the console's registry; the live tail off in this console or in Settings › Live tail; or the materialization is stopped | Turn on what is off (§12.7) |
+| The Data tab says *Live is unavailable* | The tail app cannot be reached at the domain's `tailUrl`, or refuses the console (`403 console_only`: its `TAIL_SERVICE_TOKEN` is not the console's service token for the domain) | Fix the URL or the Secret; the console keeps asking |
+| A domain is *misconfigured* in the console | The registry's `controlPlaneUrl` for it reaches a control plane that says it is another domain, or none | Correct the entry, or the control plane's `domain.id` (20 §20.4) |
+| Access tokens made in one domain are refused in another | The domains' `federation-key`s differ (a banner says so), or the owner has no account there (`token_unknown_owner`) | The same key in every domain's auth Secret (18 §18.11); add the person there |
 | *Live is starting* for more than a few seconds | The table is seeding: its schema cannot be had from the control plane or GCS, or its topic has no leader | The table's `last_error` in the tail's health (§12.7) |
 | *N records behind*, in amber on the Data tab's status line | The table is `backlogged`: its runtime is more than twice `live_tail_max_rows_per_table` behind the topic (a backfill, a burst, a stopped runtime) | Nothing: the tail starts once the runtime is within 75 % of the bound; **Peek** (under More actions) shows the topic's newest records meanwhile |
 | *N records behind* that stays short of the newest | The table is paused at its bound or its rate ceiling | Routine? Raise `live_tail_max_rows_per_table` or `live_tail_max_records_per_second_per_table` |

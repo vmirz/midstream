@@ -1,5 +1,6 @@
 ## Overview
 - Kaspr control plane and dedicated runtime package for materializing Kafka topics into Apache Iceberg tables on GCS, on Kubernetes. A materialization reads one or more topics with one runtime, each topic into an Iceberg table of its own in a **dataset** — a named group of tables and their Iceberg namespace, so SQL reads `<dataset>.<table>`; the materialization's name is a label. One runtime member, the committer, commits to each table exactly once. Access is granted per dataset. A separate KasprApp, the maintenance app, compacts and expires every materialization's tables. Another, the tail app, serves the console each watched table's records past its committed snapshot straight from Kafka (the **live tail**), so the newest records show within seconds, each exactly once.
+- One deployment of all that is a **domain** (`domain.id`, e.g. `domain_a`): its own accounts, datasets, tables, bucket and settings. Any number of domains share one console — one URL, `/d/<domain>` per domain, pages across every domain, search, SQL across domains (`<domain>.<dataset>.<table>`, always with the domain), sign-in through Entra ID, GitHub, Google or OpenID Connect into every domain at once, federated access tokens every domain honours, and one Iceberg REST catalog over every domain at the console's `/catalog` (handbook 20).
 - Tech stack: Python 3.12+, setuptools 69+, Jinja2 3, PyYAML 6, kubernetes-asyncio 33, pyarrow 18, PyIceberg 0.12 (minor pinned), google-cloud-storage 2, Kaspr CRDs in a Helm chart.
 
 ## Essential Commands
@@ -44,11 +45,13 @@ cd console && npm run build                # production client bundle
 # Regenerate the console's fixture table (console/testdata/iceberg) after changing what the control plane writes
 python python/tests/console_fixture.py
 
-# Read a materialization's table by hand (handbook 11 §11.9): DuckDB through the REST catalog,
-# with an access token from the console's Account page
+# Read a materialization's table by hand (handbook 11 §11.9): DuckDB through a domain's REST catalog
+# behind the console, with an access token from the console's Account page
 #   CREATE SECRET m (TYPE ICEBERG, TOKEN 'tok_…');
-#   ATTACH 'warehouse' AS lake (TYPE ICEBERG, SECRET m, ENDPOINT 'https://<control plane>/catalog');
-#   SELECT count(*) FROM lake.<materialization>.<table>;
+#   ATTACH 'warehouse' AS lake (TYPE ICEBERG, SECRET m, ENDPOINT 'https://<console>/d/<domain>/catalog');
+#   SELECT count(*) FROM lake.<dataset>.<table>;
+# PyIceberg and Spark can use the federated catalog instead: uri https://<console>/catalog,
+# tables lake.<domain>.<dataset>.<table>
 ```
 
 ## Project Map / Architecture
@@ -65,12 +68,12 @@ python python/tests/console_fixture.py
   - `lakehouse/` — the Iceberg side: the GCS-pointer catalog, table creation and drop, schema inference/evolution/fork map (`lakehouse/schema/`), the row builder the seal and the tail share (`lakehouse/rows.py`), exactly-once commit planning, compaction/expiry/orphan planning, and the REST catalog protocol.
   - `observation/`, `schema/`, `kubernetes/`, `kafka/`, `scheduler/` — status interpretation, schema discovery from a topic sample, cluster/Kafka integration, scheduling helpers.
   - `settings/` — the settings catalog (what is overridable, bounds, sections) and effective-config resolution.
-  - `identity/` — permission catalog (each permission's scope: deployment or dataset) and built-in roles/groups, principals and their per-dataset grants, `authorize()`, session tokens, password hashing. Datasets, dataset grants and table-name claims live in the directory too (`services/identity.py`, `storage/identity.py`, `web/datasets.py`).
+  - `identity/` — permission catalog (each permission's scope: deployment or dataset) and built-in roles/groups, principals and their per-dataset grants, `authorize()`, session tokens, password hashing, federated access tokens and signed revocations (`access_tokens.py`), and sign-in providers (`providers/`: each domain verifies an Entra ID, Google or OpenID Connect ID token, or a GitHub token, itself). Datasets, dataset grants and table-name claims live in the directory too (`services/identity.py`, `storage/identity.py`, `web/datasets.py`).
 - `/python/tests/` — `unittest` suite; use these tests as the source of truth for behavior.
-- `/charts/midstream/` — the Helm chart: the control plane, the maintenance and tail apps and the console, every resource, topic and table named after the release. `templates/` holds the Kaspr CRs (agents, tasks, tables, webviews) and the console's Deployment, `ci/` the values files the tests render, `docs/install.md` the installation guide.
-- `/console/` — Midstream Console: a self-contained Node BFF plus React client. It depends on the control plane only through its public HTTP API and is intended to be extractable into its own repository. See `console/README.md`, and `console/docs/README.md` for the full 17-document handbook.
+- `/charts/midstream/` — the Helm chart: one domain's control plane, maintenance and tail apps (`domain.*`, `controlPlane.enabled`), and the shared console with its registry of every domain (`console.domains[]`), every resource, topic and table named after the release; a release can hold a domain, the console, or both. `templates/` holds the Kaspr CRs (agents, tasks, tables, webviews), the console's Deployment and the routes (with the redirect from old per-domain hostnames), `ci/` the values files the tests render, `docs/install.md` the installation guide.
+- `/console/` — Midstream Console: a self-contained Node BFF plus React client, one for every domain. It depends on each control plane only through its public HTTP API and is intended to be extractable into its own repository. `server/domains/` is the registry and each domain's client, live store and status; `server/auth/sso.ts` the providers' flows; `server/routes/catalog.ts` the catalogs. See `console/README.md`, and `console/docs/README.md` for the full 17-document handbook.
 - `/docs/source-of-truth.md` — code-derived, end-to-end reference document for deep architecture and implementation context.
-- `/docs/handbook/` — 19-document deep reference manual. Load the specific document you need rather than the whole set:
+- `/docs/handbook/` — 20-document deep reference manual. Load the specific document you need rather than the whole set:
   - `01` system overview · `02` deployment and the chart · `03` configuration · `04` HTTP API · `05` data models
   - `06` event & topic contracts · `07` control-plane workflows · `08` observation & status derivation
   - `09` schema evolution & forks · `10` runtime internals · `11` Iceberg tables & storage
@@ -78,6 +81,7 @@ python python/tests/console_fixture.py
   - `16` versioning · `17` settings (console overrides, the `settings` table, live runtime settings)
   - `18` identity & access (users, groups, roles, permissions and their scopes, datasets, grants and table-name claims, sessions, how every request is authorized)
   - `19` the live tail (the tail app, exactly once with the snapshot, ownership and forwarding, a table's states, the console's side)
+  - `20` domains and the shared console (topologies, the registry, routes and redirects, sessions and single sign-on, federated access tokens, SQL across domains, the federated catalog, lake access)
   - Start at `docs/handbook/README.md` for the selection table.
 
 ## Code Style & Patterns
@@ -115,7 +119,8 @@ return process_request_event(table, request_event, config=cfg, work_id=work_id)
 - If a change affects WebView or workflow behavior, update or add the nearest existing `python/tests/test_*.py` case instead of relying on manual reasoning only.
 - There is no standalone local control-plane server in the repo; prefer unit tests and chart rendering unless you are intentionally working against the running cluster via port-forward.
 - Never import from `python/` inside `/console`, or from `/console` inside `python/`. The console must stay extractable; it talks to the control plane over HTTP only.
-- Every WebView must authorize its caller before doing anything: `principal = authorize(request, directory_table, "<permission>")` — with `dataset=` for a dataset permission on a dataset in the path — with the `directory` table bound (named after the release in its template). Every console `/api` route declares `permit('<permission>')`, `permitAnywhere('<dataset permission>')` plus a per-dataset check, or `signedIn()`. `AuthorizationWiringTests` enforces the control-plane half.
+- Every WebView must authorize its caller before doing anything: `principal = authorize(request, directory_table, "<permission>")` — with `dataset=` for a dataset permission on a dataset in the path — with the `directory` table bound (named after the release in its template). Every console `/api` route declares `permit('<permission>')`, `permitAnywhere('<dataset permission>')` plus a per-dataset check, or `signedIn()` — checked in the route's domain, every domain route living under `/api/d/<domain>/` — or, for the console's own routes, `permitInHome('<permission>')` (the console's settings) or `permitInSomeDomain('<permission>')` plus a check in each domain a request touches. `AuthorizationWiringTests` enforces the control-plane half.
+- Never let one domain's credential reach another: a session, a domain's service token and its tail are only ever sent to their own domain; only federated access tokens cross, and every domain checks them itself. The console never decides who someone is: a provider's credential goes to every domain, and each verifies it (`identity/providers/`).
 - A table's name in its dataset is claimed by the directory before the table exists (`claim_tables`, sent by request intake) and released when it leaves the catalog; never create a table without a claim, and never write claims except through `identity-intake`. The console's live views read with the service credential and must be cut down per person (`visibleDetail`) before they are sent.
 - Never write or delete a materialization's records in the `state` table while handling an event keyed by anything but that materialization (`materialization_routing_key`): a write lands in the handled event's shard, so the copy would strand there. Scheduled steps on `__system__` events only read and hand their work on, keyed by the materialization (handbook 06 §6.4); `ShardRoutingTests` checks them.
 - Never write the directory tables from a WebView; publish an `IdentityRequest` keyed `identity_routing_key()` and let `identity-intake` apply it. Never put a plain-text password on a topic, in a log, or in a test assertion's message.

@@ -17,6 +17,11 @@ describes the code both execute. They still report separately because a runtime 
 image it was created with until its spec is re-applied: after a control-plane upgrade, runtimes
 legitimately lag until they are rolled.
 
+`GET /system/version`, public, answers `{"component": "control-plane", "version", "domain": {"id",
+"name"} | null, "federation_key_id"}`: the domain it serves (`DOMAIN_ID`, `DOMAIN_NAME`) and the
+first 8 hex characters of its federation key's SHA-256, which the shared console compares across
+domains (20 §20.4, §20.8).
+
 `midstream.version.PACKAGE_VERSION` reads the installed distribution metadata, so
 `pyproject.toml` is the single source of truth. Outside an installed context it reports
 `0.0.0+unknown` rather than a plausible-looking number.
@@ -30,8 +35,9 @@ useful when a build system wants to stamp something more specific.
 
 ## 16.2 Where a user sees it
 
-- **Console and control plane** — the version sits in the sidebar footer; clicking it opens
-  **About this deployment**, which lists both with a note on why a runtime may differ.
+- **Console and control planes** — the version sits in the sidebar footer; clicking it opens
+  **About this deployment**, which lists the console and every domain's control plane, with a note on
+  why a runtime may differ; Settings › Domains lists each domain's version too (20 §20.4).
 - **A materialization's runtime** — its Overview tab, in the Reconciliation panel beside
   **Tables**. Blank until that runtime has reported status at least once.
 - **A table** — its `materializer.package-version` property names the release that created it

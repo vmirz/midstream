@@ -24,11 +24,15 @@ npm install
 cp .env.example .env
 ```
 
-Edit `.env` and point `CONTROL_PLANE_URL` at a reachable control plane. For the dev cluster:
+With no registry in `.env`, the console serves one domain, `local`, at `http://localhost:6065`. For
+the dev cluster, port-forward its control plane there:
 
 ```bash
 kubectl -n midstream port-forward svc/midstream-control-plane-app-api 6065:6065
 ```
+
+To serve several domains, give `CONSOLE_DOMAINS` (or `CONSOLE_DOMAINS_FILE`) a registry and each
+domain's service token (03 §3.3).
 
 Then:
 
@@ -50,16 +54,16 @@ streams — the proxy is explicitly configured not to buffer `text/event-stream`
 ### Signing in
 
 Without a session the console shows what a guest may see — by default the materialization list
-and status — with **Sign in** in the sidebar. Signing in needs an account on the control plane
-you point at. On a fresh control plane, the first administrator is the bootstrap account from its
+and status — with **Sign in** in the sidebar. Signing in with a password needs an account in the
+domain chosen; through a provider, the console's registration with it (03 §3.3a). On a fresh control plane, the first administrator is the bootstrap account from its
 `<release>-auth` Secret, who chooses a new password at first sign-in and can then add people
 under **Settings → Users** ([18 — Identity and access](../../docs/handbook/18-identity-and-access.md)).
 
-For the live views to show details, give the console the control plane's service token:
+For the live views to show details, give the console each domain's service token:
 
 ```bash
 # console/.env
-CONSOLE_SERVICE_TOKEN=<the control plane's AUTH_SERVICE_TOKEN>
+CONSOLE_DOMAIN_LOCAL_SERVICE_TOKEN=<the control plane's AUTH_SERVICE_TOKEN>
 ```
 
 Without it the server logs a warning, and the fleet and detail streams read as a guest.
@@ -130,7 +134,8 @@ Because `useEventStream` tracks connection state, a server restart during develo
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Header shows `control plane at http://localhost:6065 is unreachable` | No control plane, or wrong URL | Start the port-forward; check `CONTROL_PLANE_URL` |
+| A banner says `The control plane of Local cannot be reached` | No control plane, or wrong URL | Start the port-forward; check the domain's `controlPlaneUrl` in `CONSOLE_DOMAINS` (unset, it is `http://localhost:6065`) |
+| A banner says the registry sends a domain to a control plane that is another | The URL reaches another domain's control plane, or one whose `DOMAIN_ID` differs | Point the entry at the right control plane, or give the entry the id that control plane reports |
 | `Cannot find module ... server/main.ts` | You ran `node server/main.ts` from the repository root | `cd console` first, or use an absolute path |
 | Blank page and a MIME-type error in the console | The server was started before the client was built, or the client was rebuilt after the server started | `npm run build` then restart the server |
 | Data tab: "Object storage is not reachable" | No ADC credentials, or the destination bucket is not readable | `gcloud auth application-default login`, or set `CONSOLE_DATA_ACCESS_ENABLED=false` to hide the feature |

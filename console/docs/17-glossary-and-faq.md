@@ -2,20 +2,20 @@
 
 ## 17.1 Glossary
 
-### Materializer domain
+### Materializations and tables
 
 | Term | Meaning |
 |------|---------|
-| **Control plane** | The single Kaspr application that owns desired and observed state, creates and drops the tables, projects their schemas, and serves the Iceberg REST catalog, identity and settings. The console's only upstream besides object storage |
+| **Control plane** | The Kaspr application, one per domain, that owns its domain's desired and observed state, creates and drops the tables, projects their schemas, and serves the domain's Iceberg REST catalog, identity and settings. With each domain's tail app, the console's upstreams besides object storage |
 | **Runtime** | The dedicated Kaspr application deployed per materialization: its members consume the source topics and upload Parquet files, and one of them, the committer, commits them to the tables |
 | **Maintenance app** | The one Kaspr application that compacts, expires and cleans up every materialization's tables, stopped ones and kept ones included; **Run now** asks it |
-| **Tail app** | The Kaspr application that reads the topics of the tables people are watching and serves the records their runtimes have not committed yet, built into rows as the seal will write them (handbook 19). The console's second upstream, through `CONSOLE_TAIL_URL` |
+| **Tail app** | The Kaspr application that reads the topics of the tables people are watching and serves the records their runtimes have not committed yet, built into rows as the seal will write them (handbook 19). Reached through each domain's `tailUrl` |
 | **Live tail** | A table's records past its committed snapshot, from the tail app: a run reads them as one more file, so its snapshot and its tail hold every record up to `through` exactly once. Every materialization has one, while the deployment's `live_tail_enabled` is on |
 | **Live** (mode) | The Data tab's browse view following the live tail: every 1.5 s it appends what arrived, and a commit replaces the run with one on the new snapshot |
 | **`through`** | Per Kafka partition, the last offset a run holds, from its snapshot or its tail: the next fetch asks for the records after it |
 | **Materialization** | One or more Kafka topics, each continuously materialized into an Iceberg table of its own, in the dataset chosen for it, by one runtime. Identified by `mat-<12 hex>`; its name is a label for people, which can change |
-| **Dataset** | A named group of tables, and their Iceberg namespace: SQL reads `<dataset>.<table>`. Its tables may come from any materializations; access is granted per dataset. Its name is fixed once created |
-| **Claim** | A table's `<dataset>.<table>` taken for a materialization by the control plane's directory, before the table exists; the name is unique across the deployment, and freed when the table is dropped or its materialization deleted. Of two requests for one name, the first claimed wins |
+| **Dataset** | A named group of tables in one domain, and their Iceberg namespace: SQL reads `<domain>.<dataset>.<table>`. Its tables may come from any of the domain's materializations; access is granted per dataset, in its domain. Its name is fixed once created |
+| **Claim** | A table's `<dataset>.<table>` taken for a materialization by its domain's directory, before the table exists; the name is unique in the domain, and freed when the table is dropped or its materialization deleted. Of two requests for one name, the first claimed wins |
 | **Kept table** | A table whose topic was removed from its materialization and that was kept: read-only, still readable and maintained, written again if its topic is added back |
 | **Desired phase** | What the operator asked for: `running`, `stopped`, `deleting` (`paused` on records from before Stop) |
 | **Observed phase** | What the control plane concluded is actually true, from the 11-value `LIFECYCLE_PHASES` |
@@ -46,7 +46,8 @@
 | Term | Meaning |
 |------|---------|
 | **BFF** | Backend-for-frontend. The Node server in `server/` |
-| **Live store** | The singleton that polls, caches, derives rates, and fans out snapshots |
+| **Live store** | What polls one domain's control plane, caches, derives rates, and fans out snapshots: one per domain |
+| **Merged fleet** | Every domain's fleet in one list, each item tagged with its domain: the Overview and Materializations pages at `/`, with a domain's own at `/d/<domain>` |
 | **Fleet snapshot** | The whole-console view: totals, per-materialization summaries, and the fleet series |
 | **Detail snapshot** | One materialization's detail, schema, and series |
 | **Series** | A rolling array of `ThroughputSample`, capped at `CONSOLE_SERIES_POINTS`, points at least `CONSOLE_SERIES_SAMPLE_MS` apart |
@@ -56,7 +57,7 @@
 | **Direct mode** | DuckDB scans `gs://` in place using HMAC credentials |
 | **Cached mode** | Data files are mirrored to local disk, under their bucket and object name, then scanned |
 | **Baseline diff** | A diff against nothing, where every field is new |
-| **Table name** | What SQL and engines call one of a materialization's tables, inside its dataset: its topic's name made an identifier (`orders`, `payments_v2`) unless another was typed, fixed once the table exists. In a statement, `<dataset>.<table>` (`sales.orders`) is a view over the snapshot's data files in the chosen time range, one column per field with forks folded in; `iceberg.<dataset>.<table>` is the same rows as the native Iceberg table. Engines read `lake.<dataset>.<table>` |
+| **Table name** | What SQL and engines call one of a materialization's tables, inside its dataset: its topic's name made an identifier (`orders`, `payments_v2`) unless another was typed, fixed once the table exists. In a statement, always with its domain: `<domain>.<dataset>.<table>` (`domain_a.sales.orders`) is a view over the snapshot's data files in the chosen time range, one column per field with forks folded in; `<domain>_iceberg.<dataset>.<table>` is the same rows as the native Iceberg table. Engines read `lake.<domain>.<dataset>.<table>` through the federated catalog, or `lake.<dataset>.<table>` through a domain's own |
 | **Sandbox** | The DuckDB instance a statement runs in, made for it: it can open only the run's data files and write only the run's own directory |
 | **As of** | Reading a table as of an older snapshot: the runs API's `asOf`. The Data tab always reads the latest; a link from before carrying `asof=` opens on the latest |
 | **Stopped** | A materialization whose runtime is scaled to zero replicas; resume scales it back to its replica count |
@@ -64,7 +65,7 @@
 | **Time range** | The window of Kafka record timestamps a run covers. Files outside it are never opened; the manifests record each file's span |
 | **Override** | A setting value chosen on the Settings page. Stored with the control plane; wins over the environment variable until it is reset |
 | **Deployment value** | What a setting is set to by its environment variable. A reset returns a setting to it, or to the built-in default when the deployment sets none |
-| **Settings scope** | `control-plane`, `runtime` or `console`: the three groups settings are stored, versioned and conflict-checked in |
+| **Settings scope** | `control-plane`, `runtime` or `console`: the three groups settings are stored, versioned and conflict-checked in. Every domain has its own control-plane and runtime scopes; the console's is stored in the settings home |
 | **Revision** | A scope's count of applied changes. A save names the revision it read, so it cannot overwrite a change it never saw |
 | **Draft** | An unsaved edit on the Settings page: a value as typed, or a pending reset |
 | **Rollout** | How far the current runtime-settings revision has reached the runtimes, shown on the Settings page's Runtimes section |
@@ -73,18 +74,37 @@
 
 | Term | Meaning |
 |------|---------|
-| **Principal** | Who is making a request: a signed-in person (`user`), a `guest`, or the console's read-only `service` credential |
+| **Principal** | Who is making a request, in one domain: a signed-in person (`user`), an access token acting for one (`token`), a `guest`, or the console's read-only `service` credential |
 | **Guest** | Anyone not signed in. Holds what the Guest group grants: by default the materialization list and status |
 | **Permission** | One thing someone may do, such as `materializations.create` or `data.export`. Every console route and control-plane view names the one it needs. A *dataset* permission — reading schemas, querying, exporting, the catalog, adding and dropping tables, managing — is held on a dataset: granted there, or everywhere through a group's role |
 | **Role** | A set of permissions. Eight are built in: Administrator, User Manager, Operator, Viewer, Status Viewer, and the dataset roles Dataset Reader, Dataset Writer and Dataset Owner; administrators make more |
 | **Dataset grant** | Roles given to a person or group on one dataset, by its owners, from roles of dataset permissions only. A new dataset's creator owns it, and All Users may read it |
 | **Locked** | A dataset someone may not read: they see its name and its tables' names, never their schemas or data |
 | **Group** | People and the roles they hold through it. Built in: Guest, All Users, Viewer, Editor, Admin |
-| **Session** | One sign-in: a control-plane token in this browser's HttpOnly cookie. Ends after 8 h unused or 7 days in any case, at sign-out, or when an administrator ends it |
+| **Session** | One sign-in to one domain: its control plane's token in this browser's HttpOnly cookie for that domain, `midstream_session_<domain>`. Ends after 8 h unused or 7 days in any case, at sign-out, or when an administrator ends it. A provider's sign-in starts one in every domain that admits the person |
 | **Session check** | The console asking the control plane who a token belongs to; trusted for `CONSOLE_SESSION_CHECK_MS` (5 s) |
-| **Service token** | `CONSOLE_SERVICE_TOKEN`: the read-only credential the live store polls with, shared by everyone's views |
+| **Service token** | `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN`: the read-only credential a domain's live store polls it with, shared by everyone's views; each domain has its own |
 | **Bootstrap administrator** | The control plane's first administrator, from its auth Secret; must change the password at first sign-in |
-| **Audit log** | Sign-ins, failed sign-ins and every change to users, groups and roles, newest first |
+| **Audit log** | Sign-ins, failed sign-ins and every change to users, groups and roles, newest first; each domain keeps its own |
+
+### Domains
+
+| Term | Meaning |
+|------|---------|
+| **Domain** | One Midstream deployment — a control plane with its maintenance and tail apps, in one cluster, with its own accounts, datasets, tables, bucket and settings — as the console serves it. Its id (`domain_a`) is its URL segment (`/d/domain_a`), its catalog in SQL and its first level in the federated catalog; its name (*Domain A*) is what people read |
+| **Shared console** | The one console serving every domain, at one URL. There are no per-domain consoles: an old per-domain hostname redirects to `/d/<domain>` |
+| **Registry** | The domains the console serves and how it reaches each — `controlPlaneUrl`, `tailUrl`, the Secret with its service token — from `console.domains[]` in the chart, as `CONSOLE_DOMAINS_FILE` |
+| **Settings home** | The one domain that stores the console's own settings (its `console` scope), and whose `settings.view`/`settings.manage` decide who may see and change them |
+| **Domain switcher** | The header's control for where you are: *All domains*, or one domain. Pages under `/d/<domain>` are that domain's; the others show every domain at once |
+| **Misconfigured** | A domain whose control plane says it is another domain, or none: the console serves nothing of it until the registry or the control plane is corrected |
+| **Sign-in provider** | Microsoft Entra ID, GitHub, Google or a generic OpenID Connect provider (`oidc`), registered with the console and turned on by each domain for itself. One sign-in through it starts a session in every domain that admits the person |
+| **First-sign-in policy** | What a domain does with someone a provider vouches for that it has never seen: `open` makes them an account in All Users, `invited` refuses them until an administrator adds one |
+| **Allowed email domains** | The email domains a domain admits through a provider (`example.com`); empty, any |
+| **Linked identity** | A provider account tied to a domain's user, by the provider's subject: how the domain finds them next time, even if their email changes |
+| **Federated access token** | An access token any domain honours: signed with the federation key, carrying its owner, permissions and datasets by `<domain>.<dataset>`; in each domain it acts for the account with the same provider account, else the same email, with no more than that account holds there |
+| **Federation key** | The secret every domain shares to sign and check federated access tokens and their revocations; its id is shown on the console's Domains section, and a banner says when two domains' differ |
+| **Revocation** | A signed record that a token was revoked, handed to every domain at once and again by the console every 5 minutes |
+| **Federated catalog** | The console's `/catalog`: one Iceberg REST catalog over every domain, its namespaces `<domain>` and `<domain>.<dataset>`. Each domain's own is at `/d/<domain>/catalog` |
 
 ## 17.2 FAQ — behaviour
 
@@ -353,8 +373,28 @@ Live data arrives over SSE. Putting it in a query cache too would create two sou
 the same value.
 
 **Can I run more than one replica?**
-Technically yes, but each keeps its own poll loop, series and runs. See
-[13 §13.4](./13-operations-runbook.md#134-running-more-than-one-replica).
+Technically yes, but each keeps its own poll loops, series, runs and provider sign-ins in flight.
+See [13 §13.4](./13-operations-runbook.md#134-running-more-than-one-replica).
+
+**Why does one console serve every domain, instead of one console each?**
+So people find everything in one place: one URL, one sign-in through a provider, search and SQL
+across domains, one catalog for engines. Each domain still decides everything about itself — its
+accounts, permissions, data and settings — and the console asks each one, as the person, for each
+thing it shows (handbook 20).
+
+**Why must SQL name the domain?**
+So a statement reads the same wherever it is pasted, and two domains' `sales.orders` are never
+confused. `domain_a.sales.orders`; a statement naming `sales.orders` is told how to write it.
+
+**Why did a provider's sign-in sign me in to only some domains?**
+Each domain decides for itself: it may not have the provider turned on, may admit only the people
+an administrator added (`invited`), or only some email domains. The sign-in page lists what each
+domain answered and why.
+
+**Why is my access token refused in one domain?**
+Either that domain's federation key differs from the one the token was signed with (a banner says
+so), or you have no account there with the same provider account or email
+(`token_unknown_owner`), or the token is limited to datasets of other domains.
 
 ## 17.5 FAQ — development
 
@@ -381,8 +421,9 @@ An `overrides` entry pins `uuid` to `^11.1.1`.
 It publishes prerelease-tagged versions (`1.5.5-r.4`), where a caret range behaves unpredictably.
 
 **Can I move `/console` into its own repository?**
-Yes — that is the design goal. Copy the directory, set `CONTROL_PLANE_URL`, and it works unchanged.
-Nothing under `/console` imports from `python/`.
+Yes — that is the design goal. Copy the directory, give it a registry (`CONSOLE_DOMAINS`, or none for
+one control plane at `localhost:6065`), and it works unchanged. Nothing under `/console` imports from
+`python/`.
 
 ## 17.6 Quick reference
 
@@ -399,11 +440,12 @@ Nothing under `/console` imports from `python/`.
 | Location | Contents |
 |----------|----------|
 | `localStorage['console.theme']` | `light` \| `dark` |
-| `console_session` cookie (HttpOnly) | This browser's control-plane session; scripts cannot read it |
+| `midstream_session_<domain>` cookies (HttpOnly) | This browser's session in each domain; scripts cannot read them |
+| `midstream_session-flow` cookie (HttpOnly, `/api/auth/sso` only) | A provider's sign-in in progress, for up to 10 minutes |
 | `localStorage['console.data.sqlHeight']` | SQL editor height, px |
 | `localStorage['console.data.railWidth']` | Column rail width, px (264–720) |
 | `localStorage['console.data.jsonShape']` | JSON layout for exports and the row drawer: `nested` or `flat` |
-| The control plane's `settings` table, `console` scope | This console's settings overrides; the console keeps no copy on disk |
+| The settings home's `settings` table, `console` scope | This console's settings overrides; the console keeps no copy on disk |
 | `<CONSOLE_DATA_DIR>/parquet-cache/<bucket>/<object path>` | Mirrored Parquet |
 | `<CONSOLE_DATA_DIR>/runs/<run id>/` | One statement run's result, removed with the run |
 

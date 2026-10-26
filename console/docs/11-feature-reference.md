@@ -8,30 +8,42 @@ Persistent around every page (`components/AppShell.tsx`).
 
 | Element | Behaviour |
 |---------|-----------|
-| Sidebar (≥ 768 px) | Logo, **Overview**, **Materializations**, **Datasets**; **Settings** at the foot, above the account button; active item highlighted via `NavLink`. Items a person may not open are left out |
+| Domain switcher | Above the navigation, where the console serves several domains: **All domains**, then each domain with its live dot (green live, amber reconnecting or unreachable, red misconfigured). Choosing one keeps the section open — the overview, the lists, settings |
+| Sidebar (≥ 768 px) | Logo, **Overview**, **Materializations**, **Datasets**, **Search**; **Settings** at the foot, above the account button; active item highlighted via `NavLink`. In a domain the items are that domain's; under **All domains** every domain's. Items a person may not open are left out |
 | Mobile nav (< 768 px) | Horizontal strip replacing the sidebar, Settings last; **Sign in** for a guest |
-| Account button | Signed in: an avatar with initials and the person's name; opens a menu with their email, **Your account** and **Sign out**. A guest sees **Sign in** |
+| Account button | Signed in to any domain: an avatar with initials and the person's name; opens a menu with their email, the domains they are signed in to (and **sign in to more**), **Your account** and **Sign out everywhere**. Signed in nowhere: **Sign in** |
+| ⌘K / Ctrl+K | Opens **Search** from anywhere (§11.12) |
 | Theme toggle | Flips `.dark` and persists `console.theme` |
-| Compatibility banner | Across the top when the control plane is older than 3.0 (`/api/config` → `controlPlaneCompatible: false`): *This console needs control plane 3.0 or later, whose tables are in datasets; the control plane here is 2.0.0.* Nothing table-related works against it |
+| Domain banners | Across the top, one per domain that is misconfigured (its control plane says it is another domain) or runs a release this console does not work with, saying which |
+| About this deployment | The console's version and every domain's control plane's; a warning when the domains sign access tokens with different federation keys |
 
-### Signing in (`/sign-in`)
+### Signing in (`/sign-in`, `/sign-in/:domain`)
 
-**Sign in to Midstream**: email and password, with the control plane's sign-in methods (today
-email and password only). A wrong email and a wrong password read the same — "Email or password
-is incorrect." — and a locked-out or deactivated account says so. "Forgot your password? Ask an
-administrator to set a new one." There is no self-registration.
+**Sign in to Midstream.** Where the console is registered with providers, a button for each —
+**Sign in with Microsoft**, **GitHub**, **Google**, or the OpenID Connect provider's own label — signs
+in to **every domain that admits the person** at once (handbook 20 §20.7). Below, **or with a
+password**: a password signs in to one domain, chosen in a **Domain** field where the console serves
+several (`/sign-in/<domain>` names it, and the page that sent the person here preselects its own);
+each domain has its own accounts. A wrong email and a wrong password read the same — "Email or
+password is incorrect." — and a locked-out or deactivated account says so, as does a domain whose
+password sign-in is off for all but administrators. "Forgot your password? Ask an administrator of
+<domain> to set a new one." Accounts are made by each domain's administrators, or — under the `open`
+policy — at someone's first sign-in through a provider.
 
-After signing in, the page returns to wherever the person was going. A guest who opens a page
-that needs more is sent here first; a signed-in person without the permission sees **Access
-denied** naming what the page needs.
+Back from a provider, a toast says where the sign-in started a session and where not, and why
+(*Signed in to Domain A · Domain B: no account there*); when no domain admitted the person, the sign-in
+page shows each domain's answer. After signing in, the page returns to wherever the person was going.
+A guest who opens a page that needs more is sent here first; a signed-in person without the permission
+sees **Access denied** naming what the page needs, in which domain.
 
 **A password someone else chose** — a new account, an administrator's reset, the bootstrap
-administrator — must be replaced before anything else: the console shows only **Change
-password** (current password, new password, confirm), with the control plane's minimum length.
-Once it is changed, the person is signed straight back in and carries on.
+administrator — must be replaced before anything else, in the domain that set it: the console shows
+only **Change password** for that domain (current password, new password, confirm), with its minimum
+length, and **Sign out of <domain>**. Once it is changed, the person is signed straight back in and
+carries on. A session started through a provider is never held back by it.
 
 A session that ends elsewhere — signed out by an administrator, deactivated, expired — turns the
-page into a guest's at the next request, and open streams close within 30 seconds.
+page into that domain's guest's at the next request, and open streams close within 30 seconds.
 
 ### `LiveIndicator`
 
@@ -708,32 +720,48 @@ See [handbook 16 — Versioning](../../docs/handbook/16-versioning.md) for what 
 
 ---
 
-## 11.8b Settings (`/settings/:section`)
+## 11.8b Settings (`/settings/:section`, `/d/<domain>/settings/:section`)
 
-Where an administrator changes how the control plane, its runtimes and this console behave,
-without a redeploy. `features/settings/`.
+Where an administrator changes how the console, each domain's control plane and its runtimes behave,
+without a redeploy. `features/settings/`. Two pages share one layout (handbook 17 §17.8):
+
+- **The console's** (`/settings`, under **All domains**): the console's own settings, stored in the
+  settings home, the **Domains** in its registry, **Your account** in each domain, and every domain's
+  **Change history** merged.
+- **A domain's** (`/d/<domain>/settings`): its control plane's and runtimes' settings, its directory
+  — users, groups, roles, the audit log — and **Sign-in**.
 
 ### Layout
 
-A section list on the left (a picker under 768 px) in five groups. Each section shows only to
-people with its permission:
+A section list on the left (a picker under 768 px) in groups. Each section shows only to people with
+its permission — on the console's page, in the settings home; on a domain's, in that domain:
 
-| Group | Sections | Needs |
-|-------|----------|-------|
-| Account | Your account | signed in |
-| Access | Users, Groups, Roles, Security, Audit log | `users.view`, `groups.view`, `roles.view`, `settings.view`, `audit.view` |
-| Platform | Materializations, Deletion & retention, Schema evolution, Runtimes, Commits, Compaction & retention, Iceberg catalog, Background jobs | `settings.view` |
-| Console | Live updates, Data explorer | `settings.view` |
-| System | Topics & Kafka, Diagnostics, Deployment, Change history | `settings.view` |
+| Page | Group | Sections | Needs |
+|------|-------|----------|-------|
+| Console | Account | Your account | signed in to any domain |
+| Console | Console | Live updates, Data explorer, Live tail, Security, Topics & Kafka, Diagnostics | `settings.view` in the settings home |
+| Console | System | Domains | signed in |
+| Console | System | Deployment | `settings.view` in the settings home |
+| Console | System | Change history | `settings.view` in any domain |
+| Domain | Access | Users, Groups, Roles, Security, Sign-in, Audit log | `users.view`, `groups.view`, `roles.view`, `settings.view`, `settings.view`, `audit.view` |
+| Domain | Platform | Materializations, Deletion & retention, Schema evolution, Runtimes, Commits, Live tail, Compaction & retention, Iceberg catalog, Background jobs | `settings.view` |
+| Domain | System | Topics & Kafka, Diagnostics, Deployment, Change history | `settings.view` |
 
-Without `settings.manage` the settings sections are read-only: no save bar, no Reset. Security
-holds the control plane's session, password, lockout and audit settings and the console's two
-(session check interval, sign-in attempts per minute).
+Without `settings.manage` the settings sections are read-only: no save bar, no Reset. A domain's
+Security holds its session, password, lockout and audit settings; the console's Security its two
+(session check interval, sign-in attempts per minute). **Sign-in** turns each provider on or off in
+the domain, sets what a first sign-in does (`open` or `invited`), the email domains that may sign in
+through a provider (any, when empty), and whether people may sign in with a password (administrators
+always may).
 
-A section with unsaved edits carries a dot (a `•` in the picker). Where a section mixes the control
-plane's settings and the console's (Topics & Kafka, Diagnostics), each group has its own heading.
-Settings marked advanced sit in a collapsed **Advanced** panel, which opens by itself when one of
-them has an edit.
+**Domains** lists every domain in the registry: its status and why (*Live*, *Its control plane
+cannot be reached*, *says it is another domain*), its version, the id of the key it signs access
+tokens with (*differs* when it is not the one most domains share, with a warning above the list),
+whether it is the settings home, whether you are signed in there — **Sign in** when not — and
+**Open**.
+
+A section with unsaved edits carries a dot (a `•` in the picker). Settings marked advanced sit in a
+collapsed **Advanced** panel, which opens by itself when one of them has an edit.
 
 ### A setting
 
@@ -788,23 +816,29 @@ Every scope's changes, newest first: who, when, the scope, the revision, and eac
 before and after; a value that was not an override is marked *(default)* or *(deployment)*. The newest 100 per
 scope are kept.
 
-## 11.8c Your account (`/settings/account`)
+## 11.8c Your account (`/settings/account[/:domain]`)
 
-Everyone signed in. The person's name and email ("An administrator manages your name, email and
-groups"); **What you can do**, the permissions they hold by category ("Everything: you are an
-administrator" for an administrator); **Password** — changing it signs them out everywhere else,
-and this browser carries on with a new session; and **Sessions**: each browser signed in, with its
-address, when it signed in and was last active, **Sign out** on any other one, and **Sign out
+Everyone signed in to a domain. Where the console serves several, **Your domains** first: each
+domain, with who you are signed in there as and how (*with a password*, *through Google*), **Show**
+and **Sign out**, or **Sign in**; **Sign out everywhere**. Then **Access tokens**, every domain's at
+once, and below them your account in the domain shown (`/settings/account/<domain>`, your first by
+default): your name and email ("An administrator manages your name, email and groups"); **What you
+can do** there, by category; **Password** — changing it signs you out of that domain everywhere else,
+and this browser carries on with a new session; and **Sessions** there: each browser signed in, with
+its address, when it signed in and was last active, **Sign out** on any other one, and **Sign out
 other sessions**.
 
-With `catalog.read`, **Access tokens**: credentials for DuckDB, Spark, Trino or PyIceberg to read
-the Iceberg REST catalog as them (handbook 18 §18.15). Each token shows its name, permissions and
-expiry, and the datasets it is limited to (*Every dataset you may read through the catalog* when it
-is not), with **Revoke**. **New token** asks for a name, the permissions (only those the person holds
-on some dataset; **Commit to tables** is marked as able to rewrite data), the **Datasets** — every one
-the person may read, now and later, or **Only these datasets**, chosen from those they may read
-through the catalog — and a lifetime, then shows the token **once** with **Copy**: *Copy it now: it is not shown again.* The Table tab's **Connect** panel
-uses it.
+**Access tokens**: credentials for DuckDB, Spark, Trino or PyIceberg to read the Iceberg REST catalogs
+as you, in every domain where you have an account (handbook 18 §18.15). Each token shows its name,
+permissions, expiry, the domain it was **made in**, and the datasets it is limited to — named
+`<domain>.<dataset>` — (*Every dataset you may read, in every domain* when it is not), with **Revoke**,
+which reaches every domain. **New token** asks for a name, the domain to make it in (one where you
+hold `catalog.read`), the permissions (those you hold there; **Commit to tables** is marked as able to
+rewrite data), the **Datasets** — every one you may read, now and later, in every domain, or **Only
+these datasets**, chosen from those you read in any domain you are signed in to — and a lifetime,
+then shows the token **once** with **Copy**: *Copy it now: it is not shown again.* — with the
+federated catalog's URI, and a domain's own for engines that read one level of namespaces. With one
+domain the page is that domain's account, as before.
 
 ## 11.8d Users (`/settings/users[/:userId]`)
 
@@ -929,4 +963,23 @@ table — the dialog says so and only closes; once empty, its grants go with it 
 
 A change of access reloads the person's own session, since what they may do may have changed with it;
 open detail pages of others pick it up within 30 seconds (08 §8.22).
+
+## 11.12 Search (`/search`)
+
+One box over every domain: materializations by name, id or topic, tables by name
+(`<dataset>.<table>` or in full, `<domain>.<dataset>.<table>`), and datasets by name or description —
+in each domain where the person may see them. Results are grouped (**Materializations**, **Tables**,
+**Datasets**), each with its domain's chip, and open in their domain: a materialization's page, a
+table on its materialization's **Table** tab, a dataset's page. ↑ and ↓ move through them, ↵ opens one;
+⌘K or Ctrl+K from anywhere focuses the box.
+
+## 11.13 Every domain at once
+
+Under **All domains**, the **Overview** shows the fleet's totals and throughput summed over every
+domain, a **Domains** panel (each domain's materializations, rates and status), and *Needs attention*
+across domains, each row with its domain's chip; **Materializations** lists every domain's in one
+table with a **Domain** column and domain filter chips, and **New materialization** asks which
+domain first; **Datasets** lists every domain's, grouped by domain, and **New dataset** asks which
+domain first. A domain the person may not see, or that cannot be asked now, is named under the list
+with **Sign in** where that would help. Inside a domain each page is as before, about that domain.
 

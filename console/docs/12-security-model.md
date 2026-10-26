@@ -6,51 +6,79 @@ boundaries are.
 ## 12.1 Trust boundaries
 
 ```
-┌─────────────┐   untrusted   ┌──────────────────┐  person's session   ┌───────────────┐
-│  Browser    │ ────────────► │  Console server  │ ──────────────────► │ Control plane │
-│ (a guest,   │   cookie      │                  │  or service token   │  (authorizes  │
-│  or someone │               │  who is calling  │                     │   every call) │
-│  signed in) │               │  permit() checks │ ──────────────────► │  Object store │
-└─────────────┘               │  validation      │                     └───────────────┘
-                              │  sandbox         │
-                              └──────────────────┘
+┌─────────────┐   untrusted   ┌──────────────────┐  the person's session  ┌──────────────────┐
+│  Browser    │ ────────────► │  Console server  │  in that domain, or    │ Domain A's       │
+│ (a guest,   │  one cookie   │                  │  its service token     │ control plane    │
+│  or someone │  per domain   │  which domain,   │ ─────────────────────► │ (authorizes      │
+│  signed in) │               │  who is calling  │ ─────────────────────► │  every call) …   │
+└─────────────┘               │  permit() checks │                        │ Domain B's, C's  │
+       │                      │  validation      │ ─────────────────────► │ Object stores    │
+       │  sign-in through     │  sandbox         │                        └──────────────────┘
+       ▼  a provider          └──────────────────┘
+┌─────────────┐  code → ID token    │  ▲
+│ Entra ID,   │ ◄───────────────────┘  │  each domain checks the ID token
+│ GitHub,     │ ◄──────────────────────┼─ against the provider itself
+│ Google, OIDC│                        │
+└─────────────┘
 ```
 
 Everything crossing the browser→server boundary is untrusted: path parameters, request bodies,
 headers, and SQL. So is what a table names — its pointer, metadata and manifests are written by
-whoever commits to it (§12.6). Everything the server sends upstream is constructed from validated
-input. Who
-may do what is decided by the control plane; the console asks it, enforces the answer on its own
-routes, and sends every change with the person's own session so the control plane checks again.
+whoever commits to it (§12.6) — and what a sign-in provider sends back. Everything the server sends
+upstream is constructed from validated input. Who may do what is decided by each domain's control
+plane, for that domain only; the console asks it, enforces the answer on its own routes, and sends
+every change with the person's own session there, so the control plane checks again. The console
+is not an identity provider: it runs a provider's sign-in and hands what the provider vouched for
+to every domain, and each domain decides for itself whether that is someone it knows (control-plane
+handbook 18 §18.17).
 
 ## 12.2 Authentication and authorization
 
-People sign in with an email and password; accounts, groups, roles and permissions live in the
-control plane ([18 — Identity and access](../../docs/handbook/18-identity-and-access.md)). There is
-no self-registration: an administrator adds people with an initial password they must change.
+Accounts, groups, roles and permissions live in each domain's control plane
+([18 — Identity and access](../../docs/handbook/18-identity-and-access.md)); a domain knows nothing of
+another's. People sign in two ways: with an email and password, in one domain at a time, or through
+a sign-in provider — Microsoft Entra ID, GitHub, Google or any OpenID Connect provider — in every
+domain at once ([20 — Domains and the shared console](../../docs/handbook/20-domains-and-the-shared-console.md)).
+A password account is added by an administrator, with an initial password they must change. A
+provider's sign-in can make an account the first time someone signs in to a domain, when that
+domain's first-sign-in policy is `open` (the default) and their email is in one of its allowed email
+domains; with `invited`, only the people an administrator added get in. Either way the account is
+made by the domain, never the console, and it starts in the domain's default groups — a provider's
+groups never decide any.
 
 | Control | How |
 |---------|-----|
-| **Every route declares a permission** | `permit('<permission>')` or `signedIn()` on each `/api` route; a route with neither answers anyone (`/api/health`, `/api/config`, `/api/auth/session`, `/api/auth/login`, `/api/auth/logout`). A guest gets `401`, a person without the permission `403` |
-| **Data permissions are checked per dataset** | A dataset permission (`dataset.view_schema`, `data.query`, `data.export`, `catalog.read`, …) is checked on the datasets a request is about: every table a statement names, the table a schema is of, the datasets a run read (for its rows, stream and export, again on every request). The route's guard, `permitAnywhere(permission)`, turns away anyone holding it on no dataset; `requireOnDatasets` then refuses with `403`, `details.permission` and `details.dataset` (`auth/guard.ts`, the rule in `shared/access.ts`). A token limited to datasets holds no dataset permission on any other |
+| **Every route declares a permission** | `permit('<permission>')` or `signedIn()` on each `/api` route; a route with neither answers anyone (`/api/health`, `/api/config`, `/api/auth/session`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/sso/*`). A guest gets `401`, a person without the permission `403` |
+| **A domain's routes are checked in that domain only** | Every route under `/api/d/<domain>/` resolves the caller in that domain — its session cookie, else a guest there — and checks the permission there: holding `materializations.manage` in Domain A grants nothing in Domain B. The console's own routes (the merged fleet, search, runs across domains) resolve the caller in every domain and show what comes from each only as that domain allows |
+| **The catalogs are the domains' to decide** | `/catalog` and `/d/<domain>/catalog` check nothing themselves: they hand the caller's bearer token to the domain a namespace names, unchanged, and the domain checks it as it checks an engine calling it directly (§12.7) |
+| **Data permissions are checked per dataset** | A dataset permission (`dataset.view_schema`, `data.query`, `data.export`, `catalog.read`, …) is checked on the datasets a request is about, each in its own domain: every table a statement names — a statement joining two domains needs `data.query` on each dataset, each where it lives — the table a schema is of, the datasets a run read (for its rows, stream and export, again on every request). The route's guard, `permitAnywhere(permission)`, turns away anyone holding it on no dataset; `requireOnDatasets` then refuses with `403`, `details.permission` and `details.dataset` (`auth/guard.ts`, the rule in `shared/access.ts`). A token limited to datasets holds no dataset permission on any other |
 | **The control plane checks again** | Changes are sent with the person's own session, never the console's credential, so a bug in a console route cannot grant what the control plane refuses. The datasets routes are the control plane's to decide: the console only passes them through |
-| **The session never reaches page scripts** | The control-plane token is kept in an `HttpOnly`, `SameSite=Lax` cookie, `Secure` behind TLS. XSS cannot read it |
+| **The session never reaches page scripts** | Each domain's session token is kept in a cookie of its own, `<CONSOLE_SESSION_COOKIE>_<domain>`, `HttpOnly`, `SameSite=Lax`, `Secure` behind TLS. XSS cannot read them, and a session is only ever sent to the domain that issued it |
 | **Cross-site changes are refused** | `POST`/`PUT`/`PATCH`/`DELETE` need `Sec-Fetch-Site: same-origin` (or `none`), or else an `Origin` naming this host. With `SameSite=Lax`, this is the CSRF defence; no token is needed |
 | **Revocation is prompt** | Session checks are cached for `CONSOLE_SESSION_CHECK_MS` (5 s), and the control plane checks every request against the current directory: deactivating someone or signing them out applies within seconds. Streams re-check every 30 s and close |
-| **Sign-in is rate-limited** | `CONSOLE_SIGN_IN_ATTEMPTS_PER_MINUTE` per client address here, and the control plane locks an email after repeated wrong passwords whatever the address |
-| **Shared views read with least privilege** | The live store polls with `CONSOLE_SERVICE_TOKEN`, which the control plane lets read, never change, on every dataset. Everything it serves is still filtered by each route's permission, and a materialization's detail by the caller's datasets: `visibleDetail` (`live/store.ts`) leaves out the schemas and schema errors of tables whose datasets they may not see the schemas of, and the Table tab's record leaves out the fork map and `schema.*` properties — on the detail route and on every refresh of the detail stream |
+| **Sign-in is rate-limited** | `CONSOLE_SIGN_IN_ATTEMPTS_PER_MINUTE` per client address here, for passwords and for starting a provider's sign-in, and each domain locks an email after repeated wrong passwords whatever the address |
+| **A provider's sign-in finishes only where it started** | The console starts a flow with a random `state`, a `nonce` and a PKCE verifier (S256), and binds it to the browser with a short-lived cookie, `<CONSOLE_SESSION_COOKIE>-flow` (`Path=/api/auth/sso`, `HttpOnly`); it keeps only the cookie's SHA-256. The callback finishes a flow once, for the same provider, from a browser holding that cookie, within 10 minutes — else the person is asked to sign in again (`auth/sso.ts::takeFlow`). A code intercepted on its way back is useless without the verifier |
+| **Every domain checks the provider's answer itself** | The console exchanges the code for an ID token (GitHub: an access token) and hands it to every domain. Each checks the ID token's signature against the provider's published keys, its issuer (one Entra ID tenant; Google's, with its hosted domain when set), its audience, expiry, issue time and the flow's nonce — once: a nonce used is refused again — and GitHub's token against GitHub's API with the app's own credentials (control-plane handbook 18 §18.17). The console revokes GitHub's token once every domain has answered; it never stores either |
+| **Back to this console only** | Where a sign-in returns to is a path of this console (`safeReturnPath`): another host, `//host`, `/\host`, `/api/…` and `/sign-in` all become `/`. There is no open redirect |
+| **Password sign-in can be turned off, per domain** | A domain that turns it off refuses a password unless its account holds every permission, so an administrator can still get in when a provider is down; the console only shows the choice |
+| **Shared views read with least privilege** | Each domain's live store polls with that domain's own service token, `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN`, which its control plane lets read, never change, on every dataset there — and nowhere else: a domain's token is never sent to another. Everything it serves is still filtered by each route's permission, and a materialization's detail by the caller's datasets: `visibleDetail` (`live/store.ts`) leaves out the schemas and schema errors of tables whose datasets they may not see the schemas of, and the Table tab's record leaves out the fork map and `schema.*` properties — on the detail route and on every refresh of the detail stream |
 | **Runs are private** | A query run belongs to whoever started it; anyone else gets `404`. A statement's sandbox reaches only its own run's directory (§12.4) |
 | **The live tail is asked as the person** | A run's tail, a refresh and the head peek call the tail app with the person's own session — the same token the console sends the control plane — and with the console's service token in `X-Console-Token`, which the tail app requires on every view (handbook 19 §19.10). The tail app checks the session with the control plane and `data.query` on the table's dataset itself, so a console bug cannot widen what a person reads. The console refuses first: a run, a refresh and a peek need `data.query` on the table's dataset here too, so a person without it causes no tail request at all. The tail's rows land in the run's own directory and nowhere else |
-| **Access tokens are shown once** | `POST /api/auth/tokens` answers a token's text once, `cache-control: no-store`; the console never stores it and the control plane keeps only its hash. Listings never carry secrets |
+| **Access tokens are shown once** | `POST /api/d/<domain>/auth/tokens` answers a token's text once, `cache-control: no-store`. Nobody stores it: the console never does, and the domain that makes it keeps its id, owner, permissions and expiry, but not its text — every domain checks a token by its signature, with the federation key they share. Listings never carry secrets |
+| **A revoked token is refused everywhere** | Revoking signs a revocation the console hands to every other domain at once, and again every 5 minutes to any domain that missed it (`auth/revocations.ts`); each domain refuses a revoked token from then until it would have expired |
 | **No secrets in the browser** | `localStorage` holds the theme and pane sizes; the session is the cookie |
 
 Guests are real callers: by default they may see the materialization list and status. An
 administrator can give the Guest group less, or more, from the Groups page.
 
-**What still belongs to the deployment.** Serve the console over TLS (the cookie is `Secure`
-only when the request arrived over HTTPS, `CONSOLE_COOKIE_SECURE=auto`), keep the control plane's
-port off any public address, and treat the pod's ADC/HMAC credentials and the service token as
-sensitive. Ingress authentication in front of the console is still a reasonable extra layer, but
+**What still belongs to the deployment.** Serve the console over TLS (the cookies are `Secure`
+only when the request arrived over HTTPS, `CONSOLE_COOKIE_SECURE=auto`), keep each control plane's
+port off any public address — a control plane in another cluster is reached through its API route,
+over TLS — and treat the pod's ADC/HMAC credentials, every domain's service token and each
+provider's client secret as sensitive. The federation key most of all: every domain honours a token
+it signs, for anyone in that domain's directory, administrators included, so whoever holds it can act
+as anyone anywhere (control-plane handbook 18 §18.11). Keep it in the auth Secret of each domain's
+release and nowhere else, and rotate it in every domain together. Ingress authentication in front of the console is still a reasonable extra layer, but
 no longer the only one.
 
 **Limits worth knowing.** Data permissions are per dataset, not per table or per materialization:
@@ -60,7 +88,11 @@ and table names, locked datasets' included. Access is not storage access: the co
 credential reads every table, and so does anyone holding credentials that read the bucket — GCS
 enforces none of this (control-plane handbook 14). The per-address sign-in limit trusts the address
 the ingress reports (`trustProxy`); a client that reaches the pod directly can choose its own. There
-is no single sign-on yet, no "forgot password" (an administrator resets it), and no email.
+is no "forgot password" (an administrator resets it), and no email. The same email is the same
+person in every domain: a federated token made in one domain acts, in another, for the account
+there with the same provider account, else the same email — so a domain should add people under the
+emails they use everywhere. A provider's flow lives in the console process that started it, as runs
+do: with more than one replica, the callback must reach the same one (session affinity).
 
 ## 12.3 Input validation
 
@@ -70,7 +102,9 @@ is no single sign-on yet, no "forgot password" (an administrator resets it), and
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 ```
 
-Every `:materializationId` passes `assertSafeIdentifier` before it is used anywhere. The id reaches
+Every `:domain` must be a domain this console serves — anything else is a `404` (`unknown_domain`)
+before any route runs — so it picks one of the registry's URLs and never names a host. Every
+`:materializationId` passes `assertSafeIdentifier` before it is used anywhere. The id reaches
 two sinks:
 
 | Sink | Attack blocked |
@@ -143,10 +177,11 @@ and closed after it:
 | `lock_configuration = true` | the statement cannot change any of the above |
 
 DuckDB enforces these instance-wide and will not undo them (E10). The instance holds two views of
-each table the statement names, both over exactly that table's files, read by field id: the table's
-name with logical columns, and `iceberg.<name>`, in a schema of the sandbox's own, with the native
-Iceberg columns. Only the materialization's own tables are there, and only those the statement
-names: no other materialization's data, no database file. Validating a statement while it is
+each table the statement names, both over exactly that table's files, read by field id:
+`<domain>.<dataset>.<table>` with logical columns, and `<domain>_iceberg.<dataset>.<table>` with the
+native Iceberg columns, each domain an in-memory catalog attached for the statement and gone with
+it. Only the tables the statement names are there, in whichever domains, each after `data.query`
+on its dataset in its own domain: no other table's data, no database file. Validating a statement while it is
 typed binds it in a sandbox allowed nothing at all, over empty views.
 
 Browse runs, profiles and exports run only SQL the console writes, on the shared instance.
@@ -264,8 +299,18 @@ segment, keeping buckets apart.
 ## 12.7 Outbound request safety
 
 - Every control-plane request carries `AbortSignal.timeout(CONTROL_PLANE_TIMEOUT_MS)`, so a hung
-  upstream cannot exhaust the event loop.
-- `CONTROL_PLANE_URL` is operator-configured, never user-supplied — there is no SSRF surface.
+  upstream cannot exhaust the event loop; a domain that does not answer is marked unreachable and
+  the others go on.
+- Every domain's URLs come from the registry the chart renders (`CONSOLE_DOMAINS_FILE`), never from
+  a request: a `:domain` segment, or a federated namespace's first level, picks one of them — there
+  is no SSRF surface.
+- Sign-in providers' endpoints are fixed for Entra ID, GitHub and Google; a generic OpenID Connect
+  provider's come from the operator-configured issuer's discovery document, kept an hour. Every
+  provider request has a 15 s timeout.
+- The catalogs forward to a registered domain only, with a path rebuilt from the parsed namespace,
+  a 30 s timeout and a 16 MiB body limit; a commit's body is handed on byte for byte, never parsed.
+  They answer `501` to making or dropping a namespace or table, and to multi-table transactions,
+  without asking any domain.
 - Ids are `encodeURIComponent`-escaped after passing the identifier pattern.
 - Upstream status codes are relayed; upstream error bodies are relayed under
   `details.upstream_details` rather than being merged into the console's own error shape.
@@ -276,7 +321,9 @@ segment, keeping buckets apart.
 |---------|---------|
 | Unexpected server errors | Fixed message `the console failed to handle this request`, empty details, 500. The real error is logged server-side only |
 | A table that cannot be read | `503` naming what failed — storage's status code, or the missing object — never storage's own message, which can name the console's service account |
-| `GET /api/config` | Exposes mode, row limits, poll interval and versions to anyone; the control plane's URL only with `settings.view`, the create defaults only with `materializations.create`. No credentials or budgets |
+| `GET /api/config` | Exposes every domain's id, name, status, version, federation-key id and live-tail state, the mode, row limits, poll interval and versions to anyone; each domain's create defaults only with `materializations.create` there. No URLs, credentials or budgets: how each domain is reached is on its Settings page, with `settings.view` there |
+| `GET /api/auth/sso/outcomes/:id` | What a provider's sign-in did in each domain — signed in, refused and why, unreachable — to whoever holds the id: an unguessable 18-byte value in the redirect, kept 5 minutes. No token, no email |
+| A domain that refuses a sign-in | Its reason (`no_account`, `email_not_allowed`, `provider_disabled`, `password_sign_in_disabled`, …) is shown to the person, since it is about them; a wrong password still says only that the email or password is wrong |
 | Logs | `authorization` and `cookie` headers are removed; per-request logging is disabled |
 | DuckDB errors | Relayed to the user (they are needed to fix a query) but stripped of the statement echo. They can reveal column names of the tables being queried — acceptable, since the user can already `DESCRIBE` them; a table in a dataset they may not query never reaches a sandbox |
 | A table in a dataset locked to the caller | Its schema, schema errors, fork map and `schema.*` properties are left out of the detail, the detail stream and the table record. Its name, topic, counts, snapshots and maintenance stay: names are not secret, and totals are a materialization's status |
@@ -286,7 +333,8 @@ segment, keeping buckets apart.
 
 - No `dangerouslySetInnerHTML` anywhere. All rendering is through React's escaping.
 - Cell values are rendered as text, including JSON-stringified objects.
-- The only cookie is the session, `HttpOnly; SameSite=Lax`. Cross-site changes are refused by
+- The only cookies are the sessions, one per domain, `HttpOnly; SameSite=Lax`, and, during a
+  provider's sign-in, its flow cookie, sent only to `/api/auth/sso`. Cross-site changes are refused by
   `Sec-Fetch-Site`/`Origin` (§12.2). `CONSOLE_CORS_ORIGIN` is unset by default, so browsers block
   cross-origin reads; set it only to a specific trusted origin, never `*` — that origin may then
   make changes with the cookie.
@@ -323,7 +371,15 @@ Re-run `npm audit` after any dependency change; the console pulls in native code
 | Resource exhaustion via body size | Yes | 1 MiB body limit + per-field bounds |
 | SSRF to arbitrary hosts | Yes | Upstream URL is operator-configured |
 | Stack-trace disclosure | Yes | Fixed 500 message |
-| Unauthorized access | Yes | Sign-in; a permission on every route, checked again by the control plane |
+| Unauthorized access | Yes | Sign-in; a permission on every route, checked in its domain and again by that domain's control plane |
+| A permission in one domain used in another | Yes | Sessions, grants and service tokens are each domain's own; a route is checked only in the domain its path names |
+| Login CSRF, or a sign-in finished in another browser | Yes | `state` bound to the flow cookie's hash; one use; 10 minutes |
+| An intercepted authorization code | Yes | PKCE (S256): the verifier never leaves the console |
+| A replayed or misdirected ID token | Yes | Every domain checks signature, issuer, audience, expiry, issue time and a one-use nonce |
+| Open redirect after sign-in | Yes | `safeReturnPath` |
+| A forged access token | Yes | HMAC-SHA256 with the federation key, checked by every domain |
+| A revoked access token used in another domain | Yes | The revocation is handed to every domain at once, and again every 5 minutes to any that missed it; a domain down then refuses it once it is back and synced |
+| **The federation key leaked** | **No** | Whoever holds it can act as anyone in every domain: keep it secret and rotate it everywhere together |
 | Session theft via XSS | Yes | `HttpOnly` cookie; no `dangerouslySetInnerHTML` |
 | Cross-site request forgery | Yes | `SameSite=Lax` + `Sec-Fetch-Site`/`Origin` check on every change |
 | Password guessing | Yes | Per-address limit here; per-email lockout in the control plane; scrypt hashes |

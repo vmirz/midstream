@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 692" width="1000" role="img" aria-labelledby="title desc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13">
+  <title id="title">Midstream: any number of domains, one console</title>
+  <desc id="desc">People, sign-in providers and engines reach one shared console. The console serves every domain from one URL and asks each domain's control plane, as the person, for everything it shows. Each domain is its own deployment with its own accounts, data and settings; every domain holds the same federation key.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#57606a"/></marker>
+  </defs>
+  <rect x="0" y="0" width="1000" height="692" rx="12" fill="#ffffff"/>
+
+  <text x="24" y="34" font-size="17" font-weight="600" fill="#1f2328">Midstream: any number of domains, one console</text>
+  <text x="24" y="55" font-size="12" fill="#57606a">Each domain is a deployment with its own accounts, data and settings. The console asks each one, as the person, for everything it shows.</text>
+
+  <!-- Row 1: who reaches the console -->
+  <rect x="24" y="74" width="300" height="72" rx="8" fill="#f6f8fa" stroke="#8c959f" stroke-width="1.25"/>
+  <text x="40" y="98" font-weight="600" fill="#1f2328">People</text>
+  <text x="40" y="117" font-size="11.5" fill="#57606a">a browser at one URL: midstream.example.com</text>
+  <text x="40" y="134" font-size="11.5" fill="#57606a">old per-domain hostnames redirect to /d/&lt;domain&gt;</text>
+
+  <rect x="350" y="74" width="300" height="72" rx="8" fill="#8250df" fill-opacity="0.08" stroke="#8250df" stroke-width="1.5"/>
+  <text x="366" y="98" font-weight="600" fill="#1f2328">Sign-in providers</text>
+  <text x="366" y="117" font-size="11.5" fill="#57606a">Entra ID · GitHub · Google · OpenID Connect</text>
+  <text x="366" y="134" font-size="11.5" fill="#57606a">one sign-in, into every domain at once</text>
+
+  <rect x="676" y="74" width="300" height="72" rx="8" fill="#bc4c00" fill-opacity="0.07" stroke="#bc4c00" stroke-width="1.5"/>
+  <text x="692" y="98" font-weight="600" fill="#1f2328">Engines</text>
+  <text x="692" y="117" font-size="11.5" fill="#57606a">DuckDB · PyIceberg · Spark · Trino</text>
+  <text x="692" y="134" font-size="11.5" fill="#57606a">with a federated access token</text>
+
+  <g fill="none" stroke="#57606a" stroke-width="1.5">
+    <path d="M174 146V184" marker-end="url(#arrow)"/>
+    <path d="M500 148V184" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+    <path d="M826 146V184" marker-end="url(#arrow)"/>
+  </g>
+  <text x="182" y="170" font-size="11.5" fill="#57606a">pages and /api</text>
+  <text x="508" y="170" font-size="11.5" fill="#57606a">code → ID token, with PKCE</text>
+  <text x="834" y="170" font-size="11.5" fill="#57606a">Iceberg REST</text>
+
+  <!-- Row 2: the shared console -->
+  <rect x="24" y="186" width="952" height="170" rx="10" fill="#0969da" fill-opacity="0.06" stroke="#0969da" stroke-width="2"/>
+  <text x="40" y="210" font-weight="600" font-size="14" fill="#1f2328">Shared console</text>
+  <text x="152" y="210" font-size="11.5" fill="#57606a">one Deployment for every domain: beside a domain's control plane (the default), or alone in a platform cluster</text>
+
+  <g font-size="11.5" fill="#57606a">
+    <rect x="40" y="222" width="296" height="56" rx="6" fill="#ffffff" stroke="#0969da" stroke-opacity="0.45"/>
+    <text x="52" y="240" font-size="12.5" font-weight="600" fill="#1f2328">Pages</text>
+    <text x="52" y="256">/ every domain at once · /d/&lt;domain&gt; one domain</text>
+    <text x="52" y="271">a domain switcher, search across domains</text>
+
+    <rect x="352" y="222" width="296" height="56" rx="6" fill="#ffffff" stroke="#0969da" stroke-opacity="0.45"/>
+    <text x="364" y="240" font-size="12.5" font-weight="600" fill="#1f2328">Sessions</text>
+    <text x="364" y="256">a cookie per domain, only ever sent to it</text>
+    <text x="364" y="271">password sign-in: one domain at a time</text>
+
+    <rect x="664" y="222" width="296" height="56" rx="6" fill="#ffffff" stroke="#0969da" stroke-opacity="0.45"/>
+    <text x="676" y="240" font-size="12.5" font-weight="600" fill="#1f2328">Catalogs</text>
+    <text x="676" y="256">/catalog: lake.&lt;domain&gt;.&lt;dataset&gt;.&lt;table&gt;</text>
+    <text x="676" y="271">/d/&lt;domain&gt;/catalog: one domain's own</text>
+
+    <rect x="40" y="288" width="296" height="56" rx="6" fill="#ffffff" stroke="#0969da" stroke-opacity="0.45"/>
+    <text x="52" y="306" font-size="12.5" font-weight="600" fill="#1f2328">Live views</text>
+    <text x="52" y="322">a live store per domain, read with its service token</text>
+    <text x="52" y="337">cut down to what each person may see there</text>
+
+    <rect x="352" y="288" width="296" height="56" rx="6" fill="#ffffff" stroke="#0969da" stroke-opacity="0.45"/>
+    <text x="364" y="306" font-size="12.5" font-weight="600" fill="#1f2328">SQL</text>
+    <text x="364" y="322">&lt;domain&gt;.&lt;dataset&gt;.&lt;table&gt;, in any domain</text>
+    <text x="364" y="337">joins across domains; each checked where it lives</text>
+
+    <rect x="664" y="288" width="296" height="56" rx="6" fill="#ffffff" stroke="#0969da" stroke-opacity="0.45"/>
+    <text x="676" y="306" font-size="12.5" font-weight="600" fill="#1f2328">Registry</text>
+    <text x="676" y="322">console.domains[]: URLs and service tokens</text>
+    <text x="676" y="337">one settings home keeps the console's settings</text>
+  </g>
+
+  <!-- Row 2 to row 3: the console asks every domain -->
+  <g fill="none" stroke="#57606a" stroke-width="1.5">
+    <path d="M500 356V394"/>
+    <path d="M174 394H826"/>
+    <path d="M174 394V428" marker-end="url(#arrow)"/>
+    <path d="M500 394V428" marker-end="url(#arrow)"/>
+    <path d="M826 394V428" marker-end="url(#arrow)"/>
+  </g>
+  <g font-size="11.5" fill="#57606a">
+    <text x="488" y="372" text-anchor="end">HTTPS: a Service in the same cluster,</text>
+    <text x="488" y="387" text-anchor="end">an API route over TLS in another</text>
+    <text x="512" y="372">as the person there: their session, a federated token or an ID token;</text>
+    <text x="512" y="387">the console's own reads with each domain's read-only service token</text>
+  </g>
+
+  <!-- Row 3: the domains -->
+  <g font-size="11.5" fill="#57606a">
+    <rect x="24" y="430" width="300" height="170" rx="10" fill="#1a7f37" fill-opacity="0.06" stroke="#1a7f37" stroke-width="1.75"/>
+    <text x="40" y="454" font-size="14" font-weight="600" fill="#1f2328">Domain A</text>
+    <rect x="222" y="440" width="90" height="20" rx="10" fill="#0969da" fill-opacity="0.12" stroke="#0969da" stroke-opacity="0.5"/>
+    <text x="267" y="454" text-anchor="middle" font-size="11" fill="#0969da">settings home</text>
+    <text x="40" y="473">cluster A · /d/domain_a</text>
+    <rect x="36" y="484" width="276" height="58" rx="6" fill="#ffffff" stroke="#1a7f37" stroke-opacity="0.5"/>
+    <text x="48" y="503" font-size="12.5" font-weight="600" fill="#1f2328">Control plane</text>
+    <text x="48" y="519">accounts, groups, dataset grants, settings</text>
+    <text x="48" y="534">checks every sign-in and token itself</text>
+    <text x="40" y="565">maintenance · tail · a runtime per materialization</text>
+    <text x="40" y="584">Kafka topics → Iceberg tables in its bucket</text>
+
+    <rect x="350" y="430" width="300" height="170" rx="10" fill="#1a7f37" fill-opacity="0.06" stroke="#1a7f37" stroke-width="1.75"/>
+    <text x="366" y="454" font-size="14" font-weight="600" fill="#1f2328">Domain B</text>
+    <text x="366" y="473">cluster B · /d/domain_b</text>
+    <rect x="362" y="484" width="276" height="58" rx="6" fill="#ffffff" stroke="#1a7f37" stroke-opacity="0.5"/>
+    <text x="374" y="503" font-size="12.5" font-weight="600" fill="#1f2328">Control plane</text>
+    <text x="374" y="519">accounts, groups, dataset grants, settings</text>
+    <text x="374" y="534">checks every sign-in and token itself</text>
+    <text x="366" y="565">maintenance · tail · a runtime per materialization</text>
+    <text x="366" y="584">Kafka topics → Iceberg tables in its bucket</text>
+
+    <rect x="676" y="430" width="300" height="170" rx="10" fill="#1a7f37" fill-opacity="0.06" stroke="#1a7f37" stroke-width="1.75"/>
+    <text x="692" y="454" font-size="14" font-weight="600" fill="#1f2328">Domain C, and any more</text>
+    <text x="692" y="473">cluster C · /d/domain_c</text>
+    <rect x="688" y="484" width="276" height="58" rx="6" fill="#ffffff" stroke="#1a7f37" stroke-opacity="0.5"/>
+    <text x="700" y="503" font-size="12.5" font-weight="600" fill="#1f2328">Control plane</text>
+    <text x="700" y="519">accounts, groups, dataset grants, settings</text>
+    <text x="700" y="534">checks every sign-in and token itself</text>
+    <text x="692" y="565">maintenance · tail · a runtime per materialization</text>
+    <text x="692" y="584">Kafka topics → Iceberg tables in its bucket</text>
+  </g>
+
+  <!-- Row 4: what every domain shares -->
+  <rect x="24" y="616" width="952" height="56" rx="8" fill="#9a6700" fill-opacity="0.08" stroke="#9a6700" stroke-width="1.5"/>
+  <text x="40" y="639" font-weight="600" fill="#1f2328">Shared by every domain</text>
+  <text x="206" y="639" font-size="11.5" fill="#57606a">one federation key: an access token made in any domain works in all of them, and a revocation reaches each</text>
+  <text x="206" y="658" font-size="11.5" fill="#57606a">one read-only identity: the console reads every domain's lake; each domain keeps its own bucket and writes only to it</text>
+</svg>

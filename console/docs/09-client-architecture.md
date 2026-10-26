@@ -6,14 +6,16 @@ Everything in this document lives under `console/src/`.
 
 ```
 main.tsx
-  └── QueryClientProvider              TanStack Query, for on-demand resources and the session
+  └── QueryClientProvider              rootQueryClient: the console's own resources and the session
       └── BrowserRouter                React Router 7
           └── ToastProvider            Notification context
-              └── AuthProvider         Who is using the page (lib/auth.tsx)
-                  └── App              SessionGate + route table
-                      ├── SignInPage   /sign-in
-                      └── AppShell     Sidebar, account menu, theme, mobile nav
-                          └── RequirePermission → <page>   Overview | Materializations | Detail | Datasets | Settings
+              └── AuthProvider         Who is using the page, in every domain (lib/auth.tsx)
+                  └── App              SessionGate + SsoOutcomeToast + route table
+                      ├── SignInPage   /sign-in, /sign-in/:domain
+                      └── AppShell     Sidebar with the domain switcher, account menu, ⌘K, theme
+                          ├── <console page>      Overview | Materializations | Datasets | Search | Settings: every domain
+                          └── DomainScope         /d/:domain/*: the domain, its API and a query cache of its own
+                              └── RequirePermission → <page>   Overview | Materializations | Detail | Datasets | Settings
 ```
 
 `main.tsx` also reads `#root` and throws if it is missing — a fast, loud failure rather than a
@@ -33,52 +35,71 @@ new QueryClient({
 duplicate work and cause visible churn. TanStack Query is used **only** for on-demand resources:
 schema versions, schema diffs, dataset summaries, and query results.
 
+**One cache per domain** (`lib/queryClient.ts`). Each domain's pages read through a query client of
+their own, `queryClientFor(domain)`, so nothing one domain answered is ever shown as another's under
+the same key; the console's own resources — the config, the session, search, the merged fleet — use
+`rootQueryClient`. `DomainScope` (under `/d/:domain/`) and `DomainProvider` (a dialog or section
+about one domain on a console page) provide the domain, its API (`useApi()`: the domain's routes
+under `/api/d/<domain>`) and its cache; `useDomain()`, `useDomainPath()` read them.
+
 ## 9.2 Routing
 
 ```tsx
-<Route path="/sign-in"                                       element={<SignInPage />} />
-<Route path="/"                                              element={<RequirePermission permission="materializations.view">…<OverviewPage />} />
-<Route path="/materializations"                              element={<RequirePermission permission="materializations.view">…<MaterializationsPage />} />
-<Route path="/materializations/:materializationId"           element={<RequirePermission permission="materializations.view_details">…<DetailPage />} />
-<Route path="/materializations/:materializationId/:tab"      element={<RequirePermission permission="materializations.view_details">…<DetailPage />} />
-<Route path="/datasets"                                      element={<RequirePermission permission="datasets.view">…<DatasetsPage />} />
-<Route path="/datasets/:name"                                element={<RequirePermission permission="datasets.view">…<DatasetPage />} />
-<Route path="/datasets/:name/:tab"                           element={<RequirePermission permission="datasets.view">…<DatasetPage />} />   // tables | access
-<Route path="/settings"                                      element={<SettingsPage />} />
-<Route path="/settings/:section"                             element={<SettingsPage />} />
-<Route path="/settings/:section/:itemId"                     element={<SettingsPage />} />   // a user, group or role
-<Route path="*"                                              element={<Navigate to="/" replace />} />
+<Route path="/sign-in"            element={<SignInPage />} />                     // the providers, or a password for a chosen domain
+<Route path="/sign-in/:domain"    element={<SignInPage />} />                     // a password for that domain
+// Every domain:
+<Route path="/"                   element={<Overview />} />
+<Route path="/materializations"   element={<Materializations />} />
+<Route path="/datasets"           element={<Datasets />} />
+<Route path="/search"             element={<SearchPage />} />
+<Route path="/settings[/:section[/:itemId]]" element={<SettingsPage />} />        // the console's own sections
+// One domain:
+<Route path="/d/:domain/*" element={<DomainScope><DomainRoutes /></DomainScope>} />
+  // index → Overview; materializations, materializations/:id[/:tab]; datasets, datasets/:name[/:tab];
+  // settings[/:section[/:itemId]] → the domain's sections; anything else → the domain's overview
+<Route path="*"                   element={<Navigate to="/" replace />} />
 ```
 
-`RequirePermission` sends a guest to `/sign-in`, remembering where they were going, and shows a
-signed-in person without the permission an **Access denied** page. Settings checks each section's
-own permission instead (§9.7).
+`RequirePermission` sends a guest to `/sign-in` — `/sign-in/<domain>` inside a domain — remembering
+where they were going, and shows a signed-in person without the permission an **Access denied**
+page naming the domain. Settings checks each section's own permission instead (§9.7). An unknown
+domain in the path shows a page saying so; a misconfigured one, why it is not available.
 
-Settings sections are URL segments too (`/settings/runtimes`, `/settings/users/usr-…`);
-`/settings` and an unknown section redirect to the first one the person may see. Moving between sections keeps the same `SettingsPage` mounted, so
-unsaved edits survive it.
+The shell's **domain switcher** (*All domains*, then each domain with its live dot) keeps the section
+open: from `/d/domain_a/datasets` to `/datasets` or `/d/domain_b/datasets`; search is always the
+console's own. ⌘K or Ctrl+K opens search from anywhere.
 
-Detail tabs are URL segments, so `/materializations/mat-x/schema` is bookmarkable, shareable, and
-survives a reload. `DetailPage` reads `tab` from params, defaults to `''` (Overview), and switches
-tabs with `navigate(..., { replace: true })` so tab changes do not fill the history stack. The table
-a tab shows is `?table=` (`features/tables/selectedTable.ts`: `useSelectedTable` resolves it against
-the materialization's tables — the written ones, then the kept ones (`readableTables`) — the first
-when absent or unknown); switching tabs keeps it, so the Schema, Data and Table tabs stay on one
-table, and the Tables panel links into them with it set.
+Settings sections are URL segments too (`/settings/domains`, `/d/domain_a/settings/users/usr-…`);
+a page and an unknown section redirect to the first section the person may see. Moving between
+sections keeps the same `SettingsPage` mounted, so unsaved edits survive it.
 
-The server's SPA fallback (`main.ts`) is what makes deep links work on a cold load.
+Detail tabs are URL segments, so `/d/domain_a/materializations/mat-x/schema` is bookmarkable,
+shareable, and survives a reload. `DetailPage` reads `tab` from params, defaults to `''` (Overview),
+and switches tabs with `navigate(..., { replace: true })` so tab changes do not fill the history
+stack. The table a tab shows is `?table=` (`features/tables/selectedTable.ts`: `useSelectedTable`
+resolves it against the materialization's tables — the written ones, then the kept ones
+(`readableTables`) — the first when absent or unknown); switching tabs keeps it, so the Schema, Data
+and Table tabs stay on one table, and the Tables panel links into them with it set.
+
+The server's SPA fallback (`main.ts`) is what makes deep links work on a cold load; the old
+hostnames' redirect (handbook 20 §20.3) lands on `/d/<domain>/<path>`.
 
 ## 9.2a Who is using the page (`lib/auth.tsx`, `features/auth/`)
 
 `AuthProvider` reads `GET /api/auth/session` once with TanStack Query (`['session']`), again every
-minute and on window focus, and immediately when any request finds the session gone. Everything
-else reads it through two hooks:
+minute and on window focus, and immediately when any request finds a session gone: who the browser
+is **in every domain**. Everything else reads it through these hooks:
 
 ```ts
-const auth = useAuth();          // principal, signedIn, can(), canAnywhere(), signIn, signOut, reload, adopt, generation
+const all = useConsoleAuth();    // session, providers, signedInDomains, forDomain(id), overall, signOutEverywhere
+const auth = useAuth();          // inside /d/<domain>/: that domain's; elsewhere `overall`, across domains
 const canCreate = useCan('materializations.create');
 const canQuery = useCan('data.query', table.dataset_id);   // a dataset permission, on one dataset
 ```
+
+`forDomain(id)` gives one domain's `Auth` — principal, `signedIn`, `can()`, `canAnywhere()`, `signIn`
+(a password, for that domain), `signOut`, `adopt` — and `overall` answers across domains: a
+permission held in any, signed in to any, signing out of all.
 
 - `can(permission)` is false for everything while a password must be changed, which keeps the
   page from offering what the server would refuse.
@@ -89,9 +110,12 @@ const canQuery = useCan('data.query', table.dataset_id);   // a dataset permissi
 - `generation` changes whenever the person using the page changes (sign-in, sign-out, a password
   change). Live streams reconnect on it, and every cached query is invalidated, because what the
   previous person could see is not what this one can.
-- `SessionGate` (wrapping the routes) waits for the first answer; while a password must be
-  changed it shows only the change-password form; when the console cannot check sign-ins it
-  shows a retry page rather than guessing.
+- `SessionGate` (wrapping the routes) waits for the first answer; while a password someone else
+  chose must be changed in any domain it shows only that domain's change-password form (or signing
+  out of that domain); when the console cannot answer at all it shows a retry page rather than
+  guessing.
+- Back from a provider (`?signin=<id>`), `SsoOutcomeToast` says where the sign-in started a session
+  and where not, and why; the sign-in page shows the same when no domain admitted the person.
 
 The browser never holds the session token: it is an HttpOnly cookie the server sets. Requests
 use `credentials: 'same-origin'`. A `401`, or a `403` saying the password must be changed, makes
