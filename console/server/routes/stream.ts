@@ -87,16 +87,20 @@ export async function registerFleetStreamRoutes(app: FastifyInstance): Promise<v
     const auths = new Map(request.auths ?? []);
     const stream = openStream(reply);
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let opened = false;
     const emit = (): void => {
       timer = null;
       stream.send('fleet', consoleFleet(auths));
     };
+    // Later changes, from any domain, are merged into one frame; the first frame is sent at once.
     const schedule = (): void => {
-      timer ??= setTimeout(emit, MERGE_DELAY_MS);
+      if (opened) timer ??= setTimeout(emit, MERGE_DELAY_MS);
     };
     const unsubscribes = domains()
       .served()
       .map((domain) => domain.live.subscribeFleet(() => schedule()));
+    opened = true;
+    emit();
     const checks = setInterval(() => void recheck(request, auths).then(schedule), ACCESS_CHECK_MS);
     checks.unref();
     request.raw.on('close', () => {
