@@ -103,7 +103,7 @@ def build_materialization(materialization_id: str, *topics: str) -> Materializat
         desired_phase="running",
         created_at="2026-07-12T00:00:00Z",
         updated_at="2026-07-12T00:00:00Z",
-        created_by="vmirzoyan",
+        created_by="alice",
     )
 
 
@@ -855,7 +855,7 @@ class WebListAndDetailTests(unittest.TestCase):
         )
         self.assertEqual(response["runtime_binding"]["kaspr_app_name"], "kaspr-mat-1")
         self.assertEqual(response["runtime_binding"]["last_applied_spec_hash"], "abc123")
-        self.assertEqual(response["materialization"]["created_by"], "vmirzoyan")
+        self.assertEqual(response["materialization"]["created_by"], "alice")
         self.assertEqual(response["materialization"]["desired_phase"], "running")
         self.assertEqual(response["status"]["observation_source"], "hybrid")
         self.assertEqual(
@@ -1257,7 +1257,7 @@ class WebMutationTests(unittest.TestCase):
         return stop_materialization(
             self.table,
             "mat-1",
-            submitted_by="vmirzoyan",
+            submitted_by="alice",
             request_id="req-stop",
             accepted_at="2026-07-12T00:03:00Z",
             config=self.config,
@@ -1347,7 +1347,7 @@ class WebMutationTests(unittest.TestCase):
         acceptance = resume_materialization(
             self.table,
             "mat-1",
-            submitted_by="vmirzoyan",
+            submitted_by="alice",
             request_id="req-resume",
             accepted_at="2026-07-12T00:04:00Z",
             config=self.config,
@@ -1604,7 +1604,7 @@ class WebMutationTests(unittest.TestCase):
             self.table,
             "mat-1",
             {"job": "compaction", "table": "payments"},
-            submitted_by="vmirzoyan",
+            submitted_by="alice",
             config=self.config,
         )
         self.assertEqual(("payments", "retired"), (accepted["message"]["target"]["table"], accepted["message"]["target"]["state"]))

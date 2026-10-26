@@ -152,8 +152,7 @@ def runtime_name_for_materialization(self, materialization_id: str) -> str:
     return f"{self.default_runtime_name_prefix}-{materialization_id}"
 ```
 
-So `mat-a1b2c3d4e5f6` becomes `kaspr-mat-a1b2c3d4e5f6` in base and
-`develop-mat-a1b2c3d4e5f6` in dev.
+So `mat-a1b2c3d4e5f6` becomes `midstream-mat-a1b2c3d4e5f6` for a release named `midstream`.
 
 ### 3.2.4 Which variables the chart actually sets
 
@@ -188,10 +187,10 @@ Set in `charts/midstream/templates/control-plane/app.yaml`:
 - the seven session, password, lockout and audit settings (Settings page overrides apply instead)
 
 Note that `control_plane_table_name` is a config field, but the table is bound by the Kaspr
-agent/webview `tables:` block (`name: state` / `name: develop-state`), not by this variable.
+agent/webview `tables:` block (`name: <release>-state`), not by this variable.
 Changing the env var alone will **not** rebind the table. The `settings`, `identity` and
-`identity-audit` tables have no variable at all; they are bound the same way (`name: settings` /
-`name: develop-settings`, and so on).
+`identity-audit` tables have no variable at all; they are bound the same way (`name: <release>-settings`,
+and so on).
 
 ### 3.2.5 Which fields the Settings page can override
 

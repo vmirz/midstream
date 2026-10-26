@@ -117,7 +117,7 @@ def build_materialization(*, desired_phase: str = "running", updated_at: str = "
         desired_phase=desired_phase,
         created_at="2026-07-12T00:00:00Z",
         updated_at=updated_at,
-        created_by="vmirzoyan",
+        created_by="alice",
     )
 
 

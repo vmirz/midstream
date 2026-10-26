@@ -96,7 +96,7 @@ class DeletedMaterializationStaysDeletedTests(unittest.TestCase):
             desired_phase=desired_phase,
             created_at="2026-09-12T00:00:00Z",
             updated_at="2026-09-12T03:27:00Z",
-            created_by="vmirzoyan",
+            created_by="alice",
         )
 
     def _status(self, observed_phase: str, phase_reason: str) -> MaterializationStatus:

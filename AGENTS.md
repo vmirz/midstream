@@ -69,7 +69,7 @@ python python/tests/console_fixture.py
 - `/python/tests/` — `unittest` suite; use these tests as the source of truth for behavior.
 - `/charts/midstream/` — the Helm chart: the control plane, the maintenance and tail apps and the console, every resource, topic and table named after the release. `templates/` holds the Kaspr CRs (agents, tasks, tables, webviews) and the console's Deployment, `ci/` the values files the tests render, `docs/install.md` the installation guide.
 - `/console/` — Midstream Console: a self-contained Node BFF plus React client. It depends on the control plane only through its public HTTP API and is intended to be extractable into its own repository. See `console/README.md`, and `console/docs/README.md` for the full 17-document handbook.
-- `/KAFKA_MATERIALIZER_SOURCE_OF_TRUTH.md` — code-derived, end-to-end reference document for deep architecture and implementation context.
+- `/docs/source-of-truth.md` — code-derived, end-to-end reference document for deep architecture and implementation context.
 - `/docs/handbook/` — 19-document deep reference manual. Load the specific document you need rather than the whole set:
   - `01` system overview · `02` deployment and the chart · `03` configuration · `04` HTTP API · `05` data models
   - `06` event & topic contracts · `07` control-plane workflows · `08` observation & status derivation

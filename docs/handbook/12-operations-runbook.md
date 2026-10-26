@@ -1151,6 +1151,9 @@ names them, and that commit checks every input is still live and the row counts 
 
 ## 12.13 The 1.0 rollout: a fresh start that keeps people and settings
 
+*A milestone of the development line before 1.0.0 (16 §16.4), kept as the model of an upgrade that
+keeps the directory and the settings while the materializations start over.*
+
 1.0 converts nothing (decision D8): every 0.x materialization is deleted and created again, and the
 materialization plane starts empty. The identity and settings stores are kept, so every account,
 group, role, session, audit entry and settings override survives, and the administrator signs in
@@ -1183,7 +1186,7 @@ with the same email and password. This is the procedure the lab ran on 2026-10-1
      kubectl run cp-store-fix -n $NS --rm -it --restart=Never --image=busybox \
        --overrides='{"spec":{"nodeName":"<node>","volumes":[{"name":"d","persistentVolumeClaim":{"claimName":"<the control plane PVC>"}}],
                      "containers":[{"name":"c","image":"busybox","stdin":true,"tty":true,"volumeMounts":[{"name":"d","mountPath":"/data"}]}]}}'
-     # inside: ls /data/tables; rm -rf /data/tables/develop-state-*.db /data/tables/develop-state-backups …
+     # inside: ls /data/tables; rm -rf /data/tables/midstream-state-*.db /data/tables/midstream-state-backups …
      ```
 
    - Delete the 0.x KasprAgents, KasprTasks and KasprWebViews the 1.0 manifests no longer define
@@ -1205,6 +1208,9 @@ the two request topics. `identity-bootstrap` then recreates the administrator fr
 and every other account must be added again. Use it only if the identity tables are suspect.
 
 ## 12.14 The 3.0 rollout: a clean slate
+
+*A milestone of the development line before 1.0.0 (16 §16.6), kept as the model of a clean-slate
+upgrade.*
 
 3.0 puts tables in datasets (16 §16.6). It is one release on a clean slate: nothing is migrated.
 

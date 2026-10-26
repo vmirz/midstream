@@ -3,7 +3,7 @@
   "version": "1.0.0-rc.1",
   "private": true,
   "type": "module",
-  "description": "Real-time console for the Kafka materializer control plane.",
+  "description": "The web console of Midstream: materializations, their tables, settings and access, live.",
   "engines": {
     "node": ">=24"
   },

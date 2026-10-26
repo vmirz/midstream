@@ -1,4 +1,4 @@
-# Kafka Materializer Handbook
+# Midstream Handbook
 
 This directory is the **deep reference manual** for Midstream, which
 materializes Kafka topics into Apache Iceberg tables. It is written to be read by humans doing
@@ -42,8 +42,8 @@ aspirational design prose.
 | Path | Purpose |
 |------|---------|
 | `/AGENTS.md` | Short always-on agent instructions: commands, project map, guardrails. Read first, kept under 300 lines. |
-| `/KAFKA_MATERIALIZER_SOURCE_OF_TRUTH.md` | Condensed single-file end-to-end narrative. Good for a one-shot overview; this handbook is the deep reference. |
-| `/console/docs/` | The Midstream Console's own handbook (17 documents), cited here as `web <n>`. |
+| `/docs/source-of-truth.md` | Condensed single-file end-to-end narrative. Good for a one-shot overview; this handbook is the deep reference. |
+| `/console/docs/` | The Midstream Console's own handbook (17 documents), cited here as `console <n>`. |
 
 ---
 
@@ -51,7 +51,7 @@ aspirational design prose.
 
 When two sources disagree, trust them in this order:
 
-1. `manifests/` — what is actually deployed (topic names, agent wiring, env vars, cron schedules).
+1. `charts/midstream/` — what is actually deployed (resources, topic names, agent wiring, env vars, schedules).
 2. `python/src/midstream/` — what the code actually does.
 3. `python/tests/` — executable specification; asserts exact payload shapes and edge cases.
 4. Other prose — design intent, may be stale.
@@ -68,7 +68,7 @@ explicitly (see [14 — Known gaps](./14-known-gaps-and-roadmap.md)).
   navigation hints, not guarantees.
 - **`<runtime-app>`**, or **`<rt>`**, is a placeholder for the resolved runtime KasprApp name,
   e.g. `midstream-mat-a1b2c3d4e5f6` for a release named `midstream`.
-- **`web <n>`** is document `<n>` of the console handbook, `console/docs/`.
+- **`console <n>`** is document `<n>` of the console handbook, `console/docs/`.
 - **`<location>`** is a table's location, `<destination>/<storage prefix>/<materialization id>/<table>`.
 - **Timestamps** are always UTC ISO-8601 with a `Z` suffix and second precision, e.g.
   `2026-01-15T10:30:00Z`. Produced by
@@ -180,6 +180,6 @@ There is **no standalone HTTP server process** in this repository. The API only 
 lab cluster; where the code is ambiguous or a source disagrees, the handbook says so rather than
 guessing.
 
-Verified for 4.1.0 against: 1,174 passing tests (`python -m unittest discover -s python/tests -p 'test_*.py'`),
+Verified for 1.0.0-rc.1 against: 1,251 passing tests (`python -m unittest discover -s python/tests -p 'test_*.py'`),
 `helm template` with every values file, the console's `npm run typecheck && npm test && npm run build`
-(387 tests), and the lab cluster (13 §13.8–§13.8e).
+(403 tests), and the lab cluster (13 §13.8–§13.8h).

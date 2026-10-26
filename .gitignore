@@ -173,8 +173,3 @@ cython_debug/
 .pypirc
 
 .DS_Store
-
-control-plane/MANUAL_TEST_PLAN.md
-control-plane/kaspr-usesage-notes.md
-
-*-chart/

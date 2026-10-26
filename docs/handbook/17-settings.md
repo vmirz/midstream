@@ -527,7 +527,7 @@ Inspecting the store directly:
 
 ```bash
 kafka-console-consumer --bootstrap-server $BROKERS --from-beginning --property print.key=true \
-  --topic midstream-control-plane-app-develop-settings-changelog
+  --topic midstream-control-plane-app-midstream-settings-changelog
 ```
 
 ## 17.11 Who can change settings

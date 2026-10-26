@@ -292,7 +292,7 @@ plane with (handbook 18 §18.9); no row reaches a log line, and neither does a t
 
 ## 19.11 The console's side
 
-In brief; web 07 §07.9 has the detail.
+In brief; console 07 §07.9 has the detail.
 
 - `CONSOLE_TAIL_URL` names the tail app (in a cluster its Service; from a laptop the HTTPRoute's
   `/tail/` rule on the control plane's host). Unset, the console shows committed rows only.
@@ -322,7 +322,7 @@ In brief; web 07 §07.9 has the detail.
 
 | Variable | Default | |
 |---|---|---|
-| `TAIL_APP_NAME` | `<release>-tail` | The KasprApp's name (`develop-` prefixed in dev) |
+| `TAIL_APP_NAME` | `<release>-tail` | The KasprApp's name |
 | `TAIL_CONTROL_PLANE_URL` | — | The control plane's Service, for sessions, schemas and tables |
 | `TAIL_SERVICE_TOKEN` | — | From the auth Secret's `service-token`; at least 32 characters |
 | `TAIL_TABLE_EVENTS_TOPIC` | `materialization-table-events` | Commits and schema changes |
@@ -337,7 +337,7 @@ In brief; web 07 §07.9 has the detail.
 Kafka is reached with Kaspr's own `K_KAFKA_*` variables. **The control plane's** nine settings
 (`live_tail_*`, Settings › Live tail) are in handbook 17 §17.3; every tick carries them, so a change
 reaches the tail app within a minute. **The console's** four (`liveTailEnabled`,
-`liveTailRefreshMs`, `liveTailMaxRows`, `liveTailTimeoutMs`) are in web 03 §3.10.
+`liveTailRefreshMs`, `liveTailMaxRows`, `liveTailTimeoutMs`) are in console 03 §3.10.
 
 ## 19.13 Observability
 
@@ -349,7 +349,7 @@ reaches the tail app within a minute. **The console's** four (`liveTailEnabled`,
 - **The console** says, in plain words, how far behind the newest records the Data tab is — in amber
   on its status line — and otherwise a few muted words there (starting,
   reconnecting, paused, new fields, seconds behind); its More actions menu enables the head peek while
-  a table is backlogged (web 11 §11.8).
+  a table is backlogged (console 11 §11.8).
 
 ## 19.14 Failure modes
 
@@ -418,7 +418,7 @@ Service, so a console run locally can set `CONSOLE_TAIL_URL` to that host.
 ## 19.17 Verification
 
 Unit and model tests: handbook 13. Lab validation of 4.1 (steps of the design's §13.4): 13 §13.8e,
-with the console's browser checks in web 14 §14.4.
+with the console's browser checks in console 14 §14.4.
 
 ## 19.18 Decisions that differ from the design plan
 

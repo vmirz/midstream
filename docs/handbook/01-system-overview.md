@@ -23,7 +23,7 @@ and the system:
 1. Assigns a `materialization_id`, and claims each table's name in its dataset — `sales.orders`,
    `finance.invoices` — so no other table can take it (18 §18.16).
 2. Samples up to 200 records of each topic, all at once, and infers each table's schema 0 (09 §9.6).
-3. Creates the Iceberg tables under `gs://kafka-materializations/<deployment>/<materialization id>/`,
+3. Creates the Iceberg tables under `gs://my-lake/<release>/<materialization id>/`,
    one directory each, partitioned by the day of `_kafka_timestamp`, each with a catalog pointer (11).
 4. Renders and applies **one dedicated Kaspr runtime application** for both into Kubernetes.
 5. That runtime's members consume both topics, stage each record as JSONL in its table's batch,
@@ -117,7 +117,7 @@ of its partitions and forwards a request for another's. It never writes a table 
 
 The Midstream Console (`/console`) is a Node BFF and a React client. It talks to the control plane
 over HTTP only, and reads tables itself: their pointers, metadata and manifests from GCS, and their
-data files through DuckDB (web 06, 07). It is meant to be extractable into its own repository.
+data files through DuckDB (console 06, 07). It is meant to be extractable into its own repository.
 
 ## 1.3 Why "dedicated runtime" and not one shared consumer
 
@@ -361,7 +361,7 @@ There is **no linter or formatter configured** in this repository. Do not introd
 
 ```
 /AGENTS.md                          Agent instructions (short, always-on)
-/KAFKA_MATERIALIZER_SOURCE_OF_TRUTH.md   Condensed end-to-end narrative
+/docs/source-of-truth.md                Condensed end-to-end narrative
 /docs/handbook/                     This handbook
 /charts/midstream/                  The Helm chart: values.yaml; templates/ (apps, agents, tasks, tables, webviews, console); ci/ values
 /docs/install.md                    Installing it

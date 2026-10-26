@@ -101,7 +101,7 @@ def build_materialization(*, desired_phase: str = "running") -> Materialization:
         desired_phase=desired_phase,
         created_at="2026-07-12T00:00:00Z",
         updated_at="2026-07-12T00:00:00Z",
-        created_by="vmirzoyan",
+        created_by="alice",
     )
 
 
@@ -1064,7 +1064,7 @@ class ObservationServiceTests(unittest.TestCase):
                 desired_phase="deleting",
                 created_at="2026-07-12T00:00:00Z",
                 updated_at="2026-07-12T00:00:00Z",
-                created_by="vmirzoyan",
+                created_by="alice",
             ),
         )
         save_materialization_status(

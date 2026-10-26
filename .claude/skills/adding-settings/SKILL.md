@@ -1,6 +1,6 @@
 ---
 name: adding-settings
-description: Add, change or retire a setting of the Kafka materializer — the control plane, its runtimes or the web console — whether adjustable from the console's Settings page (an override) or fixed by the deployment (shown read-only). Use whenever a task introduces a new environment variable, configuration field, tunable, limit, timeout or credential, or moves one between adjustable and fixed.
+description: Add, change or retire a setting of Midstream — the control plane, its runtimes or the web console — whether adjustable from the console's Settings page (an override) or fixed by the deployment (shown read-only). Use whenever a task introduces a new environment variable, configuration field, tunable, limit, timeout or credential, or moves one between adjustable and fixed.
 ---
 
 # Adding a setting

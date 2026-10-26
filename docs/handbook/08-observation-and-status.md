@@ -313,7 +313,7 @@ back to `running` / `runtime_ready` (`_clear_table_degradation`); the next heart
 the runtime is. Every table error clears that way, `compaction_failed` included, so on a busy table a
 degradation lasts about a commit interval; a quiet table's lasts until its next commit. The failure
 itself stays in the table record's `maintenance` history, and the console's Table tab shows the
-partition that compaction gave up on (web 11).
+partition that compaction gave up on (console 11).
 
 ## 8.6 Observation follow-up, and why a phase can outlast its cause
 

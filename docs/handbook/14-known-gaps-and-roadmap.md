@@ -30,7 +30,7 @@ per table), and a binding model that maps N materializations to one app.
 
 The lake is GCS: `lakehouse/gcs.py`, the PyIceberg FileIO in `lakehouse/io.py`, and the pointer's
 compare-and-swap, which is a GCS generation precondition (`if_generation_match`, 11 §11.2). The
-console reads `gs://` the same way (web 06). *To implement* another store: a FileIO, object
+console reads `gs://` the same way (console 06). *To implement* another store: a FileIO, object
 listing for orphan cleanup, and a conditional write for the pointer — S3's `If-Match` /
 `If-None-Match`, Azure's ETags.
 
@@ -61,7 +61,7 @@ QUALIFY row_number() OVER (PARTITION BY _kafka_key ORDER BY _kafka_timestamp DES
 ```
 
 *To implement:* a maintained latest-per-key table, or equality deletes. Either needs the console
-to read delete files, which it refuses today (web 07).
+to read delete files, which it refuses today (console 07).
 
 ### A payload that is not a JSON object
 
@@ -149,22 +149,21 @@ with what the topic should hold when it matters.
 
 `catalog.write` lets an external engine commit through the REST facade (11 §11.8), and every
 commit is checked against the pointer, so nothing is overwritten. But the runtime does not
-interpret what such a commit does: row-level deletes make the console refuse the snapshot (web 07),
+interpret what such a commit does: row-level deletes make the console refuse the snapshot (console 07),
 a rewrite that drops rows makes the table hold fewer than the topic gave, a column added outside
 the fork map is a field the runtime does not write, and the committed offsets are read from the
 newest snapshot that carries them, walking past external ones (`committed_offsets`,
 `lakehouse/offsets.py`). Grant `catalog.write` to maintenance tools that rewrite files, not to
 writers of data. What such a commit cannot do is move the table: `set-location` and the properties
 that put files elsewhere are refused (11 §11.8), and the console reads nothing outside the table's
-location even if a file there is named (web 12 §12.6).
+location even if a file there is named (console 12 §12.6).
 
-### Scheduler topic-name drift between overlays (resolved by the chart)
+### The scheduler topic's name is derived
 
-Before the chart, the base manifests wrote delayed work to a topic without the `-app-` segment,
-`materializer-control-plane-schedule-requests`, while the dev overlay wrote to the one the Kaspr
-scheduler reads, `develop-materializer-control-plane-app-schedule-requests`. The chart derives the
-name from the control plane's app id for every installation,
-`<release>-control-plane-app-schedule-requests`, and `ValuesWiringTests` renders every values file.
+The Kaspr scheduler reads delayed work from `<app id>-schedule-requests`; a template that spells
+the topic by hand can write to a name nothing reads. The chart derives the name from the control
+plane's app id for every installation, `<release>-control-plane-app-schedule-requests`, and
+`ValuesWiringTests` renders every values file.
 
 ### Runtime topic deletion is prefix-based
 
@@ -185,10 +184,11 @@ RocksDB write buffer through the app's `K_STORE_ROCKSDB_*` environment instead (
 fix*: mark both fields `x-kubernetes-preserve-unknown-fields: true` (or `additionalProperties: {type:
 string}`) in the operator's CRD.
 
-### Runtimes declare their topics (resolved by the chart)
+### Runtimes declare their topics
 
-The dev overlay's runtime spec once omitted `topicAllowDeclare: true`. The chart renders one runtime
-spec for every installation, from `controlPlane.runtime.config`, with it set.
+A runtime spec without `topicAllowDeclare: true` leaves a runtime unable to create its own topics.
+The chart renders one runtime spec for every installation, from `controlPlane.runtime.config`, with
+it set.
 
 ### The sweep cannot rescue a materialization that has no runtime yet
 
@@ -383,7 +383,7 @@ and read footers before the commit's turn rather than inside it.
 
 A record is in the table once its batch is sealed, uploaded, announced and committed: at most the
 batch's soft age (`max_open_file_age_seconds`), then a commit interval, then the commit itself. On
-a quiet topic, the ceiling. The console shows this as **complete through** (web 07); consumer lag
+a quiet topic, the ceiling. The console shows this as **complete through** (console 07); consumer lag
 counts the records not yet committed to the table, so it never reads zero on a busy topic. The
 console's live tail shows a materialization's newest records within seconds (19); an engine on the
 REST catalog still reads committed snapshots only.
@@ -441,7 +441,7 @@ Strings that look like timestamps, dates or decimals stay strings, and integers 
 ### A field that changed type is several columns
 
 `total` that was a number and became a string is `total` and `total__v2` in the table (09 §9.5).
-The console folds the forks into one logical column (web 06); hand-written SQL against the table,
+The console folds the forks into one logical column (console 06); hand-written SQL against the table,
 or another engine, reads each fork as its own column and must coalesce them, guided by the
 `materializer.fork-map` property.
 
@@ -477,11 +477,11 @@ console's Data tab is slower over such a table, not wrong.
 
 The `small_files` a compaction's report gives is the count the plan saw
 (`TableMaintenance.small_files`), not a live figure: between plans files are added and compacted
-away. The console's Table tab counts from the snapshot it reads (web 11).
+away. The console's Table tab counts from the snapshot it reads (console 11).
 
 ### Schema dates are as precise as the files that hold them
 
-The console dates a schema change from the table's manifests (web 06): a field first held a value
+The console dates a schema change from the table's manifests (console 06): a field first held a value
 somewhere within the span of the earliest file holding one, by Kafka timestamp. A day-partitioned
 table's file holds one UTC day, so its dates are exact to the day, and an hour's to the hour. A
 month's are as wide as its files, up to the month, and every change of one month reads the same. An
@@ -539,7 +539,7 @@ That stall never clears by itself, and **Last commit** stops moving.
 ### An older snapshot can expire while someone reads it
 
 A console run pinned to a chosen snapshot (the runs API's `asOf`; the Data tab always reads the
-latest) can lose it to snapshot expiry meanwhile, and the next page answers that the snapshot is not in the table and may have expired (web 07). Expiry keeps
+latest) can lose it to snapshot expiry meanwhile, and the next page answers that the snapshot is not in the table and may have expired (console 07). Expiry keeps
 every snapshot of the last `snapshot_keep_all_minutes`, then one an hour, up to
 `snapshot_retention_hours` (11 §11.6).
 
@@ -661,7 +661,7 @@ Before "fixing" any of these, read the linked section.
 | A snapshot whose operation is `replace` changes no rows | compaction: files rewritten, rows and offsets carried forward (11 §11.6) |
 | Files under `data/` that no snapshot lists | uploads no commit took, or a compaction that died; orphan cleanup removes them after a day (11 §11.6) |
 | Seconds of `pending_files` while commits flow | files wait for the next commit interval, and for the files before them in their partition (10 §10.6) |
-| The console calls a query's rows exact without reading a file | row counts come from the manifests (web 06) |
+| The console calls a query's rows exact without reading a file | row counts come from the manifests (console 06) |
 | Deleted materializations vanish from the list | delete ends by purging the records; turn off `purge_records_on_delete` to keep them until the retention sweep (07 §7.10) |
 | A stopped materialization's tables get new snapshots | the maintenance app goes on compacting and expiring them (10 §10.10); nothing is appended |
 | A materialization shows `deploying` for minutes after an edit of its topics | the runtime drains until its consumer group is empty (§14.1, 07 §7.9a) |
@@ -746,12 +746,12 @@ Before "fixing" any of these, read the linked section.
 | Backpressure did not stop consumption | Resolved in 0.7.0: source partitions pause at the backlog limits |
 | `last_error` was sticky | A member clears a data or infrastructure error once it writes again (`runtime_app/state.py`) |
 | Two runtime state systems | The table-backed module is gone; `runtime_app/state.py` is the only one |
-| The dev overlay dropped runtime resource limits | Resolved by the chart: one runtime spec for every installation, `topicAllowDeclare` included (§14.2) |
+| A runtime spec without resource limits | The chart renders one runtime spec for every installation, limits and `topicAllowDeclare` included (§14.2) |
 | No `onError` status selector on WebViews: errors might answer `200` | Without one, Kaspr answers with the raised `WebError`'s `status_code` and body (`build_error`, Kaspr's `webview/response.py`) — a `400` for an unknown maintenance job on the lab |
 | `DEFAULT_MANAGED_AGENT_NAMES = ["writer", "schema-proposer"]` | Removed: the agent names come from the rendered template |
 | The authority-update fan-out (O(materializations²)) | **Gone** with the authority topic |
 | Compaction held back every partition written in the last hour, and started one partition an interval | Fixed before release: only the current partition waits, small partitions compact together, and a backlog proceeds a job a tick (§14.6) |
-| Fork-aware logical view for hand-written SQL (console roadmap) | The console reads forks as one logical column (web 06) |
+| Fork-aware logical view for hand-written SQL (console roadmap) | The console reads forks as one logical column (console 06) |
 
 ## 14.14 What 2.0 resolved
 
@@ -810,7 +810,7 @@ Handbook 19 has the model; these are its limits as built in 4.1.
 |-------|--------|
 | Settings revisions restarted if the `settings` table was lost, and runtimes ignored every delivery until the new revision passed theirs. A control plane installed afresh over a Kafka cluster that kept its delivery topic did the same to the runtimes created after it, and its rollout called them `current` (on the lab, a new runtime held revision 14 against the control plane's 3) | Runtime settings have a **lineage**, begun when the control plane first starts on settings without one (`settings-bootstrap`). Every delivery carries it; a runtime keeps the newest by lineage, then revision, and the rollout counts a member `current` only on the current lineage and revision (17 §17.7) |
 | On a broker that creates topics on demand (Kafka's default), deleted topics came back, empty, with one partition: the control plane described topics by name — for the lag refresh every minute, topic analysis, and edits, so describing a misspelt topic made it — and its and the tail app's offset lookups left aiokafka naming every topic they had looked up in each metadata refresh. On the lab, 52 topics deleted after their materializations came back at once | No request names a topic: topics are described from a read of every topic, and the clients that look up offsets track none (`kafka/metadata.py::track_no_topics`; 19 §19.7) |
-| The console's GCS reads printed `MaxListenersExceededWarning` twice per object — every few seconds while a Data tab follows a table, whose pointer it re-reads | The console reads objects with a plain GET through GCS's JSON API, with the client library's endpoint, credentials, retries and CRC32C check, not through its download stream (web 06) |
+| The console's GCS reads printed `MaxListenersExceededWarning` twice per object — every few seconds while a Data tab follows a table, whose pointer it re-reads | The console reads objects with a plain GET through GCS's JSON API, with the client library's endpoint, credentials, retries and CRC32C check, not through its download stream (console 06) |
 
 ## 14.18 What 4.2 resolved
 

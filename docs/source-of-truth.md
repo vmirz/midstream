@@ -1,6 +1,6 @@
-# Kafka Materializer Source of Truth
+# Midstream: Source of Truth
 
-This document explains the Midstream repository as it exists in code at 4.4.1: one
+This document explains the Midstream repository as it exists in code at 1.0.0-rc.1: one
 long-form narrative for engineering, design discussion and LLM-assisted changes. It covers every
 part in a few paragraphs and points to the handbook for depth.
 
@@ -10,9 +10,9 @@ Where this document and the code disagree, the implementation is authoritative, 
 2. `python/src/midstream/`
 3. `python/tests/`
 
-> **Looking for more depth?** `docs/handbook/` is an 18-document reference manual: full field
+> **Looking for more depth?** `docs/handbook/` is a 19-document reference manual: full field
 > tables, decision tables, worked examples, an operations runbook, a test map and a known-gaps
-> register. Start at [`docs/handbook/README.md`](./docs/handbook/README.md) and load only the
+> register. Start at [`docs/handbook/README.md`](./handbook/README.md) and load only the
 > document you need; this file cites it as `handbook <n>`. The console has its own, `console/docs/`.
 
 ## 1. What this project is
@@ -115,8 +115,8 @@ claims; `identity` before 3.0), `identity-audit` — each written by exactly one
 `table-events`, `maintenance`, `settings-intake`, `identity-intake`); 8 tasks (observation sweeps,
 purges, consumer-lag refresh, table-maintenance ticks, identity bootstrap and maintenance, the
 runtime settings' lineage at startup); 67
-WebViews, ten of them the REST catalog under `/catalog` and eight the datasets'. The dev overlay prefixes names with
-`develop-` and must patch every WebView's table bindings (handbook 02).
+WebViews, ten of them the REST catalog under `/catalog` and eight the datasets'. Every name derives
+from the Helm release (handbook 02 §2.9).
 
 **The maintenance app** (`charts/midstream/templates/maintenance/`): a KasprApp, the agent `maintenance-worker`
 on `<release>-maintenance-requests` (six partitions, keyed by table) and the task
@@ -138,7 +138,7 @@ anything (handbook 02, 10 §10.1).
 **Vertical pod autoscaling**: every KasprApp, the runtimes' through the runtime spec, asks
 kaspr-operator (0.19.5+) for a VerticalPodAutoscaler. It sets the kaspr container's CPU request
 from use and resizes pods in place, keeping each request under its CPU limit; the limits and
-memory stay as the manifests set them. Runtime members are limited to two cores, and a quiet
+memory stay as the chart sets them. Runtime members are limited to two cores, and a quiet
 runtime's members reserve about 100m each (handbook 02 §2.10c).
 
 ## 6. Configuration and settings
@@ -336,7 +336,7 @@ checkpoint) and `materializer.valid-through` ("is my record there yet?").
 External engines attach `<control plane>/catalog` with an access token (`tok_…`, `catalog.read`, or
 `catalog.write` to commit): DuckDB, PyIceberg, and engines on the same protocol. The facade vends no
 storage credentials. `catalog.write` is for maintenance tools; a commit cannot move the table's
-files, and the materializer assumes it is the only writer of data (handbook 14 §14.2).
+files, and Midstream assumes it is the only writer of data (handbook 14 §14.2).
 
 ## 13. Identity and settings, briefly
 
@@ -352,7 +352,7 @@ cuts its shared live views down to what each person may see.
 
 ## 14. The console
 
-`console/` — a Fastify BFF and a React client (web 01). Its live store polls the control plane and fans
+`console/` — a Fastify BFF and a React client (console 01). Its live store polls the control plane and fans
 out snapshots over SSE. For data it reads each table itself: pointer, metadata and Avro manifests
 from GCS (exact 64-bit ids, cached because they never change), so totals and time pruning cost no
 data reads; data files through DuckDB, by field id, folding fork families into logical columns.
@@ -360,15 +360,15 @@ Every query is a **run** pinned to a snapshot (the current one; the runs API can
 one, the Data tab never does); a statement can read and
 join any of the materialization's tables the person may query, each named `<dataset>.<table>`. Statements run in a DuckDB sandbox that can open only the
 run's files and write only its own directory, and nothing is read outside each table's recorded
-location (web 06, 07, 12). The Schema tab dates each change by when the data had it: the manifests'
+location (console 06, 07, 12). The Schema tab dates each change by when the data had it: the manifests'
 per-file value counts and `_kafka_timestamp` bounds give each field's first and last value, in UTC,
-as precise as the table's partitions (web 06 §6.3).
+as precise as the table's partitions (console 06 §6.3).
 
 With the live tail on, a run also asks the tail app for the records past its snapshot's offsets and
 reads them as one more Parquet file of the run: snapshot and tail are disjoint and follow on from
 each other, so every record shows exactly once. The Data tab's **Live** mode asks again every 1.5 s
 and starts a new run when a commit lands; a statement's *Auto re-run* runs it again 5 s after each
-run (web 07 §07.9, handbook 19).
+run (console 07 §07.9, handbook 19).
 
 ## 15. Commands
 
@@ -381,7 +381,7 @@ cd console && npm install && npm run typecheck && npm test && npm run build
 python python/tests/console_fixture.py      # regenerate the console's fixture table
 ```
 
-Deploying and verifying on a cluster, and the 1.0 rollout, are in handbook 12.
+Deploying and verifying on a cluster is in handbook 12; installing from scratch is `docs/install.md`.
 
 ## 16. Tests as the specification
 

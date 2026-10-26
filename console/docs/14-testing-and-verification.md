@@ -93,7 +93,7 @@ passed in both themes, with no page errors (handbook 13 §13.8g).
 
 ### 4.1.0 on the lab: the live tail
 
-Verified on 2026-10-23 and 24 on the shesuelab lab with the control plane, runtimes and tail app at
+Verified on 2026-10-23 and 24 on the lab with the control plane, runtimes and tail app at
 `feature/live-tail`, the console server on a laptop at the branch's head reaching the tail app
 through the lab's HTTPRoute, Playwright (Chromium) in light and dark. A producer numbered and timed
 probe records on `fresh.orders`; the lab steps themselves are in handbook 13 §13.8e. For the states
@@ -138,7 +138,7 @@ printed two for each read.
 
 ### 4.0.0 on the lab: month partitions, the deployment's place and scale, dates from the data
 
-Verified on 2026-10-23 on the shesuelab lab with control plane and maintenance app 4.0.0
+Verified on 2026-10-23 on the lab with control plane and maintenance app 4.0.0
 (`feature/partitions-create-schema-history`, 396027a), the console server on a laptop at the
 branch's head, Playwright (Chromium) in light and dark. One topic was made for it, `history.orders`:
 three partitions of 2,000 records each, produced with Kafka timestamps spread from 2025-01-01 to
@@ -150,9 +150,9 @@ it into the dataset `history`: *History by day* (`orders_by_day`) and *History b
 
 | Check | Result |
 |---|---|
-| Create, in the browser | No destination, namespace, runtime name or storage field; Advanced settings naming `gs://kafka-materializations` and `128Mi`, and `64Mi` once that became the default; partitioning offering By hour, By day, By month and Not partitioned. With the destination cleared on the control plane, the alert and **Create** disabled — after the minute the console keeps its defaults |
+| Create, in the browser | No destination, namespace, runtime name or storage field; Advanced settings naming `gs://my-lake` and `128Mi`, and `64Mi` once that became the default; partitioning offering By hour, By day, By month and Not partitioned. With the destination cleared on the control plane, the alert and **Create** disabled — after the minute the console keeps its defaults |
 | Create, through the API | Each of the four refused `400`, naming the deployment's value; with no destination `409 destination_not_configured`; the topic analysis recommending replicas alone |
-| Runtimes | Both in `midstream`, named `develop-mat-<id>`, each member with a `128Mi` volume (the default then), 72 KiB of it used once committed; the three 3.x runtimes, re-applied by the upgrade, kept their `1Gi`. At the `64Mi` default a third materialization's member had 55 MiB usable, its store 67 KiB with a 4 MiB RocksDB write buffer, and its table every offset once |
+| Runtimes | Both in `midstream`, named `<release>-mat-<id>`, each member with a `128Mi` volume (the default then), 72 KiB of it used once committed; the three 3.x runtimes, re-applied by the upgrade, kept their `1Gi`. At the `64Mi` default a third materialization's member had 55 MiB usable, its store 67 KiB with a 4 MiB RocksDB write buffer, and its table every offset once |
 | Month partitions | 22 partitions, `2025-01` to `2026-10`, on the Table tab and in PyIceberg (`month` transform, months since 1970); every file's timestamps inside its partition; DuckDB 2.0 through the REST catalog with a token limited to `history`: each partition's offsets 0–1,999 once, rows per month and per day as produced, every field's count as its shapes say |
 | Dates from the data | The day table's Timeline and field rows: first values on Apr 15, 2025, Sep 1, 2025 and Feb 10, 2026, last values on Aug 31, 2025 and Feb 9, 2026 — the producer's boundaries to the day; the month table's the same months, `Apr 1 – 30, 2025`; schema 0 *Initial · sampled*, schema 1 *data from Apr 15, 2025*; the first records' five fields behind **Show**; a field name opening it in the Fields view |
 | Access | With All Users' grant taken off `history`, the timeline `403` to Rita and Otto and `200` to the owner, and no Schema tab for Rita |
@@ -163,7 +163,7 @@ and an older one that month partitions make visible. It found none in the contro
 
 ### 3.0.0 on the lab: datasets and per-dataset access
 
-Verified on 2026-10-22 on the shesuelab lab cluster with control plane 3.0.0 (`feature/datasets`,
+Verified on 2026-10-22 on the lab cluster with control plane 3.0.0 (`feature/datasets`,
 4cdb65b), on a clean slate: every 2.0 materialization, its topics, consumer group and files deleted,
 and the directory started empty. The console server ran on a laptop against the lab's control plane
 and bucket, with the dev client and Playwright (Chromium) signed in as four people: Olive, who owns
@@ -189,7 +189,7 @@ stopped. Status for an unknown materialization is now dropped and logged once (4
 
 ### 2.0.0 on the lab: several topics, one runtime
 
-Verified on 2026-10-20 on the shesuelab lab cluster with control plane 2.0.0 (51ca6ab): the console
+Verified on 2026-10-20 on the lab cluster with control plane 2.0.0 (51ca6ab): the console
 server on a laptop against the lab's control plane and bucket, the dev client, and Playwright
 (Chromium, 1512×950) signed in as the lab's administrator, once in each theme. `shop` read
 `mtm-orders` (4 partitions), `mtm-payments` (2) and `mtm.shipments.v1` (3) with 2 replicas; `audit`
@@ -229,7 +229,7 @@ No browser error was logged.
 
 ### 1.0.0 on the lab
 
-Verified on the shesuelab lab cluster with the control plane and runtimes deployed from the
+Verified on the lab cluster with the control plane and runtimes deployed from the
 feature branch: the console server on a laptop against the lab's control plane and bucket, the
 dev client, and Playwright (Chromium) driving it signed in as the lab's administrator, once in the
 light theme and once in the dark. The materialization was a smoke table: 39 rows, three schemas
@@ -315,13 +315,13 @@ driven by Playwright (Chromium, 1512×950) and by direct API reads.
 
 ### Table names, default destination, Stop and Edit (0.12.0, control plane 0.4.0)
 
-Verified on the shesuelab lab cluster with the control plane deployed from the feature branch, the
+Verified on the lab cluster with the control plane deployed from the feature branch, the
 dev console (Vite + `node --watch`) driven by Playwright (Chromium, 1512×950), and direct API reads.
 
 | Check | Observed |
 |---|---|
 | Create — names | `orders-lake`, `1orders`, `select`, an existing name (`orders`, any case) and 64 characters each show their reason under the field and keep **Create** disabled; a cleared name follows the topic again (`materializer_stop_test`) |
-| Create — destination | Advanced settings show the control plane's default, `gs://kafka-materializations`; created with the field empty, the materialization's `destination_uri` was that default |
+| Create — destination | Advanced settings show the control plane's default, `gs://my-lake`; created with the field empty, the materialization's `destination_uri` was that default |
 | Create — control plane down | A console pointed at an unreachable control plane shows **Destination required** and keeps **Create** disabled until one is typed; names are still checked |
 | Name reuse | Deleting `stop_test` freed the name; recreating `stop_test` on another topic was accepted |
 | Subtitles | Detail header and list rows show the source topic only |

@@ -299,9 +299,9 @@ Topic `materialization-requests`, key `materialization:mat-a1b2c3d4e5f6`:
       { "name": "invoices", "source_topic": "finance.invoices", "dataset": "finance", "dataset_id": "ds-9a0b…" },
       { "name": "orders_v2", "source_topic": "orders.v2", "dataset": "sales", "dataset_id": "ds-5c1e…" }
     ],
-    "destination_uri": "gs://kafka-materializations",
+    "destination_uri": "gs://my-lake",
     "runtime_mode": "dedicated",
-    "runtime_name": "develop-mat-a1b2c3d4e5f6",
+    "runtime_name": "midstream-mat-a1b2c3d4e5f6",
     "namespace": "midstream",
     "resource_profile": null,
     "storage_size": "64Mi",
@@ -429,7 +429,7 @@ overruled; 3.x let a request choose them (16 §16.8). An update may still repeat
     "source_topics": ["orders", "payments"],
     "datasets": ["finance", "sales"],
     "pending_topic_change": null,
-    "destination_uri": "gs://kafka-materializations",
+    "destination_uri": "gs://my-lake",
     "runtime_mode": "dedicated",
     "namespace": "midstream",
     "replicas": 4,
@@ -462,10 +462,10 @@ overruled; 3.x let a request choose them (16 §16.8). An update may still repeat
       "bytes_written": 48210944,
       "files_written": 31,
       "latest_offsets": { "orders": { "0": 51234, "1": 50880, "2": 50226 }, "payments": { "0": 9120 } },
-      "member_progress": { "develop-mat-a1b2c3d4e5f6-app-0": { "…": "per member" } },
+      "member_progress": { "midstream-mat-a1b2c3d4e5f6-app-0": { "…": "per member" } },
       "tables": {
-        "orders": { "member_id": "develop-mat-a1b2c3d4e5f6-app-0", "…": "the committer's heartbeat block (06 §6.5)" },
-        "payments": { "member_id": "develop-mat-a1b2c3d4e5f6-app-0", "…": "" }
+        "orders": { "member_id": "midstream-mat-a1b2c3d4e5f6-app-0", "…": "the committer's heartbeat block (06 §6.5)" },
+        "payments": { "member_id": "midstream-mat-a1b2c3d4e5f6-app-0", "…": "" }
       },
       "cumulative_unmapped_by_table": { "orders": 3 }
     },
@@ -479,12 +479,12 @@ overruled; 3.x let a request choose them (16 §16.8). An update may still repeat
     }
   },
   "runtime_binding": {
-    "kaspr_app_name": "develop-mat-a1b2c3d4e5f6",
+    "kaspr_app_name": "midstream-mat-a1b2c3d4e5f6",
     "namespace": "midstream",
     "managed_agent_names": [
-      "develop-mat-a1b2c3d4e5f6-writer",
-      "develop-mat-a1b2c3d4e5f6-committer",
-      "develop-mat-a1b2c3d4e5f6-settings"
+      "midstream-mat-a1b2c3d4e5f6-writer",
+      "midstream-mat-a1b2c3d4e5f6-committer",
+      "midstream-mat-a1b2c3d4e5f6-settings"
     ]
   },
   "tables": [
@@ -494,7 +494,7 @@ overruled; 3.x let a request choose them (16 §16.8). An update may still repeat
       "name": "orders",
       "source_topic": "orders",
       "identifier": "sales.orders",
-      "location": "gs://kafka-materializations/develop/mat-a1b2c3d4e5f6/orders",
+      "location": "gs://my-lake/midstream/mat-a1b2c3d4e5f6/orders",
       "partition_granularity": "day",
       "schema_id": 2,
       "current_snapshot_id": 8410567672455764292,
@@ -641,7 +641,7 @@ the dataset.
 - `since` is when the runtime committed this schema to the table — when the materializer met the
   shape, not when the topic's records had it: a backfill reads partitions at their own pace, and
   schema 0 is sampled from both ends of the topic (09 §9.6). When the data had each field is in the
-  table itself; the console reads it from the manifests (web 08, `GET …/schema/timeline`).
+  table itself; the console reads it from the manifests (console 08, `GET …/schema/timeline`).
 - `unmapped` counts values the runtime put in this table's `_unmapped`, and when one last went
   there (09 §9.8).
 - Before discovery completes there is no projection: the same shape, with `schema_id: null` and
@@ -700,7 +700,7 @@ reports.
   "dataset_id": "ds-5c1e…",
   "name": "orders",
   "identifier": "sales.orders",
-  "location": "gs://kafka-materializations/develop/mat-a1b2c3d4e5f6/orders",
+  "location": "gs://my-lake/midstream/mat-a1b2c3d4e5f6/orders",
   "table_uuid": "3f2a…",
   "partition_granularity": "day",
   "metadata_location": "gs://…/metadata/00042-….metadata.json",
@@ -724,7 +724,7 @@ reports.
   "state": "active",
   "maintenance_job": { "job": "compaction", "started_at": "2026-10-18T12:15:00Z", "partition": "2026-10-18",
                        "attempt": 1, "member_id": "midstream-maintenance-app-0" },
-  "live": { "member_id": "develop-mat-a1b2c3d4e5f6-app-0", "pending_files": 2 },
+  "live": { "member_id": "midstream-mat-a1b2c3d4e5f6-app-0", "pending_files": 2 },
   "readable": true,
   "queryable": true
 }
@@ -736,7 +736,7 @@ compaction or orphan cleanup the maintenance app runs on it now, `null` otherwis
 
 `404 not_found` (`resource: "materialization-table"`) before the table exists, and for a name the
 materialization has no table of - a kept table is found, one being dropped is not. `snapshot_id`s are 64-bit: a client that parses JSON into doubles
-must keep them as text (the console does, web 06).
+must keep them as text (the console does, console 06).
 
 ---
 
@@ -1106,7 +1106,7 @@ than guessing.
 
 ```json
 {
-  "default_destination_uri": "gs://kafka-materializations",
+  "default_destination_uri": "gs://my-lake",
   "default_namespace": "midstream",
   "default_replicas": 1,
   "max_replicas": 64,

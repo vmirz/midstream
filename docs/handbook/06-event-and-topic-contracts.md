@@ -155,9 +155,9 @@ output (§6.18).
       { "name": "orders", "source_topic": "sales.orders", "dataset": "sales", "dataset_id": "ds-5c1e…" },
       { "name": "invoices", "source_topic": "finance.invoices", "dataset": "finance", "dataset_id": "ds-9a0b…" }
     ],
-    "destination_uri": "gs://kafka-materializations",
+    "destination_uri": "gs://my-lake",
     "runtime_mode": "dedicated",
-    "runtime_name": "develop-mat-a1b2c3d4e5f6",
+    "runtime_name": "midstream-mat-a1b2c3d4e5f6",
     "namespace": "midstream",
     "resource_profile": null,
     "storage_size": "64Mi",
@@ -262,7 +262,7 @@ The step sets are disjoint, so every message is handled once — but `repair_sta
   "dedupe_key": "start_discovery:mat-a1b2c3d4e5f6:req-9f8e7d6c5b4a",
   "target_runtime": {
     "namespace": "midstream",
-    "kaspr_app_name": "develop-mat-a1b2c3d4e5f6"
+    "kaspr_app_name": "midstream-mat-a1b2c3d4e5f6"
   }
 }
 ```
@@ -277,7 +277,7 @@ Observation follow-up:
   "requested_at": "2026-10-18T10:30:20Z",
   "caused_by": { "kind": "scheduler", "id": "observe:mat-a1b2c3d4e5f6" },
   "dedupe_key": "observe:mat-a1b2c3d4e5f6:2",
-  "target_runtime": { "namespace": "midstream", "kaspr_app_name": "develop-mat-a1b2c3d4e5f6" },
+  "target_runtime": { "namespace": "midstream", "kaspr_app_name": "midstream-mat-a1b2c3d4e5f6" },
   "observation_policy": {
     "attempt": 2,
     "max_attempts": 4,
@@ -373,11 +373,11 @@ record accumulates the deleted count across passes.
 
 ```json
 {
-  "event_id": "evt-status-develop-mat-a1b2c3d4e5f6-app-0-2026-10-18T10:35:00Z",
+  "event_id": "evt-status-midstream-mat-a1b2c3d4e5f6-app-0-2026-10-18T10:35:00Z",
   "materialization_id": "mat-a1b2c3d4e5f6",
-  "runtime_app_ref": "develop-mat-a1b2c3d4e5f6",
-  "member_id": "develop-mat-a1b2c3d4e5f6-app-0",
-  "agent_name": "develop-mat-a1b2c3d4e5f6-writer",
+  "runtime_app_ref": "midstream-mat-a1b2c3d4e5f6",
+  "member_id": "midstream-mat-a1b2c3d4e5f6-app-0",
+  "agent_name": "midstream-mat-a1b2c3d4e5f6-writer",
   "reported_at": "2026-10-18T10:35:00Z",
   "phase": "running",
   "health": "healthy",
@@ -402,7 +402,7 @@ record accumulates the deleted count across passes.
   "performance": { "…": "a window of rates, plus acknowledgements and the pipeline in flight" },
   "tables": {
     "orders": {
-    "member_id": "develop-mat-a1b2c3d4e5f6-app-0",
+    "member_id": "midstream-mat-a1b2c3d4e5f6-app-0",
     "table": "orders",
     "source_topic": "orders",
     "metadata_location": "gs://…/shop-a1b2c3d4e5f6/orders/metadata/00042-….metadata.json",
@@ -418,7 +418,7 @@ record accumulates the deleted count across passes.
     "last_commit_duration_ms": 2367,
     "pending_files": 2
     },
-    "payments": { "member_id": "develop-mat-a1b2c3d4e5f6-app-0", "table": "payments", "…": "" }
+    "payments": { "member_id": "midstream-mat-a1b2c3d4e5f6-app-0", "table": "payments", "…": "" }
   }
 }
 ```
@@ -494,8 +494,8 @@ which updates the record of the table the event names (`materialization-table:<i
   "materialization_id": "mat-a1b2c3d4e5f6",
   "table": "orders",
   "occurred_at": "2026-10-18T10:34:41Z",
-  "runtime_app_ref": "develop-mat-a1b2c3d4e5f6",
-  "member_id": "develop-mat-a1b2c3d4e5f6-app-0",
+  "runtime_app_ref": "midstream-mat-a1b2c3d4e5f6",
+  "member_id": "midstream-mat-a1b2c3d4e5f6-app-0",
   "payload": { "…": "by kind, below" }
 }
 ```
@@ -571,17 +571,17 @@ when that member goes away (10 §10.6). Every message is keyed `commits`.
 
 ```json
 {"kind": "data_file_ready", "materialization_id": "mat-a1b2c3d4e5f6", "table": "orders",
- "member_id": "develop-mat-a1b2c3d4e5f6-app-2", "session_generation": 12, "session_epoch": "9b0e…",
+ "member_id": "midstream-mat-a1b2c3d4e5f6-app-2", "session_generation": 12, "session_epoch": "9b0e…",
  "batch_id": "batch-…", "seal_id": "4f1c…", "file_count": 2,
  "partition": 3, "after_offset": 99, "offset_start": 100, "offset_end": 199,
- "file_path": "gs://…/shop-a1b2c3d4e5f6/orders/data/ts_day=2026-10-18/p03-o0000000100-0000000199-develop-mat-a1b2c3d4e5f6-app-2-….parquet",
+ "file_path": "gs://…/shop-a1b2c3d4e5f6/orders/data/ts_day=2026-10-18/p03-o0000000100-0000000199-midstream-mat-a1b2c3d4e5f6-app-2-….parquet",
  "file_size": 10485760, "record_count": 61000,
  "partition_value": {"ts_day": "2026-10-18"},
  "event_time_min": "2026-10-18T09:58:01Z", "event_time_max": "2026-10-18T10:02:12Z",
  "schema_id": 4, "announced_at": "2026-10-18T10:02:40Z", "attempt": 1}
 
 {"kind": "schema_change_request", "materialization_id": "mat-a1b2c3d4e5f6", "table": "orders",
- "runtime_app_ref": "develop-mat-a1b2c3d4e5f6", "member_id": "develop-mat-a1b2c3d4e5f6-app-2",
+ "runtime_app_ref": "midstream-mat-a1b2c3d4e5f6", "member_id": "midstream-mat-a1b2c3d4e5f6-app-2",
  "base_schema_id": 4,
  "observations": [{"path": ["customer", "phone"], "observed": {"type": "struct", "fields": {"number": "string"}}},
                   {"path": ["items", "[]", "tax"], "observed": {"type": "double"}}],
@@ -830,7 +830,7 @@ a `maintenance_tick` per table `active` or `retired` of every materialization no
 {
   "kind": "maintenance_tick",
   "target": { "materialization_id": "mat-a1b2c3d4e5f6", "namespace": "sales", "table": "orders",
-              "location": "gs://kafka-materializations/develop/mat-a1b2c3d4e5f6/orders",
+              "location": "gs://my-lake/midstream/mat-a1b2c3d4e5f6/orders",
               "source_topic": "orders", "partition_granularity": "day", "state": "active" },
   "issued_at": "2026-10-20T04:11:00Z",
   "settings": { "compaction_enabled": true, "compaction_interval_minutes": 15, "…": "every MAINTENANCE_SETTING_FIELDS" },
@@ -870,7 +870,7 @@ and the app forgets every table once no tick has named it for its forget window.
 {
   "kind": "tail_tick",
   "target": { "materialization_id": "mat-a1b2c3d4e5f6", "dataset": "sales", "dataset_id": "ds-5c1e…",
-              "table": "orders", "location": "gs://kafka-materializations/develop/mat-a1b2c3d4e5f6/orders",
+              "table": "orders", "location": "gs://my-lake/midstream/mat-a1b2c3d4e5f6/orders",
               "source_topic": "orders", "partition_granularity": "day",
               "table_uuid": "6b1c…", "skip_tombstones": false },
   "issued_at": "2026-10-23T12:00:00Z",
