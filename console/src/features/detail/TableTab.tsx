@@ -599,16 +599,25 @@ const ENGINES: Array<{ value: Engine; label: string }> = [
   { value: 'duckdb-path', label: 'By path' },
 ];
 
-/** How each engine reads the table `<dataset>.<table>` through the catalog, which attaches as `lake`. */
-function snippet(engine: Engine, connection: CatalogConnection, namespace: string, table: string, location: string): string {
+/**
+ * How each engine reads the table through a catalog, which attaches as `lake` (handbook 20).
+ *
+ * PyIceberg and Spark read nested namespaces, so they attach the federated catalog and name the
+ * table in full, `lake.<domain>.<dataset>.<table>`: one catalog for every domain. DuckDB and Trino
+ * read one level of namespaces, so they attach the domain's own catalog, one per domain, and name
+ * the table `lake.<dataset>.<table>`.
+ */
+export function snippet(engine: Engine, connection: CatalogConnection, namespace: string, table: string, location: string): string {
+  const federated = `${connection.domain}.${namespace}`;
   switch (engine) {
     case 'duckdb':
       return [
         'INSTALL iceberg; LOAD iceberg;',
-        "CREATE SECRET materializer (TYPE ICEBERG, TOKEN '<access token>');",
+        "CREATE SECRET midstream (TYPE ICEBERG, TOKEN '<access token>');",
         '-- DuckDB reads the data files itself, with a GCS HMAC key that can read the bucket:',
         "CREATE SECRET gcs (TYPE GCS, KEY_ID '<HMAC key id>', SECRET '<HMAC secret>');",
-        `ATTACH 'warehouse' AS lake (TYPE ICEBERG, SECRET materializer, ENDPOINT '${connection.uri}');`,
+        `-- One level of namespaces: this domain's own catalog; attach another domain's beside it.`,
+        `ATTACH 'warehouse' AS lake (TYPE ICEBERG, SECRET midstream, ENDPOINT '${connection.uri}');`,
         '',
         `SELECT * FROM lake.${namespace}.${table} LIMIT 10;`,
       ].join('\n');
@@ -616,24 +625,25 @@ function snippet(engine: Engine, connection: CatalogConnection, namespace: strin
       return [
         'from pyiceberg.catalog.rest import RestCatalog',
         '',
-        '# Data files are read with your Google credentials (ADC); the catalog token only lists and loads tables.',
-        `catalog = RestCatalog("lake", uri="${connection.uri}", token="<access token>")`,
-        `table = catalog.load_table("${namespace}.${table}")`,
+        '# Every domain in one catalog. Data files are read with your Google credentials (ADC).',
+        `catalog = RestCatalog("lake", uri="${connection.federatedUri}", token="<access token>")`,
+        `table = catalog.load_table("${federated}.${table}")`,
         'rows = table.scan(row_filter="_kafka_timestamp >= \'2026-01-01T00:00:00+00:00\'").to_arrow()',
       ].join('\n');
     case 'spark':
       return [
+        '# Every domain in one catalog: tables are lake.<domain>.<dataset>.<table>.',
         'spark.sql.catalog.lake=org.apache.iceberg.spark.SparkCatalog',
         'spark.sql.catalog.lake.type=rest',
-        `spark.sql.catalog.lake.uri=${connection.uri}`,
+        `spark.sql.catalog.lake.uri=${connection.federatedUri}`,
         'spark.sql.catalog.lake.token=<access token>',
         'spark.sql.catalog.lake.io-impl=org.apache.iceberg.gcp.gcs.GCSFileIO',
         '',
-        `SELECT * FROM lake.${namespace}.${table} LIMIT 10;`,
+        `SELECT * FROM lake.${federated}.${table} LIMIT 10;`,
       ].join('\n');
     case 'trino':
       return [
-        '# etc/catalog/lake.properties',
+        `# etc/catalog/lake.properties: this domain's own catalog, one level of namespaces.`,
         'connector.name=iceberg',
         'iceberg.catalog.type=rest',
         `iceberg.rest-catalog.uri=${connection.uri}`,

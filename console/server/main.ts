@@ -24,6 +24,7 @@ import { registerSchemaRoutes } from './routes/schema.ts';
 import { registerTableRoutes } from './routes/table.ts';
 import { registerSearchRoutes } from './routes/search.ts';
 import { registerSsoRoutes } from './routes/sso.ts';
+import { registerCatalogRoutes } from './routes/catalog.ts';
 import { RevocationSync } from './auth/revocations.ts';
 import { registerConsoleSettingsRoutes, registerSettingsRoutes } from './routes/settings.ts';
 import { registerFleetStreamRoutes, registerStreamRoutes } from './routes/stream.ts';
@@ -72,6 +73,7 @@ async function main(): Promise<void> {
   await registerSystemRoutes(app);
   await registerConsoleAuthRoutes(app);
   await registerSsoRoutes(app);
+  await registerCatalogRoutes(app);
   await registerFleetStreamRoutes(app);
   await registerSearchRoutes(app);
   await registerRunRoutes(app);
