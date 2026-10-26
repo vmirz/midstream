@@ -1,10 +1,10 @@
 /**
- * Statement runs: hand-written SQL over the materialization's tables.
+ * Statement runs: hand-written SQL over any tables the person may query, in any domain (handbook 20).
  *
- * Each table is read by its canonical name, dataset and table (`SELECT * FROM sales.orders`), with
- * flat logical columns; `iceberg.sales.orders` is the same rows as the native Iceberg table, structs
- * and lists as they are. A statement may read
- * any of the materialization's tables, joining them as it likes; only the tables it names are
+ * Each table is read by its full name, domain, dataset and table (`SELECT * FROM
+ * domain_a.sales.orders`), with flat logical columns; `domain_a_iceberg.sales.orders` is the same
+ * rows as the native Iceberg table, structs and lists as they are. A statement may read tables of
+ * several materializations and domains, joining them as it likes; only the tables it names are
  * planned, pinned and opened. The time range applies to every one — they hold only the rows inside
  * the range, and data files outside it are never opened — so narrowing the range makes any
  * statement cheaper without the statement having to say so, the way a Splunk search is bounded by
@@ -31,7 +31,9 @@ import { parseDuckDbError, readAll, statementProgress, withConnection, withSandb
 import { assertWithinCachedBudget, objectSources } from '../data/objects.ts';
 import { overlapsRange, type Catalog } from '../data/catalog.ts';
 import { quoteLiteral } from '../data/sql.ts';
+import { canonicalName } from './names.ts';
 import { Run, tableRead, type RunInit } from './run.ts';
+import type { TailAccess } from './tail.ts';
 import { ROWS_VIEW, statementViews, type StatementTable } from './view.ts';
 import type { LogicalColumn } from '../data/logical.ts';
 import type { DuckDBConnection } from '@duckdb/node-api';
@@ -39,18 +41,28 @@ import type { RunPage, RunTableRead } from '../../shared/types.ts';
 
 /** One table a statement reads, at the snapshot it is pinned to. */
 export interface StatementSource {
-  /** The table's dataset: its namespace in SQL. */
+  /** The table's domain: its catalog in SQL. */
+  domain: string;
+  /** The table's dataset: its schema in SQL. */
   namespace: string;
+  datasetId: string;
   name: string;
   catalog: Catalog;
   columns: LogicalColumn[];
+  /** How its live tail is read: through its own domain's tail app, as the person is there; null for none. */
+  tail: TailAccess | null;
+}
+
+/** A source's full name, `<domain>.<dataset>.<table>`: how the run reports it, and keys its tail. */
+export function sourceKey(source: Pick<StatementSource, 'domain' | 'namespace' | 'name'>): string {
+  return canonicalName(source.domain, source.namespace, source.name);
 }
 
 export interface StatementInit extends RunInit {
   statement: string;
-  /** The tables the statement names, in the materialization's order; it may name none. */
+  /** The tables the statement names, in the order it names them; it may name none. */
   sources: StatementSource[];
-  /** Every table of the materialization by its canonical name, so an error can say which there are. */
+  /** Tables a statement could name, by their full names, so an error can say which there are. */
   tableNames: string[];
 }
 
@@ -72,15 +84,19 @@ export class StatementRun extends Run {
   }
 
   protected tableReads(): RunTableRead[] {
-    return this.sources.map((source) => tableRead(source.name, source.catalog, this.tails.get(source.name)));
+    return this.sources.map((source) =>
+      tableRead(source.name, source.catalog, { domain: source.domain, dataset: source.namespace, datasetId: source.datasetId }, this.tails.get(sourceKey(source))),
+    );
   }
 
   protected async execute(): Promise<void> {
-    await this.fetchTails(this.sources.map((source) => ({ name: source.name, catalog: source.catalog })));
+    // A run as of an older snapshot, or asked for none, reads no tail of any table.
+    const tails = this.tailAccess !== null;
+    await this.fetchTails(this.sources.map((source) => ({ key: sourceKey(source), table: source.name, catalog: source.catalog, access: tails ? source.tail : null })));
     this.throwIfCancelled();
     const planned = this.sources.map((source) => ({
       source,
-      objects: [...this.tailObjects(source.name), ...source.catalog.objects].filter((object) => overlapsRange(object, this.request.range)),
+      objects: [...this.tailObjects(sourceKey(source)), ...source.catalog.objects].filter((object) => overlapsRange(object, this.request.range)),
     }));
     const objects = planned.flatMap((entry) => entry.objects);
     let rowsTotal = 0;
@@ -100,6 +116,7 @@ export class StatementRun extends Run {
       const opened = await objectSources(objects);
       await this.executeStatement(
         planned.map(({ source, objects: tableObjects }) => ({
+          domain: source.domain,
           namespace: source.namespace,
           name: source.name,
           sources: tableObjects.map((object) => opened.get(object.uri) ?? object.uri),

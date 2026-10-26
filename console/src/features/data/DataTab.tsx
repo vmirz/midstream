@@ -33,11 +33,12 @@ import { PageBody } from '@/components/AppShell';
 import { DataGrid } from '@/components/DataGrid';
 import { useToast } from '@/components/ui/Toast';
 import { Button, EmptyState, Panel, Select, Skeleton } from '@/components/ui/primitives';
-import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { ApiError, api as consoleApi } from '@/lib/api';
+import { useAuth, useConsoleAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { formatTimestamp } from '@/lib/format';
 import { useApi, useConsoleConfig, useDomain } from '@/lib/domains';
+import { rootQueryClient } from '@/lib/queryClient';
 import type {
   BrowseFilter,
   CpTableSpec,
@@ -122,6 +123,7 @@ export function DataTab({
   snapshot: DetailSnapshot;
 }): ReactNode {
   const api = useApi();
+  const domain = useDomain();
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   // The address bar seeds the view once; from then on the view drives the address bar.
@@ -132,10 +134,28 @@ export function DataTab({
   const tables = useMemo(() => (materialization ? readableTables(materialization) : []), [materialization]);
   // Only the tables whose datasets the person may query can be browsed or named in a statement.
   const { can } = useAuth();
+  const consoleAuth = useConsoleAuth();
   const mayQuery = useCallback((table: CpTableSpec) => can('data.query', table.dataset_id), [can]);
   const queryable = useMemo(() => tables.filter(mayQuery), [tables, mayQuery]);
-  // Each table's dataset, which SQL names it in: `<dataset>.<table>`.
+  // Each table's dataset, which SQL names it in: `<domain>.<dataset>.<table>`.
   const datasets = useMemo(() => new Map(tables.map((table) => [table.name, table.dataset])), [tables]);
+  // Every other table a statement could name, in this domain and the others (handbook 20): offered
+  // by name as the editor completes; each domain decides at run time whether the person may query it.
+  const fleetQuery = useQuery({ queryKey: ['fleet-tables'], queryFn: () => consoleApi.fleet(), staleTime: 60_000 }, rootQueryClient);
+  const otherTables = useMemo(
+    () =>
+      (fleetQuery.data?.domains ?? []).flatMap((entry) =>
+        (entry.snapshot?.items ?? [])
+          .filter((item) => !(entry.domain === domain.id && item.materialization_id === materializationId) && item.desired_phase !== 'deleted')
+          .flatMap((item) =>
+            item.tables.map((qualified) => {
+              const dot = qualified.indexOf('.');
+              return { domain: entry.domain, dataset: qualified.slice(0, dot), name: qualified.slice(dot + 1) };
+            }),
+          ),
+      ),
+    [fleetQuery.data, domain.id, materializationId],
+  );
   const [requestedTable, setRequestedTable] = useState<string | null>(initial.table);
   // A table the address bar names that this materialization does not have, or that the person may
   // not query, shows the first they may instead.
@@ -178,7 +198,8 @@ export function DataTab({
   });
   // A run Live started when a commit landed reads the table's newest snapshot: the summary, read
   // every 30 s, catches up with it.
-  const runSnapshotId = run?.tables.find((table) => table.name === tableName)?.snapshotId ?? null;
+  const runSnapshotId =
+    run?.tables.find((table) => table.domain === domain.id && table.materializationId === materializationId && table.name === tableName)?.snapshotId ?? null;
   useEffect(() => {
     if (runSnapshotId === null || !summaryQuery.data) return;
     if (summaryQuery.data.snapshotId !== runSnapshotId) void summaryQuery.refetch();
@@ -188,7 +209,7 @@ export function DataTab({
   // The console config is read again each minute: live tail can be switched off, and on, for every
   // materialization of the domain. The domain's own part of it says how its tail is.
   const configQuery = useConsoleConfig();
-  const domainTail = useDomain().liveTail;
+  const domainTail = domain.liveTail;
   const summary = summaryQuery.data ?? null;
   const liveTail = liveTailAvailable(domainTail.enabled, materialization);
   // A table created but with nothing committed yet is queryable through its tail.
@@ -372,7 +393,7 @@ export function DataTab({
 
   const enterSql = useCallback(() => {
     const dataset = datasets.get(tableName);
-    setSqlDraft(starterStatement(dataset ? `${dataset}.${tableName}` : tableName, filters, columns));
+    setSqlDraft(starterStatement(dataset ? `${domain.id}.${dataset}.${tableName}` : tableName, filters, columns));
     setSqlMode(true);
   }, [datasets, tableName, filters, columns]);
 
@@ -384,13 +405,12 @@ export function DataTab({
     return null;
   }, [validation, sqlDraft, run]);
 
-  // Export needs `data.export` on every table the run reads, each on its dataset.
+  // Export needs `data.export` on every table the run reads, each on its dataset, in its domain.
   const exportable =
     run !== null &&
-    (run.tables.length > 0 ? run.tables.map((table) => table.name) : [run.table]).every((name) => {
-      const table = tables.find((candidate) => candidate.name === name);
-      return table !== undefined && can('data.export', table.dataset_id);
-    });
+    (run.tables.length > 0
+      ? run.tables.every((table) => consoleAuth.forDomain(table.domain).can('data.export', table.datasetId))
+      : tables.some((table) => table.name === run.table && can('data.export', table.dataset_id)));
 
   const shareView = useCallback((): void => {
     void navigator.clipboard.writeText(window.location.href);
@@ -516,7 +536,9 @@ export function DataTab({
               <SqlPanel
                 sql={sqlDraft}
                 tableName={tableName}
+                domain={domain.id}
                 tables={queryable}
+                otherTables={otherTables}
                 tableColumns={tableColumns}
                 rangeLabel={rangeLabel(range)}
                 columns={editorColumns}
@@ -920,7 +942,7 @@ function Notice({ tone, title, description }: { tone: 'failed'; title: string; d
 
 /**
  * A statement to start from: the filters already chosen, written out, over the table on screen by
- * its canonical name, `shop.orders`.
+ * its full name, `domain_a.shop.orders` (handbook 20).
  *
  * The time range is not written in, because it already bounds the table itself.
  */

@@ -14,8 +14,9 @@ import { loadCatalog, pauseWarming, type Catalog } from '../data/catalog.ts';
 import { logicalColumns, resolveFilters } from '../data/logical.ts';
 import { assertReadOnlyStatement } from '../data/sql.ts';
 import { BrowseRun } from './browse.ts';
+import { canonicalName } from './names.ts';
 import { StatementRun, statementError, type StatementSource } from './statement.ts';
-import { assertNativeReferences, listOf, qualifiedName, referencedTables, statementViews } from './view.ts';
+import { listOf, statementViews } from './view.ts';
 import type { Run, RunDataset } from './run.ts';
 import type { TailAccess } from './tail.ts';
 import type { RunRequest, TimeRange } from '../../shared/types.ts';
@@ -83,13 +84,23 @@ function once(fn: () => void): () => void {
 export interface RunTableSource {
   /** The domain it is in (handbook 20). */
   domain: string;
-  /** Its name in its dataset: SQL reads it as `<dataset>.<name>`, and `iceberg.<dataset>.<name>`. */
+  /** The materialization that writes it. */
+  materializationId: string;
+  /** Its name in its dataset: SQL reads it as `<domain>.<dataset>.<name>`, and `<domain>_iceberg.<dataset>.<name>`. */
   name: string;
   /** The dataset it is in: its namespace in SQL. */
   dataset: string;
   datasetId: string;
   /** Its location; null before the control plane has created it. */
   location: string | null;
+}
+
+/**
+ * A table a statement names, found in its domain (handbook 20): where it lives, and how its live tail
+ * is read - through its own domain's tail app, as the person is there.
+ */
+export interface ResolvedTable extends RunTableSource {
+  tail: TailAccess | null;
 }
 
 export interface StartRunInput {
@@ -102,27 +113,30 @@ export interface StartRunInput {
   tables: RunTableSource[];
   request: RunRequest;
   /**
-   * How the run reads its tables' live tails. A request with `liveTail: false`, or `asOf` an older
+   * How the run reads its own table's live tail. A request with `liveTail: false`, or `asOf` an older
    * snapshot, reads none whatever this says.
    */
   tail?: TailAccess | null;
+  /**
+   * A statement's tables, in the order it names them, found in their domains by whoever starts the
+   * run (`routes/data.ts`), which has checked the person may query each.
+   */
+  sources?: ResolvedTable[];
+  /** Tables a statement could name, by their full names, so an error can say which there are. */
+  tableNames?: string[];
 }
 
 /**
- * The tables a run would read: the one it browses, or the statement's own and every table the
- * statement names. Whoever starts it must be allowed to query each one, in its dataset.
+ * The tables a run reads: the one it browses; a statement's named tables, or - a statement that
+ * names none - its request's table. Whoever starts it must be allowed to query each one.
  */
-export function tablesRead(tables: RunTableSource[], request: Pick<RunRequest, 'kind' | 'table' | 'sql'>): RunTableSource[] {
-  const selected = pickTable(tables, request.table);
-  if (request.kind !== 'sql') return [selected];
-  const named = new Set(referencedTables(request.sql ?? '', tables.map((table) => table.name)));
-  return tables.filter((table) => table === selected || named.has(table.name));
-}
-
-/** The tables a statement names, in the materialization's order. */
-export function tablesNamed(tables: RunTableSource[], sql: string): RunTableSource[] {
-  const named = new Set(referencedTables(sql, tables.map((table) => table.name)));
-  return tables.filter((table) => named.has(table.name));
+export function tablesRead(
+  tables: RunTableSource[],
+  request: Pick<RunRequest, 'kind' | 'table'>,
+  sources: readonly RunTableSource[] = [],
+): RunTableSource[] {
+  if (request.kind === 'sql' && sources.length > 0) return [...sources];
+  return [pickTable(tables, request.table)];
 }
 
 /** The datasets of some tables, each once, in their domains. */
@@ -141,24 +155,20 @@ function datasetsOf(tables: RunTableSource[]): RunDataset[] {
 export async function startRun(input: StartRunInput): Promise<Run> {
   validateRange(input.request);
   const selected = pickTable(input.tables, input.request.table);
-  let statement: string | null = null;
-  if (input.request.kind === 'sql') {
-    statement = assertReadOnlyStatement(input.request.sql ?? '');
-    assertNativeReferences(statement, input.tables);
-  }
-  const datasets = datasetsOf(tablesRead(input.tables, input.request));
-
-  const catalog = await loadCatalog(input.materializationId, selected.location, {
-    fresh: true,
-    snapshotId: input.request.asOf ?? null,
-    table: selected.name,
-  });
-  assertReadable(catalog);
-  const columns = logicalColumns(catalog.schema, catalog.forkMap);
+  const statement = input.request.kind === 'sql' ? assertReadOnlyStatement(input.request.sql ?? '') : null;
+  const named = statement === null ? [] : (input.sources ?? []);
+  const datasets = datasetsOf(tablesRead(input.tables, input.request, named));
   // A run as of an older snapshot is about the past: what arrived since is not part of it.
   const tail = input.request.asOf || input.request.liveTail === false ? null : (input.tail ?? null);
 
   if (statement === null) {
+    const catalog = await loadCatalog(input.materializationId, selected.location, {
+      fresh: true,
+      snapshotId: input.request.asOf ?? null,
+      table: selected.name,
+    });
+    assertReadable(catalog);
+    const columns = logicalColumns(catalog.schema, catalog.forkMap);
     // The run echoes its request back, so it carries the filters as applied: a link that still
     // names `payload.status` gets a run, and a request, about `status`.
     const request = { ...input.request, table: selected.name, filters: resolveFilters(input.request.filters ?? [], columns) };
@@ -178,17 +188,45 @@ export async function startRun(input: StartRunInput): Promise<Run> {
     );
   }
 
+  // The request's table is read as of `asOf`; every other table at its current snapshot.
+  const isRequested = (table: RunTableSource): boolean =>
+    table.domain === input.domain && table.materializationId === input.materializationId && table.name === selected.name;
   const sources: StatementSource[] = await Promise.all(
-    tablesNamed(input.tables, statement).map(async (table): Promise<StatementSource> => {
-      if (table === selected) return { namespace: table.dataset, name: table.name, catalog, columns };
-      const other = await loadCatalog(input.materializationId, table.location, { fresh: true, table: table.name });
-      assertReadable(other);
-      return { namespace: table.dataset, name: table.name, catalog: other, columns: logicalColumns(other.schema, other.forkMap) };
+    named.map(async (table): Promise<StatementSource> => {
+      const catalog = await loadCatalog(table.materializationId, table.location, {
+        fresh: true,
+        snapshotId: isRequested(table) ? (input.request.asOf ?? null) : null,
+        table: table.name,
+      });
+      assertReadable(catalog);
+      return {
+        domain: table.domain,
+        namespace: table.dataset,
+        datasetId: table.datasetId,
+        name: table.name,
+        catalog,
+        columns: logicalColumns(catalog.schema, catalog.forkMap),
+        tail: tail === null ? null : table.tail,
+      };
     }),
   );
-  // The run is about the request's table when the statement reads it, else the first it reads.
+  // The run is about the request's table when the statement reads it, else the first it reads; a
+  // statement that reads no table at all is about the request's table.
   const primary =
-    sources.find((source) => source.name === selected.name) ?? sources[0] ?? { namespace: selected.dataset, name: selected.name, catalog, columns };
+    sources.find((_source, index) => isRequested(named[index] as RunTableSource)) ??
+    sources[0] ??
+    (await (async (): Promise<StatementSource> => {
+      const catalog = await loadCatalog(input.materializationId, selected.location, { fresh: true, table: selected.name });
+      return {
+        domain: input.domain,
+        namespace: selected.dataset,
+        datasetId: selected.datasetId,
+        name: selected.name,
+        catalog,
+        columns: logicalColumns(catalog.schema, catalog.forkMap),
+        tail: null,
+      };
+    })());
   return register(
     new StatementRun({
       domain: input.domain,
@@ -203,7 +241,7 @@ export async function startRun(input: StartRunInput): Promise<Run> {
       tail,
       statement,
       sources,
-      tableNames: input.tables.map((table) => qualifiedName(table.dataset, table.name)),
+      tableNames: input.tableNames ?? input.tables.map((table) => canonicalName(table.domain, table.dataset, table.name)),
     }),
   );
 }
@@ -214,6 +252,9 @@ export interface RefreshRunInput {
   ownerId: string;
   /** Every table of the materialization, in its order, as it is now. */
   tables: RunTableSource[];
+  /** A statement's tables, found in their domains again: a run that replaces it reads them as they are now. */
+  sources?: ResolvedTable[];
+  tableNames?: string[];
   /** The run's range resolved again, for a run that replaces it: a relative range slides. */
   range?: TimeRange | null;
   /** How the refreshed run reads its tail now: the person's current session, the switches as they are. */
@@ -243,6 +284,8 @@ export async function refreshRun(input: RefreshRunInput): Promise<{ replaced: bo
       tables: input.tables,
       request,
       tail: input.tail,
+      ...(input.sources ? { sources: input.sources } : {}),
+      ...(input.tableNames ? { tableNames: input.tableNames } : {}),
     });
     run.expireWithin(REPLACED_RUN_GRACE_MS);
     return { replaced: true, run: next };
@@ -329,13 +372,13 @@ function assertReadable(catalog: Catalog): void {
  * empty. The sandbox may open nothing, so a statement naming a file is refused at bind time as it
  * would be at run time.
  */
-export async function validateStatement(input: { materializationId: string; tables: RunTableSource[]; sql: string }): Promise<void> {
+export async function validateStatement(input: { sources: RunTableSource[]; sql: string; tableNames: string[] }): Promise<void> {
   const statement = assertReadOnlyStatement(input.sql);
-  assertNativeReferences(statement, input.tables);
   const views = await Promise.all(
-    tablesNamed(input.tables, statement).map(async (table) => {
-      const catalog = await loadCatalog(input.materializationId, table.location, { table: table.name });
+    input.sources.map(async (table) => {
+      const catalog = await loadCatalog(table.materializationId, table.location, { table: table.name });
       return {
+        domain: table.domain,
         namespace: table.dataset,
         name: table.name,
         sources: [],
@@ -353,7 +396,7 @@ export async function validateStatement(input: { materializationId: string; tabl
       // On its own line, so an error's line number is the statement's line plus one.
       await connection.run(`PREPARE console_bind_check AS\n${statement}`);
     } catch (cause) {
-      throw statementError(cause, input.tables.map((table) => qualifiedName(table.dataset, table.name)));
+      throw statementError(cause, input.tableNames);
     }
   });
 }

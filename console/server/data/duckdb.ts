@@ -403,10 +403,9 @@ function suggestFieldName(message: string): string {
 /**
  * Say which tables there are when a statement names one that is not.
  *
- * `tableNames` are the canonical names, `shop.orders`. DuckDB guesses the nearest names it knows —
- * `"iceberg.shop.orders or shop.orders"` for a bare `orders`. When a guess is one of the
- * materialization's tables, the guess is the answer; otherwise it is a system table such as `pg_am`,
- * which only misleads, so the materialization's tables are named instead.
+ * `tableNames` are full names, `domain_a.shop.orders`. DuckDB guesses the nearest names it knows.
+ * When a guess is one of the tables, the guess is the answer; otherwise it is a system table such as
+ * `pg_am`, which only misleads, so the tables are named instead.
  */
 function suggestTableName(message: string, tableNames: readonly string[] | undefined): string {
   if (!tableNames || tableNames.length === 0) return message;
@@ -415,15 +414,19 @@ function suggestTableName(message: string, tableNames: readonly string[] | undef
     .split(/\s+or\s+/)
     .map((guess) => guess.trim().replace(/^memory\./i, '').toLowerCase())
     .filter(Boolean);
-  // DuckDB names a table in a schema the statement already named without its schema: `shop.orderz`
-  // gets "orders".
+  // DuckDB names a table in a schema the statement already named without its catalog and schema:
+  // `domain_a.shop.orderz` gets "orders".
   const known = new Set(
-    tableNames.flatMap((name) => [name.toLowerCase(), `iceberg.${name.toLowerCase()}`, name.toLowerCase().split('.').at(-1) as string]),
+    tableNames.flatMap((name) => {
+      const [domain, ...rest] = name.toLowerCase().split('.');
+      const inDomain = rest.join('.');
+      return [name.toLowerCase(), `${domain}_iceberg.${inDomain}`, inDomain, rest.at(-1) as string];
+    }),
   );
   if (guesses.some((guess) => known.has(guess))) return message;
   const withoutGuess = message.replace(/\s*Did you mean "[^"]*"\?/, '');
-  const list = tableNames.length === 1 ? `table is ${tableNames[0]}` : `tables are ${tableNames.slice(0, -1).join(', ')} and ${tableNames.at(-1)}`;
-  return `${withoutGuess}\nThis materialization's ${list}.`;
+  const list = tableNames.length === 1 ? `table here is ${tableNames[0]}` : `tables here are ${tableNames.slice(0, -1).join(', ')} and ${tableNames.at(-1)}`;
+  return `${withoutGuess}\nThe ${list}.`;
 }
 
 function toConsoleError(cause: unknown): ConsoleError {

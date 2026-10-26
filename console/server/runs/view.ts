@@ -1,19 +1,18 @@
 /**
  * The views over snapshots' data files that statements, profiles and exports read.
  *
- * A statement reads each of the materialization's tables by its canonical name, its dataset and the
- * table — `SELECT * FROM sales.orders` — as flat logical columns, and its native Iceberg table as
- * `iceberg.sales.orders`: structs and lists as they are, which is what an external engine attached to
- * the catalog sees. A materialization's tables may be in several datasets, and a statement can read
- * several tables at once, joining them like any others; only the tables it names are planned and
- * read. Profiles and exports read a run's rows under `ROWS_VIEW`, a name of the console's own.
- * Internal names start with an underscore, which neither a dataset nor a table name ever does, so
- * nothing can be named onto one of them.
+ * A statement reads tables by their full names, `<domain>.<dataset>.<table>` (handbook 20), as flat
+ * logical columns, and their native Iceberg tables as `<domain>_iceberg.<dataset>.<table>`: structs
+ * and lists as they are, which is what an external engine attached to the catalog sees. It may read
+ * tables of several materializations and domains, joining them like any others; only the tables it
+ * names are planned and read. Profiles and exports read a run's rows under `ROWS_VIEW`, a name of
+ * the console's own. Internal names start with an underscore, which neither a dataset nor a table
+ * name ever does, so nothing can be named onto one of them.
  */
 
-import { badRequest } from '../errors.ts';
 import { duckType, readParquet, selectList, timePredicate, type LogicalColumn } from '../data/logical.ts';
-import { quoteIdentifier, stripStringsAndComments } from '../data/sql.ts';
+import { quoteIdentifier } from '../data/sql.ts';
+import { nativeCatalog } from './names.ts';
 import type { IcebergSchema } from '../iceberg/metadata.ts';
 import type { TimeRange } from '../../shared/types.ts';
 
@@ -26,17 +25,16 @@ const NATIVE_VIEW = '__table';
 /** A table's logical view, before it is given its canonical name. */
 const LOGICAL_VIEW = '__view';
 
-/** The database statements read the native tables from: `FROM iceberg.sales.orders`. */
-export const NATIVE_CATALOG = 'iceberg';
-
-/** How SQL names one of a materialization's tables, and an engine on the catalog does too: `sales.orders`. */
+/** How a browse run names its table, as its materialization's page does: `sales.orders`. */
 export function qualifiedName(namespace: string, table: string): string {
   return `${namespace}.${table}`;
 }
 
 /** One table a statement reads: its name, its snapshot's data files, and how they are read. */
 export interface StatementTable {
-  /** The table's dataset: its namespace in SQL. */
+  /** The table's domain: its catalog in SQL. */
+  domain: string;
+  /** The table's dataset: its schema in SQL. */
   namespace: string;
   name: string;
   /** The data files of the run's snapshot inside the time range, as DuckDB opens them. */
@@ -80,76 +78,38 @@ export function viewSetup(
 }
 
 /**
- * Every view a statement reads, inside its sandbox: each table as `<dataset>.<table>`, and its
- * native table as `iceberg.<dataset>.<table>`.
+ * Every view a statement reads, inside its sandbox: each table as `<domain>.<dataset>.<table>`, and
+ * its native table as `<domain>_iceberg.<dataset>.<table>`.
  *
  * A sandbox is a DuckDB instance of the statement's own (`data/duckdb.ts::withSandbox`), so the
- * schemas are real — `sales.orders` resolves as DuckDB resolves any qualified name — and gone with
- * the statement. `iceberg` is an in-memory database attached for the native views: the sandbox allows it,
- * as it refuses any file. The views are defined over temporary ones, which only `temp` can hold.
+ * catalogs and schemas are real - `domain_a.sales.orders` resolves as DuckDB resolves any qualified
+ * name - and gone with the statement. Each domain, and its native catalog, is an in-memory database
+ * attached for the statement: the sandbox allows that, as it refuses any file. The views are defined
+ * over temporary ones, which only `temp` can hold.
  */
 export function statementViews(tables: StatementTable[], range: TimeRange): string[] {
-  const statements = [`ATTACH ':memory:' AS ${NATIVE_CATALOG}`];
-  for (const namespace of new Set(tables.map((table) => table.namespace))) {
-    statements.push(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(namespace)}`);
-    statements.push(`CREATE SCHEMA IF NOT EXISTS ${NATIVE_CATALOG}.${quoteIdentifier(namespace)}`);
+  const statements: string[] = [];
+  for (const domain of new Set(tables.map((table) => table.domain))) {
+    statements.push(`ATTACH ':memory:' AS ${quoteIdentifier(domain)}`);
+    statements.push(`ATTACH ':memory:' AS ${quoteIdentifier(nativeCatalog(domain))}`);
+  }
+  const schemas = new Set<string>();
+  for (const table of tables) {
+    const key = `${table.domain}.${table.namespace}`;
+    if (schemas.has(key)) continue;
+    schemas.add(key);
+    statements.push(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(table.domain)}.${quoteIdentifier(table.namespace)}`);
+    statements.push(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(nativeCatalog(table.domain))}.${quoteIdentifier(table.namespace)}`);
   }
   tables.forEach((table, index) => {
     const logicalName = `${LOGICAL_VIEW}_${index}`;
     const nativeName = `${NATIVE_VIEW}_${index}`;
-    const canonical = `${quoteIdentifier(table.namespace)}.${quoteIdentifier(table.name)}`;
+    const inSchema = `${quoteIdentifier(table.namespace)}.${quoteIdentifier(table.name)}`;
     statements.push(...viewSetup(table.sources, table.schema, table.columns, range, { name: logicalName, nativeName }));
-    statements.push(`CREATE OR REPLACE VIEW ${canonical} AS SELECT * FROM temp.main.${quoteIdentifier(logicalName)}`);
-    statements.push(`CREATE OR REPLACE VIEW ${NATIVE_CATALOG}.${canonical} AS SELECT * FROM temp.main.${quoteIdentifier(nativeName)}`);
+    statements.push(`CREATE OR REPLACE VIEW ${quoteIdentifier(table.domain)}.${inSchema} AS SELECT * FROM temp.main.${quoteIdentifier(logicalName)}`);
+    statements.push(`CREATE OR REPLACE VIEW ${quoteIdentifier(nativeCatalog(table.domain))}.${inSchema} AS SELECT * FROM temp.main.${quoteIdentifier(nativeName)}`);
   });
   return statements;
-}
-
-/** An identifier: quoted, with `""` for a quote inside, or bare. */
-const IDENTIFIER = /"(?:[^"]|"")+"|[A-Za-z_][\w$]*/g;
-
-function unquote(token: string): string {
-  return token.startsWith('"') ? token.slice(1, -1).replace(/""/g, '"') : token;
-}
-
-/**
- * The materialization's tables a statement names, in the materialization's order.
- *
- * Any identifier spelled as a table's name counts — `sales.orders`, `"Orders"`,
- * `iceberg.sales.orders` — since SQL compares names without regard to case; a table's name is unique
- * in its materialization, whatever its dataset. A column that happens to share a table's name only
- * costs that table's planning; a table the statement reads is never missed.
- */
-export function referencedTables(statement: string, tableNames: readonly string[]): string[] {
-  const byName = new Map(tableNames.map((name) => [name.toLowerCase(), name]));
-  const found = new Set<string>();
-  for (const match of stripStringsAndComments(statement, { keepLength: true }).matchAll(IDENTIFIER)) {
-    const table = byName.get(unquote(match[0]).toLowerCase());
-    if (table !== undefined) found.add(table);
-  }
-  return tableNames.filter((name) => found.has(name));
-}
-
-/**
- * Refuse `iceberg.…` for anything but one of the materialization's native tables,
- * `iceberg.<dataset>.<table>`, saying which there are; DuckDB's own message would suggest a system
- * table, or none. The tables may be in several datasets.
- */
-export function assertNativeReferences(statement: string, tables: ReadonlyArray<{ dataset: string; name: string }>): void {
-  const stripped = stripStringsAndComments(statement, { keepLength: true });
-  const part = '("(?:[^"]|"")+"|[A-Za-z_][\\w$]*)';
-  const pattern = new RegExp(`(^|[^\\w."])${NATIVE_CATALOG}\\.${part}(?:\\.${part})?`, 'gi');
-  const known = new Set(tables.map((table) => qualifiedName(table.dataset, table.name).toLowerCase()));
-  for (const match of stripped.matchAll(pattern)) {
-    const schema = unquote(match[2] as string);
-    const table = match[3] === undefined ? null : unquote(match[3]);
-    if (table !== null && known.has(qualifiedName(schema, table).toLowerCase())) continue;
-    const named = table === null ? `${NATIVE_CATALOG}.${schema}` : `${NATIVE_CATALOG}.${schema}.${table}`;
-    const natives = tables.map((entry) => `${NATIVE_CATALOG}.${qualifiedName(entry.dataset, entry.name)}`);
-    throw badRequest(`there is no table ${named}; this materialization's native tables are ${listOf(natives)}`, {
-      field: 'sql',
-    });
-  }
 }
 
 /** `a`, `a and b`, `a, b and c`. */

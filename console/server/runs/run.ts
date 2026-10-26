@@ -146,14 +146,20 @@ export abstract class Run {
    * Fetch the live tail of each table, past its snapshot, all at once. Every failure is the tail's
    * status, never the run's: a run whose tail cannot be had reads committed rows and says why.
    */
-  protected async fetchTails(tables: Array<{ name: string; catalog: Catalog }>): Promise<void> {
-    const access = this.tailAccess;
-    if (access === null) return;
+  /**
+   * Fetch the live tail of each table, keyed as the run reports the table. A browse run reads its
+   * own table's with the run's access; a statement reads each table's through its own domain's tail
+   * app (`access`), and none at all when the run reads no tails.
+   */
+  protected async fetchTails(tables: Array<{ key: string; table: string; catalog: Catalog; access?: TailAccess | null }>): Promise<void> {
+    if (this.tailAccess === null) return;
     await Promise.all(
-      tables.map(async ({ name, catalog }) => {
-        const tail = new TableTail(name, catalog, access.off);
-        this.tails.set(name, tail);
-        await tail.fetch(access, this.workDir, this.signal, () => !this.disposed);
+      tables.map(async ({ key, table, catalog, access }) => {
+        const reads = access === undefined ? this.tailAccess : access;
+        if (reads === null || reads === undefined) return;
+        const tail = new TableTail(table, catalog, reads.off);
+        this.tails.set(key, tail);
+        await tail.fetch(reads, this.workDir, this.signal, () => !this.disposed);
       }),
     );
   }
@@ -200,7 +206,9 @@ export abstract class Run {
 
   /** Every table the run reads, at the snapshot it is pinned to. A browse run reads its own. */
   protected tableReads(): RunTableRead[] {
-    return [tableRead(this.tableName, this.catalog, this.tails.get(this.tableName))];
+    const dataset = this.datasets[0];
+    const place = { domain: this.domain, dataset: dataset?.name ?? '', datasetId: dataset?.id ?? '' };
+    return [tableRead(this.tableName, this.catalog, place, this.tails.get(this.tableName))];
   }
 
   /**
@@ -371,10 +379,21 @@ export abstract class Run {
 }
 
 /** A table as a run reads it: the snapshot it is pinned to, and the live tail past it. */
-export function tableRead(name: string, catalog: Catalog, tail?: TableTail): RunTableRead {
+/** Where a table a run reads is: its domain, dataset and materialization. */
+export interface TablePlace {
+  domain: string;
+  dataset: string;
+  datasetId: string;
+}
+
+export function tableRead(name: string, catalog: Catalog, place: TablePlace, tail?: TableTail): RunTableRead {
   const snapshot = catalog.snapshot;
   return {
     name,
+    domain: place.domain,
+    dataset: place.dataset,
+    datasetId: place.datasetId,
+    materializationId: catalog.materializationId,
     snapshotId: snapshot?.snapshotId ?? null,
     snapshotAt: snapshot?.committedAt == null ? null : new Date(snapshot.committedAt).toISOString(),
     pinned: snapshot !== null && snapshot.snapshotId !== catalog.currentSnapshotId,

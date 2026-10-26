@@ -22,7 +22,7 @@ const { insideRange, overlapsRange, estimateRange, summarize } = await import('.
 const { logicalColumns, renderFilter, resolveFilters, selectList, timePredicate } = await import('../data/logical.ts');
 const { BrowseRun, orderObjects } = await import('./browse.ts');
 const { StatementRun } = await import('./statement.ts');
-const { assertNativeReferences, referencedTables } = await import('./view.ts');
+const { namedTables, unqualifiedReferences } = await import('./names.ts');
 const { openExport } = await import('./export.ts');
 const { profileColumn } = await import('./profile.ts');
 
@@ -246,8 +246,8 @@ function statement(
     columns,
     admit,
     statement: sql,
-    sources: [{ namespace: 'shop', name: tableName, catalog, columns }],
-    tableNames: [`shop.${tableName}`],
+    sources: [{ domain: 'domain_a', namespace: 'shop', datasetId: 'ds-000000000001', name: tableName, catalog, columns, tail: null }],
+    tableNames: [`domain_a.shop.${tableName}`],
   });
 }
 
@@ -439,21 +439,21 @@ describe('cancelling', () => {
 
 describe('statements', () => {
   it('are bounded by the time range', async () => {
-    const run = statement('SELECT count(*) AS n FROM shop.orders', { from: minutes(0), to: minutes(105) });
+    const run = statement('SELECT count(*) AS n FROM domain_a.shop.orders', { from: minutes(0), to: minutes(105) });
     await finished(run);
     assert.equal(run.state, 'succeeded');
     assert.equal((await run.readPage(0, 10)).rows[0]?.n, 150);
   });
 
   it('page through their stored result with an exact total', async () => {
-    const run = statement('SELECT "status", count(*) AS n FROM shop.orders GROUP BY 1 ORDER BY 1');
+    const run = statement('SELECT "status", count(*) AS n FROM domain_a.shop.orders GROUP BY 1 ORDER BY 1');
     await finished(run);
     assert.equal(run.rows, 3);
     assert.deepEqual((await run.readPage(1, 1)).rows, [{ status: 'new', n: 136 }]);
   });
 
   it('keep at most the result limit, but still count every row', async () => {
-    const run = statement('SELECT * FROM shop.orders');
+    const run = statement('SELECT * FROM domain_a.shop.orders');
     await finished(run);
     assert.equal(run.truncated, true);
     assert.equal(run.rowsRetained, 50);
@@ -462,7 +462,7 @@ describe('statements', () => {
   });
 
   it('report a failure at the place in the statement the engine pointed at', async () => {
-    const run = statement('SELECT\n  nope\nFROM shop.orders');
+    const run = statement('SELECT\n  nope\nFROM domain_a.shop.orders');
     await finished(run);
     assert.equal(run.state, 'failed');
     assert.match(run.error?.message ?? '', /nope/);
@@ -470,32 +470,32 @@ describe('statements', () => {
   });
 
   it('see a column no object has yet as NULL rather than failing to bind', async () => {
-    const run = statement(`SELECT count(*) AS n, count("note") AS notes FROM shop.orders`);
+    const run = statement(`SELECT count(*) AS n, count("note") AS notes FROM domain_a.shop.orders`);
     await finished(run);
     assert.deepEqual((await run.readPage(0, 1)).rows[0], { n: 400, notes: 0 });
   });
 
   it('read the native table as iceberg.<namespace>.<name>, with structs and lists as they are', async () => {
     const run = statement(
-      'SELECT count(*) AS n, count(customer.email) AS emails, count(total) AS longs FROM iceberg.shop.orders',
+      'SELECT count(*) AS n, count(customer.email) AS emails, count(total) AS longs FROM domain_a_iceberg.shop.orders',
     );
     await finished(run);
     assert.equal(run.state, 'succeeded', run.error?.message ?? '');
     assert.deepEqual((await run.readPage(0, 1)).rows[0], { n: 400, emails: 300, longs: 200 });
 
-    const unnested = statement(`SELECT unnest(items).sku AS sku FROM iceberg.shop.orders WHERE id = 'c-7' ORDER BY 1`);
+    const unnested = statement(`SELECT unnest(items).sku AS sku FROM domain_a_iceberg.shop.orders WHERE id = 'c-7' ORDER BY 1`);
     await finished(unnested);
     assert.deepEqual((await unnested.readPage(0, 5)).rows, [{ sku: 'SKU-7' }, { sku: 'SKU-X' }]);
   });
 
   it('bound the native table by the time range too', async () => {
-    const run = statement('SELECT count(*) AS n FROM iceberg.shop.orders', { from: minutes(0), to: minutes(105) });
+    const run = statement('SELECT count(*) AS n FROM domain_a_iceberg.shop.orders', { from: minutes(0), to: minutes(105) });
     await finished(run);
     assert.equal((await run.readPage(0, 1)).rows[0]?.n, 150);
   });
 
   it('report an error in a native statement where it was written', async () => {
-    const run = statement('SELECT\n  nope\nFROM iceberg.shop.orders');
+    const run = statement('SELECT\n  nope\nFROM domain_a_iceberg.shop.orders');
     await finished(run);
     assert.equal(run.state, 'failed');
     assert.deepEqual(run.error?.position, { line: 2, column: 3 });
@@ -518,7 +518,7 @@ describe('statements', () => {
       assert.match(run.error?.message ?? '', /Permission Error|disabled by configuration|Cannot access/, sql);
     }
     // The run's own files are still there to read.
-    const allowed = statement('SELECT count(*) AS n FROM shop.orders');
+    const allowed = statement('SELECT count(*) AS n FROM domain_a.shop.orders');
     await finished(allowed);
     assert.equal((await allowed.readPage(0, 1)).rows[0]?.n, 400);
   });
@@ -530,14 +530,14 @@ describe('statements', () => {
   });
 
   it('name the column a statement meant when it still spells out the payload root', async () => {
-    const run = statement('SELECT "payload.status" FROM shop.orders');
+    const run = statement('SELECT "payload.status" FROM domain_a.shop.orders');
     await finished(run);
     assert.equal(run.state, 'failed');
     assert.match(run.error?.message ?? '', /write "status"/);
   });
 
   it('read a table by its name, which SQL compares without regard to case', async () => {
-    for (const sql of ['SELECT count(*) AS n FROM SHOP.ORDERS', 'SELECT count(*) AS n FROM "Shop"."Orders"']) {
+    for (const sql of ['SELECT count(*) AS n FROM DOMAIN_A.SHOP.ORDERS', 'SELECT count(*) AS n FROM "domain_a"."Shop"."Orders"']) {
       const run = statement(sql, { from: null, to: null }, 'Orders');
       await finished(run);
       assert.equal(run.state, 'succeeded', sql);
@@ -549,13 +549,13 @@ describe('statements', () => {
     const run = statement('SELECT count(*) AS n\nFROM materialized');
     await finished(run);
     assert.equal(run.state, 'failed');
-    assert.match(run.error?.message ?? '', /This materialization's table is shop\.orders\./);
+    assert.match(run.error?.message ?? '', /The table here is domain_a\.shop\.orders\./);
     assert.doesNotMatch(run.error?.message ?? '', /Did you mean/, 'DuckDB guesses a system table');
     assert.deepEqual(run.error?.position, { line: 2, column: 6 });
   });
 
   it('keep DuckDB’s guess when it is one of the tables', async () => {
-    const run = statement('SELECT count(*) AS n FROM shop.orderz');
+    const run = statement('SELECT count(*) AS n FROM domain_a.shop.orderz');
     await finished(run);
     assert.equal(run.state, 'failed');
     assert.match(run.error?.message ?? '', /Did you mean "orders"\?/);
@@ -610,7 +610,7 @@ describe('exports', () => {
   });
 
   it('write a JSON array in either shape', async () => {
-    const run = statement('SELECT "id", "items[].sku" FROM shop.orders ORDER BY "id" LIMIT 2');
+    const run = statement('SELECT "id", "items[].sku" FROM domain_a.shop.orders ORDER BY "id" LIMIT 2');
     await finished(run);
     let text = '';
     for await (const chunk of (await openExport(run, 'json', 'nested')).stream) text += chunk;
@@ -800,47 +800,36 @@ describe('logical columns', () => {
   });
 });
 
-describe('the tables a statement reads', () => {
-  const tables = ['orders', 'payments', 'orders_v2'];
+describe('the tables a statement names', () => {
+  const domains = ['domain_a', 'domain_b'];
+  const names = (sql: string): string[] =>
+    namedTables(sql, domains).map((reference) => `${reference.native ? 'native:' : ''}${reference.domain}.${reference.dataset}.${reference.table}`);
 
-  it('are the ones it names, logical or native, in any case, in the materialization’s order', () => {
-    assert.deepEqual(referencedTables('SELECT * FROM shop.payments p JOIN SHOP.ORDERS o ON o.id = p.order_id', tables), ['orders', 'payments']);
-    assert.deepEqual(referencedTables('SELECT * FROM iceberg.shop."Payments"', tables), ['payments']);
-    assert.deepEqual(referencedTables('SELECT * FROM shop.orders_v2', tables), ['orders_v2'], 'a longer name is another table');
-    assert.deepEqual(referencedTables('SELECT 42', tables), []);
+  it('are named with their domain, logical or native, in any case or quoting, each once', () => {
+    assert.deepEqual(names('SELECT * FROM domain_a.shop.payments p JOIN DOMAIN_B.SHOP.ORDERS o ON o.id = p.order_id'), [
+      'domain_a.shop.payments',
+      'domain_b.shop.orders',
+    ]);
+    assert.deepEqual(names('SELECT * FROM domain_a_iceberg.shop."Payments" JOIN domain_a . shop . orders USING (id)'), [
+      'native:domain_a.shop.payments',
+      'domain_a.shop.orders',
+    ]);
+    assert.deepEqual(names('SELECT domain_a.shop.orders.id FROM domain_a.shop.orders'), ['domain_a.shop.orders'], 'a column after a table is the table’s');
+    assert.deepEqual(names('SELECT 42'), []);
   });
 
-  it('are not named in strings or comments', () => {
-    assert.deepEqual(referencedTables("SELECT 'payments' AS t FROM shop.orders -- iceberg.shop.orders_v2\n/* payments */", tables), ['orders']);
+  it('are not named in strings or comments, nor by a catalog that is no domain', () => {
+    assert.deepEqual(names("SELECT 'domain_b.x.y' AS t FROM domain_a.shop.orders -- domain_b.shop.orders\n/* domain_b.a.b */"), ['domain_a.shop.orders']);
+    assert.deepEqual(names('SELECT payload.customer.email FROM elsewhere.shop.orders'), []);
   });
 
-  it('refuse a native table the materialization does not have, saying which it has', () => {
-    const inDatasets = tables.map((name) => ({ dataset: 'shop', name }));
-    assert.doesNotThrow(() => assertNativeReferences('SELECT * FROM iceberg.shop.orders JOIN ICEBERG.SHOP."Payments" USING (id)', inDatasets));
-    assert.doesNotThrow(() =>
-      assertNativeReferences("SELECT 'iceberg.nothing' AS t, x.iceberg FROM shop.orders -- iceberg.nothing", inDatasets),
-    );
-    const natives = /this materialization's native tables are iceberg\.shop\.orders, iceberg\.shop\.payments and iceberg\.shop\.orders_v2/;
-    for (const [sql, named] of [
-      ['SELECT * FROM iceberg.shop.customers', 'iceberg.shop.customers'],
-      ['SELECT * FROM iceberg.orders', 'iceberg.orders'],
-      ['SELECT * FROM iceberg.lake.orders', 'iceberg.lake.orders'],
-    ] as const) {
-      assert.throws(() => assertNativeReferences(sql, inDatasets), new RegExp(`no table ${named.replace(/\./g, '\\.')}; `), sql);
-      assert.throws(() => assertNativeReferences(sql, inDatasets), natives, sql);
-    }
-  });
-
-  it('may be in several datasets, each read in its own', () => {
-    const spread = [
-      { dataset: 'sales', name: 'orders' },
-      { dataset: 'finance', name: 'payments' },
+  it('must name their domain: a table named without it is found, to say how to write it', () => {
+    const tables = [
+      { dataset: 'shop', table: 'orders' },
+      { dataset: 'finance', table: 'payments' },
     ];
-    assert.doesNotThrow(() => assertNativeReferences('SELECT * FROM iceberg.sales.orders JOIN iceberg.finance.payments USING (id)', spread));
-    assert.throws(
-      () => assertNativeReferences('SELECT * FROM iceberg.sales.payments', spread),
-      /no table iceberg\.sales\.payments; this materialization's native tables are iceberg\.sales\.orders and iceberg\.finance\.payments/,
-      'a table is in its own dataset only',
-    );
+    assert.deepEqual(unqualifiedReferences('SELECT * FROM shop.orders o JOIN FINANCE.PAYMENTS p USING (id)', tables), ['shop.orders', 'finance.payments']);
+    assert.deepEqual(unqualifiedReferences('SELECT * FROM iceberg.shop.orders', tables), ['iceberg.shop.orders']);
+    assert.deepEqual(unqualifiedReferences('SELECT o.id, shop.customers FROM domain_a.shop.orders o', tables), [], 'full names and other two-part names pass');
   });
 });

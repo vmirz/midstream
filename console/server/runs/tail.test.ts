@@ -79,6 +79,7 @@ const { resetTables } = await import('../iceberg/table.ts');
 const { resetSnapshotCaches } = await import('../iceberg/snapshot.ts');
 const { FIXTURE_DIR, PAYMENTS_DIR, FIXTURE_LOCATION, PAYMENTS_LOCATION, fixturePath, fixtureReader } = await import('../iceberg/testing.ts');
 const { evictIdleRuns, getRun, refreshRun, resetRuns, startRun } = await import('./store.ts');
+const { sourcesFor } = await import('./testing.ts');
 const { openExport } = await import('./export.ts');
 const { config } = await import('../config.ts');
 
@@ -114,8 +115,8 @@ const TAILS: Record<string, FixtureAnswer[]> = { orders: ORDERS_TAIL.answers, pa
 const MATERIALIZATION = 'mat-a1b2c3d4e5f6';
 const PERSON = { kind: 'user' as const, token: 'tok-person-0001' };
 const TABLES = [
-  { domain: 'domain_a', name: 'orders', dataset: 'shop', datasetId: 'ds-000000000001', location: FIXTURE_LOCATION },
-  { domain: 'domain_a', name: 'payments', dataset: 'finance', datasetId: 'ds-000000000002', location: PAYMENTS_LOCATION },
+  { domain: 'domain_a', materializationId: MATERIALIZATION, name: 'orders', dataset: 'shop', datasetId: 'ds-000000000001', location: FIXTURE_LOCATION },
+  { domain: 'domain_a', materializationId: MATERIALIZATION, name: 'payments', dataset: 'finance', datasetId: 'ds-000000000002', location: PAYMENTS_LOCATION },
 ];
 /** Rows the orders table holds at its current snapshot. */
 const COMMITTED_ROWS = 12;
@@ -185,11 +186,13 @@ async function settled(run: Run): Promise<Run> {
 
 async function started(request: Partial<RunRequest> = {}, tail: TailAccess | null = access()): Promise<Run> {
   const full: RunRequest = { kind: 'browse', range: ALL_TIME, ...request } as RunRequest;
-  return settled(await startRun({ domain: 'domain_a', materializationId: MATERIALIZATION, ownerId: 'usr-test', tables: TABLES, request: full, tail }));
+  const named = full.kind === 'sql' ? sourcesFor(full.sql ?? '', TABLES, tail) : {};
+  return settled(await startRun({ domain: 'domain_a', materializationId: MATERIALIZATION, ownerId: 'usr-test', tables: TABLES, request: full, tail, ...named }));
 }
 
 async function refreshed(run: Run, tail: TailAccess | null = access(), range: TimeRange | null = null): Promise<{ replaced: boolean; run: Run }> {
-  const outcome = await refreshRun({ run, ownerId: 'usr-test', tables: TABLES, range, tail });
+  const named = run.request.kind === 'sql' ? sourcesFor(run.request.sql ?? '', TABLES, tail) : {};
+  const outcome = await refreshRun({ run, ownerId: 'usr-test', tables: TABLES, range, tail, ...named });
   await settled(outcome.run);
   return outcome;
 }
@@ -341,17 +344,17 @@ describe('a browse run with a live tail', () => {
 
 describe('a statement with live tails', () => {
   it('reads each table with its tail, natively too', async () => {
-    const run = await started({ kind: 'sql', sql: 'SELECT count(*) AS n FROM shop.orders' });
+    const run = await started({ kind: 'sql', sql: 'SELECT count(*) AS n FROM domain_a.shop.orders' });
     assert.equal(run.state, 'succeeded', run.error?.message ?? '');
     assert.equal(Number((await run.readPage(0, 1)).rows[0]?.n), COMMITTED_ROWS + 4);
-    const native = await started({ kind: 'sql', sql: "SELECT count(*) AS n FROM iceberg.shop.orders WHERE order_id = 'O-20'" });
+    const native = await started({ kind: 'sql', sql: "SELECT count(*) AS n FROM domain_a_iceberg.shop.orders WHERE order_id = 'O-20'" });
     assert.equal(Number((await native.readPage(0, 1)).rows[0]?.n), 1);
   });
 
   it('joins two tables each with a tail', async () => {
     const run = await started({
       kind: 'sql',
-      sql: 'SELECT o.order_id, p.payment_id FROM shop.orders o JOIN finance.payments p ON p.order_id = o.order_id ORDER BY 1',
+      sql: 'SELECT o.order_id, p.payment_id FROM domain_a.shop.orders o JOIN domain_a.finance.payments p ON p.order_id = o.order_id ORDER BY 1',
     });
     assert.equal(run.state, 'succeeded', run.error?.message ?? '');
     const rows = (await run.readPage(0, 20)).rows.map((row) => `${row.order_id}/${row.payment_id}`);
@@ -365,7 +368,7 @@ describe('a statement with live tails', () => {
   });
 
   it('is never refreshed in place: a refresh is a new run', async () => {
-    const run = await started({ kind: 'sql', sql: 'SELECT count(*) AS n FROM shop.orders' });
+    const run = await started({ kind: 'sql', sql: 'SELECT count(*) AS n FROM domain_a.shop.orders' });
     const outcome = await refreshed(run);
     assert.equal(outcome.replaced, true);
     assert.notEqual(outcome.run.id, run.id);

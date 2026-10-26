@@ -104,16 +104,24 @@ const controlPlane = domain.controlPlane;
 const liveStore = domain.live;
 const original = { ...controlPlane } as Record<string, unknown>;
 const getDetail = liveStore.getDetail.bind(liveStore);
+const fleetSnapshot = liveStore.fleetSnapshot.bind(liveStore);
 const getSchema = liveStore.getSchema.bind(liveStore);
 
 beforeEach(() => {
   liveStore.getDetail = async () => detail();
+  // A statement's tables are found by name in the domain's fleet (handbook 20).
+  liveStore.fleetSnapshot = () =>
+    ({
+      ...fleetSnapshot(),
+      items: [{ materialization_id: 'mat-a1b2c3d4e5f6', desired_phase: 'running', tables: ['sales.orders', 'finance.invoices'] }],
+    }) as unknown as ReturnType<typeof fleetSnapshot>;
   liveStore.getSchema = async (_id: string, table: string) => schema(table === 'orders' ? ORDERS : INVOICES);
 });
 
 afterEach(() => {
   Object.assign(controlPlane, original);
   liveStore.getDetail = getDetail;
+  liveStore.fleetSnapshot = fleetSnapshot;
   liveStore.getSchema = getSchema;
 });
 
@@ -272,7 +280,7 @@ describe('reading tables in datasets', () => {
     const joined = await server.inject({
       method: 'POST',
       url: '/api/d/domain_a/materializations/mat-a1b2c3d4e5f6/runs',
-      payload: { kind: 'sql', table: 'orders', range, sql: 'SELECT * FROM sales.orders JOIN finance.invoices USING (order_id)' },
+      payload: { kind: 'sql', table: 'orders', range, sql: 'SELECT * FROM domain_a.sales.orders JOIN domain_a.finance.invoices USING (order_id)' },
     });
     assert.equal(joined.statusCode, 403, 'a statement naming a locked table is refused whatever else it reads');
     assert.equal(joined.json().error.details.dataset, 'finance');
@@ -280,7 +288,7 @@ describe('reading tables in datasets', () => {
     const validated = await server.inject({
       method: 'POST',
       url: '/api/d/domain_a/materializations/mat-a1b2c3d4e5f6/data/validate',
-      payload: { sql: 'SELECT count(*) FROM finance.invoices' },
+      payload: { sql: 'SELECT count(*) FROM domain_a.finance.invoices' },
     });
     assert.equal(validated.statusCode, 403);
   });

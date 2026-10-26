@@ -1101,7 +1101,13 @@ export interface RunTail {
 
 /** One table a run reads, at the snapshot it is pinned to. */
 export interface RunTableRead {
+  /** Its name in its dataset; SQL reads it as `<domain>.<dataset>.<name>`. */
   name: string;
+  /** The domain, dataset and materialization it is in: a statement may read tables of several (handbook 20). */
+  domain: string;
+  dataset: string;
+  datasetId: string;
+  materializationId: string;
   snapshotId: string | null;
   snapshotAt: string | null;
   /** Read as of an older snapshot than the table's current one. */

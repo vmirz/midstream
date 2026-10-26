@@ -152,7 +152,22 @@ function RunSummary({ run }: { run: RunSnapshot }): ReactNode {
           first {formatExact(run.rowsRetained)} kept
         </span>
       ) : null}
+      {readAcross(run)}
     </>
+  );
+}
+
+/** For a statement that read tables of several domains, which domains: each table is its domain's. */
+function readAcross(run: RunSnapshot): ReactNode {
+  const domains = [...new Set(run.tables.map((table) => table.domain))];
+  if (run.request.kind !== 'sql' || domains.length < 2) return null;
+  return (
+    <span
+      className="numeric min-w-0 truncate text-[11px] text-[var(--color-ink-muted)]"
+      title={run.tables.map((table) => `${table.domain}.${table.dataset}.${table.name}`).join('\n')}
+    >
+      across {domains.join(', ')}
+    </span>
   );
 }
 
@@ -200,5 +215,8 @@ function ProgressBar({ run }: { run: RunSnapshot }): ReactNode {
 /** A newer snapshot of the table on screen than the one the run read, which only a run following the table can miss. */
 function hasNewerData(run: RunSnapshot, summary: DataSummary | null): boolean {
   if (run.pinned || !summary?.snapshotId) return false;
-  return newerSnapshot(run.tables.find((table) => table.name === summary.table), summary);
+  return newerSnapshot(
+    run.tables.find((table) => table.materializationId === summary.materializationId && table.name === summary.table),
+    summary,
+  );
 }
