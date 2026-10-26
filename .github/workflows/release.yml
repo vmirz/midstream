@@ -126,9 +126,16 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Only the two artifacts the release attaches: the image job also records a build summary
+      # artifact, and a download of everything once failed on it.
       - uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          name: python-distribution
+          path: artifacts/python-distribution
+      - uses: actions/download-artifact@v4
+        with:
+          name: helm-chart
+          path: artifacts/helm-chart
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
