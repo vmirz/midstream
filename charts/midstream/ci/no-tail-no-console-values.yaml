@@ -3,7 +3,6 @@ fullnameOverride: lake
 package:
   source: index
   index:
-    version: 4.4.1
     url: https://pypi.example.com/simple
     credentialsSecret: pypi-credentials
 kaspr:

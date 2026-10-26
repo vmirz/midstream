@@ -1,6 +1,6 @@
 {
   "name": "midstream-console",
-  "version": "4.4.0",
+  "version": "1.0.0-rc.1",
   "private": true,
   "type": "module",
   "description": "Real-time console for the Kafka materializer control plane.",
