@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
-import { authIn, callerOf, domainOf, permit, permitAnywhere, permitInSomeDomain, requireOnDatasets, type DatasetRef } from '../auth/guard.ts';
+import { authIn, authInResolving, callerOf, domainOf, permit, permitAnywhere, permitInSomeDomain, requireOnDatasets, type DatasetRef } from '../auth/guard.ts';
 import { config } from '../config.ts';
 import { ConsoleError, badRequest } from '../errors.ts';
 import { logger } from '../logger.ts';
@@ -131,7 +131,8 @@ async function tailAccess(request: FastifyRequest, domain: Domain, materializati
  * The tables a statement names, found in their domains (handbook 20): each `<domain>.<dataset>.<table>`
  * through its domain's live fleet to the materialization that writes it, and its location. Refused,
  * naming what to write instead: a table named without its domain, and a name no domain holds. The
- * caller must be allowed to query each table, in its dataset, as their domain knows them.
+ * caller must be allowed to query each table, in its dataset, as their domain knows them - resolved
+ * here in a domain the request did not name, with their session there.
  */
 async function resolveStatement(
   request: FastifyRequest,
@@ -177,6 +178,8 @@ async function resolveStatement(
     const { materialization, tables } = await materializationTables(domain, item.materialization_id);
     const table = tables.find((candidate) => `${candidate.dataset}.${candidate.name}`.toLowerCase() === qualified);
     if (!table) throw badRequest(`There is no table ${key}.`, { field: 'sql' });
+    // Who the person is there, before their session there reads its tail and its datasets are checked.
+    await authInResolving(request, domain);
     sources.push({ ...table, tail: await tailAccess(request, domain, materialization) });
   }
   requireOnTables(request, 'data.query', sources);

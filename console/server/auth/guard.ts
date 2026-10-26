@@ -28,6 +28,8 @@ declare module 'fastify' {
     domain: Domain | null;
     /** Who made this request, in each domain resolved for it, by domain id. */
     auths: Map<string, RequestAuth> | null;
+    /** Resolve the caller in a domain the request was not resolved in (`authInResolving`). */
+    resolveDomain: ((domain: Domain) => Promise<RequestAuth>) | null;
   }
 }
 
@@ -42,9 +44,11 @@ const renewals = new Map<string, Promise<string | null>>();
 export async function registerAuth(app: FastifyInstance): Promise<void> {
   app.decorateRequest('domain', null);
   app.decorateRequest('auths', null);
+  app.decorateRequest('resolveDomain', null);
 
   app.addHook('onRequest', async (request, reply) => {
     if (!request.url.startsWith('/api/')) return;
+    request.resolveDomain = (domain) => resolveIn(request, reply, domain);
     if (MUTATIONS.has(request.method) && crossSite(request)) {
       throw new ConsoleError('forbidden', 'Changes can only be made from the console itself.', 403, {
         reason: 'cross_site_request',
@@ -256,6 +260,20 @@ export function authIn(request: FastifyRequest, domain: Domain): RequestAuth {
   const auth = request.auths?.get(domain.id);
   if (auth) return auth;
   throw new ConsoleError('internal_error', `the request was not authenticated in ${domain.id}`, 500);
+}
+
+/**
+ * The caller in `domain`, resolved now if the request was resolved only in its own: a statement
+ * started in one domain may name tables of another, each read as that domain knows the person.
+ */
+export async function authInResolving(request: FastifyRequest, domain: Domain): Promise<RequestAuth> {
+  const known = request.auths?.get(domain.id);
+  if (known) return known;
+  if (!request.resolveDomain) throw new ConsoleError('internal_error', `the request was not authenticated in ${domain.id}`, 500);
+  await domain.ready();
+  const auth = await request.resolveDomain(domain);
+  request.auths = new Map([...(request.auths ?? new Map<string, RequestAuth>()), [domain.id, auth]]);
+  return auth;
 }
 
 /** How the console calls a domain's control plane on this request's behalf: with the caller's session there. */

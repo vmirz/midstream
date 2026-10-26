@@ -38,14 +38,21 @@ export function testAuth(principal: CpPrincipal, token: string | null = principa
   return { state, token, invalidToken: false, error: null };
 }
 
-/** Make every request to `app` come from `principal`. Register before the routes under test. */
+/**
+ * Make every request to `app` come from `principal`. Register before the routes under test. As the
+ * real guard does, a request about one domain is resolved in that domain alone, and in another only
+ * when a route asks (`authInResolving`); the console's own routes in every domain.
+ */
 export function installTestAuth(app: FastifyInstance, principal: CpPrincipal, perDomain: Record<string, CpPrincipal> = {}): void {
   app.decorateRequest('domain', null);
   app.decorateRequest('auths', null);
+  app.decorateRequest('resolveDomain', null);
   app.addHook('onRequest', async (request) => {
     const match = /^\/api\/d\/([^/?#]+)/.exec(request.url);
-    const served = domains().served();
+    const authFor = (domain: { id: string }): RequestAuth => testAuth(perDomain[domain.id] ?? principal);
     if (match) request.domain = domains().require(decodeURIComponent(match[1] as string));
-    request.auths = new Map(served.map((domain) => [domain.id, testAuth(perDomain[domain.id] ?? principal)]));
+    const targets = request.domain ? [request.domain] : domains().served();
+    request.auths = new Map(targets.map((domain) => [domain.id, authFor(domain)]));
+    request.resolveDomain = async (domain) => authFor(domain);
   });
 }
