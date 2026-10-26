@@ -84,7 +84,8 @@ export class Domain {
     this.controlPlane = controlPlane;
     // Every failure the domain's store and topic list log names the domain.
     const log = logger.child({ domain: entry.id });
-    this.live = new LiveStore(controlPlane, log);
+    // Its polls see the control plane go and come back first: check at once what it is now.
+    this.live = new LiveStore(controlPlane, log, () => void this.checkIdentity());
     this.topics = topicCatalogFor(controlPlane, log);
   }
 
@@ -138,10 +139,15 @@ export class Domain {
     }
   }
 
-  /** Whether the console can work with the domain, as its last check found. */
+  /**
+   * Whether the console can work with the domain, as its checks found: unreachable until it first
+   * answers, and again while its latest check fails. A control plane last seen as another domain
+   * stays misconfigured, reachable or not.
+   */
   get status(): DomainStatus {
     if (this.identity === null) return 'unreachable';
     if (this.identity.domain === null || this.identity.domain.id !== this.id) return 'misconfigured';
+    if (this.identityError !== null) return 'unreachable';
     if (compatibleControlPlane(this.identity.version) === false) return 'incompatible';
     return 'ok';
   }

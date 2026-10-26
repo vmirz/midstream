@@ -183,7 +183,20 @@ export class ControlPlaneClient {
     }
 
     const text = await response.text();
-    return { status: response.status, payload: text ? safeJsonParse(text) : null };
+    const payload = text ? safeJsonParse(text) : null;
+    // A gateway whose control plane is not there - a route removed, a cluster down - answers these
+    // with a page of its own, never the control plane's JSON error. That is the control plane being
+    // unreachable, not a resource it says is missing: a materialization is not deleted because its
+    // domain's gateway cannot find the domain.
+    if (NOT_THERE.has(response.status) && !isControlPlaneError(payload)) {
+      throw new ConsoleError(
+        'control_plane_unreachable',
+        `control plane at ${this.baseUrl} is unreachable: it answered ${response.status} without the control plane's own error`,
+        503,
+        { reason: `http_${response.status}` },
+      );
+    }
+    return { status: response.status, payload };
   }
 
   /** Every topic in the cluster; `refresh` asks the control plane to reload rather than reuse its cache. */
@@ -522,6 +535,16 @@ function toConsoleError(payload: unknown, status: number): ConsoleError {
     upstream_code: upstream.code,
     upstream_details: upstream.details,
   });
+}
+
+/** What a gateway answers when the control plane behind it is not there. */
+const NOT_THERE = new Set([404, 502, 503, 504]);
+
+/** Whether a body is the control plane's own error: JSON with an `error` object. */
+export function isControlPlaneError(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object' || !('error' in payload)) return false;
+  const error = (payload as { error: unknown }).error;
+  return Boolean(error) && typeof error === 'object' && (error as { code?: unknown }).code !== 'invalid_upstream_payload';
 }
 
 /** Snapshot ids are 64-bit, so integers beyond a double's precision are kept as decimal text. */

@@ -159,6 +159,7 @@ async function resolveStatement(
     seen.add(key);
     const domain = domains().require(reference.domain);
     const qualified = `${reference.dataset}.${reference.table}`;
+    if (domain.status === 'unreachable') throw domainUnreachable(domain, key);
     const item = domain.live
       .fleetSnapshot()
       .items.find((candidate) => candidate.desired_phase !== 'deleted' && candidate.tables.some((name) => name.toLowerCase() === qualified));
@@ -175,7 +176,14 @@ async function resolveStatement(
         { field: 'sql' },
       );
     }
-    const { materialization, tables } = await materializationTables(domain, item.materialization_id);
+    let found: Awaited<ReturnType<typeof materializationTables>>;
+    try {
+      found = await materializationTables(domain, item.materialization_id);
+    } catch (cause) {
+      if (cause instanceof ConsoleError && cause.code === 'control_plane_unreachable') throw domainUnreachable(domain, key);
+      throw cause;
+    }
+    const { materialization, tables } = found;
     const table = tables.find((candidate) => `${candidate.dataset}.${candidate.name}`.toLowerCase() === qualified);
     if (!table) throw badRequest(`There is no table ${key}.`, { field: 'sql' });
     // Who the person is there, before their session there reads its tail and its datasets are checked.
@@ -185,6 +193,14 @@ async function resolveStatement(
   requireOnTables(request, 'data.query', sources);
   const tableNames = [...new Set([...own.map((table) => canonicalName(table.domain, table.dataset, table.name)), ...seen])];
   return { sources, tableNames };
+}
+
+/** A statement naming a table of a domain that cannot be reached now. */
+function domainUnreachable(domain: Domain, table: string): ConsoleError {
+  return new ConsoleError('domain_unreachable', `${domain.name} cannot be reached right now, so ${table} cannot be read. Try again in a moment.`, 503, {
+    reason: 'domain_unreachable',
+    domain: domain.id,
+  });
 }
 
 /** `sales.orders` as its dataset and table. */

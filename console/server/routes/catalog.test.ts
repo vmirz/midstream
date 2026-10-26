@@ -55,16 +55,19 @@ const seen: { a: Seen[]; b: Seen[] } = { a: [], b: [] };
 const catalogs = {
   a: domainCatalog('token-for-a', { sales: ['orders'] }, seen.a),
   b: domainCatalog('token-for-b', { finance: ['payments', 'invoices'] }, seen.b),
+  // A gateway whose domain is gone: a bare 404 for everything, never a catalog's error.
+  d: createServer((_request, response) => void response.writeHead(404).end()),
 };
 for (const server of Object.values(catalogs)) await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 const url = (server: Server): string => `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
-await installTestDomains(['domain_a', 'domain_b', 'domain_c'], {
+await installTestDomains(['domain_a', 'domain_b', 'domain_c', 'domain_d'], {
   entries: {
     domain_a: { controlPlaneUrl: url(catalogs.a) },
     domain_b: { controlPlaneUrl: url(catalogs.b) },
     // Nothing listens here: Domain C cannot be reached.
     domain_c: { controlPlaneUrl: 'http://127.0.0.1:9' },
+    domain_d: { controlPlaneUrl: url(catalogs.d) },
   },
 });
 
@@ -162,6 +165,18 @@ describe('the federated catalog', () => {
     assert.equal(answer.statusCode, 503);
     assert.equal(answer.json().error.type, 'ServiceUnavailableException');
     assert.match(answer.json().error.message, /Domain C/);
+  });
+
+  it('says so too when a gateway answers for a domain that is not there, rather than pass its page on', async () => {
+    const server = await app();
+    for (const path of ['/catalog/v1/namespaces/domain_d%1Fsales', '/catalog/v1/namespaces/domain_d%1Fsales/tables/orders', '/d/domain_d/catalog/v1/namespaces']) {
+      const answer = await server.inject({ url: path, headers: { authorization: BOTH } });
+      assert.equal(answer.statusCode, 503, path);
+      assert.equal(answer.json().error.type, 'ServiceUnavailableException', path);
+      assert.match(answer.json().error.message, /Domain D/, path);
+    }
+    const top = await server.inject({ url: '/catalog/v1/namespaces', headers: { authorization: BOTH } });
+    assert.deepEqual(top.json().namespaces, [['domain_a']], 'a domain that is not there lists nothing');
   });
 
   it('makes and drops nothing', async () => {

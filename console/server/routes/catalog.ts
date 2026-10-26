@@ -64,7 +64,26 @@ async function forward(domain: Domain, request: FastifyRequest, path: string): P
     body,
     signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
   });
-  return { status: response.status, contentType: response.headers.get('content-type'), body: Buffer.from(await response.arrayBuffer()) };
+  const answer = { status: response.status, contentType: response.headers.get('content-type'), body: Buffer.from(await response.arrayBuffer()) };
+  // A gateway whose domain is not there answers with a page of its own, never the catalog's JSON
+  // error: the domain cannot be reached. A HEAD answer has no body to tell them apart by.
+  if (NOT_THERE.has(answer.status) && request.method !== 'HEAD' && !isCatalogError(answer.body)) {
+    throw new Error(`${domain.name}'s catalog answered ${answer.status} without the catalog's own error`);
+  }
+  return answer;
+}
+
+/** What a gateway answers when the domain behind it is not there. */
+const NOT_THERE = new Set([404, 502, 503, 504]);
+
+/** Whether a body is a catalog's own error: JSON with an `error` object, as the protocol has it. */
+function isCatalogError(body: Buffer): boolean {
+  try {
+    const parsed = JSON.parse(body.toString('utf8')) as { error?: unknown };
+    return Boolean(parsed?.error) && typeof parsed.error === 'object';
+  } catch {
+    return false;
+  }
 }
 
 function send(reply: FastifyReply, answer: Answer): FastifyReply {

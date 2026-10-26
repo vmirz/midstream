@@ -255,6 +255,21 @@ describe('a statement across domains', () => {
     assert.match(answer.json().error.message, /write domain_a\.sales\.orders for sales\.orders and domain_a_iceberg\.sales\.orders for iceberg\.sales\.orders/);
   });
 
+  it('says a domain cannot be reached, rather than that its table is gone', async () => {
+    const server = await app();
+    b.live.getDetail = async () => {
+      throw new ConsoleError('control_plane_unreachable', 'control plane at http://domain-b.test:6065 is unreachable: it answered 404', 503, { reason: 'http_404' });
+    };
+    const answer = await statement(server, JOIN);
+    assert.equal(answer.statusCode, 503, answer.body);
+    assert.equal(answer.json().error.details.reason, 'domain_unreachable');
+    assert.equal(answer.json().error.details.domain, 'domain_b');
+    assert.match(answer.json().error.message, /Domain B cannot be reached right now, so domain_b\.finance\.payments cannot be read/);
+    // Its own domain's tables still run.
+    const own = await finished(server, 'SELECT count(*) AS n FROM domain_a.sales.orders', { liveTail: false });
+    assert.equal(own.state, 'succeeded', own.error?.message ?? '');
+  });
+
   it('says which tables there are when it names one no domain holds', async () => {
     const server = await app();
     const answer = await statement(server, 'SELECT * FROM domain_b.finance.refunds');

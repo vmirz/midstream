@@ -228,6 +228,7 @@ them as reported, never trusts them for a decision.
 | Situation | Result |
 |-----------|--------|
 | `fetch` throws (DNS, connection refused, timeout) | `ConsoleError('control_plane_unreachable', …, 503, { reason })` |
+| `404`, `502`, `503` or `504` whose body is not the control plane's JSON error — a gateway answering for a control plane that is not there: a route removed, a cluster down | The same `control_plane_unreachable` `503` (`reason: http_<status>`), so a gateway's 404 is never read as a materialization the control plane says is gone (`isControlPlaneError`) |
 | Non-2xx response with a `{ error: { code, message, details } }` body | `upstreamError(message, response.status, { upstream_code, upstream_details })` |
 | Non-2xx response with a non-JSON body | Same, with `message` set to the first 512 characters of the raw text |
 | 2xx with an unparseable body | `safeJsonParse` returns a synthetic `invalid_upstream_payload` error object |
@@ -525,13 +526,13 @@ Every domain the console serves is a `Domain`, made once from the registry
 | `domains/index.ts` | `domains()`: the `Domains` of the registry — `all()`, `served()`, `get(id)`, `require(id)` (`404 unknown_domain`), `home`. `consoleSettings()`: the console's settings store, over the home's client. `useDomains` replaces them in route tests (`domains/testing.ts::installTestDomains`) |
 
 **Which domain a control plane is.** Each `Domain` asks its control plane `GET /system/version`
-at start and every minute: its version, the domain it says it is, and its federation key's id. That
-gives its status:
+at start, every minute, and at once whenever its live store's polls stop or start succeeding: its
+version, the domain it says it is, and its federation key's id. That gives its status:
 
 | Status | When | What the console does |
 |---|---|---|
 | `ok` | It answered, as the domain the registry names, with a version this console works with | Serves it |
-| `unreachable` | No answer yet, or the last check failed | Serves it, marked: its views say so, the merged fleet shows what it last read — or, once the caller cannot be checked there, that it is unavailable — with a banner, search answers from what it last read, the federated catalog's listing leaves it out |
+| `unreachable` | No answer yet, or the latest check failed (a domain last seen as another stays `misconfigured`) | Serves it, marked: its views say so, the merged fleet shows what it last read — or, once the caller cannot be checked there, that it is unavailable — with a banner, search answers from what it last read, the federated catalog's listing leaves it out |
 | `misconfigured` | It answered as another domain, or as none | Serves nothing of it (`503 domain_misconfigured`): a wrong URL never shows one domain's data as another's |
 | `incompatible` | Its major version is older than the console's (`REQUIRED_CONTROL_PLANE_MAJOR`) | Serves it, with a banner saying so |
 

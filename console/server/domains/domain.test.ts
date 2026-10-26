@@ -93,6 +93,35 @@ describe('a domain’s control plane', () => {
     }
   });
 
+  it('is unreachable while its latest check fails, and ok again once it answers; misconfigured stays so', async () => {
+    const [domain] = (await installTestDomains(['domain_a'])).all() as [Domain];
+    try {
+      const answering = domain.controlPlane.request.bind(domain.controlPlane);
+      let down = true;
+      domain.controlPlane.request = (async (...args: Parameters<typeof answering>) => {
+        if (down) throw new Error('control plane at http://domain-a.test:6065 is unreachable');
+        return answering(...args);
+      }) as typeof domain.controlPlane.request;
+      await domain.checkIdentity();
+      assert.equal(domain.status, 'unreachable', 'it answered once, but not now');
+      assert.match(domain.statusMessage ?? '', /cannot be reached: control plane at http:\/\/domain-a\.test:6065 is unreachable/);
+      assert.equal(domain.served, true);
+      down = false;
+      await domain.checkIdentity();
+      assert.equal(domain.status, 'ok');
+
+      const wrong = (await installTestDomains(['domain_a'], { reports: { domain_a: 'domain_z' } })).require('domain_a');
+      wrong.controlPlane.request = (async () => {
+        throw new Error('gone');
+      }) as typeof wrong.controlPlane.request;
+      await wrong.checkIdentity();
+      assert.equal(wrong.status, 'misconfigured', 'last seen as another domain: nothing of it is served even while it cannot be reached');
+      assert.equal(wrong.served, false);
+    } finally {
+      await installTestDomains(['domain_a', 'domain_b'], { entries: { domain_b: { tailUrl: null } } });
+    }
+  });
+
   it('is unreachable until it answers, and serving it is not refused for that', async () => {
     const [unreachable] = (await installTestDomains(['domain_a'])).all() as [Domain];
     (unreachable as unknown as { identity: null }).identity = null;

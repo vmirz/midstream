@@ -52,10 +52,13 @@ export class LiveStore {
   private readonly controlPlane: ControlPlaneClient;
   /** Its log, naming the domain, so a failure says whose it is. */
   private readonly log: Logger;
+  /** Told when the control plane stops answering the store's polls, and when it answers again. */
+  private readonly onConnectionChange: ((connected: boolean) => void) | null;
 
-  constructor(controlPlane: ControlPlaneClient, log: Logger = logger) {
+  constructor(controlPlane: ControlPlaneClient, log: Logger = logger, onConnectionChange: ((connected: boolean) => void) | null = null) {
     this.controlPlane = controlPlane;
     this.log = log;
+    this.onConnectionChange = onConnectionChange;
   }
 
   private readonly list = new Map<string, CpListItem>();
@@ -271,8 +274,10 @@ export class LiveStore {
       try {
         await this.refresh(includeStaleDetails);
       } catch (cause) {
+        const wasConnected = this.controlPlaneError === null;
         this.controlPlaneError = cause instanceof Error ? cause.message : String(cause);
         this.log.warn({ err: cause }, 'live refresh failed');
+        if (wasConnected) this.onConnectionChange?.(false);
         this.emitAll();
       } finally {
         this.inFlight = null;
@@ -284,7 +289,10 @@ export class LiveStore {
   private async refresh(includeStaleDetails: boolean): Promise<void> {
     const now = Date.now();
     const listing = await this.controlPlane.list(SERVICE, 'all');
-    this.controlPlaneError = null;
+    if (this.controlPlaneError !== null) {
+      this.controlPlaneError = null;
+      this.onConnectionChange?.(true);
+    }
 
     const seen = new Set<string>();
     for (const item of listing.items ?? []) {

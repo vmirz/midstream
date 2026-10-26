@@ -94,15 +94,17 @@ the control planes on a mesh with mTLS (§20.12).
 ## 20.4 The console's domains at run time
 
 At start the console reads the registry (`server/domains/registry.ts`), refuses to start on a broken
-one (an id that breaks the rule, two settings homes, a remote domain without its token), and makes
-one `Domain` per entry (`server/domains/domain.ts`): its `ControlPlaneClient`, `LiveStore` (the
-fleet and detail polls, as before, per domain), `TopicCatalog` and tail target. Every minute it asks
-each control plane `GET /system/version`:
+one (an id that breaks the rule, an id named twice, a URL that is not http(s), not exactly one
+settings home) — a domain without its service token is served, read as a guest, with a warning in
+the log — and makes one `Domain` per entry (`server/domains/domain.ts`): its `ControlPlaneClient`, `LiveStore` (the
+fleet and detail polls, as before, per domain), `TopicCatalog` and tail target. Every minute, and at
+once when the domain's polls stop or start succeeding, it asks each control plane
+`GET /system/version`:
 
 | Status | When | The console |
 |---|---|---|
 | `ok` | The control plane answers as the registry says | serves the domain |
-| `unreachable` | No answer | serves what it last knew, marked stale; retries |
+| `unreachable` | No answer yet, or the latest check failed | serves what it last knew, marked stale; a statement naming its tables is `503 domain_unreachable`; retries |
 | `misconfigured` | The control plane says it is another domain | serves nothing of it; its pages say why |
 | `incompatible` | Its release is older than the console works with | serves it, with a banner |
 
@@ -382,7 +384,9 @@ the data files itself with its own credentials (§20.11).
 | `GET`/`HEAD /v1/namespaces/domain_a%1Fsales`, `…/tables`, `…/tables/{t}` (`GET`, `HEAD`, `POST`), `…/metrics` | Handed to Domain A with the namespace rewritten to `sales`; namespaces in the answer rewritten back; a table answered as the domain answered it |
 | Creating or dropping namespaces or tables, transactions | `501 NotImplementedException`, as every domain answers |
 
-A domain the console cannot reach is `503 ServiceUnavailableException` naming it. Each domain's own
+A domain the console cannot reach is `503 ServiceUnavailableException` naming it — including one whose
+gateway answers for it with a page of its own (a 404 or 5xx that is not a catalog's JSON error), as a
+gateway does when the domain's route or cluster is gone. Each domain's own
 catalog is handed through byte for byte, path, query, token and body. The Table tab's Connect panel
 gives PyIceberg and Spark the federated catalog (`lake.<domain>.<dataset>.<table>`), and DuckDB and
 Trino — which read one level of namespaces — the domain's own catalog, attached once per domain (§20.15).
