@@ -11,7 +11,7 @@ import { cn } from '@/lib/cn';
 import { useApi } from '@/lib/domains';
 import type { CpUser, IdentityChangeResult } from '@shared/types';
 
-export { describeAgent, expandPermissions, generatePassword, permissionMap } from './logic';
+export { AUDIT_ACTION_LABELS, auditActionLabel, describeAgent, expandPermissions, generatePassword, permissionMap } from './logic';
 
 /** Every identity query, so a change can refresh what it may have changed. */
 export const IDENTITY_QUERY_ROOTS = ['users', 'user', 'groups', 'group', 'roles', 'role', 'audit'] as const;
@@ -135,33 +135,3 @@ export function formatDate(value: string | null | undefined): string {
   return new Date(value).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-/** What an audit entry's action reads as. */
-export const AUDIT_ACTION_LABELS: Record<string, string> = {
-  'session.signed_in': 'Signed in',
-  'session.sign_in_failed': 'Failed sign-in',
-  'session.locked_out': 'Locked out',
-  'session.signed_out': 'Signed out',
-  'user.created': 'Added a user',
-  'user.updated': 'Changed a user',
-  'user.deactivated': 'Deactivated a user',
-  'user.reactivated': 'Reactivated a user',
-  'user.deleted': 'Deleted a user',
-  'user.password_reset': 'Reset a password',
-  'user.password_changed': 'Changed their password',
-  'user.signed_out': 'Signed a user out everywhere',
-  'user.session_ended': 'Ended a session',
-  'user.unlocked': 'Unlocked a user',
-  'user.bootstrapped': 'Made the first administrator',
-  'user.bootstrap_restored': 'Restored the bootstrap administrator',
-  'user.provisioned': 'Made an account at a first sign-in',
-  'user.identity_linked': 'Linked a sign-in provider',
-  'group.created': 'Created a group',
-  'group.updated': 'Changed a group',
-  'group.deleted': 'Deleted a group',
-  'role.created': 'Created a role',
-  'role.updated': 'Changed a role',
-  'role.deleted': 'Deleted a role',
-  'token.created': 'Made an access token',
-  'token.revoked': 'Revoked an access token',
-  'directory.seeded': 'Set up the built-in groups',
-};

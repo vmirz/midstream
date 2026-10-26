@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { CpPermissionCatalog } from '@shared/types';
 
-import { PASSWORD_ALPHABET, describeAgent, describeDetail, describeMethod, expandPermissions, generatePassword } from './logic.ts';
+import { AUDIT_ACTION_LABELS, PASSWORD_ALPHABET, auditActionLabel, describeAgent, describeDetail, describeMethod, expandPermissions, generatePassword } from './logic.ts';
 
 const catalog: CpPermissionCatalog = {
   categories: [{ id: 'data', label: 'Data' }],
@@ -80,5 +80,28 @@ describe('describeMethod', () => {
     assert.equal(describeMethod('sso:github'), 'through GitHub');
     assert.equal(describeMethod('sso:oidc'), 'through single sign-on');
     assert.equal(describeMethod('sso:other'), 'through other');
+  });
+});
+
+describe('audit actions', () => {
+  // Every action the control plane audits (handbook 18): each reads as words on the audit page.
+  const AUDITED = [
+    'session.signed_in', 'session.sign_in_failed', 'session.locked_out', 'session.signed_out',
+    'user.created', 'user.updated', 'user.deactivated', 'user.reactivated', 'user.deleted', 'user.password_reset',
+    'user.password_changed', 'user.signed_out', 'user.session_ended', 'user.unlocked', 'user.bootstrapped',
+    'user.bootstrap_restored', 'user.provisioned', 'user.identity_linked',
+    'group.created', 'group.updated', 'group.deleted', 'role.created', 'role.updated', 'role.deleted',
+    'dataset.created', 'dataset.updated', 'dataset.deleted', 'dataset.access_changed',
+    'token.created', 'token.revoked', 'token.revocation_applied', 'directory.seeded',
+  ];
+
+  it('label every action the control plane audits', () => {
+    assert.deepEqual(AUDITED.filter((action) => !(action in AUDIT_ACTION_LABELS)), []);
+    assert.equal(auditActionLabel('token.revocation_applied'), 'Recorded a token revoked in another domain');
+    assert.equal(auditActionLabel('dataset.access_changed'), 'Changed who may use a dataset');
+  });
+
+  it('read an action this console does not know as words, never as its code', () => {
+    assert.equal(auditActionLabel('pipeline.started_again'), 'Pipeline started again');
   });
 });

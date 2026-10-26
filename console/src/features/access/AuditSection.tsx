@@ -3,7 +3,7 @@ import { ChevronRight, ScrollText, Search } from 'lucide-react';
 import { useDeferredValue, useState, type ReactNode } from 'react';
 
 import { describeAgent, describeDetail } from './logic';
-import { AUDIT_ACTION_LABELS, tableHeaderClass } from './shared';
+import { auditActionLabel, tableHeaderClass } from './shared';
 import { RelativeTime } from '@/components/Inline';
 import { Badge, Button, EmptyState, Input, Panel, Select, Skeleton } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
@@ -16,6 +16,8 @@ const ACTIONS: { value: string; label: string }[] = [
   { value: 'user.', label: 'Users' },
   { value: 'group.', label: 'Groups' },
   { value: 'role.', label: 'Roles' },
+  { value: 'dataset.', label: 'Datasets' },
+  { value: 'token.', label: 'Access tokens' },
 ];
 
 const GRID = 'grid grid-cols-[120px_minmax(0,1.2fr)_minmax(0,1.2fr)_minmax(0,1.3fr)_20px] items-center gap-4';
@@ -116,7 +118,7 @@ function AuditRow({ entry }: { entry: CpAuditEntry }): ReactNode {
       >
         <RelativeTime value={entry.occurred_at} className="text-[12px] text-[var(--color-ink-muted)]" />
         <span className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate">{AUDIT_ACTION_LABELS[entry.action] ?? entry.action}</span>
+          <span className="truncate">{auditActionLabel(entry.action)}</span>
           {entry.outcome === 'failure' ? <Badge tone="failed">Failed</Badge> : null}
         </span>
         <span className="truncate text-[var(--color-ink-muted)]">{entry.actor_email ?? entry.actor_id ?? '—'}</span>
