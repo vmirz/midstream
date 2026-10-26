@@ -57,6 +57,9 @@ The auth Secret's keys are read by name (`signing-key`, `service-token`, `bootst
 `bootstrap-admin-password`, and `previous-signing-key` when a key is rotated); the chart only needs
 its name. Without `signing-key` nobody can sign in and every request is a guest's.
 
+A Kafka listener without authentication needs no Secret: skip the `$RELEASE-kafka` command above and
+set `kaspr.authentication` to `{type: plain}` alone in §3.
+
 On GKE with workload identity, skip the GCS Secret and leave `gcs.credentialsSecret` empty: the pods
 use application default credentials.
 
@@ -81,20 +84,23 @@ VALUES
 ```
 
 Everything else has a default; `charts/midstream/values.yaml` documents each value. The ones most
-often changed: `kaspr.storageClass` when the cluster has no default storage class, `kaspr.nodeSelector`
+often changed: `kaspr.storageClass` when the cluster has no default storage class,
+`kaspr.config.topicReplicationFactor` on a cluster with fewer than three brokers (Kaspr's default is 3), `kaspr.nodeSelector`
 and `kaspr.tolerations` to place every pod, `tail.enabled: false` to run without the live tail,
 `console.enabled: false` to run without the console, and `route` or `ingress` to expose the console
 and the catalog.
 
-`package.source` is `git` by default and installs this repository's `main` branch; set
-`package.git.ref` to a tag or commit to pin it. `package.source: index` installs a published release
-from PyPI instead (`package.index.version`, the chart's appVersion by default); the control plane then
-pins its runtimes to the same version. The console image for a release is
-`ghcr.io/vmirz/midstream-console:<version>`, the chart's default.
+`package.source` is `index` by default: every app installs the release the chart belongs to,
+`midstream-platform==<appVersion>`, from PyPI, and the control plane pins its runtimes to the same
+version. `package.source: git` installs this repository at `package.git.ref` instead, for development.
+The console image for a release is `ghcr.io/vmirz/midstream-console:<version>`, the chart's default.
 
 ## 4. Install
 
 ```bash
+# The published chart, at the version of the release you are installing (github.com/vmirz/midstream/releases) …
+helm install "$RELEASE" oci://ghcr.io/vmirz/charts/midstream --version <version> -n "$NS" -f midstream-values.yaml
+# … or the chart in a checkout of this repository
 helm install "$RELEASE" charts/midstream -n "$NS" -f midstream-values.yaml
 
 kubectl -n "$NS" get kasprapp -w          # three apps: control-plane, maintenance, tail
@@ -102,7 +108,7 @@ kubectl -n "$NS" get kasprapp -w          # three apps: control-plane, maintenan
 
 The first start of each app installs the Python package, which takes a minute or two; then the
 operator reports every app `Ready`. If an app stays in its install step, look at its init
-container: `kubectl -n "$NS" logs <pod> -c python-packages-install`.
+container: `kubectl -n "$NS" logs <pod> -c install-packages`.
 
 ## 5. Check it
 
@@ -150,7 +156,7 @@ shows the rows as they commit, and new records within seconds through the live t
 ## 7. Upgrade and remove
 
 ```bash
-helm upgrade "$RELEASE" charts/midstream -n "$NS" -f midstream-values.yaml   # re-applies every runtime too
+helm upgrade "$RELEASE" oci://ghcr.io/vmirz/charts/midstream --version <version> -n "$NS" -f midstream-values.yaml   # re-applies every runtime too
 helm uninstall "$RELEASE" -n "$NS"                                          # the apps and their claims; runtimes and topics stay until each materialization is deleted
 ```
 

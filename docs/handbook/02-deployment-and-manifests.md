@@ -155,20 +155,23 @@ Notes:
 - `topicAllowDeclare: true` lets agents declare their input topics (`declare: true`) instead of
   requiring pre-created topics.
 - `webPort: 6065` and `webBasePath: /` define the HTTP surface.
+- `kaspr.config` adds an installation's shared Kaspr settings to every app and runtime,
+  `topicReplicationFactor` on a small cluster for one; the keys above stay the chart's.
 
 ### Package installation
 
 ```yaml
 pythonPackages:
   packages:
-    - git+https://github.com/vmirz/midstream.git@main#egg=midstream-platform&subdirectory=python
+    - midstream-platform==<appVersion>
   installPolicy: { retries: 3, timeout: 600, onFailure: block }
 ```
 
-Every app installs the package when its pod starts, from `package.source`: `git` installs this
-repository at `package.git.ref` over https (no deploy key: the repository is public); `index`
-installs `midstream-platform==<package.index.version>` from PyPI or `package.index.url`, with
-`package.index.credentialsSecret` for a private index. `onFailure: block` means a failed install
+Every app installs the package when its pod starts, from `package.source`: `index`, the default,
+installs `midstream-platform==<package.index.version>`, the chart's appVersion unless set, from PyPI
+or `package.index.url`, with `package.index.credentialsSecret` for a private index; `git` installs
+this repository at `package.git.ref` over https (no deploy key: the repository is public), for
+development. `onFailure: block` means a failed install
 prevents the app from starting rather than running a stale version. The runtimes get the same block
 through the runtime spec, with the control plane pinning the exact revision (10 §10.1).
 
@@ -218,9 +221,9 @@ verticalPodAutoscaler:           # the members' CPU request from their use (§2.
   controlledValues: RequestsOnly
   minAllowed: { cpu: 100m }
   maxAllowed: { cpu: 1500m }
-config: { topicAllowDeclare: true, brokerRebalanceTimeout: 300 }
+config: { valueSerializer: json, topicAllowDeclare: true, brokerRebalanceTimeout: 300 }   # plus kaspr.config
 pythonPackages:                  # the same block as the apps'; the control plane pins the revision
-  packages: [ git+https://github.com/vmirz/midstream.git@main#egg=midstream-platform&subdirectory=python ]
+  packages: [ midstream-platform==<appVersion> ]
 template:
   pod: { nodeSelector, tolerations, volumes: [gcp-credentials] }
   kasprContainer:

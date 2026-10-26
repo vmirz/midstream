@@ -24,10 +24,7 @@ spec:
   storage:
     {{- include "midstream.storage" (dict "root" . "size" .Values.tail.storage.size) | nindent 4 }}
   config:
-    valueSerializer: json
-    topicAllowDeclare: true
-    webBasePath: /
-    webPort: {{ .Values.tail.webPort }}
+    {{- include "midstream.kasprConfig" (dict "root" . "fixed" (dict "valueSerializer" "json" "topicAllowDeclare" true "webBasePath" "/" "webPort" .Values.tail.webPort)) | nindent 4 }}
   resources:
     {{- toYaml .Values.tail.resources | nindent 4 }}
   {{- with .Values.tail.verticalPodAutoscaler }}
