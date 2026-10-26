@@ -1,7 +1,7 @@
 import { SERVICE, type ControlPlaneClient } from '../controlPlane/client.ts';
 import { config } from '../config.ts';
 import { ConsoleError } from '../errors.ts';
-import { logger } from '../logger.ts';
+import { logger, type Logger } from '../logger.ts';
 import { RateTracker, type CurrentRates } from './rates.ts';
 import { can } from '../../shared/access.ts';
 import { isDeletedPhase, readableTables } from '../../shared/types.ts';
@@ -50,9 +50,12 @@ const NO_RATES: CurrentRates = { rowsPerSecond: null, bytesPerSecond: null, memb
 export class LiveStore {
   /** The control plane of the domain this store follows; every domain has a store of its own. */
   private readonly controlPlane: ControlPlaneClient;
+  /** Its log, naming the domain, so a failure says whose it is. */
+  private readonly log: Logger;
 
-  constructor(controlPlane: ControlPlaneClient) {
+  constructor(controlPlane: ControlPlaneClient, log: Logger = logger) {
     this.controlPlane = controlPlane;
+    this.log = log;
   }
 
   private readonly list = new Map<string, CpListItem>();
@@ -219,10 +222,10 @@ export class LiveStore {
     const previous = errors.get(table);
     errors.set(table, message);
     if (previous === message) {
-      logger.debug({ err: cause, materializationId: id, table }, 'schema refresh still failing');
+      this.log.debug({ err: cause, materializationId: id, table }, 'schema refresh still failing');
       return;
     }
-    logger.warn({ err: cause, materializationId: id, table }, 'schema refresh failed');
+    this.log.warn({ err: cause, materializationId: id, table }, 'schema refresh failed');
   }
 
   private summarize(item: CpListItem): MaterializationSummary {
@@ -269,7 +272,7 @@ export class LiveStore {
         await this.refresh(includeStaleDetails);
       } catch (cause) {
         this.controlPlaneError = cause instanceof Error ? cause.message : String(cause);
-        logger.warn({ err: cause }, 'live refresh failed');
+        this.log.warn({ err: cause }, 'live refresh failed');
         this.emitAll();
       } finally {
         this.inFlight = null;
@@ -319,7 +322,7 @@ export class LiveStore {
         this.forget(id);
         return null;
       }
-      logger.debug({ err: cause, materializationId: id }, 'detail refresh failed');
+      this.log.debug({ err: cause, materializationId: id }, 'detail refresh failed');
       throw cause;
     }
   }

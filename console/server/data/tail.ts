@@ -316,8 +316,8 @@ export function refusal(status: number, body: Buffer): TailBacklogged | TailUnav
   // not ticked yet - which a resume or the next tick changes: asked again next refresh.
   if (status === 404 && reason === 'live_tail_off') return unavailableOutcome('not_tailed', message, status);
   if (status === 404) {
-    // Not the tail app's own answer: CONSOLE_TAIL_URL points somewhere that is not it.
-    return unavailableOutcome('unreachable', `The live tail answered 404 (${message}); is CONSOLE_TAIL_URL the tail app?`, status);
+    // Not the tail app's own answer: the domain's tailUrl points somewhere that is not it.
+    return unavailableOutcome('unreachable', `The live tail answered 404 (${message}); is this domain's tailUrl its tail app?`, status);
   }
   if (status === 409 && reason === 'tail_rebalancing') return unavailableOutcome('rebalancing', message, status);
   if (status === 409 && reason === 'tail_unavailable') return unavailableOutcome('unavailable_for_snapshot', message, status);

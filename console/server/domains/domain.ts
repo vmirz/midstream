@@ -82,8 +82,10 @@ export class Domain {
     this.tailUrl = entry.tailUrl;
     this.serviceToken = entry.serviceToken;
     this.controlPlane = controlPlane;
-    this.live = new LiveStore(controlPlane);
-    this.topics = topicCatalogFor(controlPlane);
+    // Every failure the domain's store and topic list log names the domain.
+    const log = logger.child({ domain: entry.id });
+    this.live = new LiveStore(controlPlane, log);
+    this.topics = topicCatalogFor(controlPlane, log);
   }
 
   /** Begin following the domain: its live store, and which domain its control plane says it is. */

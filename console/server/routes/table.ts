@@ -119,7 +119,7 @@ export async function registerTableRoutes(app: FastifyInstance): Promise<void> {
         if (!table) metadataError = 'the table has not been created yet';
         else metadata = describeTable(table.metadataLocation, table.metadata, await snapshotCatalog(table.metadata), settings, schemaVisible);
       } catch (cause) {
-        logger.warn({ err: cause, materializationId: id, table }, 'table metadata unreadable');
+        logger.warn({ err: cause, domain: domain.id, materializationId: id, table }, 'table metadata unreadable');
         metadataError = unreadableTable(location, cause).message;
       }
     }

@@ -255,7 +255,7 @@ const tunableDeployment = {
 
   /**
    * The live tail: a run of a table, every materialization's, also reads the records newer than its
-   * snapshot, from the tail app (`CONSOLE_TAIL_URL`), and the Data tab's Live mode
+   * snapshot, from its domain's tail app (the registry's `tailUrl`), and the Data tab's Live mode
    * appends what arrives every `liveTailRefreshMs`. `liveTailMaxRows` bounds one fetch;
    * `liveTailTimeoutMs` is how long a run waits for its tail before it goes on without it.
    */

@@ -1245,8 +1245,8 @@ DEPLOYMENT_SETTINGS: tuple[DeploymentSetting, ...] = (
         "control-plane",
         "Console service token",
         "AUTH_SERVICE_TOKEN",
-        "What the console reads its live views with. It can read, never change; set the same value "
-        "as the console's CONSOLE_SERVICE_TOKEN.",
+        "What the console reads this domain's live views with. It can read, never change; set the "
+        "same value as the console's CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN for this domain.",
     ),
     DeploymentSetting(
         "auth_federation_key",

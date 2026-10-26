@@ -1337,7 +1337,7 @@ export interface ConsoleAutoscaling {
 
 /** Whether this console reads live tails, and how often the Data tab's Live mode looks. */
 export interface ConsoleLiveTail {
-  /** A tail app is configured (`CONSOLE_TAIL_URL`). */
+  /** A tail app is configured for the domain (its registry entry's `tailUrl`). */
   configured: boolean;
   /** Configured, and on in this console and in the control plane. */
   enabled: boolean;

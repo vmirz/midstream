@@ -5,7 +5,7 @@ import { gzip as gzipCallback } from 'node:zlib';
 import { config } from '../config.ts';
 import { SERVICE, type ControlPlaneClient } from '../controlPlane/client.ts';
 import { ConsoleError, unavailable } from '../errors.ts';
-import { logger } from '../logger.ts';
+import { logger, type Logger } from '../logger.ts';
 import type { CpTopicList, TopicCatalogResponse } from '../../shared/types.ts';
 
 const gzip = promisify(gzipCallback);
@@ -23,6 +23,8 @@ export interface TopicCatalogOptions {
   ttlMs: number;
   minRefreshMs: number;
   now?: () => number;
+  /** Where a failed refresh is logged: the domain's log, naming it. */
+  log?: Logger;
 }
 
 /**
@@ -103,7 +105,7 @@ export class TopicCatalog {
         this.lastError = null;
       } catch (cause) {
         this.lastError = describeFailure(cause);
-        logger.warn({ err: cause }, 'topic catalog refresh failed');
+        (this.options.log ?? logger).warn({ err: cause }, 'topic catalog refresh failed');
         // Keep serving the last good list, marked so the picker can say it may be out of date.
         if (this.response) {
           try {
@@ -182,9 +184,10 @@ export function acceptsGzip(header: string | undefined): boolean {
 }
 
 /** One domain's topic catalog, read with its service token. */
-export function topicCatalogFor(controlPlane: ControlPlaneClient): TopicCatalog {
+export function topicCatalogFor(controlPlane: ControlPlaneClient, log: Logger = logger): TopicCatalog {
   // Getters, so a change made on the Settings page applies to the next read.
   return new TopicCatalog((refresh) => controlPlane.topics(SERVICE, refresh), {
+    log,
     get ttlMs() {
       return config.topicCatalogTtlMs;
     },
