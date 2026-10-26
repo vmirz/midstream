@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version as _distribution_version
 
-DISTRIBUTION_NAME = "midstream"
+DISTRIBUTION_NAME = "midstream-platform"
 
 # Reported when the package is running from a source tree that was never installed, which is the
 # case in some test and tooling contexts. Deliberately not a plausible release number.

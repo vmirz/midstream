@@ -185,7 +185,7 @@ class AutoscaleDecisionTests(unittest.TestCase):
 
 class ScaledRenderTests(unittest.TestCase):
     def setUp(self) -> None:
-        patcher = patch("midstream.runtime.templates.installed_package_source", return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python"))
+        patcher = patch("midstream.runtime.templates.installed_package_source", return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream-platform&subdirectory=python"))
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -316,7 +316,7 @@ class AutoscaleAfterLagTests(unittest.TestCase):
 
 class ScaledSweepTests(unittest.TestCase):
     def setUp(self) -> None:
-        patcher = patch("midstream.runtime.templates.installed_package_source", return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python"))
+        patcher = patch("midstream.runtime.templates.installed_package_source", return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream-platform&subdirectory=python"))
         patcher.start()
         self.addCleanup(patcher.stop)
         self.table = FakeTable()

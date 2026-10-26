@@ -15,12 +15,37 @@ kaspr:
       operator: Equal
       value: streaming
       effect: NoSchedule
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 1
+          preference:
+            matchExpressions:
+              - key: topology.kubernetes.io/zone
+                operator: In
+                values: [europe-west1-b]
 gcs:
   credentialsSecret: midstream-gcs
 controlPlane:
   settings:
     defaultDestinationUri: gs://example-lake/midstream
+# The maintenance app on its own, compaction-sized nodes; everything else where kaspr.* says.
+maintenance:
+  nodeSelector:
+    workload: compaction
+  tolerations:
+    - key: workload
+      operator: Equal
+      value: compaction
+      effect: NoSchedule
 console:
+  nodeSelector:
+    workload: web
+  tolerations:
+    - key: workload
+      operator: Equal
+      value: web
+      effect: NoSchedule
   persistence:
     enabled: true
   hmacSecret: midstream-gcs-hmac

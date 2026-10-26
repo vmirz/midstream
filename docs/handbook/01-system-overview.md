@@ -89,7 +89,7 @@ resources**, rendered from Jinja2 templates in
 | `<rt>-pipeline` (KasprTask) | `pipeline-task.yaml.j2` | every 5 s: advance the batch pipeline — seals in child processes, uploads on pool threads — announce files, release acknowledgements |
 | `<rt>-commit-timer` (KasprTask) | `commit-timer-task.yaml.j2` | leader only, every 5 s: a `commit_tick`, the committer's clock; a commit is due `commit_interval_seconds` after the last |
 
-Both planes run the **same Python package** (`midstream`). The runtime side lives
+Both planes run the **same Python package** (`midstream-platform`). The runtime side lives
 under `runtime_app/`, the maintenance app's under `maintenance_app/`, the Iceberg library they all
 use under `lakehouse/`, the control-plane side everywhere else. One wheel, one install, one version
 pin.

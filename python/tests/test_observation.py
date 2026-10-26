@@ -521,7 +521,7 @@ class ObservationServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.package_revision_patcher = patch(
             "midstream.runtime.templates.installed_package_source",
-            return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python"),
+            return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream-platform&subdirectory=python"),
         )
         self.package_revision_patcher.start()
         self.addCleanup(self.package_revision_patcher.stop)
@@ -1256,7 +1256,7 @@ class AsyncObservationHandlerTests(unittest.TestCase):
     def setUp(self) -> None:
         patcher = patch(
             "midstream.runtime.templates.installed_package_source",
-            return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python"),
+            return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream-platform&subdirectory=python"),
         )
         patcher.start()
         self.addCleanup(patcher.stop)

@@ -45,9 +45,9 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
 {{/* The package reference pip installs: this repository at a ref, or a release from an index. */}}
 {{- define "midstream.packageRef" -}}
 {{- if eq .Values.package.source "git" -}}
-git+{{ .Values.package.git.repository }}@{{ .Values.package.git.ref }}#egg=midstream&subdirectory=python
+git+{{ .Values.package.git.repository }}@{{ .Values.package.git.ref }}#egg=midstream-platform&subdirectory=python
 {{- else if eq .Values.package.source "index" -}}
-midstream=={{ default .Chart.AppVersion .Values.package.index.version }}
+midstream-platform=={{ default .Chart.AppVersion .Values.package.index.version }}
 {{- else -}}
 {{- fail (printf "package.source must be git or index, not %q" .Values.package.source) -}}
 {{- end -}}
@@ -89,13 +89,22 @@ size: {{ .size }}
 deleteClaim: true
 {{- end -}}
 
+{{/*
+Where a Kaspr pod is placed: the app's own nodeSelector, tolerations and affinity when it sets them,
+kaspr's otherwise, which also place every runtime. Called with (dict "root" $ "own" <the app's values>).
+*/}}
 {{- define "midstream.podScheduling" -}}
-{{- with .Values.kaspr.nodeSelector }}
+{{- $own := .own | default dict -}}
+{{- with $own.nodeSelector | default .root.Values.kaspr.nodeSelector }}
 nodeSelector:
   {{- toYaml . | nindent 2 }}
 {{- end }}
-{{- with .Values.kaspr.tolerations }}
+{{- with $own.tolerations | default .root.Values.kaspr.tolerations }}
 tolerations:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with $own.affinity | default .root.Values.kaspr.affinity }}
+affinity:
   {{- toYaml . | nindent 2 }}
 {{- end }}
 {{- end -}}
@@ -151,7 +160,7 @@ pythonPackages:
   {{- include "midstream.pythonPackages" . | nindent 2 }}
 template:
   pod:
-    {{- include "midstream.podScheduling" . | nindent 4 }}
+    {{- include "midstream.podScheduling" (dict "root" . "own" .Values.controlPlane.runtime) | nindent 4 }}
     {{- include "midstream.gcsVolumes" . | nindent 4 }}
   kasprContainer:
     env:

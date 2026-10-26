@@ -3,7 +3,7 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "midstream"
+name = "midstream-platform"
 version = "1.0.0rc1"
 description = "Midstream: a streaming platform on Kaspr that materializes Kafka topics into Iceberg tables"
 readme = "README.md"
