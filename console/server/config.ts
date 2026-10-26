@@ -82,13 +82,19 @@ const deployment = {
   version: str('CONSOLE_VERSION', packageVersion()),
   memberId: str('HOSTNAME', hostname()),
 
-  controlPlaneUrl: str('CONTROL_PLANE_URL', 'http://localhost:6065').replace(/\/+$/, ''),
   /**
-   * The tail app's base URL: where a run fetches the newest records of the tables it reads, those
-   * not committed yet (handbook 19). In a cluster it is the tail app's Service; unset, this console
-   * shows committed rows only.
+   * The URL people use for this console, without a trailing slash: where the sign-in providers send
+   * people back to (`<url>/api/auth/sso/<provider>/callback`) and the old hostnames redirect to.
+   * Unset, the console takes the URL each request arrived at, which suits development only.
    */
-  tailUrl: optional('CONSOLE_TAIL_URL')?.replace(/\/+$/, '') || null,
+  consoleUrl: optional('CONSOLE_URL')?.replace(/\/+$/, '') || null,
+  /**
+   * The domains this console serves (handbook 20): a JSON file the chart renders, or the same JSON
+   * inline for development. With neither, one domain at http://localhost:6065 (`domains/registry.ts`).
+   * Each domain's service token comes from `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN`.
+   */
+  domainsFile: optional('CONSOLE_DOMAINS_FILE'),
+  domainsJson: optional('CONSOLE_DOMAINS'),
 
   dataDir,
   parquetCacheDir: str('CONSOLE_PARQUET_CACHE_DIR', join(dataDir, 'parquet-cache')),
@@ -126,14 +132,10 @@ const deployment = {
   corsOrigin: optional('CONSOLE_CORS_ORIGIN'),
 
   /**
-   * The credential the console reads its live views with: the fleet, details, schemas, topics and
-   * its own settings. The control plane gives it read access only; everything a person changes is
-   * sent with that person's session. Set from the same Secret as the control plane's
-   * AUTH_SERVICE_TOKEN.
+   * The cookies holding a browser's sessions, one per domain: `<name>_<domain id>`. Renaming it
+   * signs everyone out.
    */
-  serviceToken: optional('CONSOLE_SERVICE_TOKEN'),
-  /** The cookie holding a signed-in browser's session. Renaming it signs everyone out. */
-  sessionCookieName: str('CONSOLE_SESSION_COOKIE', 'console_session'),
+  sessionCookieName: str('CONSOLE_SESSION_COOKIE', 'midstream_session'),
   /**
    * Whether the session cookie is marked Secure: `auto` follows the request's scheme, as reported
    * by the ingress, so it is Secure behind TLS and still works on http://localhost.

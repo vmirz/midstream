@@ -7,7 +7,8 @@
  * settings save, the console waits — up to 10 seconds — for the outcome, and answers with it.
  */
 
-import { controlPlane, type Caller } from '../controlPlane/client.ts';
+import type { Caller } from '../controlPlane/client.ts';
+import type { Domain } from '../domains/domain.ts';
 import { ConsoleError } from '../errors.ts';
 import type { CpIdentityAccepted, CpIdentityOutcome, IdentityChangeResult } from '../../shared/types.ts';
 import { forgetAllSessions } from './principal.ts';
@@ -15,13 +16,13 @@ import { forgetAllSessions } from './principal.ts';
 const APPLY_TIMEOUT_MS = 10_000;
 const APPLY_POLL_MS = 150;
 
-/** Wait for an accepted change; returns it applied or pending, and throws when it was refused. */
-export async function settle(caller: Caller, accepted: CpIdentityAccepted): Promise<IdentityChangeResult> {
-  const outcome = await waitForOutcome(caller, accepted.request_id);
+/** Wait for a change a domain accepted; returns it applied or pending, and throws when it was refused. */
+export async function settle(domain: Domain, caller: Caller, accepted: CpIdentityAccepted): Promise<IdentityChangeResult> {
+  const outcome = await waitForOutcome(domain, caller, accepted.request_id);
   if (outcome.status === 'rejected') throw refusal(outcome);
   if (outcome.status === 'applied') {
-    // Whatever changed may change what anyone may do; every session is checked again.
-    forgetAllSessions();
+    // Whatever changed may change what anyone may do there; every session there is checked again.
+    forgetAllSessions(domain);
   }
   return {
     request_id: accepted.request_id,
@@ -31,11 +32,11 @@ export async function settle(caller: Caller, accepted: CpIdentityAccepted): Prom
   };
 }
 
-export async function waitForOutcome(caller: Caller, requestId: string): Promise<CpIdentityOutcome> {
+export async function waitForOutcome(domain: Domain, caller: Caller, requestId: string): Promise<CpIdentityOutcome> {
   const deadline = Date.now() + APPLY_TIMEOUT_MS;
   while (Date.now() < deadline) {
     try {
-      const outcome = await controlPlane.identityRequest(caller, requestId);
+      const outcome = await domain.controlPlane.identityRequest(caller, requestId);
       if (outcome.status !== 'pending') return outcome;
     } catch (cause) {
       // Ending the asker's own sessions — a password change — makes their session unusable the

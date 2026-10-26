@@ -101,9 +101,9 @@ interface RequestOptions {
 
 const FORWARDED_LIMIT = 256;
 
-function headersFor(caller: Caller): Record<string, string> {
+function headersFor(caller: Caller, serviceToken: string | null): Record<string, string> {
   if (caller.kind === 'service') {
-    return config.serviceToken ? { authorization: `Bearer ${config.serviceToken}` } : {};
+    return serviceToken ? { authorization: `Bearer ${serviceToken}` } : {};
   }
   const headers: Record<string, string> = {};
   if (caller.token) headers.authorization = `Bearer ${caller.token}`;
@@ -123,10 +123,21 @@ function headersFor(caller: Caller): Record<string, string> {
  * session and authorized by the control plane, never with the console's own credential.
  */
 export class ControlPlaneClient {
-  private readonly baseUrl: string;
+  readonly baseUrl: string;
+  private readonly serviceToken: string | null;
 
-  constructor(baseUrl: string = config.controlPlaneUrl) {
-    this.baseUrl = baseUrl;
+  /**
+   * One domain's control plane: its URL, and the service token the console reads that domain's
+   * live views with (handbook 20). Every domain has a client of its own.
+   */
+  constructor(baseUrl: string, serviceToken: string | null = null) {
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.serviceToken = serviceToken;
+  }
+
+  /** Whether this console holds the domain's service token. */
+  get hasServiceToken(): boolean {
+    return this.serviceToken !== null;
   }
 
   /** Call the control plane; a non-2xx answer becomes a `ConsoleError` with its status. */
@@ -154,7 +165,7 @@ export class ControlPlaneClient {
         signal: composed,
         headers: {
           accept: 'application/json',
-          ...headersFor(caller),
+          ...headersFor(caller, this.serviceToken),
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -513,4 +524,3 @@ function extractUpstreamError(payload: unknown): {
   return {};
 }
 
-export const controlPlane = new ControlPlaneClient();

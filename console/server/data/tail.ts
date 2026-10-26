@@ -132,14 +132,25 @@ const MAX_WAIT_MS = 5_000;
 
 const STATES: ReadonlySet<string> = new Set(['seeding', 'catching_up', 'live', 'paused', 'backlogged']);
 
+/**
+ * Where a domain's tail app is, and the domain's service token it requires in `X-Console-Token`
+ * (handbook 19 §19.10): every domain has its own (handbook 20).
+ */
+export interface TailTarget {
+  /** The domain, for what is said when it has no tail app. */
+  name: string;
+  tailUrl: string | null;
+  serviceToken: string | null;
+}
+
 /** Records of a table past `after`. Never throws: every failure is an outcome. */
-export async function fetchTail(caller: UserCaller, request: TailRequest): Promise<TailOutcome> {
+export async function fetchTail(target: TailTarget, caller: UserCaller, request: TailRequest): Promise<TailOutcome> {
   const query = new URLSearchParams({
     after: JSON.stringify(request.after),
     max_rows: String(Math.max(1, Math.floor(request.maxRows))),
     wait_ms: String(waitMs(request.timeoutMs)),
   });
-  const answer = await call(caller, `${tablePath(request.materializationId, request.table)}?${query}`, request.timeoutMs, request.signal);
+  const answer = await call(target, caller, `${tablePath(request.materializationId, request.table)}?${query}`, request.timeoutMs, request.signal);
   if (answer.kind !== 'answer') return answer;
   if (answer.status !== 200) return refusal(answer.status, answer.body);
   return readRows(answer.headers, answer.body, request.after);
@@ -147,11 +158,12 @@ export async function fetchTail(caller: UserCaller, request: TailRequest): Promi
 
 /** The newest `rows` records on a table's topic. Never throws: every failure is an outcome. */
 export async function fetchHead(
+  target: TailTarget,
   caller: UserCaller,
   request: { materializationId: string; table: string; rows: number; timeoutMs: number; signal?: AbortSignal },
 ): Promise<HeadOutcome> {
   const query = new URLSearchParams({ rows: String(Math.max(1, Math.floor(request.rows))) });
-  const answer = await call(caller, `${tablePath(request.materializationId, request.table)}/head?${query}`, request.timeoutMs, request.signal);
+  const answer = await call(target, caller, `${tablePath(request.materializationId, request.table)}/head?${query}`, request.timeoutMs, request.signal);
   if (answer.kind !== 'answer') return answer;
   if (answer.status !== 200) {
     const outcome = refusal(answer.status, answer.body);
@@ -211,12 +223,12 @@ export async function readPeek(
 
 type Answer = { kind: 'answer'; status: number; headers: Headers; body: Buffer };
 
-async function call(caller: UserCaller, path: string, timeoutMs: number, signal?: AbortSignal): Promise<Answer | TailUnavailable | TailOff> {
-  const base = config.tailUrl;
-  if (!base) return { kind: 'off', reason: 'not_configured', message: 'No live tail is configured for this console.' };
-  const credential = config.serviceToken;
+async function call(target: TailTarget, caller: UserCaller, path: string, timeoutMs: number, signal?: AbortSignal): Promise<Answer | TailUnavailable | TailOff> {
+  const base = target.tailUrl;
+  if (!base) return { kind: 'off', reason: 'not_configured', message: `No live tail is configured for ${target.name}.` };
+  const credential = target.serviceToken;
   if (!credential) {
-    return { kind: 'off', reason: 'not_configured', message: 'This console has no service credential for the live tail (CONSOLE_SERVICE_TOKEN).' };
+    return { kind: 'off', reason: 'not_configured', message: `This console has no service token for ${target.name}, which its live tail requires.` };
   }
   const timeout = AbortSignal.timeout(Math.max(1, timeoutMs));
   const composed = signal ? AbortSignal.any([signal, timeout]) : timeout;

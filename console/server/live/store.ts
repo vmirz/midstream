@@ -1,4 +1,4 @@
-import { SERVICE, controlPlane } from '../controlPlane/client.ts';
+import { SERVICE, type ControlPlaneClient } from '../controlPlane/client.ts';
 import { config } from '../config.ts';
 import { ConsoleError } from '../errors.ts';
 import { logger } from '../logger.ts';
@@ -48,6 +48,13 @@ const NO_RATES: CurrentRates = { rowsPerSecond: null, bytesPerSecond: null, memb
  * that costs the control plane anything.
  */
 export class LiveStore {
+  /** The control plane of the domain this store follows; every domain has a store of its own. */
+  private readonly controlPlane: ControlPlaneClient;
+
+  constructor(controlPlane: ControlPlaneClient) {
+    this.controlPlane = controlPlane;
+  }
+
   private readonly list = new Map<string, CpListItem>();
   private readonly details = new Map<string, CpDetail>();
   /** Each table's current schema, by materialization and then table name. */
@@ -195,7 +202,7 @@ export class LiveStore {
 
   private async fetchSchema(id: string, table: string): Promise<CpSchema> {
     try {
-      const schema = await controlPlane.schema(SERVICE, id, table);
+      const schema = await this.controlPlane.schema(SERVICE, id, table);
       mapOf(this.schemas, id).set(table, schema);
       this.schemaErrors.get(id)?.delete(table);
       return schema;
@@ -273,7 +280,7 @@ export class LiveStore {
 
   private async refresh(includeStaleDetails: boolean): Promise<void> {
     const now = Date.now();
-    const listing = await controlPlane.list(SERVICE, 'all');
+    const listing = await this.controlPlane.list(SERVICE, 'all');
     this.controlPlaneError = null;
 
     const seen = new Set<string>();
@@ -300,7 +307,7 @@ export class LiveStore {
   /** Fetch one materialization's detail, sample it, and reconcile its schemas while it is watched. */
   private async refreshDetail(id: string, now: number): Promise<CpDetail | null> {
     try {
-      const detail = await controlPlane.detail(SERVICE, id);
+      const detail = await this.controlPlane.detail(SERVICE, id);
       this.details.set(id, detail);
       this.lastDetailFetch.set(id, now);
       this.recordSample(id, detail, now);
@@ -640,4 +647,3 @@ function isNotFound(cause: unknown): boolean {
   );
 }
 
-export const liveStore = new LiveStore();

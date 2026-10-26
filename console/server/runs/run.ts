@@ -41,13 +41,18 @@ import type {
 } from '../../shared/types.ts';
 
 export interface RunInit {
+  /** The domain the run was started in: its materialization's (handbook 20). */
+  domain: string;
   materializationId: string;
-  /** Who started the run; only they can read it (`runs/store.ts::getRun`). */
+  /** Who started the run, as its domain knows them; only they can read it (`runs/store.ts::getRun`). */
   ownerId: string;
   /** The run's table: the one browsed, or the statement's (`RunRequest.table`). */
   tableName: string;
-  /** The datasets of the tables it reads: reading its rows needs `data.query` on each, again. */
-  datasets: Array<{ id: string; name: string }>;
+  /**
+   * The datasets of the tables it reads, each in its domain: reading its rows needs `data.query` on
+   * each, again, as the person is in that domain.
+   */
+  datasets: RunDataset[];
   request: RunRequest;
   /** The run's table at the snapshot it reads. */
   catalog: Catalog;
@@ -63,12 +68,20 @@ type Listener = (snapshot: RunSnapshot) => void;
 /** How often listeners hear about progress while a run works. Terminal changes go out at once. */
 const EMIT_INTERVAL_MS = 200;
 
+/** A dataset a run reads, in the domain it belongs to. */
+export interface RunDataset {
+  domain: string;
+  id: string;
+  name: string;
+}
+
 export abstract class Run {
   readonly id = randomUUID();
+  readonly domain: string;
   readonly materializationId: string;
   readonly ownerId: string;
   readonly tableName: string;
-  readonly datasets: ReadonlyArray<{ id: string; name: string }>;
+  readonly datasets: ReadonlyArray<RunDataset>;
   readonly request: RunRequest;
   readonly startedAt = Date.now();
   protected readonly catalog: Catalog;
@@ -115,6 +128,7 @@ export abstract class Run {
   private lastEmitAt = 0;
 
   constructor(init: RunInit) {
+    this.domain = init.domain;
     this.materializationId = init.materializationId;
     this.ownerId = init.ownerId;
     this.tableName = init.tableName;
@@ -314,6 +328,7 @@ export abstract class Run {
     const until = this.finishedAt ?? Date.now();
     return {
       id: this.id,
+      domain: this.domain,
       materializationId: this.materializationId,
       request: this.request,
       state: this.state,

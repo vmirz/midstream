@@ -1,11 +1,9 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
-import { controlPlane } from '../controlPlane/client.ts';
 import { assertSafeIdentifier, badRequest } from '../errors.ts';
-import { callerOf, permit, permitAnywhere } from '../auth/guard.ts';
+import { callerOf, domainOf, permit, permitAnywhere } from '../auth/guard.ts';
 import { settle } from '../auth/outcomes.ts';
-import { liveStore } from '../live/store.ts';
 import { parseBody } from './materializations.ts';
 import { datasetNameProblem } from '../../shared/tableNames.ts';
 import type { DatasetChangeResult } from '../../shared/types.ts';
@@ -50,50 +48,50 @@ function principalIdOf(request: FastifyRequest): string {
  */
 export async function registerDatasetRoutes(app: FastifyInstance): Promise<void> {
   /** Every dataset, locked ones included; `?q=` finds them by name, description or table name. */
-  app.get('/api/datasets', { preHandler: permit('datasets.view') }, async (request) => {
+  app.get('/datasets', { preHandler: permit('datasets.view') }, async (request) => {
     const { q } = parseBody(listQuery, request.query ?? {});
-    return controlPlane.datasets(callerOf(request), q ?? '');
+    return domainOf(request).controlPlane.datasets(callerOf(request), q ?? '');
   });
 
-  app.post('/api/datasets', { preHandler: permit('datasets.create') }, async (request, reply) => {
+  app.post('/datasets', { preHandler: permit('datasets.create') }, async (request, reply) => {
     const caller = callerOf(request);
     const body = parseBody(createDatasetSchema, request.body);
-    const accepted = await controlPlane.createDataset(caller, body);
-    const result: DatasetChangeResult = { ...(await settle(caller, accepted)), name: accepted.name };
+    const accepted = await domainOf(request).controlPlane.createDataset(caller, body);
+    const result: DatasetChangeResult = { ...(await settle(domainOf(request), caller, accepted)), name: accepted.name };
     return reply.code(result.status === 'applied' ? 201 : 202).send(result);
   });
 
   /** One dataset, and every table in it with the materialization that writes it. */
-  app.get('/api/datasets/:dataset', { preHandler: permit('datasets.view') }, async (request) =>
-    controlPlane.dataset(callerOf(request), datasetOf(request)),
+  app.get('/datasets/:dataset', { preHandler: permit('datasets.view') }, async (request) =>
+    domainOf(request).controlPlane.dataset(callerOf(request), datasetOf(request)),
   );
 
-  app.patch('/api/datasets/:dataset', { preHandler: permitAnywhere('dataset.manage') }, async (request, reply) => {
+  app.patch('/datasets/:dataset', { preHandler: permitAnywhere('dataset.manage') }, async (request, reply) => {
     const caller = callerOf(request);
     const body = parseBody(updateDatasetSchema, request.body);
-    const result = await settle(caller, await controlPlane.updateDataset(caller, datasetOf(request), body));
+    const result = await settle(domainOf(request), caller, await domainOf(request).controlPlane.updateDataset(caller, datasetOf(request), body));
     return reply.code(result.status === 'applied' ? 200 : 202).send(result);
   });
 
   /** Only an empty dataset can be deleted: none of its tables written, kept, or still being dropped. */
-  app.delete('/api/datasets/:dataset', { preHandler: permitAnywhere('dataset.manage') }, async (request, reply) => {
+  app.delete('/datasets/:dataset', { preHandler: permitAnywhere('dataset.manage') }, async (request, reply) => {
     const caller = callerOf(request);
-    const result = await settle(caller, await controlPlane.deleteDataset(caller, datasetOf(request)));
+    const result = await settle(domainOf(request), caller, await domainOf(request).controlPlane.deleteDataset(caller, datasetOf(request)));
     return reply.code(result.status === 'applied' ? 200 : 202).send(result);
   });
 
   /** Who may use a dataset, and with which roles; and the roles the person asking can grant there. */
-  app.get('/api/datasets/:dataset/grants', { preHandler: permitAnywhere('dataset.manage') }, async (request) =>
-    controlPlane.datasetGrants(callerOf(request), datasetOf(request)),
+  app.get('/datasets/:dataset/grants', { preHandler: permitAnywhere('dataset.manage') }, async (request) =>
+    domainOf(request).controlPlane.datasetGrants(callerOf(request), datasetOf(request)),
   );
 
   /** Set the roles a person or a group holds on a dataset; none removes their grant. */
-  app.put('/api/datasets/:dataset/grants/:principalId', { preHandler: permitAnywhere('dataset.manage') }, async (request, reply) => {
+  app.put('/datasets/:dataset/grants/:principalId', { preHandler: permitAnywhere('dataset.manage') }, async (request, reply) => {
     const caller = callerOf(request);
     const body = parseBody(grantSchema, request.body);
-    const result = await settle(caller, await controlPlane.setDatasetGrant(caller, datasetOf(request), principalIdOf(request), body));
+    const result = await settle(domainOf(request), caller, await domainOf(request).controlPlane.setDatasetGrant(caller, datasetOf(request), principalIdOf(request), body));
     // Who may read which tables changed: open detail pages show it on their next refresh.
-    liveStore.wake();
+    domainOf(request).live.wake();
     return reply.code(result.status === 'applied' ? 200 : 202).send(result);
   });
 }

@@ -1,12 +1,13 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
-import { controlPlane, type Caller } from '../controlPlane/client.ts';
-import { authOf, callerOf, permit } from '../auth/guard.ts';
+import type { Caller } from '../controlPlane/client.ts';
+import { authOf, callerOf, domainOf, permit } from '../auth/guard.ts';
 import { refusal, waitForOutcome } from '../auth/outcomes.ts';
 import { config } from '../config.ts';
 import { assertSafeIdentifier, badRequest } from '../errors.ts';
-import { liveStore, visibleDetail } from '../live/store.ts';
+import type { Domain } from '../domains/domain.ts';
+import { visibleDetail } from '../live/store.ts';
 import { datasetNameProblem, labelProblem, tableNameProblem } from '../../shared/tableNames.ts';
 import { PARTITION_GRANULARITIES, type CpAccepted } from '../../shared/types.ts';
 
@@ -133,9 +134,9 @@ export function materializationId(request: FastifyRequest): string {
  * refused claim - a name taken meanwhile, a dataset deleted, write access taken away - is the
  * request's error, naming the table it was about, so a dialog can show it on the right row.
  */
-export async function awaitClaim(caller: Caller, accepted: CpAccepted): Promise<CpAccepted> {
+export async function awaitClaim(domain: Domain, caller: Caller, accepted: CpAccepted): Promise<CpAccepted> {
   if (!accepted.claim_request_id) return accepted;
-  const outcome = await waitForOutcome(caller, accepted.claim_request_id);
+  const outcome = await waitForOutcome(domain, caller, accepted.claim_request_id);
   if (outcome.status === 'rejected') {
     const error = refusal(outcome);
     error.details.materialization_id = accepted.materialization_id;
@@ -155,35 +156,40 @@ export function parseBody<T extends z.ZodTypeAny>(schema: T, body: unknown): z.i
   return parsed.data;
 }
 
+/** A domain's materializations, under `/api/d/<domain>/` (handbook 20). */
 export async function registerMaterializationRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/materializations', { preHandler: permit('materializations.view') }, async () => {
-    await liveStore.ensureFresh(config.listPollIntervalMs);
-    return liveStore.fleetSnapshot();
+  app.get('/materializations', { preHandler: permit('materializations.view') }, async (request) => {
+    const { live } = domainOf(request);
+    await live.ensureFresh(config.listPollIntervalMs);
+    return live.fleetSnapshot();
   });
 
   /** Answers once the new tables' names are claimed: a name taken meanwhile is the request's error. */
-  app.post('/api/materializations', { preHandler: permit('materializations.create') }, async (request, reply) => {
+  app.post('/materializations', { preHandler: permit('materializations.create') }, async (request, reply) => {
+    const domain = domainOf(request);
     const input = parseBody(createMaterializationSchema, request.body);
     const caller = callerOf(request);
-    const accepted = await controlPlane.create(caller, input);
-    liveStore.wake();
+    const accepted = await domain.controlPlane.create(caller, input);
+    domain.live.wake();
     try {
-      return reply.code(202).send(await awaitClaim(caller, accepted));
+      return reply.code(202).send(await awaitClaim(domain, caller, accepted));
     } finally {
-      liveStore.wake();
+      domain.live.wake();
     }
   });
 
-  app.get('/api/materializations/:materializationId', { preHandler: permit('materializations.view_details') }, async (request) => {
+  app.get('/materializations/:materializationId', { preHandler: permit('materializations.view_details') }, async (request) => {
+    const { live } = domainOf(request);
     const id = materializationId(request);
-    const detail = await liveStore.getDetail(id);
-    return visibleDetail({ ...liveStore.detailSnapshot(id), detail }, authOf(request).state.principal);
+    const detail = await live.getDetail(id);
+    return visibleDetail({ ...live.detailSnapshot(id), detail }, authOf(request).state.principal);
   });
 
   /** Scale the runtime to zero; resume scales it back to its replica count. */
-  app.post('/api/materializations/:materializationId/stop', { preHandler: permit('materializations.stop') }, async (request, reply) => {
-    const accepted = await controlPlane.stop(callerOf(request), materializationId(request));
-    liveStore.wake();
+  app.post('/materializations/:materializationId/stop', { preHandler: permit('materializations.stop') }, async (request, reply) => {
+    const domain = domainOf(request);
+    const accepted = await domain.controlPlane.stop(callerOf(request), materializationId(request));
+    domain.live.wake();
     return reply.code(202).send(accepted);
   });
 
@@ -191,28 +197,31 @@ export async function registerMaterializationRoutes(app: FastifyInstance): Promi
    * Change a materialization's mutable settings: its label, its replica count, and the topics it
    * reads. A change adding topics answers once their tables' names are claimed.
    */
-  app.patch('/api/materializations/:materializationId', { preHandler: permit('materializations.edit') }, async (request, reply) => {
+  app.patch('/materializations/:materializationId', { preHandler: permit('materializations.edit') }, async (request, reply) => {
+    const domain = domainOf(request);
     const id = materializationId(request);
     const input = parseBody(updateMaterializationSchema, request.body);
     const caller = callerOf(request);
-    const accepted = await controlPlane.update(caller, id, input);
-    liveStore.wake();
+    const accepted = await domain.controlPlane.update(caller, id, input);
+    domain.live.wake();
     try {
-      return reply.code(202).send(await awaitClaim(caller, accepted));
+      return reply.code(202).send(await awaitClaim(domain, caller, accepted));
     } finally {
-      liveStore.wake();
+      domain.live.wake();
     }
   });
 
-  app.post('/api/materializations/:materializationId/resume', { preHandler: permit('materializations.resume') }, async (request, reply) => {
-    const accepted = await controlPlane.resume(callerOf(request), materializationId(request));
-    liveStore.wake();
+  app.post('/materializations/:materializationId/resume', { preHandler: permit('materializations.resume') }, async (request, reply) => {
+    const domain = domainOf(request);
+    const accepted = await domain.controlPlane.resume(callerOf(request), materializationId(request));
+    domain.live.wake();
     return reply.code(202).send(accepted);
   });
 
-  app.delete('/api/materializations/:materializationId', { preHandler: permit('materializations.delete') }, async (request, reply) => {
-    const accepted = await controlPlane.remove(callerOf(request), materializationId(request));
-    liveStore.wake();
+  app.delete('/materializations/:materializationId', { preHandler: permit('materializations.delete') }, async (request, reply) => {
+    const domain = domainOf(request);
+    const accepted = await domain.controlPlane.remove(callerOf(request), materializationId(request));
+    domain.live.wake();
     return reply.code(202).send(accepted);
   });
 }

@@ -16,7 +16,7 @@ import { assertReadOnlyStatement } from '../data/sql.ts';
 import { BrowseRun } from './browse.ts';
 import { StatementRun, statementError, type StatementSource } from './statement.ts';
 import { assertNativeReferences, listOf, qualifiedName, referencedTables, statementViews } from './view.ts';
-import type { Run } from './run.ts';
+import type { Run, RunDataset } from './run.ts';
 import type { TailAccess } from './tail.ts';
 import type { RunRequest, TimeRange } from '../../shared/types.ts';
 
@@ -81,6 +81,8 @@ function once(fn: () => void): () => void {
 
 /** One of a materialization's tables, as the control plane describes it. */
 export interface RunTableSource {
+  /** The domain it is in (handbook 20). */
+  domain: string;
   /** Its name in its dataset: SQL reads it as `<dataset>.<name>`, and `iceberg.<dataset>.<name>`. */
   name: string;
   /** The dataset it is in: its namespace in SQL. */
@@ -91,8 +93,10 @@ export interface RunTableSource {
 }
 
 export interface StartRunInput {
+  /** The domain the run is started in: its materialization's. */
+  domain: string;
   materializationId: string;
-  /** Who is starting the run: a person's user id. Nobody else can read it. */
+  /** Who is starting the run, as the domain knows them. Nobody else can read it. */
   ownerId: string;
   /** Every table of the materialization, in its order. */
   tables: RunTableSource[];
@@ -121,9 +125,9 @@ export function tablesNamed(tables: RunTableSource[], sql: string): RunTableSour
   return tables.filter((table) => named.has(table.name));
 }
 
-/** The datasets of some tables, each once. */
-function datasetsOf(tables: RunTableSource[]): Array<{ id: string; name: string }> {
-  const byId = new Map(tables.map((table) => [table.datasetId, { id: table.datasetId, name: table.dataset }]));
+/** The datasets of some tables, each once, in their domains. */
+function datasetsOf(tables: RunTableSource[]): RunDataset[] {
+  const byId = new Map(tables.map((table) => [`${table.domain}:${table.datasetId}`, { domain: table.domain, id: table.datasetId, name: table.dataset }]));
   return [...byId.values()];
 }
 
@@ -160,6 +164,7 @@ export async function startRun(input: StartRunInput): Promise<Run> {
     const request = { ...input.request, table: selected.name, filters: resolveFilters(input.request.filters ?? [], columns) };
     return register(
       new BrowseRun({
+        domain: input.domain,
         materializationId: input.materializationId,
         ownerId: input.ownerId,
         tableName: selected.name,
@@ -186,6 +191,7 @@ export async function startRun(input: StartRunInput): Promise<Run> {
     sources.find((source) => source.name === selected.name) ?? sources[0] ?? { namespace: selected.dataset, name: selected.name, catalog, columns };
   return register(
     new StatementRun({
+      domain: input.domain,
       materializationId: input.materializationId,
       ownerId: input.ownerId,
       tableName: primary.name,
@@ -230,7 +236,14 @@ export async function refreshRun(input: RefreshRunInput): Promise<{ replaced: bo
   const { run } = input;
   const replace = async (): Promise<{ replaced: true; run: Run }> => {
     const request = input.range ? { ...run.request, range: input.range } : run.request;
-    const next = await startRun({ materializationId: run.materializationId, ownerId: input.ownerId, tables: input.tables, request, tail: input.tail });
+    const next = await startRun({
+      domain: run.domain,
+      materializationId: run.materializationId,
+      ownerId: input.ownerId,
+      tables: input.tables,
+      request,
+      tail: input.tail,
+    });
     run.expireWithin(REPLACED_RUN_GRACE_MS);
     return { replaced: true, run: next };
   };
@@ -354,11 +367,12 @@ function validateRange(request: RunRequest): void {
 
 /**
  * A run, for the person who started it. Anyone else is told it does not exist: a run holds query
- * results, and its id is no secret once it is in a shared link.
+ * results, and its id is no secret once it is in a shared link. `ownerId` is who is asking - as the
+ * run's domain knows them, when it is a function of that domain.
  */
-export function getRun(runId: string, ownerId: string): Run {
+export function getRun(runId: string, ownerId: string | ((domain: string) => string)): Run {
   const run = runs.get(runId);
-  if (!run || run.ownerId !== ownerId) {
+  if (!run || run.ownerId !== (typeof ownerId === 'function' ? ownerId(run.domain) : ownerId)) {
     throw notFound(`run ${runId} has expired or never existed`, { resource: 'run', id: runId });
   }
   run.touch();

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  domainIdProblem,
   DATASET_NAME_MAX_LENGTH,
   LABEL_MAX_LENGTH,
   TABLE_NAME_MAX_LENGTH,
@@ -131,3 +132,18 @@ describe('table names', () => {
     assert.deepEqual(tableNamesForTopics(['payments'], undefined, { fixed: new Map([['payments', 'payments_2']]) }), ['payments_2']);
   });
 });
+
+describe('domain ids', () => {
+  it('follow a dataset name\'s rule, at most 32 characters', () => {
+    for (const good of ['domain_a', 'sales', 'a', 'scm_2', 'x'.repeat(32)]) assert.equal(domainIdProblem(good), null, good);
+    for (const bad of ['', 'Domain_A', 'domain-a', '1domain', '_a', 'x'.repeat(33)]) assert.notEqual(domainIdProblem(bad), null, bad);
+  });
+
+  it('are not words the console\'s URLs or SQL use, as the control plane says', () => {
+    for (const reserved of ['api', 'd', 'catalog', 'iceberg', 'main', 'memory', 'temp', 'system', 'select', 'lake']) {
+      assert.notEqual(domainIdProblem(reserved), null, reserved);
+    }
+    assert.match(domainIdProblem('orders_iceberg') ?? '', /SQL/);
+  });
+});
+

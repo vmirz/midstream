@@ -1,9 +1,10 @@
 /**
- * The session cookie: how a signed-in browser carries its session to the console.
+ * The session cookies: how a signed-in browser carries its sessions to the console, one per domain.
  *
- * It holds the control plane's session token and is HttpOnly, so no script on the page can read
- * it, and SameSite=Lax, so another site cannot make the browser send it with a change. The console
- * keeps no session state of its own; the cookie and the control plane are the whole of it.
+ * Each holds one domain's session token, `<CONSOLE_SESSION_COOKIE>_<domain id>`, and is HttpOnly, so
+ * no script on the page can read it, and SameSite=Lax, so another site cannot make the browser send
+ * it with a change. The console keeps no session state of its own; the cookies and the domains'
+ * control planes are the whole of it.
  */
 
 import { config } from '../config.ts';
@@ -32,10 +33,20 @@ export interface CookieOptions {
   secure: boolean;
 }
 
-/** A `Set-Cookie` value for the session cookie. A max age of 0 deletes it. */
-export function sessionCookie(value: string, options: CookieOptions): string {
+/** The name of a domain's session cookie. */
+export function sessionCookieName(domainId: string): string {
+  return `${config.sessionCookieName}_${domainId}`;
+}
+
+/** A `Set-Cookie` value for a domain's session cookie. A max age of 0 deletes it. */
+export function sessionCookie(domainId: string, value: string, options: CookieOptions): string {
+  return cookie(sessionCookieName(domainId), value, options);
+}
+
+/** A `Set-Cookie` value: HttpOnly, SameSite=Lax, for the whole site. A max age of 0 deletes it. */
+export function cookie(name: string, value: string, options: CookieOptions): string {
   const parts = [
-    `${config.sessionCookieName}=${encodeURIComponent(value)}`,
+    `${name}=${encodeURIComponent(value)}`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
@@ -51,4 +62,12 @@ export function secureCookie(protocol: string): boolean {
   if (setting === 'true') return true;
   if (setting === 'false') return false;
   return protocol === 'https';
+}
+
+/**
+ * Add a cookie to a response without replacing the others it sets: a sign-in sets one per domain.
+ * Fastify appends every `set-cookie` header it is given rather than replacing the last.
+ */
+export function appendCookie(reply: { header(name: string, value: unknown): unknown }, value: string): void {
+  reply.header('set-cookie', value);
 }

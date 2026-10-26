@@ -2,13 +2,13 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { config, dataAccessMode } from '../config.ts';
-import { controlPlane, type Caller } from '../controlPlane/client.ts';
-import { callerOf, permit } from '../auth/guard.ts';
+import type { Caller } from '../controlPlane/client.ts';
+import { callerOf, domainOf, permit, permitInHome } from '../auth/guard.ts';
 import { ConsoleError, badRequest } from '../errors.ts';
 import { consoleSettingDefinition, consoleSettingProblem } from '../settings/catalog.ts';
-import { consoleSettings } from '../settings/store.ts';
+import { consoleSettings, domains } from '../domains/index.ts';
+import type { Domain } from '../domains/domain.ts';
 import { workerPoolSize } from '../workerPool.ts';
-import { invalidateMaterializationDefaults } from './system.ts';
 import { parseBody } from './materializations.ts';
 import {
   SETTINGS_SCOPES,
@@ -54,107 +54,174 @@ const saveSchema = z.object({
 
 const historyQuery = z.object({ limit: z.coerce.number().int().min(1).max(HISTORY_RETAINED).optional() });
 
-export async function registerSettingsRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/settings', { preHandler: permit('settings.view') }, async (request): Promise<SettingsOverview> =>
-    readOverview(callerOf(request)),
-  );
+/** The scopes a settings page edits: the console's own, or a domain's control plane and runtimes. */
+type ScopeSet = readonly SettingsScope[];
+const CONSOLE_SCOPES: ScopeSet = ['console'];
+const DOMAIN_SCOPES: ScopeSet = ['control-plane', 'runtime'];
 
-  app.patch('/api/settings', { preHandler: permit('settings.manage') }, async (request, reply): Promise<SettingsSaveResult> => {
-    const caller = callerOf(request);
-    const body = parseBody(saveSchema, request.body);
-    const ordered = [...body.changes].sort(
-      (left, right) => SETTINGS_SCOPES.indexOf(left.scope) - SETTINGS_SCOPES.indexOf(right.scope),
-    );
-    for (const change of ordered) {
-      if (Object.keys(change.values).length === 0 && change.reset.length === 0) {
-        throw badRequest(`nothing to change in ${change.scope} settings`, { scope: change.scope });
-      }
-      if (change.scope === 'console') validateConsoleChange(change.values, change.reset);
-    }
-
-    // Control plane first, then runtime, then console, stopping at the first refusal so a save is
-    // all or nothing in the common case. Each scope is applied by the settings agent after the
-    // API accepts it, so the save waits for that before answering.
-    const accepted: { scope: SettingsScope; requestId: string }[] = [];
-    for (const change of ordered) {
-      try {
-        const acceptance = await controlPlane.updateSettings(caller, change.scope, {
-          values: change.values,
-          reset: change.reset,
-          base_revision: change.baseRevision,
-          ...(change.scope === 'console' ? { fallbacks: consoleFallbacks(change.values, change.reset) } : {}),
-        });
-        accepted.push({ scope: change.scope, requestId: acceptance.request_id });
-      } catch (cause) {
-        if (accepted.length === 0 || !(cause instanceof ConsoleError)) throw withScope(cause, change.scope);
-        throw new ConsoleError(
-          cause.code,
-          `${scopeLabel(accepted.map((item) => item.scope))} settings were saved, but ${scopeLabel([change.scope])} ` +
-            `settings were not: ${cause.message}`,
-          cause.statusCode,
-          { ...cause.details, scope: change.scope, saved: accepted.map((item) => item.scope) },
-        );
-      }
-    }
-
-    const outcomes = await Promise.all(accepted.map((item) => waitForApplied(caller, item.scope, item.requestId)));
-    const rejected = outcomes.find((outcome) => outcome.state === 'rejected');
-    if (rejected && rejected.state === 'rejected') {
-      throw new ConsoleError('settings_rejected', rejected.message, 409, {
-        scope: rejected.scope,
-        reason: rejected.reason,
-      });
-    }
-    for (const outcome of outcomes) {
-      if (outcome.state === 'applied' && outcome.scope === 'console') consoleSettings.install(outcome.document);
-    }
-    invalidateMaterializationDefaults();
-    const pending = outcomes.filter((outcome) => outcome.state === 'pending').map((outcome) => outcome.scope);
-    const overview = await readOverview(caller);
-    return reply.code(pending.length > 0 ? 202 : 200).send({ ...overview, pending });
+/**
+ * The console's own settings (handbook 20): stored in the settings home's `console` scope, so seeing
+ * them needs `settings.view` there and changing them `settings.manage` there.
+ */
+export async function registerConsoleSettingsRoutes(app: FastifyInstance): Promise<void> {
+  app.get('/api/settings', { preHandler: permitInHome('settings.view') }, async (request): Promise<SettingsOverview> => {
+    const home = domains().home;
+    return readOverview(home, callerOf(request, home), CONSOLE_SCOPES);
   });
 
-  app.get('/api/settings/history', { preHandler: permit('settings.view') }, async (request): Promise<SettingsHistory> => {
-    const query = historyQuery.safeParse(request.query ?? {});
-    if (!query.success) throw badRequest('limit must be a whole number from 1 to 100', { field: 'limit' });
-    const limit = query.data.limit ?? HISTORY_RETAINED;
-    const caller = callerOf(request);
-    const results = await Promise.allSettled(SETTINGS_SCOPES.map((scope) => controlPlane.settingsHistory(caller, scope, limit)));
-    const changes: SettingsHistoryEntry[] = [];
-    const errors: SettingsHistory['errors'] = [];
-    results.forEach((result, index) => {
-      const scope = SETTINGS_SCOPES[index] as SettingsScope;
-      if (result.status === 'rejected') {
-        errors.push({ scope, message: messageOf(result.reason) });
-        return;
-      }
-      for (const record of result.value.changes) {
-        changes.push({
-          scope,
-          revision: record.revision,
-          requestId: record.request_id,
-          updatedAt: record.updated_at,
-          updatedBy: record.updated_by,
-          changes: record.changes.map((item) => ({
-            key: item.key,
-            before: item.before,
-            after: item.after,
-            beforeSource: item.before_source,
-            afterSource: item.after_source,
-          })),
-        });
-      }
-    });
-    changes.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.revision - left.revision);
-    return { changes, retainedPerScope: HISTORY_RETAINED, errors };
+  app.patch('/api/settings', { preHandler: permitInHome('settings.manage') }, async (request, reply): Promise<SettingsSaveResult> => {
+    const home = domains().home;
+    return save(home, callerOf(request, home), CONSOLE_SCOPES, request.body, reply);
+  });
+
+  app.get('/api/settings/history', { preHandler: permitInHome('settings.view') }, async (request): Promise<SettingsHistory> => {
+    const home = domains().home;
+    return history(home, callerOf(request, home), CONSOLE_SCOPES, request.query);
   });
 }
 
-async function readOverview(caller: Caller): Promise<SettingsOverview> {
+/** A domain's settings, under `/api/d/<domain>/`: its control plane's and its runtimes'. */
+export async function registerSettingsRoutes(app: FastifyInstance): Promise<void> {
+  app.get('/settings', { preHandler: permit('settings.view') }, async (request): Promise<SettingsOverview> =>
+    readOverview(domainOf(request), callerOf(request), DOMAIN_SCOPES),
+  );
+
+  app.patch('/settings', { preHandler: permit('settings.manage') }, async (request, reply): Promise<SettingsSaveResult> =>
+    save(domainOf(request), callerOf(request), DOMAIN_SCOPES, request.body, reply),
+  );
+
+  app.get('/settings/history', { preHandler: permit('settings.view') }, async (request): Promise<SettingsHistory> =>
+    history(domainOf(request), callerOf(request), DOMAIN_SCOPES, request.query),
+  );
+}
+
+async function save(
+  domain: Domain,
+  caller: Caller,
+  allowed: ScopeSet,
+  rawBody: unknown,
+  reply: import('fastify').FastifyReply,
+): Promise<SettingsSaveResult> {
+  const body = parseBody(saveSchema, rawBody);
+  const ordered = [...body.changes].sort(
+    (left, right) => SETTINGS_SCOPES.indexOf(left.scope) - SETTINGS_SCOPES.indexOf(right.scope),
+  );
+  for (const change of ordered) {
+    if (!allowed.includes(change.scope)) {
+      throw badRequest(
+        change.scope === 'console'
+          ? 'the console\'s own settings are saved on the console\'s Settings page, not a domain\'s'
+          : `${scopeLabel([change.scope])} settings are a domain's: save them on that domain's Settings page`,
+        { scope: change.scope },
+      );
+    }
+    if (Object.keys(change.values).length === 0 && change.reset.length === 0) {
+      throw badRequest(`nothing to change in ${change.scope} settings`, { scope: change.scope });
+    }
+    if (change.scope === 'console') validateConsoleChange(change.values, change.reset);
+  }
+
+  // Control plane first, then runtime, stopping at the first refusal so a save is all or nothing in
+  // the common case. Each scope is applied by the settings agent after the API accepts it, so the
+  // save waits for that before answering.
+  const accepted: { scope: SettingsScope; requestId: string }[] = [];
+  for (const change of ordered) {
+    try {
+      const acceptance = await domain.controlPlane.updateSettings(caller, change.scope, {
+        values: change.values,
+        reset: change.reset,
+        base_revision: change.baseRevision,
+        ...(change.scope === 'console' ? { fallbacks: consoleFallbacks(change.values, change.reset) } : {}),
+      });
+      accepted.push({ scope: change.scope, requestId: acceptance.request_id });
+    } catch (cause) {
+      if (accepted.length === 0 || !(cause instanceof ConsoleError)) throw withScope(cause, change.scope);
+      throw new ConsoleError(
+        cause.code,
+        `${scopeLabel(accepted.map((item) => item.scope))} settings were saved, but ${scopeLabel([change.scope])} ` +
+          `settings were not: ${cause.message}`,
+        cause.statusCode,
+        { ...cause.details, scope: change.scope, saved: accepted.map((item) => item.scope) },
+      );
+    }
+  }
+
+  const outcomes = await Promise.all(accepted.map((item) => waitForApplied(domain, caller, item.scope, item.requestId)));
+  const rejected = outcomes.find((outcome) => outcome.state === 'rejected');
+  if (rejected && rejected.state === 'rejected') {
+    throw new ConsoleError('settings_rejected', rejected.message, 409, {
+      scope: rejected.scope,
+      reason: rejected.reason,
+    });
+  }
+  for (const outcome of outcomes) {
+    if (outcome.state === 'applied' && outcome.scope === 'console') consoleSettings().install(outcome.document);
+  }
+  domain.invalidateSystemSettings();
+  const pending = outcomes.filter((outcome) => outcome.state === 'pending').map((outcome) => outcome.scope);
+  const overview = await readOverview(domain, caller, allowed);
+  return reply.code(pending.length > 0 ? 202 : 200).send({ ...overview, pending });
+}
+
+async function history(domain: Domain, caller: Caller, scopes: ScopeSet, rawQuery: unknown): Promise<SettingsHistory> {
+  const query = historyQuery.safeParse(rawQuery ?? {});
+  if (!query.success) throw badRequest('limit must be a whole number from 1 to 100', { field: 'limit' });
+  const limit = query.data.limit ?? HISTORY_RETAINED;
+  const results = await Promise.allSettled(scopes.map((scope) => domain.controlPlane.settingsHistory(caller, scope, limit)));
+  const changes: SettingsHistoryEntry[] = [];
+  const errors: SettingsHistory['errors'] = [];
+  results.forEach((result, index) => {
+    const scope = scopes[index] as SettingsScope;
+    if (result.status === 'rejected') {
+      errors.push({ scope, message: messageOf(result.reason) });
+      return;
+    }
+    for (const record of result.value.changes) {
+      changes.push({
+        scope,
+        revision: record.revision,
+        requestId: record.request_id,
+        updatedAt: record.updated_at,
+        updatedBy: record.updated_by,
+        changes: record.changes.map((item) => ({
+          key: item.key,
+          before: item.before,
+          after: item.after,
+          beforeSource: item.before_source,
+          afterSource: item.after_source,
+        })),
+      });
+    }
+  });
+  changes.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.revision - left.revision);
+  return { changes, retainedPerScope: HISTORY_RETAINED, errors };
+}
+
+/**
+ * A settings page: the console's own scope, read from the settings home, or a domain's control-plane
+ * and runtime scopes, with what each deployment fixes.
+ */
+async function readOverview(domain: Domain, caller: Caller, scopes: ScopeSet): Promise<SettingsOverview> {
+  if (scopes.includes('console')) {
+    const store = consoleSettings();
+    let failure: unknown = null;
+    try {
+      await store.refresh();
+    } catch (cause) {
+      failure = cause;
+    }
+    return {
+      generatedAt: new Date().toISOString(),
+      controlPlane: { reachable: store.loaded && failure === null, error: failure === null ? null : describeFailure(failure) },
+      scopes: { 'control-plane': null, runtime: null, console: store.view() },
+      deployment: consoleDeployment(),
+      rollout: null,
+      historyRetained: HISTORY_RETAINED,
+    };
+  }
   const [controlPlaneScope, runtimeScope] = await Promise.allSettled([
-    controlPlane.settingsScope(caller, 'control-plane'),
-    controlPlane.settingsScope(caller, 'runtime'),
-    consoleSettings.refresh(),
+    domain.controlPlane.settingsScope(caller, 'control-plane'),
+    domain.controlPlane.settingsScope(caller, 'runtime'),
   ]);
   const reachable = controlPlaneScope.status === 'fulfilled' && runtimeScope.status === 'fulfilled';
   const failure =
@@ -167,17 +234,13 @@ async function readOverview(caller: Caller): Promise<SettingsOverview> {
   const runtimeDocument = runtimeScope.status === 'fulfilled' ? runtimeScope.value : null;
   return {
     generatedAt: new Date().toISOString(),
-    controlPlane: { reachable: reachable && consoleSettings.loaded, error: failure === null ? null : describeFailure(failure) },
+    controlPlane: { reachable, error: failure === null ? null : describeFailure(failure) },
     scopes: {
       'control-plane': controlPlaneDocument ? toScopeView(controlPlaneDocument) : null,
       runtime: runtimeDocument ? toScopeView(runtimeDocument) : null,
-      console: consoleSettings.view(),
+      console: null,
     },
-    deployment: [
-      ...deploymentFrom(controlPlaneDocument),
-      ...deploymentFrom(runtimeDocument),
-      ...consoleDeployment(),
-    ],
+    deployment: [...deploymentFrom(controlPlaneDocument), ...deploymentFrom(runtimeDocument), ...domainDeployment(domain)],
     rollout: runtimeDocument?.rollout ? toRollout(runtimeDocument.rollout) : null,
     historyRetained: HISTORY_RETAINED,
   };
@@ -189,11 +252,11 @@ type ApplyOutcome =
   | { state: 'pending'; scope: SettingsScope };
 
 /** Wait until the settings agent has applied, or refused, a change the API accepted. */
-async function waitForApplied(caller: Caller, scope: SettingsScope, requestId: string): Promise<ApplyOutcome> {
+async function waitForApplied(domain: Domain, caller: Caller, scope: SettingsScope, requestId: string): Promise<ApplyOutcome> {
   const deadline = Date.now() + APPLY_TIMEOUT_MS;
   while (Date.now() < deadline) {
     try {
-      const document = await controlPlane.settingsScope(caller, scope);
+      const document = await domain.controlPlane.settingsScope(caller, scope);
       if (document.last_rejection?.request_id === requestId) {
         return {
           state: 'rejected',
@@ -231,7 +294,7 @@ function consoleFallbacks(
 ): Record<string, { value: SettingValue; source: 'default' | 'deployment' }> {
   const fallbacks: Record<string, { value: SettingValue; source: 'default' | 'deployment' }> = {};
   for (const key of [...Object.keys(values), ...reset]) {
-    const fallback = consoleSettings.fallback(key);
+    const fallback = consoleSettings().fallback(key);
     if (fallback) fallbacks[key] = fallback;
   }
   return fallbacks;
@@ -305,24 +368,54 @@ function toRollout(rollout: NonNullable<CpSettingsScope['rollout']>): RuntimeRol
   };
 }
 
-/** The console's environment-only settings. Credentials are reported as configured or not. */
-function consoleDeployment(): DeploymentSettingView[] {
-  const entry = (
-    key: string,
-    label: string,
-    value: SettingValue,
-    envVar: string | null,
-    description: string | null = null,
-  ): DeploymentSettingView => ({ component: 'console', key, label, value, envVar, description });
+function deploymentEntry(
+  key: string,
+  label: string,
+  value: SettingValue,
+  envVar: string | null,
+  description: string | null = null,
+): DeploymentSettingView {
+  return { component: 'console', key, label, value, envVar, description };
+}
+
+/** How the console reaches a domain, as its registry says: shown on that domain's Deployment section. */
+function domainDeployment(domain: Domain): DeploymentSettingView[] {
   return [
-    entry('controlPlaneUrl', 'Control plane', config.controlPlaneUrl, 'CONTROL_PLANE_URL', 'Where the console reads and stores everything, settings included.'),
-    entry(
+    deploymentEntry('domain', 'Domain', `${domain.name} (${domain.id})`, 'CONSOLE_DOMAINS_FILE', 'Its id is its URL segment, its catalog in SQL and its level of the federated catalog.'),
+    deploymentEntry('controlPlaneUrl', 'Control plane', domain.controlPlane.baseUrl, 'CONSOLE_DOMAINS_FILE', 'Where the console reaches this domain: its Service, or its API hostname in another cluster.'),
+    deploymentEntry(
       'tailUrl',
       'Live tail',
-      config.tailUrl,
-      'CONSOLE_TAIL_URL',
-      'The tail app the Data tab reads the newest, not yet committed records from. Unset, the console shows committed rows only.',
+      domain.tailUrl,
+      'CONSOLE_DOMAINS_FILE',
+      'The tail app the Data tab reads this domain\'s newest, not yet committed records from. Unset, its tables show committed rows only.',
     ),
+    deploymentEntry(
+      'serviceToken',
+      'Service token',
+      domain.serviceToken ? 'configured' : 'not configured',
+      `CONSOLE_DOMAIN_${domain.id.toUpperCase()}_SERVICE_TOKEN`,
+      'What the console reads this domain\'s live views with. Without it the fleet, details and topics are read as a guest.',
+    ),
+  ];
+}
+
+/** The console's environment-only settings. Credentials are reported as configured or not. */
+function consoleDeployment(): DeploymentSettingView[] {
+  const entry = deploymentEntry;
+  return [
+    entry('consoleUrl', 'Console URL', config.consoleUrl, 'CONSOLE_URL', 'Where the sign-in providers send people back to, and the old hostnames redirect to.'),
+    entry(
+      'domains',
+      'Domains',
+      domains()
+        .all()
+        .map((domain) => domain.id)
+        .join(', '),
+      'CONSOLE_DOMAINS_FILE',
+      'Every domain this console serves; each domain\'s Settings page says how it is reached.',
+    ),
+    entry('settingsHome', 'Settings home', domains().home.id, 'CONSOLE_DOMAINS_FILE', 'The domain whose console scope stores these settings.'),
     entry('version', 'Version', config.version, 'CONSOLE_VERSION'),
     entry('listen', 'Listens on', `${config.host}:${config.port}`, 'HOST, PORT'),
     entry(
@@ -342,14 +435,7 @@ function consoleDeployment(): DeploymentSettingView[] {
     entry('parquetCacheMaxBytes', 'Parquet cache budget', config.parquetCacheMaxBytes, 'CONSOLE_PARQUET_CACHE_MAX_BYTES'),
     entry('corsOrigin', 'CORS origin', config.corsOrigin, 'CONSOLE_CORS_ORIGIN'),
     entry('serveClient', 'Serves the web app', config.serveClient, 'CONSOLE_SERVE_CLIENT'),
-    entry(
-      'serviceToken',
-      'Service token',
-      config.serviceToken ? 'configured' : 'not configured',
-      'CONSOLE_SERVICE_TOKEN',
-      'What the console reads its live views with. Without it the fleet, details and topics are read as a guest.',
-    ),
-    entry('sessionCookieName', 'Session cookie', config.sessionCookieName, 'CONSOLE_SESSION_COOKIE', 'Renaming it signs everyone out.'),
+    entry('sessionCookieName', 'Session cookies', `${config.sessionCookieName}_<domain>`, 'CONSOLE_SESSION_COOKIE', 'One per domain. Renaming them signs everyone out.'),
     entry(
       'cookieSecure',
       'Secure cookie',

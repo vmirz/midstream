@@ -218,10 +218,11 @@ async function finished(run: Run): Promise<Run> {
 
 function browse(request: Partial<RunRequest> = {}): InstanceType<typeof BrowseRun> {
   return new BrowseRun({
+    domain: 'domain_a',
     materializationId: 'mat-test',
     ownerId: 'usr-test',
     tableName: 'orders',
-    datasets: [{ id: 'ds-000000000001', name: 'shop' }],
+    datasets: [{ domain: 'domain_a', id: 'ds-000000000001', name: 'shop' }],
     request: { kind: 'browse', range: { from: null, to: null }, ...request },
     catalog,
     columns,
@@ -235,10 +236,11 @@ function statement(
   tableName = 'orders',
 ): InstanceType<typeof StatementRun> {
   return new StatementRun({
+    domain: 'domain_a',
     materializationId: 'mat-test',
     ownerId: 'usr-test',
     tableName,
-    datasets: [{ id: 'ds-000000000001', name: 'shop' }],
+    datasets: [{ domain: 'domain_a', id: 'ds-000000000001', name: 'shop' }],
     request: { kind: 'sql', range, sql },
     catalog,
     columns,

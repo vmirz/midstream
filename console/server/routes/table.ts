@@ -1,12 +1,14 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
-import { SERVICE, controlPlane } from '../controlPlane/client.ts';
-import { authOf, callerOf, permit, permitAnywhere } from '../auth/guard.ts';
+import { SERVICE } from '../controlPlane/client.ts';
+import { consoleBaseUrl } from '../consoleUrl.ts';
+import type { Domain } from '../domains/domain.ts';
+import { authOf, callerOf, domainOf, permit, permitAnywhere } from '../auth/guard.ts';
 import { can } from '../auth/principal.ts';
-import { config, dataAccessMode } from '../config.ts';
+import { dataAccessMode } from '../config.ts';
 import { ConsoleError } from '../errors.ts';
-import { liveStore, tableSpec } from '../live/store.ts';
+import { tableSpec } from '../live/store.ts';
 import { logger } from '../logger.ts';
 import { unreadableTable } from '../data/catalog.ts';
 import { compactionDue, type CompactionThresholds } from '../iceberg/compaction.ts';
@@ -38,38 +40,46 @@ const DEFAULT_HOT_PARTITION_DELAY_MINUTES = 60;
 const SETTINGS_TTL_MS = 60_000;
 
 interface Defaults extends CompactionThresholds {
-  connection: CatalogConnection;
+  catalogEnabled: boolean;
   readAt: number;
 }
 
-let defaults: Defaults | null = null;
+/** Each domain's, by id. */
+const defaults = new Map<string, Defaults>();
 
 /**
- * What the Table tab needs from the settings: the runtimes' compaction thresholds, and where
- * engines reach the catalog. Read with the console's own credential, which may read settings, and
- * kept a minute; a control plane that cannot say falls back to the shipped defaults.
+ * What the Table tab needs from a domain's settings: its runtimes' compaction thresholds, and whether
+ * its catalog is on. Read with the domain's service token, which may read settings, and kept a
+ * minute; a control plane that cannot say falls back to the shipped defaults.
  */
-async function tableDefaults(): Promise<Defaults> {
-  if (defaults && Date.now() - defaults.readAt < SETTINGS_TTL_MS) return defaults;
+async function tableDefaults(domain: Domain): Promise<Defaults> {
+  const kept = defaults.get(domain.id);
+  if (kept && Date.now() - kept.readAt < SETTINGS_TTL_MS) return kept;
   const [runtime, controlPlaneScope] = await Promise.all([
-    controlPlane.settingsScope(SERVICE, 'runtime').catch((cause: unknown) => logUnavailable(cause, 'runtime')),
-    controlPlane.settingsScope(SERVICE, 'control-plane').catch((cause: unknown) => logUnavailable(cause, 'control-plane')),
+    domain.controlPlane.settingsScope(SERVICE, 'runtime').catch((cause: unknown) => logUnavailable(cause, 'runtime')),
+    domain.controlPlane.settingsScope(SERVICE, 'control-plane').catch((cause: unknown) => logUnavailable(cause, 'control-plane')),
   ]);
   const setting = (scope: CpSettingsScope | null, key: string): unknown => scope?.settings?.find((item) => item.key === key)?.value;
-  const deployed = (key: string): unknown => controlPlaneScope?.deployment?.find((item) => item.key === key)?.value;
-  const base = typeof deployed('catalog_base_url') === 'string' && deployed('catalog_base_url') ? String(deployed('catalog_base_url')) : null;
-  defaults = {
+  const read: Defaults = {
     smallFileBytes: numberOr(setting(runtime, 'compaction_small_file_bytes'), DEFAULT_SMALL_FILE_BYTES),
     minInputFiles: numberOr(setting(runtime, 'compaction_min_input_files'), DEFAULT_MIN_INPUT_FILES),
     hotPartitionDelayMinutes: numberOr(setting(runtime, 'compaction_hot_partition_delay_minutes'), DEFAULT_HOT_PARTITION_DELAY_MINUTES),
-    connection: {
-      uri: `${(base ?? config.controlPlaneUrl).replace(/\/+$/, '').replace(/\/catalog$/, '')}/catalog`,
-      configured: base !== null,
-      enabled: setting(controlPlaneScope, 'catalog_api_enabled') !== false,
-    },
+    catalogEnabled: setting(controlPlaneScope, 'catalog_api_enabled') !== false,
     readAt: Date.now(),
   };
-  return defaults;
+  defaults.set(domain.id, read);
+  return read;
+}
+
+/**
+ * Where engines reach the catalog (handbook 20): the console's federated catalog, whose namespaces
+ * are `<domain>.<dataset>`, and this domain's own, whose namespaces are its datasets - for an engine
+ * that does not read nested namespaces. Both are the console's, which passes each request to the
+ * domain with the engine's own token.
+ */
+function connectionOf(request: FastifyRequest, domain: Domain, enabled: boolean): CatalogConnection {
+  const base = consoleBaseUrl(request);
+  return { uri: `${base}/d/${domain.id}/catalog`, federatedUri: `${base}/catalog`, domain: domain.id, configured: true, enabled };
 }
 
 function logUnavailable(cause: unknown, scope: string): null {
@@ -88,15 +98,16 @@ export async function registerTableRoutes(app: FastifyInstance): Promise<void> {
    * itself — snapshots, files by partition, properties. Either half may be missing; the other still
    * answers.
    */
-  app.get('/api/materializations/:materializationId/tables/:table', { preHandler: permit('materializations.view_details') }, async (request): Promise<TableView> => {
+  app.get('/materializations/:materializationId/tables/:table', { preHandler: permit('materializations.view_details') }, async (request): Promise<TableView> => {
     const id = materializationId(request);
-    const detail = await liveStore.getDetail(id);
+    const detail = await domainOf(request).live.getDetail(id);
     const spec = tableSpec(detail, (request.params as { table?: string }).table ?? '');
     const table = spec.name;
     // Snapshots, files and maintenance are anyone's who may see the materialization; what describes
     // the table's fields is only for those who may see its dataset's schemas.
     const schemaVisible = can(authOf(request).state.principal, 'dataset.view_schema', spec.dataset_id);
-    const [record, settings] = await Promise.all([tableRecord(request, id, table), tableDefaults()]);
+    const domain = domainOf(request);
+    const [record, settings] = await Promise.all([tableRecord(request, id, table), tableDefaults(domain)]);
     const location = record?.location ?? detail.tables.find((summary) => summary.name === table)?.location ?? null;
     let metadata: TableMetadataView | null = null;
     let metadataError: string | null = null;
@@ -112,7 +123,7 @@ export async function registerTableRoutes(app: FastifyInstance): Promise<void> {
         metadataError = unreadableTable(location, cause).message;
       }
     }
-    return { materializationId: id, table, record, metadata, metadataError, connection: settings.connection };
+    return { materializationId: id, table, record, metadata, metadataError, connection: connectionOf(request, domain, settings.catalogEnabled) };
   });
 
   /**
@@ -120,24 +131,25 @@ export async function registerTableRoutes(app: FastifyInstance): Promise<void> {
    * every table, kept ones included. The maintenance app runs it, whether or not the runtime runs,
    * and reports back.
    */
-  app.post('/api/materializations/:materializationId/maintenance', { preHandler: permit('materializations.maintain') }, async (request, reply) => {
+  app.post('/materializations/:materializationId/maintenance', { preHandler: permit('materializations.maintain') }, async (request, reply) => {
     const id = materializationId(request);
     const body = parseBody(maintenanceSchema, request.body);
-    const table = body.table ? tableSpec(await liveStore.getDetail(id), body.table).name : null;
-    const accepted = await controlPlane.maintain(callerOf(request), id, body.job, table);
-    liveStore.wake();
+    const table = body.table ? tableSpec(await domainOf(request).live.getDetail(id), body.table).name : null;
+    const accepted = await domainOf(request).controlPlane.maintain(callerOf(request), id, body.job, table);
+    domainOf(request).live.wake();
     return reply.code(202).send(accepted);
   });
 
   /** Where external engines reach the catalog, for the Connect panel and the access-token page. */
-  app.get('/api/catalog/connection', { preHandler: permitAnywhere('catalog.read') }, async (): Promise<CatalogConnection> => {
-    return (await tableDefaults()).connection;
+  app.get('/catalog/connection', { preHandler: permitAnywhere('catalog.read') }, async (request): Promise<CatalogConnection> => {
+    const domain = domainOf(request);
+    return connectionOf(request, domain, (await tableDefaults(domain)).catalogEnabled);
   });
 }
 
 async function tableRecord(request: FastifyRequest, id: string, table: string): Promise<CpTable | null> {
   try {
-    return await controlPlane.table(callerOf(request), id, table);
+    return await domainOf(request).controlPlane.table(callerOf(request), id, table);
   } catch (cause) {
     if (cause instanceof ConsoleError && cause.statusCode === 404) return null;
     throw cause;
@@ -247,5 +259,5 @@ function snapshotRow(snapshot: TableMetadata['snapshots'][number], currentSnapsh
 
 /** Test seam. */
 export function resetTableDefaults(): void {
-  defaults = null;
+  defaults.clear();
 }

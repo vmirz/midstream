@@ -68,8 +68,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
 
 const dataDir = await mkdtemp(join(tmpdir(), 'console-tail-runs-'));
 process.env.CONSOLE_DATA_DIR = dataDir;
-process.env.CONSOLE_TAIL_URL = `http://127.0.0.1:${port}/`;
-process.env.CONSOLE_SERVICE_TOKEN = 'console-service-credential-0123456789abcdef';
+/** The domain whose tail app the stub is: its URL, and its service token. */
+const TARGET = { name: 'Domain A', tailUrl: `http://127.0.0.1:${port}`, serviceToken: 'console-service-credential-0123456789abcdef' };
 
 const { setObjectReader } = await import('../iceberg/io.ts');
 const { setObjectPathResolver } = await import('../data/objects.ts');
@@ -114,8 +114,8 @@ const TAILS: Record<string, FixtureAnswer[]> = { orders: ORDERS_TAIL.answers, pa
 const MATERIALIZATION = 'mat-a1b2c3d4e5f6';
 const PERSON = { kind: 'user' as const, token: 'tok-person-0001' };
 const TABLES = [
-  { name: 'orders', dataset: 'shop', datasetId: 'ds-000000000001', location: FIXTURE_LOCATION },
-  { name: 'payments', dataset: 'finance', datasetId: 'ds-000000000002', location: PAYMENTS_LOCATION },
+  { domain: 'domain_a', name: 'orders', dataset: 'shop', datasetId: 'ds-000000000001', location: FIXTURE_LOCATION },
+  { domain: 'domain_a', name: 'payments', dataset: 'finance', datasetId: 'ds-000000000002', location: PAYMENTS_LOCATION },
 ];
 /** Rows the orders table holds at its current snapshot. */
 const COMMITTED_ROWS = 12;
@@ -165,7 +165,7 @@ function access(options: { off?: { reason: string; message: string } | null; tim
   return {
     off: options.off ?? null,
     fetch: (table, after, signal) =>
-      fetchTail(PERSON, { materializationId: MATERIALIZATION, table, after, maxRows: 100_000, timeoutMs: options.timeoutMs ?? 3_000, signal }),
+      fetchTail(TARGET, PERSON, { materializationId: MATERIALIZATION, table, after, maxRows: 100_000, timeoutMs: options.timeoutMs ?? 3_000, signal }),
   };
 }
 
@@ -185,7 +185,7 @@ async function settled(run: Run): Promise<Run> {
 
 async function started(request: Partial<RunRequest> = {}, tail: TailAccess | null = access()): Promise<Run> {
   const full: RunRequest = { kind: 'browse', range: ALL_TIME, ...request } as RunRequest;
-  return settled(await startRun({ materializationId: MATERIALIZATION, ownerId: 'usr-test', tables: TABLES, request: full, tail }));
+  return settled(await startRun({ domain: 'domain_a', materializationId: MATERIALIZATION, ownerId: 'usr-test', tables: TABLES, request: full, tail }));
 }
 
 async function refreshed(run: Run, tail: TailAccess | null = access(), range: TimeRange | null = null): Promise<{ replaced: boolean; run: Run }> {
@@ -274,7 +274,7 @@ describe('a browse run with a live tail', () => {
     assert.equal(seen.length, 1);
     assert.deepEqual(seen[0]?.after, ORDERS_TAIL.committed, 'past the snapshot’s offsets');
     assert.equal(seen[0]?.headers.authorization, `Bearer ${PERSON.token}`);
-    assert.equal(seen[0]?.headers['x-console-token'], config.serviceToken);
+    assert.equal(seen[0]?.headers['x-console-token'], TARGET.serviceToken);
     assert.equal(seen[0]?.query.get('max_rows'), '100000');
     assert.equal(seen[0]?.query.get('wait_ms'), '2500', 'the tail app answers before the console gives up');
   });
@@ -312,6 +312,7 @@ describe('a browse run with a live tail', () => {
 
   it('reads no tail as of an older snapshot, nor when the request says no', async () => {
     const pinned = await startRun({
+      domain: 'domain_a',
       materializationId: MATERIALIZATION,
       ownerId: 'usr-test',
       tables: TABLES,
@@ -527,7 +528,7 @@ describe('refreshing a run', () => {
 
   it('replaces a run that was cancelled or failed', async () => {
     respond = () => ({ status: 200, hang: true });
-    const run = await startRun({ materializationId: MATERIALIZATION, ownerId: 'usr-test', tables: TABLES, request: { kind: 'browse', range: ALL_TIME }, tail: access() });
+    const run = await startRun({ domain: 'domain_a', materializationId: MATERIALIZATION, ownerId: 'usr-test', tables: TABLES, request: { kind: 'browse', range: ALL_TIME }, tail: access() });
     run.cancel();
     await settled(run);
     assert.equal(run.state, 'cancelled');

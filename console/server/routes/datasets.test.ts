@@ -10,13 +10,13 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 import { installTestAuth, testPrincipal } from '../auth/testing.ts';
-import { controlPlane } from '../controlPlane/client.ts';
+import { installTestDomains } from '../domains/testing.ts';
 import { ConsoleError } from '../errors.ts';
 import { setObjectReader } from '../iceberg/io.ts';
 import { resetSnapshotCaches } from '../iceberg/snapshot.ts';
 import { resetTables } from '../iceberg/table.ts';
 import { fixtureReader } from '../iceberg/testing.ts';
-import { liveStore, visibleDetail } from '../live/store.ts';
+import { visibleDetail } from '../live/store.ts';
 import { registerDataRoutes } from './data.ts';
 import { registerDatasetRoutes } from './datasets.ts';
 import { registerMaterializationRoutes } from './materializations.ts';
@@ -99,6 +99,9 @@ function schema(spec: CpTableSpec): CpSchema {
   };
 }
 
+const domain = (await installTestDomains(['domain_a'])).require('domain_a');
+const controlPlane = domain.controlPlane;
+const liveStore = domain.live;
 const original = { ...controlPlane } as Record<string, unknown>;
 const getDetail = liveStore.getDetail.bind(liveStore);
 const getSchema = liveStore.getSchema.bind(liveStore);
@@ -120,10 +123,15 @@ async function app(principal: CpPrincipal): Promise<FastifyInstance> {
     reply.code(error.statusCode ?? 500).send(error instanceof ConsoleError ? error.toBody() : { error: { code: 'internal_error', message: String(error) } }),
   );
   installTestAuth(server, principal);
-  await registerMaterializationRoutes(server);
-  await registerDatasetRoutes(server);
-  await registerDataRoutes(server);
-  await registerSchemaRoutes(server);
+  await server.register(
+    async (scope) => {
+      await registerMaterializationRoutes(scope);
+      await registerDatasetRoutes(scope);
+      await registerDataRoutes(scope);
+      await registerSchemaRoutes(scope);
+    },
+    { prefix: '/api/d/:domain' },
+  );
   return server;
 }
 
@@ -136,7 +144,7 @@ describe('dataset routes', () => {
         return { datasets: [], returned: 0, can_create: true };
       },
     });
-    const response = await (await app(salesWriter())).inject({ url: '/api/datasets?q=orders' });
+    const response = await (await app(salesWriter())).inject({ url: '/api/d/domain_a/datasets?q=orders' });
     assert.equal(response.statusCode, 200);
     assert.deepEqual(asked, { token: 'token-test', q: 'orders' });
   });
@@ -150,7 +158,7 @@ describe('dataset routes', () => {
       },
       identityRequest: async () => ({ request_id: 'idr-1', status: 'applied' }),
     });
-    const response = await (await app(salesWriter())).inject({ method: 'POST', url: '/api/datasets', payload: { name: 'returns', description: 'Refunds' } });
+    const response = await (await app(salesWriter())).inject({ method: 'POST', url: '/api/d/domain_a/datasets', payload: { name: 'returns', description: 'Refunds' } });
     assert.equal(response.statusCode, 201);
     assert.deepEqual(created, { name: 'returns', description: 'Refunds' });
     assert.equal(response.json().name, 'returns');
@@ -161,7 +169,7 @@ describe('dataset routes', () => {
       createDataset: async () => assert.fail('a name the rules refuse never leaves'),
     });
     for (const name of ['Sales', 'sales-eu', 'main', 'select']) {
-      const response = await (await app(salesWriter())).inject({ method: 'POST', url: '/api/datasets', payload: { name } });
+      const response = await (await app(salesWriter())).inject({ method: 'POST', url: '/api/d/domain_a/datasets', payload: { name } });
       assert.equal(response.statusCode, 400, name);
     }
   });
@@ -169,10 +177,10 @@ describe('dataset routes', () => {
   it('turn away changes from someone who manages no dataset', async () => {
     const server = await app(salesWriter());
     for (const [method, url, payload] of [
-      ['PATCH', '/api/datasets/sales', { description: 'x' }],
-      ['DELETE', '/api/datasets/sales', undefined],
-      ['GET', '/api/datasets/sales/grants', undefined],
-      ['PUT', '/api/datasets/sales/grants/usr-2', { role_ids: [] }],
+      ['PATCH', '/api/d/domain_a/datasets/sales', { description: 'x' }],
+      ['DELETE', '/api/d/domain_a/datasets/sales', undefined],
+      ['GET', '/api/d/domain_a/datasets/sales/grants', undefined],
+      ['PUT', '/api/d/domain_a/datasets/sales/grants/usr-2', { role_ids: [] }],
     ] as const) {
       const response = await server.inject({ method, url, ...(payload ? { payload } : {}) });
       assert.equal(response.statusCode, 403, `${method} ${url}`);
@@ -191,7 +199,7 @@ describe('dataset routes', () => {
     const owner = testPrincipal(['datasets.view'], { dataset_permissions: { [SALES]: ['dataset.manage', 'dataset.view_schema'] } });
     const response = await (await app(owner)).inject({
       method: 'PUT',
-      url: '/api/datasets/sales/grants/all-users',
+      url: '/api/d/domain_a/datasets/sales/grants/all-users',
       payload: { role_ids: [], principal_type: 'group' },
     });
     assert.equal(response.statusCode, 200);
@@ -220,7 +228,7 @@ describe('creating a materialization', () => {
       create: async () => accepted,
       identityRequest: async (_caller: unknown, requestId: string) => ((asked = requestId), { request_id: requestId, status: 'applied' }),
     });
-    const response = await (await app(salesWriter())).inject({ method: 'POST', url: '/api/materializations', payload: body });
+    const response = await (await app(salesWriter())).inject({ method: 'POST', url: '/api/d/domain_a/materializations', payload: body });
     assert.equal(response.statusCode, 202);
     assert.equal(asked, 'idr-claim-1');
     assert.equal(response.json().claim_status, 'applied');
@@ -238,7 +246,7 @@ describe('creating a materialization', () => {
         details: { index: 0, dataset: 'sales', table: 'orders', source_topic: 'sales.orders' },
       }),
     });
-    const response = await (await app(salesWriter())).inject({ method: 'POST', url: '/api/materializations', payload: body });
+    const response = await (await app(salesWriter())).inject({ method: 'POST', url: '/api/d/domain_a/materializations', payload: body });
     assert.equal(response.statusCode, 409);
     const error = response.json().error;
     assert.equal(error.details.reason, 'table_name_taken');
@@ -254,7 +262,7 @@ describe('reading tables in datasets', () => {
     const range = { from: null, to: null };
     const browse = await server.inject({
       method: 'POST',
-      url: '/api/materializations/mat-a1b2c3d4e5f6/runs',
+      url: '/api/d/domain_a/materializations/mat-a1b2c3d4e5f6/runs',
       payload: { kind: 'browse', table: 'invoices', range },
     });
     assert.equal(browse.statusCode, 403);
@@ -263,7 +271,7 @@ describe('reading tables in datasets', () => {
 
     const joined = await server.inject({
       method: 'POST',
-      url: '/api/materializations/mat-a1b2c3d4e5f6/runs',
+      url: '/api/d/domain_a/materializations/mat-a1b2c3d4e5f6/runs',
       payload: { kind: 'sql', table: 'orders', range, sql: 'SELECT * FROM sales.orders JOIN finance.invoices USING (order_id)' },
     });
     assert.equal(joined.statusCode, 403, 'a statement naming a locked table is refused whatever else it reads');
@@ -271,7 +279,7 @@ describe('reading tables in datasets', () => {
 
     const validated = await server.inject({
       method: 'POST',
-      url: '/api/materializations/mat-a1b2c3d4e5f6/data/validate',
+      url: '/api/d/domain_a/materializations/mat-a1b2c3d4e5f6/data/validate',
       payload: { sql: 'SELECT count(*) FROM finance.invoices' },
     });
     assert.equal(validated.statusCode, 403);
@@ -281,7 +289,7 @@ describe('reading tables in datasets', () => {
     const viewer = testPrincipal(['materializations.view', 'materializations.view_details']);
     const response = await (await app(viewer)).inject({
       method: 'POST',
-      url: '/api/materializations/mat-a1b2c3d4e5f6/runs',
+      url: '/api/d/domain_a/materializations/mat-a1b2c3d4e5f6/runs',
       payload: { kind: 'browse', table: 'orders', range: { from: null, to: null } },
     });
     assert.equal(response.statusCode, 403);
@@ -289,12 +297,12 @@ describe('reading tables in datasets', () => {
 
   it('shows a table’s schema only to someone who may see its dataset’s schemas', async () => {
     const server = await app(salesWriter());
-    assert.equal((await server.inject({ url: '/api/materializations/mat-a1b2c3d4e5f6/tables/orders/schema' })).statusCode, 200);
-    const locked = await server.inject({ url: '/api/materializations/mat-a1b2c3d4e5f6/tables/invoices/schema' });
+    assert.equal((await server.inject({ url: '/api/d/domain_a/materializations/mat-a1b2c3d4e5f6/tables/orders/schema' })).statusCode, 200);
+    const locked = await server.inject({ url: '/api/d/domain_a/materializations/mat-a1b2c3d4e5f6/tables/invoices/schema' });
     assert.equal(locked.statusCode, 403);
     assert.match(locked.json().error.message, /“View schemas” on dataset finance/);
     for (const path of ['schema/versions', 'schema/versions/0', 'schema/diff', 'schema/timeline']) {
-      const response = await server.inject({ url: `/api/materializations/mat-a1b2c3d4e5f6/tables/invoices/${path}` });
+      const response = await server.inject({ url: `/api/d/domain_a/materializations/mat-a1b2c3d4e5f6/tables/invoices/${path}` });
       assert.equal(response.statusCode, 403, path);
     }
   });
@@ -304,7 +312,7 @@ describe('reading tables in datasets', () => {
     setObjectReader(fixtureReader());
     try {
       const server = await app(salesWriter());
-      const response = await server.inject({ url: '/api/materializations/mat-a1b2c3d4e5f6/tables/orders/schema/timeline' });
+      const response = await server.inject({ url: '/api/d/domain_a/materializations/mat-a1b2c3d4e5f6/tables/orders/schema/timeline' });
       assert.equal(response.statusCode, 200);
       const timeline = response.json();
       assert.equal(timeline.available, true);

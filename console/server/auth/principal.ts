@@ -1,17 +1,18 @@
 /**
- * Who is making a request to the console, as the control plane says.
+ * Who is making a request to the console, as each domain's control plane says.
  *
- * The control plane is the authority on sessions and permissions; the console asks it and keeps
- * the answer for `CONSOLE_SESSION_CHECK_MS` (5 s by default), keyed by a hash of the token, so a
- * busy page costs the control plane one check per session per interval. Deactivating someone or
- * ending their sessions therefore reaches the console within that interval, and the control plane
- * itself refuses their very next request to it.
+ * Every domain is the authority on its own sessions and permissions (handbook 20): a person has a
+ * session in each domain they signed in to, and is a guest in the others. The console asks the
+ * domain and keeps the answer for `CONSOLE_SESSION_CHECK_MS` (5 s by default), keyed by the domain
+ * and a hash of the token, so a busy page costs each control plane one check per session per
+ * interval. Deactivating someone or ending their sessions therefore reaches the console within that
+ * interval, and the control plane itself refuses their very next request to it.
  */
 
 import { createHash } from 'node:crypto';
 
 import { config } from '../config.ts';
-import { controlPlane } from '../controlPlane/client.ts';
+import type { Domain } from '../domains/domain.ts';
 import { ConsoleError } from '../errors.ts';
 import { logger } from '../logger.ts';
 import { can as holds, canAnywhere as holdsAnywhere } from '../../shared/access.ts';
@@ -37,8 +38,14 @@ const CACHE_LIMIT = 10_000;
 /** How long past its check interval a session is still trusted while the control plane is unreachable. */
 const OUTAGE_GRACE_MS = 60_000;
 
+/** Checked sessions, keyed `<domain id>:<token hash>`. */
 const sessions = new Map<string, CachedAuth>();
-let guest: CachedAuth | null = null;
+/** What a guest may do, per domain. */
+const guests = new Map<string, CachedAuth>();
+
+function sessionKey(domain: Domain, token: string): string {
+  return `${domain.id}:${tokenKey(token)}`;
+}
 
 export function tokenKey(token: string): string {
   return createHash('sha256').update(token).digest('base64url');
@@ -87,17 +94,17 @@ export function canAnywhere(principal: CpPrincipal, permission: string): boolean
   return holdsAnywhere({ ...principal, password_change_required: false }, permission);
 }
 
-/** Resolve a request's caller from its session token, or as a guest when it has none. */
-export async function resolveAuth(token: string | null): Promise<RequestAuth> {
-  if (!token) return guestAuth();
-  const key = tokenKey(token);
+/** Resolve a request's caller in one domain from its token there, or as a guest when it has none. */
+export async function resolveAuth(domain: Domain, token: string | null): Promise<RequestAuth> {
+  if (!token) return guestAuth(domain);
+  const key = sessionKey(domain, token);
   const cached = sessions.get(key);
   const now = Date.now();
   if (cached && now - cached.checkedAt < config.sessionCheckMs) {
     return { state: cached.auth, token, invalidToken: false, error: null };
   }
   try {
-    const answer = toAuthState(await controlPlane.session({ kind: 'user', token }));
+    const answer = toAuthState(await domain.controlPlane.session({ kind: 'user', token }));
     if (!answer.authenticated) {
       sessions.delete(key);
       return { state: answer, token: null, invalidToken: true, error: null };
@@ -109,20 +116,21 @@ export async function resolveAuth(token: string | null): Promise<RequestAuth> {
     if (cached && now - cached.checkedAt < config.sessionCheckMs + OUTAGE_GRACE_MS) {
       return { state: cached.auth, token, invalidToken: false, error: null };
     }
-    logger.debug({ err: cause }, 'session could not be checked with the control plane');
+    logger.debug({ err: cause, domain: domain.id }, 'session could not be checked with the control plane');
     return { state: offline(), token, invalidToken: false, error };
   }
 }
 
-/** A guest's permissions, as the Guest group grants them now. */
-export async function guestAuth(): Promise<RequestAuth> {
+/** A guest's permissions in one domain, as its Guest group grants them now. */
+export async function guestAuth(domain: Domain): Promise<RequestAuth> {
   const now = Date.now();
+  const guest = guests.get(domain.id);
   if (guest && now - guest.checkedAt < config.sessionCheckMs) {
     return { state: guest.auth, token: null, invalidToken: false, error: null };
   }
   try {
-    const answer = toAuthState(await controlPlane.session({ kind: 'user', token: null }));
-    guest = { auth: answer, checkedAt: now };
+    const answer = toAuthState(await domain.controlPlane.session({ kind: 'user', token: null }));
+    guests.set(domain.id, { auth: answer, checkedAt: now });
     return { state: answer, token: null, invalidToken: false, error: null };
   } catch (cause) {
     if (guest && now - guest.checkedAt < config.sessionCheckMs + OUTAGE_GRACE_MS) {
@@ -132,26 +140,29 @@ export async function guestAuth(): Promise<RequestAuth> {
   }
 }
 
-/** Keep a session the control plane just vouched for, as after a sign-in or a renewal. */
-export function rememberSession(token: string, session: CpAuthSession): AuthState {
+/** Keep a session a domain's control plane just vouched for, as after a sign-in or a renewal. */
+export function rememberSession(domain: Domain, token: string, session: CpAuthSession): AuthState {
   const state = toAuthState(session);
-  remember(tokenKey(token), state, Date.now());
+  remember(sessionKey(domain, token), state, Date.now());
   return state;
 }
 
 /** Forget one session, as when it is signed out. */
-export function forgetSession(token: string): void {
-  sessions.delete(tokenKey(token));
+export function forgetSession(domain: Domain, token: string): void {
+  sessions.delete(sessionKey(domain, token));
 }
 
 /**
- * Forget every session and the guest's permissions, so the next request of each is checked again.
- * Called after a change to users, groups or roles made through this console, which may change
- * what anyone may do.
+ * Forget every session of a domain and its guest's permissions, so the next request of each is
+ * checked again. Called after a change to users, groups or roles made through this console, which
+ * may change what anyone may do in that domain - and in no other.
  */
-export function forgetAllSessions(): void {
-  sessions.clear();
-  guest = null;
+export function forgetAllSessions(domain: Domain): void {
+  const prefix = `${domain.id}:`;
+  for (const key of [...sessions.keys()]) {
+    if (key.startsWith(prefix)) sessions.delete(key);
+  }
+  guests.delete(domain.id);
 }
 
 function remember(key: string, auth: AuthState, checkedAt: number): void {

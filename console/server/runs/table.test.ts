@@ -36,8 +36,8 @@ const LOCATION = FIXTURE_LOCATION;
 /** The materialization's tables, as the control plane lists them. */
 /** The materialization's two tables, in two datasets: SQL reads `shop.orders` and `finance.payments`. */
 const TABLES = [
-  { name: 'orders', dataset: 'shop', datasetId: 'ds-000000000001', location: LOCATION },
-  { name: 'payments', dataset: 'finance', datasetId: 'ds-000000000002', location: PAYMENTS_LOCATION },
+  { domain: 'domain_a', name: 'orders', dataset: 'shop', datasetId: 'ds-000000000001', location: LOCATION },
+  { domain: 'domain_a', name: 'payments', dataset: 'finance', datasetId: 'ds-000000000002', location: PAYMENTS_LOCATION },
 ];
 const admit = async (): Promise<() => void> => () => undefined;
 
@@ -67,10 +67,11 @@ function runOver(catalog: Catalog): InstanceType<typeof BrowseRun> {
 
 function makeBrowse(catalog: Catalog, request: { filters?: Array<{ column: string; operator: 'eq'; value: string }> } = {}): InstanceType<typeof BrowseRun> {
   return new BrowseRun({
+    domain: 'domain_a',
     materializationId: 'mat-a1b2c3d4e5f6',
     ownerId: 'usr-test',
     tableName: 'orders',
-    datasets: [{ id: 'ds-000000000001', name: 'shop' }],
+    datasets: [{ domain: 'domain_a', id: 'ds-000000000001', name: 'shop' }],
     request: { kind: 'browse', range: { from: null, to: null }, ...request },
     catalog,
     columns: logicalColumns(catalog.schema, catalog.forkMap),
@@ -81,10 +82,11 @@ function makeBrowse(catalog: Catalog, request: { filters?: Array<{ column: strin
 function statementOver(catalog: Catalog, sql: string): InstanceType<typeof StatementRun> {
   const columns = logicalColumns(catalog.schema, catalog.forkMap);
   return new StatementRun({
+    domain: 'domain_a',
     materializationId: 'mat-a1b2c3d4e5f6',
     ownerId: 'usr-test',
     tableName: 'orders',
-    datasets: [{ id: 'ds-000000000001', name: 'shop' }],
+    datasets: [{ domain: 'domain_a', id: 'ds-000000000001', name: 'shop' }],
     request: { kind: 'sql', range: { from: null, to: null }, sql },
     catalog,
     columns,
@@ -102,7 +104,7 @@ async function finished<T extends Run>(run: T): Promise<T> {
 
 /** Start a run as the route does, over both tables, and wait for it to end. */
 async function started(request: RunRequest): Promise<Run> {
-  const run = await startRun({ materializationId: 'mat-a1b2c3d4e5f6', ownerId: 'usr-test', tables: TABLES, request });
+  const run = await startRun({ domain: 'domain_a', materializationId: 'mat-a1b2c3d4e5f6', ownerId: 'usr-test', tables: TABLES, request });
   if (!run.isTerminal()) {
     await new Promise<void>((resolve) => {
       const stop = run.subscribe((snapshot) => {
@@ -287,6 +289,7 @@ describe('a run over an Iceberg table', () => {
       assert.rejects(
         () =>
           startRun({
+            domain: 'domain_a',
             materializationId: 'mat-a1b2c3d4e5f6',
             ownerId: 'usr-test',
             tables: TABLES,

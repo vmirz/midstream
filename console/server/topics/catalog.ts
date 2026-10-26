@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import { gzip as gzipCallback } from 'node:zlib';
 
 import { config } from '../config.ts';
-import { SERVICE, controlPlane } from '../controlPlane/client.ts';
+import { SERVICE, type ControlPlaneClient } from '../controlPlane/client.ts';
 import { ConsoleError, unavailable } from '../errors.ts';
 import { logger } from '../logger.ts';
 import type { CpTopicList, TopicCatalogResponse } from '../../shared/types.ts';
@@ -181,12 +181,15 @@ export function acceptsGzip(header: string | undefined): boolean {
   });
 }
 
-// Getters, so a change made on the Settings page applies to the next read.
-export const topicCatalog = new TopicCatalog((refresh) => controlPlane.topics(SERVICE, refresh), {
-  get ttlMs() {
-    return config.topicCatalogTtlMs;
-  },
-  get minRefreshMs() {
-    return config.topicCatalogMinRefreshMs;
-  },
-});
+/** One domain's topic catalog, read with its service token. */
+export function topicCatalogFor(controlPlane: ControlPlaneClient): TopicCatalog {
+  // Getters, so a change made on the Settings page applies to the next read.
+  return new TopicCatalog((refresh) => controlPlane.topics(SERVICE, refresh), {
+    get ttlMs() {
+      return config.topicCatalogTtlMs;
+    },
+    get minRefreshMs() {
+      return config.topicCatalogMinRefreshMs;
+    },
+  });
+}
