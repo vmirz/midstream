@@ -20,13 +20,11 @@ afterEach(() => {
 });
 
 describe('control plane compatibility', () => {
-  it('needs 4.0 or later, and cannot say for an unknown version', () => {
-    assert.equal(compatibleControlPlane('4.0.0'), true);
-    assert.equal(compatibleControlPlane('4.2.1'), true);
-    assert.equal(compatibleControlPlane('3.1.0'), false, 'a create could choose its destination; no month partitions');
-    assert.equal(compatibleControlPlane('2.0.0'), false, 'tables in the materialization\'s namespace, no datasets');
-    assert.equal(compatibleControlPlane('1.0.0'), false, 'one topic per materialization, one table each');
-    assert.equal(compatibleControlPlane('0.7.0'), false);
+  it('needs 1.0 or later, and cannot say for an unknown version', () => {
+    assert.equal(compatibleControlPlane('1.0.0'), true);
+    assert.equal(compatibleControlPlane('1.0.0rc1'), true, 'a release candidate reports the release it leads to');
+    assert.equal(compatibleControlPlane('1.2.1'), true);
+    assert.equal(compatibleControlPlane('0.9.0'), false, 'nothing before the first release');
     assert.equal(compatibleControlPlane(null), null);
     assert.equal(compatibleControlPlane('dev'), null);
   });

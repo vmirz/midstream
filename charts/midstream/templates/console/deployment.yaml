@@ -35,10 +35,18 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      # The image runs as node (uid 1000); the group lets it write its cache volume.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: console
           image: "{{ .Values.console.image.repository }}:{{ default .Chart.AppVersion .Values.console.image.tag }}"
           imagePullPolicy: {{ .Values.console.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
           env:
             - name: PORT
               value: {{ .Values.console.port | quote }}
