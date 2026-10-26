@@ -44,6 +44,7 @@ aspirational design prose.
 | `/AGENTS.md` | Short always-on agent instructions: commands, project map, guardrails. Read first, kept under 300 lines. |
 | `/docs/source-of-truth.md` | Condensed single-file end-to-end narrative. Good for a one-shot overview; this handbook is the deep reference. |
 | `/console/docs/` | The Midstream Console's own handbook (17 documents), cited here as `console <n>`. |
+| `/docs/design/` | Design specifications: `few-second-freshness.md` (the live tail, built as handbook 19) and `multi-domain.md` (domains and the shared console: any number of control planes under one console with single sign-on; agreed 2026-10-26, not yet built). |
 
 ---
 

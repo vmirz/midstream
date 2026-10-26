@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 204" width="760" role="img" aria-label="The federated catalog proxies each request to the table's domain" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8c959f"/></marker>
+  </defs>
+  <text x="24" y="28" font-size="15" font-weight="600" fill="#1f2328">The federated catalog proxies each request to the table's domain</text>
+
+  <rect x="24" y="56" width="156" height="72" rx="8" fill="none" stroke="#8c959f" stroke-width="1.25"/>
+  <text x="36" y="80" font-weight="600" fill="#1f2328">Engine</text>
+  <text x="36" y="96" font-size="11.5" fill="#1f2328">any Iceberg engine</text>
+  <text x="36" y="112" font-size="11.5" fill="#1f2328">one token, one URL</text>
+
+  <rect x="209" y="56" width="156" height="72" rx="8" fill="#0969da" fill-opacity="0.12" stroke="#0969da" stroke-width="2"/>
+  <text x="221" y="80" font-weight="600" fill="#1f2328">Console /catalog</text>
+  <text x="221" y="96" font-size="11.5" fill="#1f2328">domain_a.sales.orders</text>
+  <text x="221" y="112" font-size="11.5" fill="#1f2328">token passed through</text>
+
+  <rect x="394" y="56" width="156" height="72" rx="8" fill="none" stroke="#8c959f" stroke-width="1.25"/>
+  <text x="406" y="80" font-weight="600" fill="#1f2328">Domain A /catalog</text>
+  <text x="406" y="96" font-size="11.5" fill="#1f2328">sales.orders</text>
+  <text x="406" y="112" font-size="11.5" fill="#1f2328">verifies the token</text>
+
+  <rect x="579" y="56" width="156" height="72" rx="8" fill="none" stroke="#8c959f" stroke-width="1.25"/>
+  <text x="591" y="80" font-weight="600" fill="#1f2328">Bucket A</text>
+  <text x="591" y="96" font-size="11.5" fill="#1f2328">metadata, data files</text>
+  <text x="591" y="112" font-size="11.5" fill="#1f2328">read by the engine</text>
+
+  <g fill="none" stroke="#8c959f" stroke-width="1.25">
+    <path d="M180 92H209" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+    <path d="M365 92H394" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+    <path d="M102 128V160H657V128" marker-end="url(#arrow)"/>
+  </g>
+  <text x="380" y="178" text-anchor="middle" font-size="11.5" fill="#656d76">the engine reads metadata and data files itself, with its own access</text>
+</svg>
