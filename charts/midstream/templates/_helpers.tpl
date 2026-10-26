@@ -89,13 +89,22 @@ size: {{ .size }}
 deleteClaim: true
 {{- end -}}
 
+{{/*
+Where a Kaspr pod is placed: the app's own nodeSelector, tolerations and affinity when it sets them,
+kaspr's otherwise, which also place every runtime. Called with (dict "root" $ "own" <the app's values>).
+*/}}
 {{- define "midstream.podScheduling" -}}
-{{- with .Values.kaspr.nodeSelector }}
+{{- $own := .own | default dict -}}
+{{- with $own.nodeSelector | default .root.Values.kaspr.nodeSelector }}
 nodeSelector:
   {{- toYaml . | nindent 2 }}
 {{- end }}
-{{- with .Values.kaspr.tolerations }}
+{{- with $own.tolerations | default .root.Values.kaspr.tolerations }}
 tolerations:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with $own.affinity | default .root.Values.kaspr.affinity }}
+affinity:
   {{- toYaml . | nindent 2 }}
 {{- end }}
 {{- end -}}
@@ -151,7 +160,7 @@ pythonPackages:
   {{- include "midstream.pythonPackages" . | nindent 2 }}
 template:
   pod:
-    {{- include "midstream.podScheduling" . | nindent 4 }}
+    {{- include "midstream.podScheduling" (dict "root" . "own" .Values.controlPlane.runtime) | nindent 4 }}
     {{- include "midstream.gcsVolumes" . | nindent 4 }}
   kasprContainer:
     env:

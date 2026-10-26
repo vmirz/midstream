@@ -39,8 +39,12 @@ kaspr:
   #     passwordSecret: {secretName: midstream-kafka, passwordKey: password}
   authentication: {}
   storageClass: ""           # for every persistent claim; empty takes the cluster's default
+  # Where every Kaspr pod is placed, the runtimes included: a node selector, tolerations for
+  # tainted nodes, and affinity, as Kubernetes spells them. Each app below, and the runtimes, may
+  # set their own instead; empty means these.
   nodeSelector: {}
   tolerations: []
+  affinity: {}
 
 gcs:
   # A Secret holding a service-account key under `credentialsKey`. Every app and runtime mounts it
@@ -58,6 +62,9 @@ auth:
 controlPlane:
   replicas: 1
   webPort: 6065
+  nodeSelector: {}              # empty: kaspr.nodeSelector
+  tolerations: []               # empty: kaspr.tolerations
+  affinity: {}                  # empty: kaspr.affinity
   storage:
     size: 1Gi
   resources:
@@ -93,6 +100,9 @@ controlPlane:
   # The spec every materialization's runtime is rendered from (handbook 02 §2.3, 10 §10.1): the
   # control plane sets each runtime's replicas, storage size and package pin on top of it.
   runtime:
+    nodeSelector: {}            # where every runtime member runs; empty: kaspr.nodeSelector
+    tolerations: []             # empty: kaspr.tolerations
+    affinity: {}                # empty: kaspr.affinity
     resources:
       requests:
         cpu: 0.5
@@ -119,6 +129,9 @@ controlPlane:
 # since tables left unmaintained grow small files and old snapshots without end.
 maintenance:
   replicas: 1
+  nodeSelector: {}              # empty: kaspr.nodeSelector
+  tolerations: []               # empty: kaspr.tolerations
+  affinity: {}                  # empty: kaspr.affinity
   requestPartitions: 6          # bounds the members that share the tables; changing it moves every table
   maxConcurrentJobs: 1
   storage:
@@ -147,6 +160,9 @@ tail:
   enabled: true
   replicas: 2
   webPort: 6065
+  nodeSelector: {}              # empty: kaspr.nodeSelector
+  tolerations: []               # empty: kaspr.tolerations
+  affinity: {}                  # empty: kaspr.affinity
   requestPartitions: 64         # bounds the members and routes the tables; changing it moves every table
   memoryBudgetBytes: 2684354560
   storage:
@@ -196,8 +212,10 @@ console:
     enabled: false              # keep the Parquet cache across restarts
     size: 10Gi
     storageClass: ""
+  # The console is not a Kaspr pod and does not follow kaspr.*: place it here.
   nodeSelector: {}
   tolerations: []
+  affinity: {}
   service:
     type: ClusterIP
 
