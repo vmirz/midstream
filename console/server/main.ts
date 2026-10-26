@@ -24,6 +24,7 @@ import { registerSchemaRoutes } from './routes/schema.ts';
 import { registerTableRoutes } from './routes/table.ts';
 import { registerSearchRoutes } from './routes/search.ts';
 import { registerSsoRoutes } from './routes/sso.ts';
+import { RevocationSync } from './auth/revocations.ts';
 import { registerConsoleSettingsRoutes, registerSettingsRoutes } from './routes/settings.ts';
 import { registerFleetStreamRoutes, registerStreamRoutes } from './routes/stream.ts';
 import { registerSystemRoutes } from './routes/system.ts';
@@ -113,9 +114,13 @@ async function main(): Promise<void> {
   // until they have been read.
   consoleSettings().start();
   served.start();
+  // Token revocations reach every domain: at once from the revoke, and every five minutes after.
+  const revocations = new RevocationSync(() => served.served());
+  revocations.start();
 
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'shutting down console');
+    revocations.stop();
     served.stop();
     consoleSettings().stop();
     await app.close();

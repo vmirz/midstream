@@ -3,6 +3,7 @@ import { useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 import { AccountSection } from './AccountSection';
+import { FederatedTokens } from './FederatedTokens';
 import { describeMethod } from './logic';
 import { DomainDot } from '@/components/DomainChip';
 import { Button, EmptyState, Panel, PanelHeader, Skeleton } from '@/components/ui/primitives';
@@ -110,6 +111,8 @@ export function AccountOverview({ domainId }: { domainId: string | null }): Reac
           })}
         </ul>
       </Panel>
+
+      {signedIn.length > 0 ? <FederatedTokens /> : null}
 
       {chosen ? (
         <section className="space-y-3" aria-label={`Your account in ${chosen.name}`}>

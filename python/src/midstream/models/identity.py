@@ -37,6 +37,8 @@ DIRECTORY_ACTIONS = (
     "delete_role",
     "create_access_token",
     "revoke_access_token",
+    # A revocation another domain signed, handed on by the console (handbook 20).
+    "apply_token_revocation",
     "create_dataset",
     "update_dataset",
     "delete_dataset",
@@ -415,25 +417,28 @@ class Session:
 
 @dataclass(frozen=True, slots=True)
 class AccessToken:
-    """A credential someone made for a tool, carrying some of their permissions (spec §11.4).
+    """A token someone made in this domain for a tool (handbook 20), as the domain lists it.
 
-    Only the hash of its secret is kept (`identity/access_tokens.py`). `datasets` limits it to some
-    datasets, by id; empty, it may use its permissions on every dataset its owner may.
+    The token itself is signed and checked by every domain without this record
+    (`identity/access_tokens.py`); this is what its owner and administrators see and revoke it by.
+    `datasets` limits it to some datasets, as `<domain>.<dataset>`; empty, it may use its
+    permissions on every dataset its owner may, in every domain.
     """
 
     token_id: str
     user_id: str
     name: str
     permissions: tuple[str, ...]
-    secret_hash: str
     created_at: str
     expires_at: str
+    #: The domain that made it: this one.
+    issuer: str = ""
     revoked_at: str | None = None
     revoked_by: str | None = None
     datasets: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        _require(self, "token_id", "user_id", "name", "secret_hash", "created_at", "expires_at")
+        _require(self, "token_id", "user_id", "name", "created_at", "expires_at")
 
     @property
     def revoked(self) -> bool:
@@ -445,9 +450,9 @@ class AccessToken:
             "user_id": self.user_id,
             "name": self.name,
             "permissions": list(self.permissions),
-            "secret_hash": self.secret_hash,
             "created_at": self.created_at,
             "expires_at": self.expires_at,
+            "issuer": self.issuer,
             "revoked_at": self.revoked_at,
             "revoked_by": self.revoked_by,
             "datasets": list(self.datasets),
@@ -460,12 +465,50 @@ class AccessToken:
             user_id=value["user_id"],
             name=value["name"],
             permissions=tuple(_strings(value.get("permissions"))),
-            secret_hash=value["secret_hash"],
             created_at=value["created_at"],
             expires_at=value["expires_at"],
+            issuer=value.get("issuer") or "",
             revoked_at=value.get("revoked_at"),
             revoked_by=value.get("revoked_by"),
             datasets=tuple(_strings(value.get("datasets"))),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TokenRevocation:
+    """That an access token was revoked, in whichever domain it was (handbook 20).
+
+    Every domain keeps one for each revoked token until the token expires, and refuses the token
+    while it does. `signature` is the revocation as the domain that revoked it signed it, so it can
+    be handed on to another domain; `source` is that domain.
+    """
+
+    token_id: str
+    expires_at: int
+    signature: str
+    revoked_at: str
+    source: str = ""
+
+    def __post_init__(self) -> None:
+        _require(self, "token_id", "signature", "revoked_at")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "token_id": self.token_id,
+            "expires_at": self.expires_at,
+            "signature": self.signature,
+            "revoked_at": self.revoked_at,
+            "source": self.source,
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "TokenRevocation":
+        return cls(
+            token_id=value["token_id"],
+            expires_at=int(value["expires_at"]),
+            signature=value["signature"],
+            revoked_at=value["revoked_at"],
+            source=value.get("source") or "",
         )
 
 

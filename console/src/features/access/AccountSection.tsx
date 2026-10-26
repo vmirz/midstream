@@ -123,7 +123,8 @@ export function AccountSection(): ReactNode {
         )}
       </Panel>
 
-      {auth.canAnywhere('catalog.read') ? <AccessTokens /> : null}
+      {/* Where the console serves several domains, the Account page lists every domain's tokens at once. */}
+      {auth.canAnywhere('catalog.read') && !manyDomains ? <AccessTokens /> : null}
 
       {manyDomains ? null : (
         <div className="flex justify-end">

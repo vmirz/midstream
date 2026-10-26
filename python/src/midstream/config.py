@@ -313,6 +313,16 @@ def domain_identity_from_environment(environ: Mapping[str, str]) -> tuple[str | 
 
 
 @lru_cache(maxsize=1)
+def current_domain_id() -> str | None:
+    """This deployment's domain id (`DOMAIN_ID`), read once; None outside a shared console's registry.
+
+    Cheaper than `get_config()`, and needs nothing else of the environment: an access token's
+    dataset limits are read against it on every request that carries one.
+    """
+    return domain_identity_from_environment(os.environ)[0]
+
+
+@lru_cache(maxsize=1)
 def get_config() -> ControlPlaneConfig:
     """Load and cache the control-plane configuration from the environment."""
     domain_id, domain_name = domain_identity_from_environment(os.environ)

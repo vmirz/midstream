@@ -2106,12 +2106,18 @@ export interface CpDatasetRef {
 }
 
 /** One of the caller's access tokens. Its secret is never shown again after it is made. */
+/**
+ * An access token made in a domain (handbook 20). It is good in every domain where its owner has
+ * an account; this is how the domain that made it lists it.
+ */
 export interface CpAccessToken {
   token_id: string;
   name: string;
   permissions: string[];
-  /** The datasets it is limited to; empty, every dataset its owner may read. */
-  datasets: CpDatasetRef[];
+  /** The datasets it is limited to, as `<domain>.<dataset>`; empty, every dataset its owner may read, in every domain. */
+  datasets: Array<{ name: string }>;
+  /** The domain that made it. */
+  issuer: string;
   created_at: string;
   expires_at: string | null;
   revoked_at: string | null;
@@ -2120,12 +2126,14 @@ export interface CpAccessToken {
 }
 
 export interface CpAccessTokenList {
+  /** The domain asked: the one these tokens were made in. */
+  domain: string;
   tokens: CpAccessToken[];
   /** Most tokens one person may hold. */
   limit: number;
   /** Each permission a token can carry, and whether the caller has it to give, on any dataset. */
   permissions: Array<{ key: string; label: string; granted: boolean }>;
-  /** The datasets a token could be limited to: those the caller reads through the catalog. */
+  /** The datasets a token could be limited to there, as `<domain>.<dataset>`: those the caller reads through the catalog. */
   datasets: Array<CpDatasetRef & { permissions: string[] }>;
   /** Most datasets one token may be limited to. */
   max_datasets: number;
@@ -2139,8 +2147,26 @@ export interface CpAccessTokenCreated extends CpIdentityAccepted {
   token_id: string;
   name: string;
   permissions: string[];
-  datasets: CpDatasetRef[];
+  datasets: Array<{ name: string }>;
+  issuer: string;
   expires_at: string;
+}
+
+/** That a token was revoked, signed with the federation key so any domain records it (handbook 20). */
+export interface CpTokenRevocation {
+  jti: string;
+  exp: number;
+  signature: string;
+  revoked_at?: string;
+  source?: string;
+}
+
+/** A token revoked: in the domain that made it, and as far as the revocation reached the others. */
+export interface AccessTokenRevoked {
+  request_id: string;
+  status: 'applied' | 'pending';
+  /** Each other domain, and whether it recorded the revocation now; one that did not is told again within five minutes. */
+  domains: Record<string, 'applied' | 'failed'>;
 }
 
 export interface CpIdentityOutcome {

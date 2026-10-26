@@ -9,7 +9,7 @@ import { useToast } from '@/components/ui/Toast';
 import { Badge, Button, EmptyState, Field, Input, Panel, PanelHeader, Select, Skeleton } from '@/components/ui/primitives';
 import { ApiError } from '@/lib/api';
 import { formatTimestamp } from '@/lib/format';
-import { useApi } from '@/lib/domains';
+import { useApi, useManyDomains } from '@/lib/domains';
 import type { CpAccessToken, CpAccessTokenCreated, CpAccessTokenList } from '@shared/types';
 
 const LIFETIMES = [7, 30, 90, 180, 365];
@@ -43,8 +43,14 @@ export function AccessTokens(): ReactNode {
   };
   const revoke = useMutation({
     mutationFn: (token: CpAccessToken) => api.revokeAccessToken(token.token_id),
-    onSuccess: (_accepted, token) => {
-      toast.success('Token revoked', `“${token.name}” stops working on its next request.`);
+    onSuccess: (revoked, token) => {
+      const missed = Object.entries(revoked.domains ?? {}).filter(([, result]) => result === 'failed').map(([domain]) => domain);
+      toast.success(
+        'Token revoked',
+        missed.length
+          ? `“${token.name}” stops working on its next request here; ${missed.join(', ')} could not be told yet and will be within five minutes.`
+          : `“${token.name}” stops working on its next request, in every domain.`,
+      );
       setRevoking(null);
       refresh();
     },
@@ -306,8 +312,10 @@ function CreateTokenDialog({
   );
 }
 
-function TokenReveal({ token, onClose }: { token: CpAccessTokenCreated; onClose: () => void }): ReactNode {
+/** A token just made: its text, shown this once, and where engines connect with it. */
+export function TokenReveal({ token, onClose }: { token: CpAccessTokenCreated; onClose: () => void }): ReactNode {
   const api = useApi();
+  const many = useManyDomains();
   const [copied, setCopied] = useState(false);
   const connection = useQuery({ queryKey: ['catalog-connection'], queryFn: () => api.catalogConnection(), retry: 0 });
   return (
@@ -346,10 +354,17 @@ function TokenReveal({ token, onClose }: { token: CpAccessTokenCreated; onClose:
         </p>
         {connection.data ? (
           <div className="space-y-1">
-            <p className="text-[12px] font-medium">Catalog URI</p>
+            <p className="text-[12px] font-medium">{many ? 'Catalog URI, every domain' : 'Catalog URI'}</p>
             <code className="numeric block rounded-[var(--radius-control)] bg-[var(--color-raised)] px-3 py-2 text-[12px] break-all">
-              {connection.data.uri}
+              {many ? connection.data.federatedUri : connection.data.uri}
             </code>
+            {many ? (
+              <p className="text-[12px] text-[var(--color-ink-muted)]">
+                Its namespaces are <span className="numeric">&lt;domain&gt;.&lt;dataset&gt;</span>. An engine that reads one level
+                of namespaces connects to a domain&rsquo;s own catalog instead, such as{' '}
+                <span className="numeric break-all">{connection.data.uri}</span>.
+              </p>
+            ) : null}
             <p className="text-[12px] text-[var(--color-ink-muted)]">
               Each materialization’s Table tab has snippets for DuckDB, PyIceberg, Spark and Trino.
             </p>

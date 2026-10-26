@@ -1,4 +1,5 @@
 import type {
+  AccessTokenRevoked,
   ApiErrorBody,
   AuthState,
   CpAuditPage,
@@ -29,7 +30,6 @@ import type {
   TableRequest,
   CpAccessTokenCreated,
   CpAccessTokenList,
-  CpIdentityAccepted,
   CpMaintenanceAccepted,
   CpSchema,
   CpSchemaVersions,
@@ -323,8 +323,9 @@ export function domainApi(domain: string) {
     /** Make an access token, optionally limited to some datasets; the answer's `token` is its text, shown this once. */
     createAccessToken: (input: { name: string; permissions: string[]; expires_in_days: number; datasets?: string[] }) =>
       request<CpAccessTokenCreated>(`${base}/auth/tokens`, { method: 'POST', body: JSON.stringify(input) }),
+    /** Revoke a token made in this domain; the console hands the revocation to every other domain. */
     revokeAccessToken: (tokenId: string) =>
-      request<CpIdentityAccepted>(`${base}/auth/tokens/${encodeURIComponent(tokenId)}`, { method: 'DELETE' }),
+      request<AccessTokenRevoked>(`${base}/auth/tokens/${encodeURIComponent(tokenId)}`, { method: 'DELETE' }),
 
     users: (query: { status?: UserFilter; sort?: UserSort; q?: string } = {}) =>
       request<CpUserList>(`${base}/users${queryString(query)}`),

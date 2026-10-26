@@ -37,6 +37,7 @@ import type {
   SettingsScope,
   SettingValue,
   TableRequest,
+  CpTokenRevocation,
 } from '../../shared/types.ts';
 
 export interface CreateMaterializationInput {
@@ -381,8 +382,25 @@ export class ControlPlaneClient {
     return this.request<CpAccessTokenCreated>(caller, '/auth/tokens', { method: 'POST', body: input });
   }
 
-  revokeAccessToken(caller: Caller, tokenId: string): Promise<CpIdentityAccepted> {
-    return this.request<CpIdentityAccepted>(caller, `/auth/tokens/${pathId(tokenId, 'token_id')}`, { method: 'DELETE' });
+  /** Revoke a token made here; the answer carries the revocation, signed, to hand to the other domains. */
+  revokeAccessToken(caller: Caller, tokenId: string): Promise<CpIdentityAccepted & { revocation?: CpTokenRevocation }> {
+    return this.request<CpIdentityAccepted & { revocation?: CpTokenRevocation }>(caller, `/auth/tokens/${pathId(tokenId, 'token_id')}`, {
+      method: 'DELETE',
+    });
+  }
+
+  /** Revocations this domain holds, from `since` on (handbook 20); read with the service credential. */
+  tokenRevocations(caller: Caller, since: string | null): Promise<{ revocations: CpTokenRevocation[] }> {
+    const query = since ? `?since=${encodeURIComponent(since)}` : '';
+    return this.request<{ revocations: CpTokenRevocation[] }>(caller, `/auth/tokens/revocations${query}`);
+  }
+
+  /** Hand this domain revocations another signed; it records each it can verify. */
+  applyTokenRevocations(caller: Caller, revocations: CpTokenRevocation[], source: string): Promise<{ request_id: string; accepted: number }> {
+    return this.request<{ request_id: string; accepted: number }>(caller, '/auth/tokens/revocations', {
+      method: 'POST',
+      body: { revocations: revocations.map(({ jti, exp, signature }) => ({ jti, exp, signature })), source },
+    });
   }
 
   /* --------------------------------------------------------------------------- directory */

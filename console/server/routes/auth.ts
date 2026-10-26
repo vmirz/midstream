@@ -10,9 +10,10 @@ import { authIn, authOf, callerOf, clearSessionCookie, domainOf, permitAnywhere,
 import { waitForOutcome, refusal } from '../auth/outcomes.ts';
 import { forgetAllSessions, forgetSession, guestAuth, rememberSession } from '../auth/principal.ts';
 import { AttemptLimiter } from '../auth/rateLimit.ts';
+import { handOn } from '../auth/revocations.ts';
 import { ssoProviders } from '../auth/sso.ts';
 import { parseBody } from './materializations.ts';
-import { TOKEN_PERMISSIONS, type AuthState, type ConsoleSession, type CpAccessTokenList, type CpAuthSession, type CpMySessions, type DomainAuth } from '../../shared/types.ts';
+import { TOKEN_PERMISSIONS, type AccessTokenRevoked, type AuthState, type ConsoleSession, type CpAccessTokenList, type CpAuthSession, type CpMySessions, type DomainAuth } from '../../shared/types.ts';
 
 const signInSchema = z.object({
   email: z.string().trim().min(1).max(254),
@@ -35,8 +36,14 @@ const createTokenSchema = z.strictObject({
   name: z.string().trim().min(1).max(64),
   permissions: z.array(z.enum(TOKEN_PERMISSIONS)).min(1).max(TOKEN_PERMISSIONS.length),
   expires_in_days: z.number().int().min(1).max(365),
-  /** The datasets, by name, the token is limited to; omitted, every dataset its owner may read. */
-  datasets: z.array(z.string().trim().min(1).max(63)).max(100).optional(),
+  /**
+   * The datasets the token is limited to, as `<domain>.<dataset>` (a name without its domain is the
+   * minting domain's); omitted, every dataset its owner may read, in every domain.
+   */
+  datasets: z
+    .array(z.string().trim().min(1).max(97).regex(/^([a-z][a-z0-9_]{0,31}\.)?[a-z][a-z0-9_]{0,62}$/, 'must be <domain>.<dataset>'))
+    .max(100)
+    .optional(),
 });
 
 const signIns = new AttemptLimiter();
@@ -142,18 +149,35 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   );
 
   /**
-   * Make an access token, optionally limited to some datasets. The answer carries its text, shown
-   * this once and never stored by the console; the control plane keeps only its hash.
+   * Make an access token in this domain, optionally limited to some datasets of any domain (handbook
+   * 20). It is good in every domain where its owner has an account. The answer carries its text,
+   * shown this once and never stored by the console - and only once the domain has recorded the
+   * token: one it refuses is revoked, and its text is never shown.
    */
   app.post('/auth/tokens', { preHandler: permitAnywhere('catalog.read') }, async (request, reply) => {
+    const domain = domainOf(request);
+    const caller = callerOf(request);
     const input = parseBody(createTokenSchema, request.body);
-    const created = await domainOf(request).controlPlane.createAccessToken(callerOf(request), input);
-    return reply.code(202).header('cache-control', 'no-store').send(created);
+    const created = await domain.controlPlane.createAccessToken(caller, input);
+    const outcome = await waitForOutcome(domain, caller, created.request_id);
+    if (outcome.status === 'rejected') throw refusal(outcome);
+    return reply.code(outcome.status === 'applied' ? 201 : 202).header('cache-control', 'no-store').send(created);
   });
 
-  app.delete('/auth/tokens/:tokenId', { preHandler: signedIn() }, async (request, reply) => {
+  /**
+   * Revoke a token made in this domain, and hand the revocation to every other domain, which then
+   * refuses the token too; a domain that cannot be reached now is told again within five minutes.
+   */
+  app.delete('/auth/tokens/:tokenId', { preHandler: signedIn() }, async (request, reply): Promise<AccessTokenRevoked> => {
+    const domain = domainOf(request);
+    const caller = callerOf(request);
     const tokenId = (request.params as { tokenId?: string }).tokenId ?? '';
-    return reply.code(202).send(await domainOf(request).controlPlane.revokeAccessToken(callerOf(request), tokenId));
+    const accepted = await domain.controlPlane.revokeAccessToken(caller, tokenId);
+    const outcome = await waitForOutcome(domain, caller, accepted.request_id);
+    if (outcome.status === 'rejected') throw refusal(outcome);
+    const others = accepted.revocation ? await handOn([accepted.revocation], domain, domains().served()) : {};
+    reply.code(outcome.status === 'applied' ? 200 : 202);
+    return { request_id: accepted.request_id, status: outcome.status === 'applied' ? 'applied' : 'pending', domains: others };
   });
 
   /**

@@ -22,7 +22,8 @@ from datetime import UTC, datetime
 import hmac
 from typing import Any
 
-from midstream.identity.access_tokens import ACCESS_TOKEN_PREFIX, parse_token, secret_matches
+from midstream.config import current_domain_id
+from midstream.identity.access_tokens import ACCESS_TOKEN_PREFIX, InvalidAccessToken, read_access_token
 from midstream.identity.permissions import (
     PERMISSION_KEYS,
     expand_permissions,
@@ -39,7 +40,15 @@ from midstream.identity.principals import (
 from midstream.identity.secrets import IdentitySecrets, get_identity_secrets
 from midstream.identity.tokens import InvalidToken, read_token
 from midstream.models.identity import Dataset, RequestContext
-from midstream.storage.identity import get_access_token, get_session, get_user, resolve_dataset
+from midstream.storage.identity import (
+    find_dataset_by_name,
+    find_user_by_email,
+    find_user_by_external_identity,
+    get_session,
+    get_token_revocation,
+    get_user,
+    resolve_dataset,
+)
 from midstream.storage.table import TableProtocol
 from midstream.web.errors import forbidden, not_found, unauthenticated, unavailable
 
@@ -127,7 +136,7 @@ def authenticate(
     ):
         return service_principal()
     if token.startswith(ACCESS_TOKEN_PREFIX):
-        return _token_principal(token, directory_table, now=_now() if now is None else now)
+        return _token_principal(token, directory_table, secrets=identity_secrets, now=_now() if now is None else now)
     if not identity_secrets.can_sign_in:
         raise unauthenticated(
             "Sign-in is not configured on this control plane",
@@ -172,46 +181,64 @@ def authenticate(
     )
 
 
-def _token_principal(text: str, directory_table: TableProtocol | None, *, now: int) -> Principal:
-    """The person an access token belongs to, with only what the token carries and they still hold."""
-    parsed = parse_token(text)
-    token = None if parsed is None else get_access_token(directory_table, parsed[0])
-    if parsed is None or token is None or not secret_matches(parsed[1], token.secret_hash):
-        raise unauthenticated("This access token is not valid.", reason="invalid_token")
-    if token.revoked:
+def _token_principal(text: str, directory_table: TableProtocol | None, *, secrets: IdentitySecrets, now: int) -> Principal:
+    """The person an access token acts for here (handbook 20), with only what the token carries and
+    they still hold here.
+
+    Any domain's token is checked the same way: its signature with this domain's federation keys,
+    its expiry, that no domain revoked it, then its owner, found here by the provider account they
+    signed in with, else by their email. Its dataset limits apply to this domain's datasets named in
+    it; a token limited to other domains' datasets reads nothing here.
+    """
+    try:
+        claims = read_access_token(text, secrets, now=now)
+    except InvalidAccessToken as error:
+        if error.reason == "expired":
+            raise unauthenticated("This access token has expired. Make a new one.", reason="token_expired") from error
+        raise unauthenticated("This access token is not valid.", reason="invalid_token") from error
+    if get_token_revocation(directory_table, claims.token_id) is not None:
         raise unauthenticated("This access token was revoked.", reason="token_revoked")
-    expires = _epoch(token.expires_at)
-    if expires is not None and expires <= now:
-        raise unauthenticated("This access token has expired. Make a new one.", reason="token_expired")
-    user = get_user(directory_table, token.user_id)
-    if user is None or not user.active:
+    owner = claims.owner
+    user = (
+        find_user_by_external_identity(directory_table, owner.provider, owner.subject)
+        if owner.provider and owner.subject
+        else None
+    ) or find_user_by_email(directory_table, owner.email)
+    if user is None:
+        raise unauthenticated("The owner of this access token has no account here.", reason="token_unknown_owner")
+    if not user.active:
         raise unauthenticated("The account this token belongs to can no longer sign in.", reason="account_deactivated")
-    owner = cached_grants(directory_table, user)
-    carried = expand_permissions(token.permissions)
-    permissions = carried if owner.all_permissions else frozenset(carried & owner.permissions)
-    if owner.all_permissions:
+    held = cached_grants(directory_table, user)
+    carried = expand_permissions(claims.permissions)
+    permissions = carried if held.all_permissions else frozenset(carried & held.permissions)
+    if held.all_permissions:
         datasets = {}
     else:
         datasets = {
-            dataset_id: frozenset(carried & held)
-            for dataset_id, held in owner.datasets.items()
-            if carried & held
+            dataset_id: frozenset(carried & permitted)
+            for dataset_id, permitted in held.datasets.items()
+            if carried & permitted
         }
+    limited = claims.datasets_in(current_domain_id() or claims.issuer)
+    dataset_limit = None
+    if limited is not None:
+        found = (find_dataset_by_name(directory_table, name) for name in limited)
+        dataset_limit = frozenset(dataset.dataset_id for dataset in found if dataset is not None)
     return Principal(
         kind="token",
         grants=Grants(
-            group_ids=owner.group_ids,
-            role_ids=owner.role_ids,
+            group_ids=held.group_ids,
+            role_ids=held.role_ids,
             permissions=permissions,
             datasets=datasets,
-            dataset_limit=frozenset(token.datasets) if token.datasets else None,
+            dataset_limit=dataset_limit,
         ),
         user_id=user.user_id,
         email=user.email,
         first_name=user.first_name,
         last_name=user.last_name,
-        expires_at=expires,
-        extra={"access_token_id": token.token_id, "access_token_name": token.name},
+        expires_at=claims.expires_at,
+        extra={"access_token_id": claims.token_id, "access_token_issuer": claims.issuer},
     )
 
 

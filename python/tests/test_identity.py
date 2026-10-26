@@ -56,6 +56,7 @@ from midstream.models.identity import (
     Session,
     SignInGuard,
     TableClaim,
+    TokenRevocation,
     User,
     UserActivity,
     IDENTITY_ACTIONS,
@@ -101,6 +102,7 @@ SECRETS = IdentitySecrets(
     signing_keys=(signing_key(KEY),),
     service_token="s" * 40,
     bootstrap_admin=BootstrapAdmin(email="root@example.com", password="bootstrap-password-1", first_name="Root", last_name="Admin"),
+    federation_keys=(signing_key("f" * 40),),
 )
 CONFIG = ControlPlaneConfig()
 # Hashing is deliberately slow; tests that do not check the hash share one.
@@ -437,15 +439,16 @@ class ModelRoundTripTests(unittest.TestCase):
             DirectoryState(revision=4, updated_at=NOW, seeded_at=NOW),
             AuditEntry(entry_id="aud-1", occurred_at=NOW, action="user.created", details={"email": "a@example.com"}),
             AccessToken(
-                token_id="tok-1",
+                token_id="0123456789ab",
                 user_id="usr-1",
                 name="duckdb",
                 permissions=("catalog.read",),
-                secret_hash="hash",
                 created_at=NOW,
                 expires_at=NOW,
-                datasets=("ds-000000000001", "ds-000000000002"),
+                issuer="domain_a",
+                datasets=("domain_a.sales", "domain_b.finance"),
             ),
+            TokenRevocation(token_id="0123456789ab", expires_at=NOW_EPOCH, signature="abcd1234.sig", revoked_at=NOW, source="domain_b"),
             Dataset(dataset_id="ds-000000000001", name="sales", description="Orders and refunds", revision=2, created_at=NOW, created_by="usr-1", updated_at=NOW, updated_by="usr-1"),
             DatasetGrant(dataset_id="ds-000000000001", principal_type="group", principal_id="all-users", role_ids=["dataset-reader"], updated_at=NOW, updated_by="usr-1"),
             TableClaim(
@@ -478,7 +481,7 @@ class ModelRoundTripTests(unittest.TestCase):
             TableClaim(dataset_id="ds-1", table="", materialization_id="mat-1", source_topic="t", claimed_at=NOW, claimed_by="a", request_id="r")
 
     def test_records_written_before_datasets_read_as_unlimited_and_without_details(self) -> None:
-        token = AccessToken(token_id="tok-1", user_id="usr-1", name="t", permissions=("catalog.read",), secret_hash="h", created_at=NOW, expires_at=NOW)
+        token = AccessToken(token_id="0123456789ab", user_id="usr-1", name="t", permissions=("catalog.read",), created_at=NOW, expires_at=NOW)
         stored = token.to_dict()
         del stored["datasets"]
         self.assertEqual((), AccessToken.from_dict(stored).datasets)
@@ -1342,6 +1345,8 @@ class AccessTokenTests(unittest.TestCase):
             self.principal_of(user),
             {"name": "DuckDB on my laptop"} if body is None else body,
             request=http_request(),
+            directory_table=self.table,
+            secrets=SECRETS,
             now=self.NOW_DATETIME,
         )
         outcome = apply_identity_request(self.table, self.audit, acceptance.request_event, config=CONFIG, secrets=SECRETS, applied_at=NOW)
@@ -1358,18 +1363,17 @@ class AccessTokenTests(unittest.TestCase):
             return authorize(http_request(token), self.table, permission, any_dataset=True, secrets=SECRETS, now=now)
         return authorize(http_request(token), self.table, permission, secrets=SECRETS, now=now)
 
-    def test_a_token_is_shown_once_kept_hashed_and_carries_only_its_permissions(self) -> None:
+    def test_a_token_is_shown_once_signed_and_carries_only_its_permissions(self) -> None:
+        from midstream.identity.access_tokens import read_access_token
+
         response = self.make(self.admin)
 
         self.assertTrue(response["token"].startswith("tok_"))
-        stored = json.dumps(self.table.data)
-        # The secret is URL-safe base64, so it may hold "_" itself: split as the control plane does.
-        from midstream.identity.access_tokens import parse_token
-
-        token_id, secret = parse_token(response["token"])
-        self.assertEqual(response["token_id"], token_id)
-        self.assertGreaterEqual(len(secret), 43)
-        self.assertNotIn(secret, stored)
+        # The directory never holds the token's text: any domain checks its signature instead.
+        self.assertNotIn(response["token"].split(".")[-1], json.dumps(self.table.data))
+        claims = read_access_token(response["token"], SECRETS, now=NOW_EPOCH)
+        self.assertEqual((response["token_id"], "admin@example.com", ("catalog.read",)), (claims.token_id, claims.owner.email, claims.permissions))
+        self.assertEqual(claims.expires_at - claims.issued_at, 90 * 86400)
         principal = self.use(response["token"])
         self.assertEqual(("token", "admin"), (principal.kind, principal.user_id))
         # An administrator's token still carries only what it was made with.
@@ -1389,6 +1393,8 @@ class AccessTokenTests(unittest.TestCase):
                 self.principal_of(self.viewer),
                 {"name": "writer", "permissions": ["catalog.write"]},
                 request=http_request(),
+                directory_table=self.table,
+                secrets=SECRETS,
                 now=self.NOW_DATETIME,
             )
         self.assertEqual(403, caught.exception.status_code)
@@ -1397,12 +1403,16 @@ class AccessTokenTests(unittest.TestCase):
             self.audit,
             "create_access_token",
             "viewer",
-            {"token_id": "a" * 12, "name": "sneaky", "permissions": ["catalog.write"], "secret_hash": "sha256:" + "0" * 64},
+            {"token_id": "a" * 12, "name": "sneaky", "permissions": ["catalog.write"], "expires_at": "2026-11-13T12:00:00Z", "issuer": "default"},
         )
         self.assertEqual("rejected", outcome.status)
+        # A token the agent refuses must not work anywhere: it is revoked as it is refused.
+        from midstream.storage.identity import get_token_revocation
+
+        self.assertIsNotNone(get_token_revocation(self.table, "a" * 12))
         for body in ({"name": "x", "permissions": ["users.manage"]}, {"name": ""}, {"name": "x", "expires_in_days": 999}, {"name": "x", "color": "red"}):
             with self.subTest(body=body), self.assertRaises(WebError):
-                create_access_token_request(self.principal_of(self.viewer), body, request=http_request(), now=self.NOW_DATETIME)
+                create_access_token_request(self.principal_of(self.viewer), body, request=http_request(), directory_table=self.table, secrets=SECRETS, now=self.NOW_DATETIME)
 
     def test_a_token_narrows_with_its_owner_and_stops_when_they_are_deactivated(self) -> None:
         token = self.make(self.viewer)["token"]
@@ -1443,7 +1453,7 @@ class AccessTokenTests(unittest.TestCase):
 
         token = self.make(self.viewer)["token"]
         with self.assertRaises(WebError) as caught:
-            create_access_token_request(self.use(token), {"name": "again"}, request=http_request(), now=self.NOW_DATETIME)
+            create_access_token_request(self.use(token), {"name": "again"}, request=http_request(), directory_table=self.table, secrets=SECRETS, now=self.NOW_DATETIME)
         self.assertEqual("session_required", caught.exception.details["reason"])
 
     def test_people_see_and_revoke_only_their_own_tokens(self) -> None:
@@ -1454,16 +1464,20 @@ class AccessTokenTests(unittest.TestCase):
 
         listed = my_access_tokens_view(self.table, self.principal_of(self.viewer), now=self.NOW_DATETIME)
         self.assertEqual([mine["token_id"]], [item["token_id"] for item in listed["tokens"]])
-        self.assertNotIn("secret_hash", listed["tokens"][0])
+        self.assertNotIn("token", listed["tokens"][0])
         self.assertTrue(listed["tokens"][0]["active"])
         self.assertEqual({"catalog.read": True, "catalog.write": False}, {item["key"]: item["granted"] for item in listed["permissions"]})
 
         admins = [token for token in my_access_tokens_view(self.table, self.principal_of(self.admin))["tokens"]]
         with self.assertRaises(WebError) as caught:
-            revoke_access_token_request(self.table, self.principal_of(self.viewer), admins[0]["token_id"], request=http_request())
+            revoke_access_token_request(self.table, self.principal_of(self.viewer), admins[0]["token_id"], request=http_request(), secrets=SECRETS)
         self.assertEqual(404, caught.exception.status_code)
-        accepted = revoke_access_token_request(self.table, self.principal_of(self.viewer), mine["token_id"], request=http_request())
+        accepted = revoke_access_token_request(self.table, self.principal_of(self.viewer), mine["token_id"], request=http_request(), secrets=SECRETS)
         self.assertEqual("revoke_access_token", accepted.request_event.action)
+        # The revocation, signed, for the console to hand to every other domain.
+        from midstream.identity.access_tokens import read_revocation
+
+        self.assertEqual(mine["token_id"], read_revocation(accepted.response["revocation"], SECRETS).token_id)
 
     def test_tokens_go_with_their_owner_and_old_revoked_ones_are_cleaned_up(self) -> None:
         from midstream.storage.identity import get_access_token

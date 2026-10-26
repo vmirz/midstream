@@ -35,6 +35,9 @@ from midstream.identity.access_tokens import (
     MAX_TOKENS_PER_USER,
     TOKEN_NAME_MAX_LENGTH,
     TOKEN_PERMISSIONS,
+    is_token_id,
+    read_revocation,
+    sign_revocation,
 )
 from midstream.identity.directory import DirectoryView
 from midstream.identity.passwords import hash_password
@@ -81,6 +84,7 @@ from midstream.models.identity import (
     Session,
     SignInGuard,
     TableClaim,
+    TokenRevocation,
     User,
     UserActivity,
 )
@@ -102,6 +106,7 @@ from midstream.storage.identity import (
     delete_session_record,
     delete_sign_in_guard,
     delete_table_claim,
+    delete_token_revocation,
     delete_user_activity,
     delete_user_email,
     delete_user_record,
@@ -114,6 +119,7 @@ from midstream.storage.identity import (
     get_session,
     get_sign_in_guard,
     get_table_claim,
+    get_token_revocation,
     get_user,
     get_user_activity,
     group_key,
@@ -123,6 +129,7 @@ from midstream.storage.identity import (
     iter_sessions,
     iter_sign_in_guards,
     iter_table_claims,
+    iter_token_revocations,
     iter_user_access_tokens,
     iter_user_sessions,
     normalize_email,
@@ -139,6 +146,7 @@ from midstream.storage.identity import (
     save_session,
     save_sign_in_guard,
     save_table_claim,
+    save_token_revocation,
     save_user,
     save_user_activity,
     save_user_email,
@@ -158,6 +166,8 @@ SESSION_RECORD_RETENTION = timedelta(days=1)
 SIGN_IN_GUARD_RETENTION = timedelta(days=1)
 #: How long a token's record is kept after it was revoked or expired, for the account page.
 TOKEN_RECORD_RETENTION = timedelta(days=7)
+#: How long a revocation is kept after its token expired.
+REVOCATION_RETENTION = timedelta(days=1)
 #: Most audit entries one hourly cleanup removes; a backlog is caught up over several passes.
 AUDIT_PURGE_BATCH_LIMIT = 5000
 #: How long a deleted materialization's release is remembered, so a claim of it that arrives late
@@ -1311,16 +1321,29 @@ def _end_sessions(work: _Work, user_id: str, *, reason: str, keep: str | None = 
 
 
 def _create_access_token(work: _Work) -> _Applied:
-    """Store a token someone made for themselves: its name, its permissions and its secret's hash.
+    """Record a token someone made in this domain: its name, its permissions, its limits (handbook 20).
 
-    A token carries catalog permissions only, and only ones its owner holds. The API made the
-    token and showed it once; this request carries only the hash of its secret.
+    The view signed the token and showed it once; the token is checked by every domain without this
+    record, so a token refused here is revoked here too - it must not work anywhere.
     """
+    payload = work.payload
+    token_id = clean_identifier(payload.get("token_id"), field="token_id")
+    expires_at = _parse_time(payload.get("expires_at"))
+    try:
+        return _record_access_token(work, token_id, expires_at)
+    except (IdentityRejection, IdentityValidationError):
+        if is_token_id(token_id) and get_access_token(work.table, token_id) is None:
+            _revoke_everywhere_after(work, token_id, expires_at or work.now_datetime + timedelta(days=MAX_TOKEN_LIFETIME_DAYS), source="")
+        raise
+
+
+def _record_access_token(work: _Work, token_id: str, expires_at: datetime | None) -> _Applied:
     actor = work.view.users.get(work.request.actor_id)
     if actor is None or not actor.active:
         raise IdentityRejection("forbidden", "Your account can no longer make changes.")
     payload = work.payload
-    token_id = clean_identifier(payload.get("token_id"), field="token_id")
+    if not is_token_id(token_id):
+        raise IdentityRejection("invalid", "That is not a token id.", field="token_id")
     if get_access_token(work.table, token_id) is not None:
         raise IdentityRejection("invalid", "That token exists already.", field="token_id")
     name = clean_label(payload.get("name"), field="name", label="Name")
@@ -1333,17 +1356,24 @@ def _create_access_token(work: _Work) -> _Applied:
             "A token carries catalog permissions only: " + ", ".join(_permission_label(key) for key in TOKEN_PERMISSIONS) + ".",
             field="permissions",
         )
-    dataset_ids = clean_ids(payload.get("datasets"), field="datasets")
-    if len(dataset_ids) > MAX_TOKEN_DATASETS:
+    issuer = str(payload.get("issuer") or "")
+    names = [item for item in payload.get("datasets") or [] if isinstance(item, str)]
+    if len(names) > MAX_TOKEN_DATASETS:
         raise IdentityRejection("invalid", f"A token can be limited to at most {MAX_TOKEN_DATASETS} datasets.", field="datasets")
     view = work.view
-    for dataset_id in dataset_ids:
-        if dataset_id not in view.datasets:
+    own: list[str] = []
+    for qualified in names:
+        domain, _, dataset_name = qualified.rpartition(".")
+        if domain != issuer:
+            continue
+        dataset = next((item for item in view.datasets.values() if item.name == dataset_name), None)
+        if dataset is None:
             raise IdentityRejection("not_found", "A chosen dataset no longer exists.", field="datasets")
+        own.append(dataset.dataset_id)
     grants = view.grants_for_user(actor)
     for permission in permissions:
         # A token is limited to some datasets, or may use its permissions wherever its owner may.
-        lacking = [dataset_id for dataset_id in dataset_ids if not grants.holds(permission, dataset_id)]
+        lacking = [dataset_id for dataset_id in own if not grants.holds(permission, dataset_id)]
         if lacking:
             raise IdentityRejection(
                 "forbidden",
@@ -1351,19 +1381,15 @@ def _create_access_token(work: _Work) -> _Applied:
                 f"on dataset {', '.join(_dataset_label(view, dataset_id) for dataset_id in lacking)}.",
                 field="datasets",
             )
-        if not dataset_ids and not grants.holds_anywhere(permission):
+        if not own and not grants.holds_anywhere(permission):
             raise IdentityRejection(
                 "forbidden",
                 f"You can only make a token with access you hold yourself. Missing: {_permission_label(permission)}.",
                 field="permissions",
             )
-    secret_hash = payload.get("secret_hash")
-    if not isinstance(secret_hash, str) or not secret_hash.startswith("sha256:"):
-        raise IdentityRejection("invalid", "The request carries no token.", field="token")
-    expires_at = _parse_time(payload.get("expires_at"))
-    latest = work.now_datetime + timedelta(days=MAX_TOKEN_LIFETIME_DAYS)
+    latest = work.now_datetime + timedelta(days=MAX_TOKEN_LIFETIME_DAYS, minutes=5)
     if expires_at is None or expires_at > latest:
-        expires_at = latest
+        raise IdentityRejection("invalid", f"A token lives at most {MAX_TOKEN_LIFETIME_DAYS} days.", field="expires_at")
     if expires_at <= work.now_datetime:
         raise IdentityRejection("invalid", "A token must expire in the future.", field="expires_at")
     live = [
@@ -1372,30 +1398,48 @@ def _create_access_token(work: _Work) -> _Applied:
         if not token.revoked and (_parse_time(token.expires_at) or work.now_datetime) > work.now_datetime
     ]
     if len(live) >= MAX_TOKENS_PER_USER:
-        raise IdentityRejection(
-            "limit",
-            f"You have {MAX_TOKENS_PER_USER} tokens already. Revoke one you no longer use first.",
-        )
+        raise IdentityRejection("limit", f"You have {MAX_TOKENS_PER_USER} tokens already. Revoke one you no longer use first.")
     token = AccessToken(
         token_id=token_id,
         user_id=actor.user_id,
         name=name,
         permissions=tuple(permissions),
-        secret_hash=secret_hash,
         created_at=work.now,
         expires_at=_format_time(expires_at),
-        datasets=tuple(dataset_ids),
+        issuer=issuer,
+        datasets=tuple(names),
     )
     save_access_token(work.table, token, updated_at=work.now)
     details: dict[str, Any] = {"token_id": token_id, "name": name, "permissions": permissions, "expires_at": token.expires_at}
-    if dataset_ids:
-        details["datasets"] = [_dataset_label(view, dataset_id) for dataset_id in dataset_ids]
+    if names:
+        details["datasets"] = names
     work.audit("token.created", target=actor, details=details)
     return _Applied("access_token", token_id, directory_changed=False)
 
 
+def _revoke_everywhere_after(work: _Work, token_id: str, expires_at: datetime, *, source: str) -> TokenRevocation | None:
+    """Record that a token is revoked, signed so the console can hand it to every other domain."""
+    if get_token_revocation(work.table, token_id) is not None:
+        return None
+    if work.secrets.current_federation_key is None:
+        return None
+    signed = sign_revocation(token_id, int(expires_at.timestamp()), work.secrets)
+    revocation = TokenRevocation(
+        token_id=token_id,
+        expires_at=signed.expires_at,
+        signature=signed.signature,
+        revoked_at=work.now,
+        source=source,
+    )
+    save_token_revocation(work.table, revocation, updated_at=work.now)
+    return revocation
+
+
 def _revoke_access_token(work: _Work) -> _Applied:
-    """Revoke one of the caller's tokens; with Manage users, anyone's they could manage."""
+    """Revoke one of the caller's tokens made here; with Manage users, anyone's they could manage.
+
+    Records the signed revocation, which the console hands to every other domain.
+    """
     token_id = clean_identifier(work.payload.get("token_id"), field="token_id")
     token = get_access_token(work.table, token_id)
     if token is None:
@@ -1412,6 +1456,7 @@ def _revoke_access_token(work: _Work) -> _Applied:
         replace(token, revoked_at=work.now, revoked_by=_actor_label(work)),
         updated_at=work.now,
     )
+    _revoke_everywhere_after(work, token_id, _parse_time(token.expires_at) or work.now_datetime, source=token.issuer)
     owner = work.view.users.get(token.user_id)
     work.audit(
         "token.revoked",
@@ -1421,6 +1466,43 @@ def _revoke_access_token(work: _Work) -> _Applied:
         details={"token_id": token_id, "name": token.name},
     )
     return _Applied("access_token", token_id, directory_changed=False)
+
+
+def _apply_token_revocation(work: _Work) -> _Applied:
+    """Record revocations another domain signed (handbook 20), so its tokens stop working here too.
+
+    The view checked each signature; this checks them again, since only a signature with the
+    federation key may revoke anything.
+    """
+    source = str(work.payload.get("source") or "")[:64]
+    applied = 0
+    for item in work.payload.get("revocations") or []:
+        revocation = read_revocation(item, work.secrets)
+        if revocation is None or get_token_revocation(work.table, revocation.token_id) is not None:
+            continue
+        save_token_revocation(
+            work.table,
+            TokenRevocation(
+                token_id=revocation.token_id,
+                expires_at=revocation.expires_at,
+                signature=revocation.signature,
+                revoked_at=work.now,
+                source=source,
+            ),
+            updated_at=work.now,
+        )
+        token = get_access_token(work.table, revocation.token_id)
+        if token is not None and not token.revoked:
+            save_access_token(work.table, replace(token, revoked_at=work.now, revoked_by=f"domain {source}" if source else "another domain"), updated_at=work.now)
+        work.audit(
+            "token.revocation_applied",
+            target_type="access_token",
+            target_id=revocation.token_id,
+            target_label=revocation.token_id,
+            details={"token_id": revocation.token_id, "source": source or None},
+        )
+        applied += 1
+    return _Applied("access_token", None, directory_changed=False)
 
 
 # --------------------------------------------------------------------------------------- datasets
@@ -1928,6 +2010,10 @@ def _maintenance(work: _Work) -> _Applied:
         ended = _parse_time(token.revoked_at) or _parse_time(token.expires_at)
         if ended is not None and ended + TOKEN_RECORD_RETENTION < now:
             delete_access_token(work.table, token.token_id)
+    for revocation in list(iter_token_revocations(work.table)):
+        # Kept as long as the token could be used, and a little after, for clocks that disagree.
+        if datetime.fromtimestamp(revocation.expires_at, tz=UTC) + REVOCATION_RETENTION < now:
+            delete_token_revocation(work.table, revocation.token_id)
     for release in iter_claim_releases(work.table):
         released = _parse_time(release.released_at)
         if released is not None and released + CLAIM_RELEASE_RETENTION < now:
@@ -1955,6 +2041,7 @@ _HANDLERS: dict[str, Callable[[_Work], _Applied]] = {
     "delete_role": _delete_role,
     "create_access_token": _create_access_token,
     "revoke_access_token": _revoke_access_token,
+    "apply_token_revocation": _apply_token_revocation,
     "create_dataset": _create_dataset,
     "update_dataset": _update_dataset,
     "delete_dataset": _delete_dataset,

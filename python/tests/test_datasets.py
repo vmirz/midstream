@@ -508,8 +508,8 @@ class DatasetAuthorizationTests(unittest.TestCase):
         from midstream.web.tokens import create_access_token_request
 
         manager = self.authorize("manager", None)
-        acceptance = create_access_token_request(manager, {"name": "BI", "datasets": ["finance"]}, request=http_request(), directory_table=self.table, now=datetime(2026, 10, 13, 12, tzinfo=UTC))
-        self.assertEqual([{"dataset_id": FINANCE, "name": "finance"}], acceptance.response["datasets"])
+        acceptance = create_access_token_request(manager, {"name": "BI", "datasets": ["finance"]}, request=http_request(), directory_table=self.table, secrets=SECRETS, now=datetime(2026, 10, 13, 12, tzinfo=UTC))
+        self.assertEqual([{"name": "default.finance"}], acceptance.response["datasets"])
         self.assertEqual("applied", apply_identity_request(self.table, self.audit, acceptance.request_event, config=CONFIG, secrets=SECRETS, applied_at=NOW).status)
         clear_grants_cache()
         token = authorize(http_request(acceptance.response["token"]), self.table, "catalog.read", any_dataset=True, secrets=SECRETS, now=NOW_EPOCH)
@@ -530,13 +530,13 @@ class DatasetAuthorizationTests(unittest.TestCase):
 
         viewer = self.authorize("viewer", None)
         with self.assertRaises(WebError) as caught:
-            create_access_token_request(viewer, {"name": "BI", "datasets": ["finance"]}, request=http_request(), directory_table=self.table)
+            create_access_token_request(viewer, {"name": "BI", "datasets": ["finance"]}, request=http_request(), directory_table=self.table, secrets=SECRETS)
         self.assertEqual(403, caught.exception.status_code)
         with self.assertRaises(WebError) as caught:
-            create_access_token_request(viewer, {"name": "BI", "datasets": ["nothing"]}, request=http_request(), directory_table=self.table)
+            create_access_token_request(viewer, {"name": "BI", "datasets": ["nothing"]}, request=http_request(), directory_table=self.table, secrets=SECRETS)
         self.assertEqual(404, caught.exception.status_code)
         # The agent checks again.
-        refused = outcome_of(self.table, self.audit, "create_access_token", "viewer", {"token_id": "b" * 12, "name": "x", "permissions": ["catalog.read"], "secret_hash": "sha256:" + "0" * 64, "datasets": [FINANCE]})
+        refused = outcome_of(self.table, self.audit, "create_access_token", "viewer", {"token_id": "b" * 12, "name": "x", "permissions": ["catalog.read"], "expires_at": "2026-11-13T12:00:00Z", "issuer": "default", "datasets": ["default.finance"]})
         self.assertEqual(("forbidden", "datasets"), (refused["reason"], refused["field"]))
 
 

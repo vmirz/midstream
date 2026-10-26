@@ -43,6 +43,7 @@ from midstream.models.identity import (
     Session,
     SignInGuard,
     TableClaim,
+    TokenRevocation,
     User,
     UserActivity,
 )
@@ -59,6 +60,7 @@ GROUP_PREFIX = "group:"
 ROLE_PREFIX = "role:"
 SESSION_PREFIX = "session:"
 TOKEN_PREFIX = "token:"
+REVOCATION_PREFIX = "revoked:"
 SIGN_IN_PREFIX = "sign-in:"
 ACTIVITY_PREFIX = "activity:"
 REQUEST_PREFIX = "request:"
@@ -77,6 +79,7 @@ GROUP_ENTITY = "group"
 ROLE_ENTITY = "role"
 SESSION_ENTITY = "session"
 TOKEN_ENTITY = "access-token"
+REVOCATION_ENTITY = "token-revocation"
 SIGN_IN_ENTITY = "sign-in-guard"
 ACTIVITY_ENTITY = "user-activity"
 REQUEST_ENTITY = "identity-request"
@@ -124,6 +127,10 @@ def role_key(role_id: str) -> str:
 
 def session_key(user_id: str, session_id: str) -> str:
     return f"{SESSION_PREFIX}{user_id}:{session_id}"
+
+
+def revocation_key(token_id: str) -> str:
+    return f"{REVOCATION_PREFIX}{token_id}"
 
 
 def token_key(token_id: str) -> str:
@@ -469,6 +476,31 @@ def save_access_token(table: TableProtocol, token: AccessToken, *, updated_at: s
 
 def delete_access_token(table: TableProtocol, token_id: str) -> None:
     _delete(table, token_key(token_id))
+
+
+def get_token_revocation(table: TableProtocol | None, token_id: str) -> TokenRevocation | None:
+    payload = _read(table, revocation_key(token_id), REVOCATION_ENTITY)
+    return None if payload is None else TokenRevocation.from_dict(payload)
+
+
+def iter_token_revocations(table: TableProtocol | None) -> Iterator[TokenRevocation]:
+    for payload in _scan(table, REVOCATION_PREFIX, REVOCATION_ENTITY).values():
+        yield TokenRevocation.from_dict(payload)
+
+
+def save_token_revocation(table: TableProtocol, revocation: TokenRevocation, *, updated_at: str) -> None:
+    _write(
+        table,
+        revocation_key(revocation.token_id),
+        entity_type=REVOCATION_ENTITY,
+        entity_id=revocation.token_id,
+        updated_at=updated_at,
+        payload=revocation.to_dict(),
+    )
+
+
+def delete_token_revocation(table: TableProtocol, token_id: str) -> None:
+    _delete(table, revocation_key(token_id))
 
 
 # ------------------------------------------------------------------------------------------ datasets
