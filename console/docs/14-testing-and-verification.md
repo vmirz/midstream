@@ -377,7 +377,7 @@ process exists to catch. 1–19 are from the 0.x releases, 20 on from 1.0.
 ## 14.6 The unit suite
 
 ```bash
-npm test          # node --test server src shared
+npm test          # node --test over server/, src/ and shared/ (*.test.ts)
 npm run typecheck # both TypeScript projects
 ```
 

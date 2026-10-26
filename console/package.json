@@ -14,7 +14,7 @@
     "build": "vite build",
     "start": "node --env-file-if-exists=.env server/main.ts",
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.server.json --noEmit",
-    "test": "node --test server src shared"
+    "test": "node --test 'server/**/*.test.ts' 'src/**/*.test.ts' 'shared/**/*.test.ts'"
   },
   "dependencies": {
     "@codemirror/lang-sql": "^6.10.0",
