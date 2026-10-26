@@ -86,9 +86,11 @@ and `kaspr.tolerations` to place every pod, `tail.enabled: false` to run without
 `console.enabled: false` to run without the console, and `route` or `ingress` to expose the console
 and the catalog.
 
-Until the first release is published, `package.source` is `git` and installs this repository's `main`
-branch; set `package.git.ref` to a tag or commit to pin it. From the first release, `package.source:
-index` installs the release from PyPI.
+`package.source` is `git` by default and installs this repository's `main` branch; set
+`package.git.ref` to a tag or commit to pin it. `package.source: index` installs a published release
+from PyPI instead (`package.index.version`, the chart's appVersion by default); the control plane then
+pins its runtimes to the same version. The console image for a release is
+`ghcr.io/vmirz/midstream-console:<version>`, the chart's default.
 
 ## 4. Install
 

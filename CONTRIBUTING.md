@@ -28,6 +28,14 @@ A behaviour change comes with a test in the nearest existing `python/tests/test_
 `console/**/*.test.ts` file, and with the matching handbook page updated. Keep the handbooks true to
 the code: they are written to be read by people and loaded by coding agents.
 
+## Continuous integration and releases
+
+Every pull request runs `.github/workflows/ci.yml`: the Python suite on 3.12 and 3.13 with a wheel
+build, the console's typecheck, tests, build and image build, the chart's lint and render with every
+values file, and a check that the version is the same everywhere (`tools/version.py check`). A tag
+`v<version>` runs `release.yml`, which publishes the package to PyPI, the console image and the chart to
+GHCR, and a GitHub release. Pre-release tags look like `v1.0.0-rc.1`.
+
 ## Pull requests
 
 Branch from `main`, keep a pull request to one topic, and write the description for someone who did

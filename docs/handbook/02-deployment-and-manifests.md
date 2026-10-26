@@ -256,9 +256,9 @@ The control plane adds `K_STREAM_WAIT_EMPTY=false`, `K_STORE_ROCKSDB_WRITE_BUFFE
 > would be acknowledged before they are in the table — exactly once would not hold (10 §10.7).
 
 > **Important:** the `pythonPackages.packages` entry inside this embedded spec is **overwritten
-> at render time** with an exact commit pin derived from the installed distribution. The `@main`
-> / `@develop` ref here is only a fallback shape; see
-> [10 — Runtime internals](./10-runtime-internals.md) § package pinning.
+> at render time** with the exact source the control plane itself was installed from: the git
+> commit at the same repository, or `midstream==<version>` from the same index. The ref here is
+> only a fallback shape; see [10 — Runtime internals](./10-runtime-internals.md) §10.13.
 
 ### Control-plane environment variables
 

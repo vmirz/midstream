@@ -951,7 +951,7 @@ kafka-console-consumer --bootstrap-server $BROKERS --topic $RT-commits --max-mes
 | `409 topic_change_pending` on `PATCH` | An earlier change adding topics still waits for its names | Wait a moment; `GET` the materialization's `pending_topic_change` |
 | A create reads `deleted` / `table_name_taken` (or `dataset_not_found`, `forbidden`) | Its claim was refused after the API accepted it: another request took the name first, or the dataset or access went meanwhile | Create it again with another name |
 | `409 dataset_not_empty` deleting a dataset | It still holds tables — written, kept, or being dropped | Drop them, or delete their materializations, first |
-| Control plane cannot apply runtimes | Installed from a local path, so `direct_url.json` has no `commit_id` | Install from git |
+| Control plane cannot apply runtimes | Installed from a local path, which no pod could repeat (`direct_url.json` has `dir_info`) | Install from git or from a package index (`package.source`) |
 | Every settings save answers `500`; the control-plane log shows `KeyError: '…<release>-settings-requests'` | The consumer group was not rebalanced after the deploy that added the settings topics | Force one rebalance (§12.1, [17 §17.12](./17-settings.md)) |
 | A settings save is refused: "These settings changed after this page loaded" | Someone saved the same scope first | Reload the page; unsaved edits are kept |
 | An env var change has no effect | The Settings page overrides the same setting | Reset the override |
