@@ -9,7 +9,7 @@
 fullnameOverride: ""
 
 # The Python package every Kaspr app installs when its pod starts (handbook 02 §2.3). `git` installs
-# this repository at `ref`; `index` installs `midstream==<version>` from PyPI or the index given.
+# this repository at `ref`; `index` installs `midstream-platform==<version>` from PyPI or the index given.
 package:
   source: git
   git:

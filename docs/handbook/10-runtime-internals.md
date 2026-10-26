@@ -530,12 +530,12 @@ metadata (PEP 610 `direct_url.json`):
 
 | The control plane was installed | `PackageSource` | The runtime's requirement |
 |---|---|---|
-| from a git repository (`package.source: git`) | `kind: git`, `reference`: the commit | `git+<that repository>@<commit>#egg=midstream&subdirectory=python` |
-| from a package index (`package.source: index`) | `kind: index`, `reference`: the version | `midstream==<version>` |
+| from a git repository (`package.source: git`) | `kind: git`, `reference`: the commit | `git+<that repository>@<commit>#egg=midstream-platform&subdirectory=python` |
+| from a package index (`package.source: index`) | `kind: index`, `reference`: the version | `midstream-platform==<version>` |
 | from a local path, an editable checkout say | refused with `RuntimeError` | none: no pod could repeat it |
 
 `_pin_runtime_package()` then rewrites the deployment's runtime spec: every `pythonPackages.packages`
-entry that names this distribution, a git URL at a branch, `midstream==<version>` or just `midstream`,
+entry that names this distribution, a git URL at a branch, `midstream-platform==<version>` or just `midstream`,
 becomes that requirement, and one is inserted if none did. The rest of the block, an index URL, its
 credentials and the cache, stays as the chart rendered it. The `reference` is the runtime's
 `control-plane/package-revision` annotation and the Settings page's *Package revision*.

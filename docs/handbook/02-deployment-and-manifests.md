@@ -161,13 +161,13 @@ Notes:
 ```yaml
 pythonPackages:
   packages:
-    - git+https://github.com/vmirz/midstream.git@main#egg=midstream&subdirectory=python
+    - git+https://github.com/vmirz/midstream.git@main#egg=midstream-platform&subdirectory=python
   installPolicy: { retries: 3, timeout: 600, onFailure: block }
 ```
 
 Every app installs the package when its pod starts, from `package.source`: `git` installs this
 repository at `package.git.ref` over https (no deploy key: the repository is public); `index`
-installs `midstream==<package.index.version>` from PyPI or `package.index.url`, with
+installs `midstream-platform==<package.index.version>` from PyPI or `package.index.url`, with
 `package.index.credentialsSecret` for a private index. `onFailure: block` means a failed install
 prevents the app from starting rather than running a stale version. The runtimes get the same block
 through the runtime spec, with the control plane pinning the exact revision (10 §10.1).
@@ -220,7 +220,7 @@ verticalPodAutoscaler:           # the members' CPU request from their use (§2.
   maxAllowed: { cpu: 1500m }
 config: { topicAllowDeclare: true, brokerRebalanceTimeout: 300 }
 pythonPackages:                  # the same block as the apps'; the control plane pins the revision
-  packages: [ git+https://github.com/vmirz/midstream.git@main#egg=midstream&subdirectory=python ]
+  packages: [ git+https://github.com/vmirz/midstream.git@main#egg=midstream-platform&subdirectory=python ]
 template:
   pod: { nodeSelector, tolerations, volumes: [gcp-credentials] }
   kasprContainer:
@@ -257,7 +257,7 @@ The control plane adds `K_STREAM_WAIT_EMPTY=false`, `K_STORE_ROCKSDB_WRITE_BUFFE
 
 > **Important:** the `pythonPackages.packages` entry inside this embedded spec is **overwritten
 > at render time** with the exact source the control plane itself was installed from: the git
-> commit at the same repository, or `midstream==<version>` from the same index. The ref here is
+> commit at the same repository, or `midstream-platform==<version>` from the same index. The ref here is
 > only a fallback shape; see [10 — Runtime internals](./10-runtime-internals.md) §10.13.
 
 ### Control-plane environment variables

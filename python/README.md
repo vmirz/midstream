@@ -1,4 +1,4 @@
-# midstream
+# midstream-platform
 
 The Python package of [Midstream](https://github.com/vmirz/midstream), a streaming platform on
 [Kaspr](https://kaspr.dev) that materializes Kafka topics into Apache Iceberg tables, exactly once,

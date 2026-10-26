@@ -96,7 +96,7 @@ def init_python(resource: dict) -> str:
 
 class RuntimeTemplateTests(unittest.TestCase):
     def setUp(self) -> None:
-        patcher = patch("midstream.runtime.templates.installed_package_source", return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python"))
+        patcher = patch("midstream.runtime.templates.installed_package_source", return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream-platform&subdirectory=python"))
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -135,7 +135,7 @@ class RuntimeTemplateTests(unittest.TestCase):
         self.assertEqual(spec["template"]["kasprContainer"]["env"][0]["name"], "RUNTIME_MEMBER_ID")
         self.assertEqual(
             spec["pythonPackages"]["packages"][0],
-            "git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python",
+            "git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream-platform&subdirectory=python",
         )
         annotations = app["metadata"]["annotations"]
         self.assertEqual(annotations["control-plane/package-revision"], "pkg-rev-1")
@@ -344,7 +344,7 @@ class RuntimeTemplateTests(unittest.TestCase):
                     "template": {"pod": {"tolerations": [{"key": "app", "operator": "Equal", "value": "streaming", "effect": "NoSchedule"}]}},
                     "pythonPackages": {
                         "packages": [
-                            "git+https://github.com/vmirz/midstream.git@main#egg=midstream&subdirectory=python",
+                            "git+https://github.com/vmirz/midstream.git@main#egg=midstream-platform&subdirectory=python",
                             "acme-runtime-support==1.2.3",
                         ]
                     },
@@ -475,11 +475,11 @@ class PackageSourceTests(unittest.TestCase):
     def test_a_git_install_pins_its_commit_at_the_repository_it_came_from(self) -> None:
         source = self.source('{"url": "https://github.com/someone/midstream.git", "vcs_info": {"vcs": "git", "commit_id": "abc123", "requested_revision": "main"}, "subdirectory": "python"}')
         self.assertEqual(("git", "abc123"), (source.kind, source.reference))
-        self.assertEqual("git+https://github.com/someone/midstream.git@abc123#egg=midstream&subdirectory=python", source.requirement)
+        self.assertEqual("git+https://github.com/someone/midstream.git@abc123#egg=midstream-platform&subdirectory=python", source.requirement)
 
     def test_an_index_install_pins_its_version(self) -> None:
         source = self.source(None, version="1.0.0rc1")
-        self.assertEqual(("index", "1.0.0rc1", "midstream==1.0.0rc1"), (source.kind, source.reference, source.requirement))
+        self.assertEqual(("index", "1.0.0rc1", "midstream-platform==1.0.0rc1"), (source.kind, source.reference, source.requirement))
         from midstream.runtime import templates
 
         with patch.object(templates.importlib_metadata, "distribution", return_value=self.Distribution(None, "1.0.0rc1")):
@@ -496,21 +496,21 @@ class PackageSourceTests(unittest.TestCase):
 
         spec = {
             "pythonPackages": {
-                "packages": ["midstream==4.4.1", "acme-runtime-support==1.2.3"],
+                "packages": ["midstream-platform==4.4.1", "acme-runtime-support==1.2.3"],
                 "indexUrl": "https://pypi.example.com/simple",
                 "credentials": {"secretRef": {"name": "pypi-credentials"}},
             }
         }
-        pinned = _pin_runtime_package(spec, "midstream==1.0.0rc1")
-        self.assertEqual(["midstream==1.0.0rc1", "acme-runtime-support==1.2.3"], pinned["pythonPackages"]["packages"])
+        pinned = _pin_runtime_package(spec, "midstream-platform==1.0.0rc1")
+        self.assertEqual(["midstream-platform==1.0.0rc1", "acme-runtime-support==1.2.3"], pinned["pythonPackages"]["packages"])
         self.assertEqual("https://pypi.example.com/simple", pinned["pythonPackages"]["indexUrl"])
         self.assertEqual({"secretRef": {"name": "pypi-credentials"}}, pinned["pythonPackages"]["credentials"])
-        for entry in ("midstream", "Midstream>=1", "midstream[extra]==2", "git+https://example.com/x.git@dev#egg=midstream&subdirectory=python"):
+        for entry in ("midstream-platform", "Midstream_Platform>=1", "midstream-platform[extra]==2", "git+https://example.com/x.git@dev#egg=midstream-platform&subdirectory=python"):
             with self.subTest(entry=entry):
-                self.assertEqual(["midstream==1.0.0rc1"], _pin_runtime_package({"pythonPackages": {"packages": [entry]}}, "midstream==1.0.0rc1")["pythonPackages"]["packages"])
-        self.assertEqual(["midstream==1.0.0rc1", "other==1"], _pin_runtime_package({"pythonPackages": {"packages": ["other==1"]}}, "midstream==1.0.0rc1")["pythonPackages"]["packages"])
-        self.assertEqual(["midstream==1.0.0rc1"], _pin_runtime_package({}, "midstream==1.0.0rc1")["pythonPackages"]["packages"])
-        for entry in ("midstream-extras==1", "notmidstream"):
+                self.assertEqual(["midstream-platform==1.0.0rc1"], _pin_runtime_package({"pythonPackages": {"packages": [entry]}}, "midstream-platform==1.0.0rc1")["pythonPackages"]["packages"])
+        self.assertEqual(["midstream-platform==1.0.0rc1", "other==1"], _pin_runtime_package({"pythonPackages": {"packages": ["other==1"]}}, "midstream-platform==1.0.0rc1")["pythonPackages"]["packages"])
+        self.assertEqual(["midstream-platform==1.0.0rc1"], _pin_runtime_package({}, "midstream-platform==1.0.0rc1")["pythonPackages"]["packages"])
+        for entry in ("midstream-platform-extras==1", "notmidstream-platform", "midstream"):
             with self.subTest(entry=entry):
-                self.assertEqual(["midstream==1.0.0rc1", entry], _pin_runtime_package({"pythonPackages": {"packages": [entry]}}, "midstream==1.0.0rc1")["pythonPackages"]["packages"])
+                self.assertEqual(["midstream-platform==1.0.0rc1", entry], _pin_runtime_package({"pythonPackages": {"packages": [entry]}}, "midstream-platform==1.0.0rc1")["pythonPackages"]["packages"])
 

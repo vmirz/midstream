@@ -309,7 +309,7 @@ class RenderedRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
         reset_runtime_settings()
         self.addCleanup(reset_runtime_settings)
-        patcher = patch("midstream.runtime.templates.installed_package_source", return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python"))
+        patcher = patch("midstream.runtime.templates.installed_package_source", return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream-platform&subdirectory=python"))
         patcher.start()
         self.addCleanup(patcher.stop)
         self.table_records = build_table_records(build_materialization())

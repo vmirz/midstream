@@ -179,7 +179,7 @@ class WorkflowTestCase(unittest.TestCase):
         self.kaspr = FakeKasprAppClient()
         self.config = ControlPlaneConfig(discovery_sample_records=50, discovery_sample_seconds=3)
         self.discovery = StubDiscoveryService(SAMPLE)
-        patcher = patch("midstream.runtime.templates.installed_package_source", return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python"))
+        patcher = patch("midstream.runtime.templates.installed_package_source", return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream-platform&subdirectory=python"))
         patcher.start()
         self.addCleanup(patcher.stop)
         save_materialization(self.table, build_materialization())

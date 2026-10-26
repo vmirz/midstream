@@ -22,7 +22,7 @@ helm install midstream charts/midstream -n midstream --create-namespace -f my-va
 | Value | Default | Meaning |
 |---|---|---|
 | `fullnameOverride` | the release name | the prefix of every derived name |
-| `package.source` | `git` | `git` installs `package.git.repository` at `package.git.ref`; `index` installs `midstream==<package.index.version>` from PyPI or `package.index.url` |
+| `package.source` | `git` | `git` installs `package.git.repository` at `package.git.ref`; `index` installs `midstream-platform==<package.index.version>` from PyPI or `package.index.url` |
 | `kaspr.bootstrapServers` | required | the Kafka bootstrap address every app and runtime uses |
 | `kaspr.authentication` | required | Kaspr's Kafka client authentication: `type` (`scram-sha-512`, `scram-sha-256`, `plain`), `username`, `passwordSecret` |
 | `kaspr.version` | the operator's default | the Kaspr image version |

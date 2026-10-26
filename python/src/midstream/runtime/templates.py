@@ -19,7 +19,7 @@ from midstream.models import Materialization, MaterializationTable
 from midstream.runtime.naming import resolve_runtime_app_name, runtime_component_names
 from midstream.runtime_app.config import get_runtime_app_config
 
-PACKAGE_DISTRIBUTION_NAME = "midstream"
+PACKAGE_DISTRIBUTION_NAME = "midstream-platform"
 #: Where a pod finds how pip installed the running package (PEP 610).
 DIRECT_URL_FILE = "direct_url.json"
 #: The runtime's RocksDB write buffer and how many it keeps: its state table's write-ahead log holds
@@ -230,8 +230,8 @@ class PackageSource:
 
     `kind` is `git` when pip installed it from a repository, with `reference` the exact commit, or
     `index` when it came from a package index, with `reference` the version. `requirement` is the
-    pip requirement that installs exactly that again: `git+<url>@<commit>#egg=midstream&subdirectory=…`
-    or `midstream==<version>`. Runtimes never float: a branch deploy still pins its commit.
+    pip requirement that installs exactly that again: `git+<url>@<commit>#egg=midstream-platform&subdirectory=…`
+    or `midstream-platform==<version>`. Runtimes never float: a branch deploy still pins its commit.
     """
 
     kind: str
@@ -383,7 +383,7 @@ def _pin_runtime_package(
     """Make the runtime install exactly the package the control plane runs.
 
     The deployment's runtime spec names this distribution however it installs it - a git URL at a
-    branch, `midstream==<version>`, or just `midstream` - and every such entry becomes the exact
+    branch, `midstream-platform==<version>`, or just `midstream` - and every such entry becomes the exact
     requirement; the rest of `pythonPackages` (an index, its credentials, the cache) stays as given.
     """
     normalized = _merge_runtime_spec({}, runtime_spec)
@@ -411,7 +411,11 @@ def _pin_runtime_package(
     return normalized
 
 
-_PLAIN_REQUIREMENT = re.compile(rf"^\s*{PACKAGE_DISTRIBUTION_NAME}\s*(?:[\[=<>!~;].*)?$", re.IGNORECASE)
+#: The distribution however pip spells it (`-`, `_` and `.` are one), with or without a version.
+_PLAIN_REQUIREMENT = re.compile(
+    r"^\s*" + r"[-_.]+".join(re.escape(part) for part in re.split(r"[-_.]+", PACKAGE_DISTRIBUTION_NAME)) + r"\s*(?:[\[=<>!~;].*)?$",
+    re.IGNORECASE,
+)
 
 
 def _names_this_distribution(package: Any) -> bool:

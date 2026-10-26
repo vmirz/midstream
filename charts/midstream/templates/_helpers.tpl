@@ -45,9 +45,9 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
 {{/* The package reference pip installs: this repository at a ref, or a release from an index. */}}
 {{- define "midstream.packageRef" -}}
 {{- if eq .Values.package.source "git" -}}
-git+{{ .Values.package.git.repository }}@{{ .Values.package.git.ref }}#egg=midstream&subdirectory=python
+git+{{ .Values.package.git.repository }}@{{ .Values.package.git.ref }}#egg=midstream-platform&subdirectory=python
 {{- else if eq .Values.package.source "index" -}}
-midstream=={{ default .Chart.AppVersion .Values.package.index.version }}
+midstream-platform=={{ default .Chart.AppVersion .Values.package.index.version }}
 {{- else -}}
 {{- fail (printf "package.source must be git or index, not %q" .Values.package.source) -}}
 {{- end -}}
