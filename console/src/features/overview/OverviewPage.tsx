@@ -274,7 +274,8 @@ function DomainsPanel({ domains }: { domains: readonly DomainFleet[] }): ReactNo
                   <p className="numeric truncate text-[12px] text-[var(--color-ink-muted)]">{entry.domain}</p>
                 </div>
                 <span className="text-right text-[13px]">
-                  {formatCount(totals.materializations)} <span className="text-[var(--color-ink-muted)]">materializations</span>
+                  {formatCount(totals.materializations)}{' '}
+                  <span className="text-[var(--color-ink-muted)]">{totals.materializations === 1 ? 'materialization' : 'materializations'}</span>
                 </span>
                 <span className="text-right text-[13px] text-[var(--color-ink-muted)]">
                   {totals.running} running · {totals.failing} failing
