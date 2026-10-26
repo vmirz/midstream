@@ -50,12 +50,12 @@ and the system:
 
 ### Control plane
 
-A single Kaspr application (`materializer-control-plane`) deployed once per environment. It owns
+A single Kaspr application (`<release>-control-plane`) deployed once per environment. It owns
 desired state and observes the runtimes; it never touches data files.
 
 | Concern | Implementation |
 |---------|----------------|
-| HTTP API | 59 `KasprWebView` CRDs (`manifests/base/webviews/`), each authorizing its caller first |
+| HTTP API | 59 `KasprWebView` CRDs (`charts/midstream/templates/webviews/`), each authorizing its caller first |
 | Desired state | `materialization:` records in the global `state` table |
 | Observed state | `materialization-status:` records |
 | Table records | `materialization-table:<id>:<table>` records: location, latest snapshot, totals, maintenance history |
@@ -96,21 +96,21 @@ pin.
 
 ### The maintenance app
 
-One more Kaspr application, `materializer-maintenance` (`manifests/base/maintenance/`), deployed
+One more Kaspr application, `<release>-maintenance` (`charts/midstream/templates/maintenance/`), deployed
 once per environment beside the control plane: compaction, snapshot expiry and orphan cleanup for
 every materialization's tables, running or stopped. It keeps no state: the control plane ticks
-each table every minute on `materializer-maintenance-requests`, keyed by table, so each member
+each table every minute on `<release>-maintenance-requests`, keyed by table, so each member
 maintains the tables of its partitions, and reports on `materialization-table-events`. Compaction
 is the memory-hungry job, so this app alone is sized for it, and the runtimes are not (10 §10.10,
 02 §2.10a).
 
 ### The tail app
 
-A third Kaspr application, `materializer-tail` (`manifests/base/tail/`), deployed once per
+A third Kaspr application, `<release>-tail` (`charts/midstream/templates/tail/`), deployed once per
 environment: for each table someone is watching, the records past its committed offsets, read from
 Kafka and built into rows by `lakehouse/rows.py::build_row` — the seal's own code — and served to
 the console as Parquet under `/tail/v1`. It keeps no state: the control plane names every tailed
-table each minute on `materializer-tail-requests`, keyed by table, so each member tails the tables
+table each minute on `<release>-tail-requests`, keyed by table, so each member tails the tables
 of its partitions and forwards a request for another's. It never writes a table (19).
 
 ### The console
@@ -144,7 +144,7 @@ WebView (202 Accepted, does NOT persist)
    └─▶ materialization-requests topic
           └─▶ request-intake agent
                  ├─ persists Materialization + MaterializationStatus
-                 ├─▶ materializer-identity-requests (claim or release of table names)
+                 ├─▶ <release>-identity-requests (claim or release of table names)
                  └─▶ materialization-work topic (first step; for a create, once the names are claimed)
 ```
 
@@ -225,7 +225,7 @@ go to `_unmapped` (09).
 ```
 schedule-table-maintenance (every minute, leader) or POST /materializations/{id}/maintenance
    └─▶ maintenance agent: reads the table records, writes nothing
-          └─▶ materializer-maintenance-requests  maintenance_tick / maintenance_request /
+          └─▶ <release>-maintenance-requests  maintenance_tick / maintenance_request /
               maintenance_cancel, keyed maintenance:<id>:<table>
                  └─▶ maintenance app: per member, one long job at a time — compaction (child
                      process, then one replace commit), orphan cleanup; snapshot expiry
@@ -237,7 +237,7 @@ the race re-reads the table and tries again (10 §10.10). The same step names ev
 the tail app:
 
 ```
-   maintenance agent ─▶ materializer-tail-requests  tail_tick / tail_cancel, keyed tail:<id>:<table>
+   maintenance agent ─▶ <release>-tail-requests  tail_tick / tail_cancel, keyed tail:<id>:<table>
                            └─▶ tail app: the owning member reads the table's topic while someone asks
 console run ─▶ GET /tail/v1/materializations/{id}/tables/{table}?after=<the snapshot's offsets>
                            └─▶ the records past them, as Parquet, read beside the snapshot (19)
@@ -246,7 +246,7 @@ console run ─▶ GET /tail/v1/materializations/{id}/tables/{table}?after=<the 
 ### Loop H — Settings
 
 ```
-console Settings page ─▶ PATCH /settings/{scope} ─▶ materializer-settings-requests
+console Settings page ─▶ PATCH /settings/{scope} ─▶ <release>-settings-requests
    └─▶ settings-intake agent ─▶ settings table
           ├─ every control-plane handler resolves its configuration from it, per event
           └─ runtime scope ─▶ materialization-schema-authority-updates (materialization_id "*")
@@ -260,7 +260,7 @@ An override wins over the environment variable until it is reset. Nothing restar
 ```
 every WebView ─▶ authorize(request, directory table, permission[, dataset])   401 / 403, or go on
 POST /auth/login ─▶ password checked, signed session token issued at once
-   └─▶ materializer-identity-requests (key "identity": one partition, strictly ordered)
+   └─▶ <release>-identity-requests (key "identity": one partition, strictly ordered)
 POST /users, /groups, /roles, /datasets, /auth/tokens … ─▶ same topic
 request-intake ─▶ claim_tables / release_tables ─▶ same topic
    └─▶ identity-intake agent ─▶ directory table (+ identity-audit)
@@ -351,7 +351,7 @@ members stage, seal, upload; the committer commits; table events keep the table 
 | Kubernetes client | kubernetes-asyncio | `>=33.1.0` |
 | Kafka admin/consumer | aiokafka | **not declared**; provided by the Kaspr runtime image |
 | Console | Node 24+, React, DuckDB (`@duckdb/node-api` 1.5.5), avsc | `console/package.json` |
-| Manifests | Kustomize (`kubectl kustomize`) | — |
+| Deployment | Helm (`charts/midstream`) | `helm` 3.12+ |
 | Tests | stdlib `unittest`; `node --test` in `/console` | — |
 
 There is **no linter or formatter configured** in this repository. Do not introduce one.
@@ -362,10 +362,8 @@ There is **no linter or formatter configured** in this repository. Do not introd
 /AGENTS.md                          Agent instructions (short, always-on)
 /KAFKA_MATERIALIZER_SOURCE_OF_TRUTH.md   Condensed end-to-end narrative
 /docs/handbook/                     This handbook
-/manifests/
-  base/                             Shared CRDs: app, agents, tasks, tables, roles, webviews; maintenance/, tail/
-  dev/                              The substantive overlay (develop- prefixes, topic renames)
-  staging/  prod/                   Pass-through overlays (resources: [../base])
+/charts/midstream/                  The Helm chart: values.yaml; templates/ (apps, agents, tasks, tables, webviews, console); ci/ values
+/docs/install.md                    Installing it
 /python/
   pyproject.toml                    Package metadata and dependencies
   src/midstream/

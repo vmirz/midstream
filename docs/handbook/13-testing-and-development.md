@@ -58,11 +58,9 @@ python3 -m compileall -q python/src
 # build a wheel
 python3 -m pip wheel --no-deps ./python
 
-# render manifests
-kubectl kustomize manifests/base
-kubectl kustomize manifests/dev
-kubectl kustomize manifests/staging
-kubectl kustomize manifests/prod
+# render the chart
+helm lint charts/midstream -f charts/midstream/ci/test-values.yaml
+helm template midstream charts/midstream -n midstream -f charts/midstream/ci/test-values.yaml
 
 # the console (console/docs/14)
 cd console && npm run typecheck && npm test && npm run build
@@ -73,7 +71,7 @@ cd console && npm run typecheck && npm test && npm run build
 unrelated change.
 
 **There is no local server.** The control plane only runs as a KasprApp inside Kubernetes.
-Validate locally with unit tests and `kubectl kustomize`; validate end-to-end against a cluster
+Validate locally with unit tests and `helm template`; validate end-to-end against a cluster
 (§13.8, and [12](./12-operations-runbook.md)).
 
 ## 13.3 Test suite map
@@ -152,7 +150,7 @@ disagree, the tests win.
 | `test_settings.py` | 54 | The settings catalog against config and env vars, precedence, applying changes, views — the runtime view saying how members are autoscaled — the runtime settings' lineage begun at startup (the task's own code run) and carried by every delivery, the runtime rollout by lineage and revision, a runtime upgraded from before lineages included |
 | `test_identity.py` | 85 | Permissions, their scopes and built-in roles, passwords, session and access tokens, authorization, bootstrap, every directory rule, sign-in and lockout, the views; `503 starting` for every caller, the session view and sign-in while a restarted control plane reads its tables back (`StartingTests`) |
 | `test_versioning.py` | 8 | Version reporting across the control plane and its runtimes |
-| `test_agent_manifests.py` | 31 | Manifest wiring: every app's CPU request set from its use; the `directory` table bound in every view and agent that authorizes (`DirectoryWiringTests`), settings bound where configuration is read, async agent maps, every WebView authorizing (`AuthorizationWiringTests`), identity requests keyed one way, every overlay defining what its views and agents use, the maintenance app owning its agent and task, ticks keyed by table; the tail app's views answering their errors as JSON, the schema views passing `raw` on |
+| `test_agent_manifests.py` | 31 | Chart wiring, rendered with every values file under `charts/midstream/ci/`: every app's CPU request set from its use; the `directory` table bound in every view and agent that authorizes (`DirectoryWiringTests`), settings bound where configuration is read, async agent maps, every WebView authorizing (`AuthorizationWiringTests`), identity requests keyed one way, every overlay defining what its views and agents use, the maintenance app owning its agent and task, ticks keyed by table; the tail app's views answering their errors as JSON, the schema views passing `raw` on |
 | `test_topic_catalog.py` | 24 | The topic list: classification, the shared cache, the metadata client's deadlines, analysis off the loop; no metadata request naming a topic, nor a topic left tracked by an offset lookup |
 | `test_kafka_admin.py`, `test_kubernetes_client.py` | 19, 11 | Adapter deadlines and loops; a group's state and its offsets committed from outside it; a runtime's pods read for their restarts, and an observation without them when they cannot be; graceful behaviour without `aiokafka` |
 | `test_config.py`, `test_package_layout.py` | 10, 2 | Config contract defaults and env parsing; every subpackage imports |
@@ -254,10 +252,10 @@ python3 -m unittest discover -s python/tests -p 'test_workflow.py' -v
 # the write and commit path
 for m in test_lakehouse_commits test_runtime_committer test_runtime_flow test_runtime_acks; do
   python3 -m unittest discover -s python/tests -p "$m.py"; done
-# templates and manifests
+# runtime templates and the chart
 python3 -m unittest discover -s python/tests -p 'test_runtime_templates.py' -v
 python3 -m unittest discover -s python/tests -p 'test_agent_manifests.py' -v
-kubectl kustomize manifests/dev > /tmp/dev.yaml
+helm template midstream charts/midstream -n midstream -f charts/midstream/ci/test-values.yaml > /tmp/chart.yaml
 ```
 
 ### Inspecting a rendered runtime spec by hand
@@ -290,20 +288,20 @@ Rendering resolves the package pin, which raises `RuntimeError` for an install w
 
 | If you change… | You must also update… |
 |----------------|----------------------|
-| A topic name | `config.py` defaults, `manifests/base/*.yaml`, every overlay patch, `test_config.py` |
+| A topic name | `config.py` defaults, the chart's templates (derived from the release), `test_config.py` |
 | A resource name pattern | `runtime/naming.py`, `test_runtime_templates.py`, RBAC if the kind changes |
 | A model field | `to_dict`/`from_dict`, `test_models.py`, any code reading the envelope |
 | A workflow step name | `WORK_STEPS`, the step dispatcher, scheduler request ids, `test_workflow.py` |
 | A phase or phase reason | `models/materialization.py`, `observation/mapping.py`, the rules in [08](./08-observation-and-status.md), `test_observation.py` |
 | A runtime env var | `runtime_app/config.py`, the relevant `.j2` template, `test_runtime_config.py` |
 | An agent or task of the runtime | `runtime/templates.py`, the `.j2` files, observation, `test_runtime_templates.py` |
-| A control-plane agent | `manifests/base/agents/*.yaml`, `handlers/`, RBAC if needed |
+| A control-plane agent | `charts/midstream/templates/agents/*.yaml`, `handlers/`, RBAC if needed |
 | What the table holds: field ids, partitioning, a summary property | `lakehouse/`, the console's reader (`console/server/iceberg/`), the fixture table (`console_fixture.py`), [11](./11-iceberg-tables-and-storage.md) |
-| The `develop-` prefix set | `manifests/dev/kustomization.yaml` **and** every explicit patch |
+| A derived name's form | `charts/midstream/templates/_helpers.tpl` and the templates that use it |
 | An overridable setting | its config field and env var, its entry in `settings/catalog.py` (runtime: also the live fields), `test_settings.py` (`.claude/skills/adding-settings/SKILL.md`) |
-| An operation that reads configuration | bind the `settings` table in its manifest and every overlay (`SettingsWiringTests`) |
+| An operation that reads configuration | bind the `settings` table in its template (`SettingsWiringTests`) |
 | The topics or tables of a Kaspr app | plan one forced consumer-group rebalance per environment at deploy ([14 §14.3](./14-known-gaps-and-roadmap.md)) |
-| A WebView | its first line authorizes the caller, it binds the `identity` table, and every overlay patches that binding (`AuthorizationWiringTests`, `OverlayTopicWiringTests`) |
+| A WebView | its first line authorizes the caller, it binds the `directory` table by its derived name (`AuthorizationWiringTests`, `ValuesWiringTests`) |
 | A permission | `identity/permissions.py`, the views and console routes that check it, [18 §18.3](./18-identity-and-access.md) (`.claude/skills/adding-permissions/SKILL.md`) |
 
 ## 13.7 Debugging techniques
@@ -632,16 +630,15 @@ Before considering any change complete:
 ```bash
 python3 -m unittest discover -s python/tests -p 'test_*.py'   # must be OK
 python3 -m compileall -q python/src                            # must be silent
-kubectl kustomize manifests/base >/dev/null                    # if manifests touched
-kubectl kustomize manifests/dev  >/dev/null                    # if manifests touched
+helm lint charts/midstream -f charts/midstream/ci/test-values.yaml   # if the chart was touched
 git status --short                                             # no stray files, no secrets
 ```
 
 If `console/` changed: `cd console && npm test && npm run typecheck && npm run build`, and check the
 change in a browser in both themes ([web 14](../../console/docs/14-testing-and-verification.md)).
 
-A local overlay directory that is not checked in (a lab environment, say) is rendered by
-`OverlayTopicWiringTests` like any other, and fails it until it carries the same patches as `dev`.
+A values file added under `charts/midstream/ci/` is rendered by `ValuesWiringTests` and
+`VerticalPodAutoscalingTests` too. Keep an environment's real values out of the repository.
 
 The backpressure tests log `Pausing N source partition(s) …` warnings and some runtime tests log
 protocol events; those lines are expected output, not failures.

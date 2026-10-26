@@ -6,7 +6,7 @@ the conventions and guardrails every change follows, and the handbooks under `do
 
 ## Setting up
 
-You need Python 3.12 or later, Node 24 or later, and `kubectl` for rendering the manifests.
+You need Python 3.12 or later, Node 24 or later, and `helm` for rendering the chart.
 
 ```bash
 python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
@@ -20,7 +20,7 @@ Run what your change touches before opening a pull request; the suites are the s
 ```bash
 .venv/bin/python -m unittest discover -s python/tests -p 'test_*.py'   # the Python package
 .venv/bin/python -m compileall python/src                               # syntax check: there is no linter
-kubectl kustomize manifests/base && kubectl kustomize manifests/dev     # the manifests
+helm lint charts/midstream -f charts/midstream/ci/test-values.yaml     # the chart
 cd console && npm run typecheck && npm test && npm run build            # the console
 ```
 
@@ -32,7 +32,7 @@ the code: they are written to be read by people and loaded by coding agents.
 
 Branch from `main`, keep a pull request to one topic, and write the description for someone who did
 not watch you work: what changed, why, and how you checked it. Do not introduce a linter, formatter,
-test runner or build system; the repository deliberately uses `pip`, `unittest`, Kustomize, npm,
+test runner or build system; the repository deliberately uses `pip`, `unittest`, Helm, npm,
 `tsc` and Vite.
 
 ## Reporting a problem

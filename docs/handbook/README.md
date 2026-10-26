@@ -5,7 +5,7 @@ materializes Kafka topics into Apache Iceberg tables. It is written to be read b
 enhancement work and to be loaded as context by LLMs answering detailed design and implementation
 questions.
 
-Everything here is derived from the code and manifests in this repository, not from
+Everything here is derived from the code and the chart in this repository, not from
 aspirational design prose.
 
 ---
@@ -16,7 +16,7 @@ aspirational design prose.
 |---|----------|------------------------|
 | — | [`README.md`](./README.md) (this file) | Where do I find X? What are the doc conventions? |
 | 01 | [System overview](./01-system-overview.md) | What is this thing? How do the pieces fit? What are the control loops? |
-| 02 | [Deployment and manifests](./02-deployment-and-manifests.md) | What Kubernetes resources exist? What does the dev overlay change? What RBAC/secrets are needed? |
+| 02 | [Deployment and manifests](./02-deployment-and-manifests.md) | What Kubernetes resources exist? What do the values change? What RBAC/secrets are needed? |
 | 03 | [Configuration reference](./03-configuration-reference.md) | What environment variables exist? What are the defaults? Which are actually wired? |
 | 04 | [HTTP API reference](./04-http-api-reference.md) | What endpoints exist? Request/response shapes? Status codes? Error payloads? |
 | 05 | [Data model reference](./05-data-model-reference.md) | What are all the models and fields? What is persisted, under which key? |
@@ -67,14 +67,14 @@ explicitly (see [14 — Known gaps](./14-known-gaps-and-roadmap.md)).
 - **Line references** (e.g. `workflow.py:288`) were accurate at time of writing; treat them as
   navigation hints, not guarantees.
 - **`<runtime-app>`**, or **`<rt>`**, is a placeholder for the resolved runtime KasprApp name,
-  e.g. `kaspr-mat-a1b2c3d4e5f6` (base) or `develop-mat-a1b2c3d4e5f6` (dev overlay).
+  e.g. `midstream-mat-a1b2c3d4e5f6` for a release named `midstream`.
 - **`web <n>`** is document `<n>` of the console handbook, `console/docs/`.
 - **`<location>`** is a table's location, `<destination>/<storage prefix>/<materialization id>/<table>`.
 - **Timestamps** are always UTC ISO-8601 with a `Z` suffix and second precision, e.g.
   `2026-01-15T10:30:00Z`. Produced by
   `datetime.now(tz=UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")`.
-- **Names in `dev`** carry a `develop-` prefix. Base names are used throughout unless the
-  dev overlay is explicitly being discussed.
+- **Deployed names derive from the Helm release**: `<release>-control-plane`, `<release>-state`,
+  `<release>-materialization-requests`. The handbook writes `<release>-` where the release name goes.
 - Code blocks marked `# code-derived` are reproduced or paraphrased from the repository.
 - **spec §n**, **D1–D10** and **E1–E14** cite the 1.0 design specification, its decisions and its
   experiments, kept only in the repository's history since they were removed from it (b729a28).
@@ -98,7 +98,7 @@ You rarely need the whole handbook. Load only what the task requires.
 | Changing schema evolution behavior | `09` → `10 §10.6` → `05` |
 | Changing the write or commit path | `10` → `11` → `03` |
 | Changing table maintenance | `11 §11.6` → `10 §10.10` → `17` |
-| Changing manifests or templates | `02` → `03` → `13 §13.5` |
+| Changing the chart or the runtime templates | `02` → `03` → `13 §13.5` |
 | Planning a larger enhancement | `14` → `01` → the relevant deep doc |
 | Answering "why is it built this way?" | `14 §14.10` → `01` |
 | Changing a setting, or adding a new one | `17` → `03` → `13 §13.6` |
@@ -145,7 +145,7 @@ HTTP  ──▶ KasprWebView ──▶ materialization-requests
 
 Two planes:
 
-- **Control plane** — one long-lived `KasprApp` named `materializer-control-plane`. Owns the
+- **Control plane** — one long-lived `KasprApp` named `<release>-control-plane`. Owns the
   HTTP API and the REST catalog, all desired and observed state, creating and dropping tables, and
   Kubernetes reconciliation. It never writes data files.
 - **Data plane (runtime)** — one dedicated `KasprApp` per materialization, generated from Jinja2
@@ -153,19 +153,19 @@ Two planes:
   and uploads Parquet files; one member, the committer, commits them to their tables — one per topic,
   exactly once — evolves each table's schema and maintains them.
 
-Settings take their own path: `PATCH /settings/{scope}` → `materializer-settings-requests` →
+Settings take their own path: `PATCH /settings/{scope}` → `<release>-settings-requests` →
 `settings-intake` agent → `settings` table, which every control-plane handler reads its effective
 configuration from. Runtime settings continue on the runtime control topic to every runtime.
 See [17](./17-settings.md).
 
 The live tail takes a third: the control plane's scheduled maintenance step also names every tailed
-table each minute on `materializer-tail-requests`; the **tail app** (`materializer-tail`) reads those
+table each minute on `<release>-tail-requests`; the **tail app** (`<release>-tail`) reads those
 tables' topics and serves the records past a snapshot's offsets, which the console reads beside the
 snapshot so that each record shows exactly once, within seconds. See [19](./19-live-tail.md).
 
 Identity takes the same shape: every WebView first authorizes its caller against the `directory`
 table; changes to users, groups, roles, datasets, grants and access tokens go `POST /users` (etc.) →
-`materializer-identity-requests` → `identity-intake` agent → `directory` and `identity-audit`
+`<release>-identity-requests` → `identity-intake` agent → `directory` and `identity-audit`
 tables, and so do the claims of table names request intake sends. Signing in is answered at once with a signed session token. See
 [18](./18-identity-and-access.md).
 
@@ -181,5 +181,5 @@ lab cluster; where the code is ambiguous or a source disagrees, the handbook say
 guessing.
 
 Verified for 4.1.0 against: 1,174 passing tests (`python -m unittest discover -s python/tests -p 'test_*.py'`),
-`kubectl kustomize` of every overlay, the console's `npm run typecheck && npm test && npm run build`
+`helm template` with every values file, the console's `npm run typecheck && npm test && npm run build`
 (387 tests), and the lab cluster (13 §13.8–§13.8e).

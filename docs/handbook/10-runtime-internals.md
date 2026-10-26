@@ -402,7 +402,7 @@ member staged but no commit covered is read again by whoever owns the partition 
 ## 10.10 Maintenance: the maintenance app
 
 Compaction, snapshot expiry and orphan cleanup run in the **maintenance app**, a KasprApp of its own
-(`materializer-maintenance`, `manifests/base/maintenance/`, `maintenance_app/`) that maintains every
+(`<release>-maintenance`, `charts/midstream/templates/maintenance/`, `maintenance_app/`) that maintains every
 materialization's tables - written and kept ones, stopped and paused materializations included.
 Compaction's memory (about 1.3 GiB for a 30-day backlog's child process, E13) is then this app's to
 size, not every runtime member's. It keeps no records of its own:
@@ -411,7 +411,7 @@ size, not every runtime member's. It keeps no records of its own:
   (07 §7.13). A tick carries the table's location, the runtimes' maintenance settings with the
   Settings page's overrides, when each job last finished (from the record's history) and the job the
   record says runs.
-- `maintenance-worker` (agent, on `materializer-maintenance-requests`, 6 partitions, keyed by table)
+- `maintenance-worker` (agent, on `<release>-maintenance-requests`, 6 partitions, keyed by table)
   hands each message to the member's `MaintenanceWorker` and answers at once. Each table one member
   maintains has a `TableMaintenance`: its target, settings, schedule and failures.
 - `maintenance-step` (task, every member, every 5 s) finishes what is done on every table - reports

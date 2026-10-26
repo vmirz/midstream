@@ -67,7 +67,7 @@ to be `deploying`, `stopped`, or `deleted` — those are control-plane conclusio
 ## 5.2 Control-plane table key layout
 
 Every record about materializations lives in one global `KasprTable` named `state`
-(`develop-state` in dev), 3 partitions, JSON key and value serializers. Settings live in a second
+(`<release>-state` in dev), 3 partitions, JSON key and value serializers. Settings live in a second
 table (§5.2.1), and people, groups, roles and sessions in two more (§5.2.2).
 
 | Prefix | Builder | Entity type | Holds |
@@ -93,7 +93,7 @@ and are processed in order.
 
 ### 5.2.1 The `settings` table
 
-A second global table, `settings` (`develop-settings` in dev), same shape. Only the
+A second global table, `settings` (`<release>-settings` in dev), same shape. Only the
 `settings-intake` agent writes it. Builders are in `storage/settings.py`.
 
 | Key | Builder | Entity type | Holds |
@@ -106,7 +106,7 @@ that scope, so one scope's changes apply in order on one partition.
 
 ### 5.2.2 The `directory` and `identity-audit` tables
 
-Two more global tables, same shape (`develop-directory`, `develop-identity-audit` in dev; the
+Two more global tables, same shape (`<release>-directory`, `<release>-identity-audit` in dev; the
 `directory` table was `identity` before 3.0). Only the `identity-intake` agent writes them.
 Builders are in `storage/identity.py`; models in §5.14.
 
@@ -739,7 +739,7 @@ The heartbeat carries more than the model keeps — `latest_committed_offsets`, 
 
 ### Maintenance messages (`models/maintenance.py`)
 
-On `materializer-maintenance-requests`, keyed `maintenance:<materialization id>:<table>`
+On `<release>-maintenance-requests`, keyed `maintenance:<materialization id>:<table>`
 (`maintenance_routing_key`), for the maintenance app (07 §7.13, 10 §10.10).
 
 | Field | Type | Notes |
@@ -755,7 +755,7 @@ On `materializer-maintenance-requests`, keyed `maintenance:<materialization id>:
 
 ### Live-tail messages (`models/live_tail.py`)
 
-On `materializer-tail-requests`, keyed `tail:<materialization id>:<table>` (`live_tail_routing_key`),
+On `<release>-tail-requests`, keyed `tail:<materialization id>:<table>` (`live_tail_routing_key`),
 for the tail app (06 §6.18, 19).
 
 | Field | Type | Notes |
@@ -947,7 +947,7 @@ Constants: `SETTINGS_SCOPES = ("control-plane", "runtime", "console")`,
 `SettingsRejection`: `request_id`, `reason` (`settings_changed` or `invalid_setting`),
 `message`, `rejected_at`.
 
-### `SettingsChangeRequest` — on `materializer-settings-requests`
+### `SettingsChangeRequest` — on `<release>-settings-requests`
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
@@ -961,7 +961,7 @@ Constants: `SETTINGS_SCOPES = ("control-plane", "runtime", "console")`,
 
 A request must set or reset at least one setting.
 
-### `SettingsBootstrapRequest` — on `materializer-settings-requests`
+### `SettingsBootstrapRequest` — on `<release>-settings-requests`
 
 The `settings-bootstrap` task's startup request: `{"kind": "bootstrap", "scope": "runtime",
 "requested_at": …}`, keyed `settings:runtime`. `SettingsBootstrapRequest.matches(value)` tells it
@@ -1077,7 +1077,7 @@ A credential someone made for a tool, such as an engine reading the REST catalog
 - `ClaimRelease`: `materialization_id`, `released_at` — every name of a materialization being deleted
   released; a later claim of it is refused.
 
-### `IdentityRequest` — on `materializer-identity-requests`
+### `IdentityRequest` — on `<release>-identity-requests`
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
@@ -1160,7 +1160,7 @@ materialization is deleted and created again.
 | `ConsumerLag.partition_lag`, `end_offsets`, `partitions` | `topics: dict[str, TopicLag]`, each with its own |
 | `TableEvent` without a table | `table`, required |
 | A materialization's topics fixed at creation | `Materialization.retired_tables` (kept tables), `MaterializationTable.state` (`TABLE_STATES`), `RuntimeBinding.drain_started_at` and its added topics: an edit changes the topics (§5.4, §5.6, §5.12) |
-| Maintenance run by the committer, requested on `<rt>-commits` | `MaintenanceMessage` on `materializer-maintenance-requests` for the maintenance app (§5.9); `MaterializationTable.maintenance_job`; the `maintenance_started` table event |
+| Maintenance run by the committer, requested on `<rt>-commits` | `MaintenanceMessage` on `<release>-maintenance-requests` for the maintenance app (§5.9); `MaterializationTable.maintenance_job`; the `maintenance_started` table event |
 | The runtime state table's entries keyed by table name only | each stamped with its table's `table_uuid`, so a table re-created under the same name never reads its predecessor's schema or offsets (§5.11) |
 
 ## 5.18 Changed in 3.0

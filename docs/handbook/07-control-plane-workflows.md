@@ -1050,7 +1050,7 @@ attempt succeeded.
 ## 7.12 Settings changes
 
 Not a work step: settings changes have their own topic and agent. `PATCH /settings/{scope}`
-validates and publishes a `SettingsChangeRequest` to `materializer-settings-requests`. The
+validates and publishes a `SettingsChangeRequest` to `<release>-settings-requests`. The
 `settings-intake` agent then runs `services/settings.py::apply_settings_change`:
 
 ```
@@ -1130,7 +1130,7 @@ keeps nothing of its own.
 - Every minute `schedule-table-maintenance` (`onLeader`) triggers `schedule_table_maintenance` on
   the `maintenance` agent, keyed `materialization:__system__`. It only reads
   (`services/table_maintenance.py::build_table_maintenance_messages`) and sends, on
-  `materializer-maintenance-requests`, keyed `maintenance:<id>:<table>`:
+  `<release>-maintenance-requests`, keyed `maintenance:<id>:<table>`:
   - a `maintenance_tick` for each table `active` or `retired`, of every materialization not being
     deleted — stopped and paused ones included. It carries the table (`MaintenanceTarget`), the
     runtimes' maintenance settings with the Settings page's overrides (`maintenance_settings`), when
@@ -1147,7 +1147,7 @@ keeps nothing of its own.
 The same step names every table to the tail app, which serves the tables' newest records from Kafka
 before they are committed (19). It keeps nothing of its own either: what it knows of each table is
 the last tick. `services/live_tail.py::build_live_tail_messages` reads the same records and sends, on
-`materializer-tail-requests`, keyed `tail:<id>:<table>` (06 §6.18):
+`<release>-tail-requests`, keyed `tail:<id>:<table>` (06 §6.18):
 
 - a `tail_tick` for each table `active` of a materialization that is running — every materialization
   has a live tail: the table (`LiveTailTarget`, with the materialization's `skip_tombstones`), the live-tail settings
@@ -1175,8 +1175,8 @@ cancelled while the materialization is stopped and ticked again once it runs.
    awaited in `process_work_event_async` (an adapter's `*_async` call under its deadline, or a
    worker thread, as the table drop does — §7.10), and what the step writes afterwards it
    writes onto records it re-reads (§7.1).
-7. Add the step to the correct agent's `filter` in `manifests/base/agents/*.yaml` — and to
+7. Add the step to the correct agent's `filter` in `charts/midstream/templates/agents/*.yaml` — and to
    `WORKFLOW_APPLY_STEPS` in `services/workflow.py` for `workflow-apply` — and confirm the agents'
    step sets stay disjoint.
 8. Add tests to `python/tests/test_workflow.py`.
-9. Run `python -m unittest python.tests.test_workflow -v` and `kubectl kustomize manifests/dev`.
+9. Run `python -m unittest python.tests.test_workflow -v` and `helm template midstream charts/midstream -f charts/midstream/ci/test-values.yaml`.

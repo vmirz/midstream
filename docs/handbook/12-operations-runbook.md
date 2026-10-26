@@ -4,18 +4,17 @@ Day-to-day operation: deploy, verify, diagnose, repair.
 
 ## 12.0 Conventions used in this runbook
 
-Assumed environment: namespace `midstream`, dev overlay. For staging/prod, drop the `develop-`
-prefix from control-plane names.
+Assumed environment: namespace `midstream`, release `midstream`, so every name below starts with
+`midstream-`; substitute your release name.
 
 Set these once per shell:
 
 ```bash
 NS=midstream
 MAT=mat-a1b2c3d4e5f6                 # the materialization id
-RT=kaspr-$MAT                        # runtime app name (base overlay)
-# RT=develop-$MAT                    # dev overlay: CONTROL_PLANE_RUNTIME_NAME_PREFIX=develop
-CP=develop-materializer-control-plane
-TAIL=develop-materializer-tail       # the tail app (19)
+RT=midstream-$MAT                    # runtime app name: <release>-<materialization id>
+CP=midstream-control-plane
+TAIL=midstream-tail       # the tail app (19)
 ```
 
 Every API call but `GET /system/version` and the guest-visible list needs a session. Sign in once
@@ -74,10 +73,10 @@ carry `kaspr.io/app: $RT`.
 
 ```bash
 # render and inspect before applying
-kubectl kustomize manifests/dev | less
+helm template midstream charts/midstream -n midstream -f my-values.yaml | less
 
 # apply
-kubectl apply -k manifests/dev
+helm upgrade --install midstream charts/midstream -n midstream -f my-values.yaml
 
 # watch the control plane come up
 kubectl get kasprapp -n $NS -w
@@ -90,9 +89,9 @@ A fresh start of the materialization plane that keeps every account and setting:
 
 ### Upgrading to 2.0: the maintenance app
 
-2.0 adds a KasprApp, `materializer-maintenance` (`manifests/base/maintenance/`): its own pod, its own
+2.0 adds a KasprApp, `<release>-maintenance` (`charts/midstream/templates/maintenance/`): its own pod, its own
 consumer group, sized for compaction (1 GiB request, 3 GiB limit, 2 CPUs). The control plane only
-*sends* to its new topic, `materializer-maintenance-requests`, and consumes nothing new, so this
+*sends* to its new topic, `<release>-maintenance-requests`, and consumes nothing new, so this
 deploy needs no rebalance of the control plane. After it:
 
 - the control plane re-applies every runtime (its package pin changed), which deletes each runtime's
@@ -102,15 +101,14 @@ deploy needs no rebalance of the control plane. After it:
   `GET …/tables/{table}` shows maintenance from `runtime_app_ref` = the app's name;
 - runtime pods may be resized down: they no longer run compaction (§12.10).
 
-An overlay that sets the `kaspr.io/app` label on every agent and task must leave the maintenance
-app's alone: restrict its label patches with `labelSelector: kaspr.io/app=materializer-control-plane`
-and add one for `materializer-maintenance` (02 §2.9; `test_the_maintenance_app_owns_its_agent_and_task`).
+The chart labels the maintenance app's agent and task as its own
+(`test_the_maintenance_app_owns_its_agent_and_task`).
 
 ### Upgrading to 4.1: the live tail
 
-4.1 adds a KasprApp, `materializer-tail` (`manifests/base/tail/`, 02 §2.10b): two members, each 1 CPU
+4.1 adds a KasprApp, `<release>-tail` (`charts/midstream/templates/tail/`, 02 §2.10b): two members, each 1 CPU
 and 2 GiB requested, 2 CPU and 4 GiB at most, in their own consumer group. The control plane only
-*sends* to its new topic, `materializer-tail-requests`, so this deploy needs no rebalance of the
+*sends* to its new topic, `<release>-tail-requests`, so this deploy needs no rebalance of the
 control plane. Before it:
 
 - Kaspr 0.11.30 and kaspr-operator 0.19.7 or later, for the tail's views to answer refusals as JSON
@@ -125,7 +123,7 @@ before it included.
 ### Upgrading to 4.4: autoscaling and restart health
 
 4.4 needs the control plane's role to `get` and `list` **pods** (02 §2.7), which every observation now
-reads for its runtime's restarts: render and apply the manifests before the control plane restarts.
+reads for its runtime's restarts: upgrade the release before the control plane restarts.
 Without the rule the observations go on without the pods, the control plane logs it once, and a
 runtime whose members keep restarting is not shown as such.
 
@@ -158,10 +156,9 @@ confirm it: [17 — Settings](./17-settings.md) §17.12.
 
 | Secret | Used for |
 |--------|----------|
-| `github-deploy-key` | SSH key so runtime pods can `pip install` from git |
-| `kafka-materializer-gcp-credentials` | GCS read and write on the destination bucket: tables, their pointers, maintenance |
-| `materializer-control-plane-user` | Kafka SCRAM-SHA-512 credentials |
-| `materializer-auth` (`develop-materializer-auth` in dev) | Session signing key, the console's service token, the first administrator. Optional to start, but without `signing-key` nobody can sign in |
+| `gcs.credentialsSecret` (`<release>-gcs` in docs/install.md) | GCS read and write on the destination bucket: tables, their pointers, maintenance; empty for workload identity |
+| the Secret `kaspr.authentication.passwordSecret` names (`<release>-kafka`) | the Kafka user's password |
+| `<release>-auth` (`midstream-auth` in dev) | Session signing key, the console's service token, the first administrator. Optional to start, but without `signing-key` nobody can sign in |
 
 The Kaspr operator must be installed and the `kaspr.io` CRDs registered.
 
@@ -169,7 +166,7 @@ Creating the auth Secret (values never echoed; keep a copy of the bootstrap pass
 safe, and give the console the same service token as `CONSOLE_SERVICE_TOKEN`):
 
 ```bash
-kubectl create secret generic develop-materializer-auth -n $NS \
+kubectl create secret generic midstream-auth -n $NS \
   --from-literal=signing-key="$(openssl rand -base64 48)" \
   --from-literal=service-token="$(openssl rand -base64 48)" \
   --from-literal=bootstrap-admin-email=you@example.com \
@@ -215,7 +212,7 @@ Check the tail app: both members in its group, each with its share of the 64 tic
 The views need the console's credential and a bearer, both the service token (never echoed):
 
 ```bash
-SERVICE_TOKEN=$(kubectl get secret -n $NS develop-materializer-auth -o jsonpath='{.data.service-token}' | base64 -d)
+SERVICE_TOKEN=$(kubectl get secret -n $NS midstream-auth -o jsonpath='{.data.service-token}' | base64 -d)
 kubectl port-forward -n $NS svc/$TAIL-app-api 6066:6065 &
 curl -s localhost:6066/tail/v1/members -H "X-Console-Token: $SERVICE_TOKEN" \
      -H "authorization: Bearer $SERVICE_TOKEN" | python3 -m json.tool      # state Stable, two members, 32 partitions each
@@ -320,8 +317,8 @@ restore gone wrong; look at the pointer's `materialization_id`.
 
 The tables' names were never claimed or the answer never arrived. `GET /identity/requests/
 {claim_request_id}`: `pending` means `identity-intake` has not applied it (is the agent up? did a
-renaming overlay patch `request-intake`'s second output, 02 §2.9?); `applied` means its answer did
-not reach `workflow-apply` (did the overlay patch `identity-intake`'s output?). The answer is
+chart's `request-intake` template name its second output `<release>-identity-requests`?); `applied` means its answer did
+not reach `workflow-apply` (is `identity-intake`'s output the work topic?). The answer is
 re-sent if the claim is redelivered; the hourly sweep does not resend it.
 
 ### `deploying` / `runtime_apply_in_progress` — stuck
@@ -627,7 +624,7 @@ The 0.x `reader/main.py` helper is gone: there is nothing it did that `iceberg_s
 
 ## 12.6 Protocol logging
 
-Off by default in code; the base manifests turn it on for the control plane and for runtimes
+Off by default in code; the chart turns it on for the control plane and for runtimes
 (`PROTOCOL_LOGGING_ENABLED`). Switch it per component on the console's Settings page,
 with no restart: **Diagnostics → Protocol logging** for the control plane, and **Runtimes →
 Protocol logging** for every runtime. The runtimes' slow-wait interval is beside it.
@@ -858,13 +855,13 @@ session length (7 days by default). Nobody is signed out.
 
 ## 12.8 Inspecting state directly
 
-State lives in the Kaspr table `develop-state` (dev) / `state` (base), backed by a changelog
+State lives in the Kaspr table `<release>-state` (dev) / `state` (base), backed by a changelog
 topic. There is no direct query API; use the HTTP endpoints, or read the changelog. The
 changelog topic name is derived by Kaspr/faust from the app id and table name — confirm the
 exact name from the broker before consuming:
 
 ```bash
-kafka-topics --bootstrap-server $BROKERS --list | grep -i 'develop-state.*changelog'
+kafka-topics --bootstrap-server $BROKERS --list | grep -i '<release>-state.*changelog'
 
 kafka-console-consumer --bootstrap-server $BROKERS \
   --topic <the-changelog-topic-from-above> \
@@ -891,7 +888,7 @@ Observing the event topics live:
 ```bash
 for t in requests work status table-events schema-authority-updates; do
   echo "== $t"; kafka-console-consumer --bootstrap-server $BROKERS \
-    --topic develop-materialization-$t --from-beginning --max-messages 5
+    --topic midstream-materialization-$t --from-beginning --max-messages 5
 done
 kafka-console-consumer --bootstrap-server $BROKERS --topic $RT-commits --max-messages 20   # the runtime's control topic
 ```
@@ -911,7 +908,7 @@ kafka-console-consumer --bootstrap-server $BROKERS --topic $RT-commits --max-mes
 | A runtime runs more members than its `replicas` | autoscaling: it is far behind (§12.7) | nothing; the detail's `autoscale.reason` says why. Turn it off for the materialization to stop it |
 | `deploying` a few minutes after a runtime fell far behind | autoscaling added members, and the new pods are starting | nothing; it is `running` again once they are ready |
 | `degraded` / `runtime_members_restarting` | members keep restarting: out of memory, most often | §12.3 |
-| Log: "Cannot read the pods of …" | the control plane's role lacks `pods` (§12.1, 4.4) | apply the manifests' role |
+| Log: "Cannot read the pods of …" | the control plane's role lacks `pods` (§12.1, 4.4) | upgrade the release so the chart's Role applies |
 | Flapping `running` ↔ `degraded` | Heartbeat interval ≥ ⅓ of the 120 s staleness window | Keep heartbeat ≤ 40 s |
 | `records_skipped` growing | Records a member cannot write — a value that is not JSON | The skip reasons name the latest partition and offset (§12.3) |
 | `unmapped_values` growing | Values the schema cannot hold: past `max_schema_fields`, or a collapsed family's array element | 09 §9.8; raise the limit if the fields matter |
@@ -945,7 +942,7 @@ kafka-console-consumer --bootstrap-server $BROKERS --topic $RT-commits --max-mes
 | One partition's lag stays near its whole size, its committed offset at 1 | twm-faust records no fetch gap after offset 0, so a compacted offset 1 is never acknowledged (14 §14.3) | nothing is lost — the committer refuses what the table holds; it needs the twm-faust fix (branch `fix-commit-gaps`) |
 | A runtime member restarts with `Writing the source record … failed; … this member restarts` before it | an unexpected writer error; the member restarts on purpose so the record is read again (10 §10.7) | read the traceback; a persistent error crash-loops the member until fixed, losing nothing |
 | `ConsistencyError: persisted offset … higher than the last offset` and the control plane crash-loops | a table's changelog topic was deleted but its RocksDB store on the volume was not | §12.13, step 3 |
-| `POST /stop`, `/resume` or `PATCH` returns 202 but nothing changes | Mutation WebViews do not persist; only the topic path does | Check `request-intake`, and that the overlay patched the WebView's table and topic (`test_agent_manifests`) |
+| `POST /stop`, `/resume` or `PATCH` returns 202 but nothing changes | Mutation WebViews do not persist; only the topic path does | Check `request-intake`, and that the WebView's table and topic derive from the release (`test_agent_manifests`) |
 | `409 conflict` on stop or `PATCH` | `runtime_not_deployed`: discovery has not finished; `materialization_deleting`: it is being deleted | Wait for `deploying`/`running`; a deleting materialization cannot be changed |
 | `400` naming `tables.<i>.name` or `.dataset` on create | The name cannot be read unquoted ([04 §4.5.1](./04-http-api-reference.md)) | A lowercase letter first, then lowercase letters, digits and underscores; not a reserved word |
 | `400` naming `tables` on create | No topic, a name Kafka would refuse, more than `max_materialization_topics`, or the 2.0 field `source_topics` | Send `tables`, each `{source_topic, dataset, name?}` |
@@ -955,14 +952,14 @@ kafka-console-consumer --bootstrap-server $BROKERS --topic $RT-commits --max-mes
 | A create reads `deleted` / `table_name_taken` (or `dataset_not_found`, `forbidden`) | Its claim was refused after the API accepted it: another request took the name first, or the dataset or access went meanwhile | Create it again with another name |
 | `409 dataset_not_empty` deleting a dataset | It still holds tables — written, kept, or being dropped | Drop them, or delete their materializations, first |
 | Control plane cannot apply runtimes | Installed from a local path, so `direct_url.json` has no `commit_id` | Install from git |
-| Every settings save answers `500`; the control-plane log shows `KeyError: '…materializer-settings-requests'` | The consumer group was not rebalanced after the deploy that added the settings topics | Force one rebalance (§12.1, [17 §17.12](./17-settings.md)) |
+| Every settings save answers `500`; the control-plane log shows `KeyError: '…<release>-settings-requests'` | The consumer group was not rebalanced after the deploy that added the settings topics | Force one rebalance (§12.1, [17 §17.12](./17-settings.md)) |
 | A settings save is refused: "These settings changed after this page loaded" | Someone saved the same scope first | Reload the page; unsaved edits are kept |
 | An env var change has no effect | The Settings page overrides the same setting | Reset the override |
 | The Settings page is read-only | The console cannot reach the control plane | Fix the control plane; control-plane settings reappear once it answers |
 | A runtime stays **Applying** on the Runtimes settings page | A member has not refreshed yet, or is not consuming | See [17 §17.10](./17-settings.md) |
 | Sign-in answers `503` "no session signing key" | The auth Secret is missing `signing-key`, or it is shorter than 32 characters | Fix the Secret; restart the control plane |
 | Every request answers `503` `starting` for some seconds after a restart | The control plane is reading its tables back from their changelogs; until it has, it answers nothing it could get wrong (18 §18.7) | Nothing: it ends once the tables are read, ~15 s on the lab; before 4.1 it answered from a half-read directory and signed console users out |
-| Sign-in and every user, group or role change answer `500`; the log shows `KeyError: '…materializer-identity-requests'` | The consumer group was not rebalanced after the 0.6.0 deploy | Force one rebalance (§12.1) |
+| Sign-in and every user, group or role change answer `500`; the log shows `KeyError: '…<release>-identity-requests'` | The consumer group was not rebalanced after the 0.6.0 deploy | Force one rebalance (§12.1) |
 | Table records never advance after a deploy, though runtimes commit | `materialization-table-events` was not assigned: no rebalance after the deploy that added it | force one rebalance (§12.1) |
 | An engine's `ATTACH` or `load_table` answers `401` / `403` | no token, an expired or revoked one, or one without `catalog.read` | make a token (§12.7) |
 | `/catalog/…` answers `503` | `catalog_api_enabled` is off | Settings → Catalog |
@@ -1047,7 +1044,7 @@ So:
   REST catalog, not how fast any materialization runs.
 
 Runtime pods take `resources` from `CONTROL_PLANE_RUNTIME_APP_SPEC`, the same for every
-materialization (02, *The embedded runtime app spec*). The shipped manifests limit each member to
+materialization (02, *The embedded runtime app spec*). The chart's runtime spec limits each member to
 2 CPUs and 1 GiB, and request 0.5 CPU and 1 GiB to start with. Every app's VerticalPodAutoscaler
 then moves its CPU request to what it uses, in place (02 §2.10c), so one spec no longer reserves a
 busy topic's CPU for every quiet one. Memory is not autoscaled; 1 GiB holds a backfill's seals since
@@ -1145,7 +1142,7 @@ event and a protocol event in the app's log (`kubectl logs -n $NS <maintenance p
 | A job of several partitions failed "(its partitions are compacted one at a time from now on)" | which partition failed is unknown, so each is compacted alone until it succeeds | nothing; a partition that fails alone backs off and gives up as above |
 | `metadata.json` large, many snapshots | retention keeps every snapshot of the last hour, then one an hour, for 72 hours | lower `snapshot_retention_hours` or `snapshot_keep_all_minutes` (Settings → Maintenance) |
 | Files under `data/` no snapshot lists | uploads no commit took, or a compaction that died before its commit | orphan cleanup deletes them once older than `orphan_min_age_hours` (24) |
-| No maintenance at all, history empty for hours | the maintenance app is down, or receives no ticks | its pod; `maintenance-step` errors in its log; the control plane's `schedule_table_maintenance` work, and the `develop-materializer-maintenance-requests` topic's offsets |
+| No maintenance at all, history empty for hours | the maintenance app is down, or receives no ticks | its pod; `maintenance-step` errors in its log; the control plane's `schedule_table_maintenance` work, and the `midstream-maintenance-requests` topic's offsets |
 | A job shown running for hours | the member that ran it went away without reporting | the next tick reports it `abandoned` once it has run longer than `compaction_timeout_minutes` + 10, or at once when the same member restarted |
 
 Compaction is safe to interrupt anywhere: its outputs are only files until one `replace` commit
@@ -1172,7 +1169,7 @@ with the same email and password. This is the procedure the lab ran on 2026-10-1
      the `state` table's changelog, and any stray `<runtime>-signals` (environment-prefixed names in
      dev).
    - **Keep** the `settings`, `identity` and `identity-audit` changelogs, the
-     `materializer-settings-requests` and `materializer-identity-requests` topics, and the auth
+     `<release>-settings-requests` and `<release>-identity-requests` topics, and the auth
      Secret.
    - **Remove the control plane's local stores of every deleted changelog.** Each Kaspr table keeps a
      RocksDB store on the control plane's volume, `/var/lib/data/tables/<table>-<n>.db` and

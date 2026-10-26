@@ -8,7 +8,7 @@ record of the reasoning.
 Written 2026-10-23 against `develop` at 5b45cda (control
 plane and maintenance app 4.0.0, console 4.0.0) and revised the same day after the owner's review:
 live tail is **on by default** for new materializations; the tail runs in **a KasprApp of its own**,
-`materializer-tail`, with request routing between its members designed in from the start so that it
+`<release>-tail`, with request routing between its members designed in from the start so that it
 scales to hundreds of materialized topics (§3.5, §5.1, §11). Every claim about current behaviour
 below was checked against the code named beside it; where the handbook and the code disagree, the
 code is cited.
@@ -32,7 +32,7 @@ stitched onto the committed snapshot:
   The tail of a snapshot *S* is, for each partition *p*, the records Kafka holds with offset
   `> O_S(p)`. The snapshot and its tail are disjoint by offset and together cover every record, so
   the union is exactly once with no new protocol.
-- A new KasprApp, **`materializer-tail`**, follows each tailed topic from the table's committed
+- A new KasprApp, **`<release>-tail`**, follows each tailed topic from the table's committed
   offsets, converts each record **with the seal's own row-building code** (the same `Conformer`, the
   same Arrow schema with field ids, the same Parquet writer) and keeps a bounded, contiguous,
   in-memory buffer of conformed rows per table. It answers one HTTP question: *the rows past these
@@ -245,9 +245,9 @@ Principles:
 
 ## 5. Components and data flow
 
-### 5.1 The tail app: `materializer-tail`
+### 5.1 The tail app: `<release>-tail`
 
-A KasprApp of its own, `manifests/base/tail/`, package `python/src/midstream/tail_app/`,
+A KasprApp of its own, `charts/midstream/templates/tail/`, package `python/src/midstream/tail_app/`,
 built on the maintenance app's shape (`maintenance_app/`, 02 §2.10a): one agent on a request topic
 keyed by table, one periodic task, no KasprTable, the same image, Kafka user, GCP credentials and
 scheduling as the control plane — plus two WebViews, since Kaspr apps serve HTTP the same way the
@@ -256,7 +256,7 @@ control plane does and the operator creates `<app>-app-api` on `webPort` for any
 
 #### One app, many members
 
-There is **one tail app per deployment** — `develop-materializer-tail` on the lab — serving every
+There is **one tail app per deployment** — `midstream-tail` on the lab — serving every
 materialization's tables in that environment, exactly as the one maintenance app maintains them.
 It is not one app per materialization and it is not part of the runtimes: runtimes are one app per
 materialization because they *write* and scale by their topic's partitions; the tail only reads and
@@ -275,7 +275,7 @@ console calls the app's Service and never learns which member answered.
 
 | Reads | What | How |
 |---|---|---|
-| `materializer-tail-requests` (new, 64 partitions, key `tail:<materialization_id>:<table>`) | one `tail_tick` per tailed table per minute — target, settings, hints — and `tail_cancel` (§6.1) | the Kaspr agent `tail-worker`: Kaspr spreads the partitions over the members, which is what assigns tables to members |
+| `<release>-tail-requests` (new, 64 partitions, key `tail:<materialization_id>:<table>`) | one `tail_tick` per tailed table per minute — target, settings, hints — and `tail_cancel` (§6.1) | the Kaspr agent `tail-worker`: Kaspr spreads the partitions over the members, which is what assigns tables to members |
 | `materialization-table-events` (exists) | `table_committed` (new committed offsets → trim), `schema_changed` (new schema → re-conform) | one plain aiokafka consumer per member, no group, from the latest offset at start |
 | the tailed **source topics** | the records | one plain aiokafka consumer per member, manually assigned every partition of every **active** table the member owns — a table someone is watching ("Activation", below); a parked table's topic is not read — seeked to `committed + 1` |
 | the control plane's `GET /materializations/{id}/tables/{table}/schema?raw=true` | the table's Iceberg schema, fork map, rejected paths, last column id, at seed | with the service token (`SERVICE_PERMISSIONS` holds `dataset.view_schema`); GCS (`load_table`) only as a fallback |
@@ -303,7 +303,7 @@ cannot be tailed, and is long committed by then.
 
 The control plane's per-minute `schedule_table_maintenance` step (already iterating every
 materialization and table, `services/table_maintenance.py`) also emits, routed `tail`, on
-`materializer-tail-requests`:
+`<release>-tail-requests`:
 
 - a **`tail_tick`** for every table in state `active` of a materialization with `live_tail: true`
   and `desired_phase == "running"`, carrying the target (`materialization_id`, `dataset`, `dataset_id`,
@@ -618,11 +618,11 @@ lag, pauses, errors, the budget), `GET /tail/v1/members` (the partition → memb
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `TAIL_APP_NAME` | `materializer-tail` | names the member in logs and views |
-| `TAIL_CONTROL_PLANE_URL` | — (required) | in-cluster `http://materializer-control-plane-app-api:6065` (`develop-` prefixed in dev): session checks and schema fetches |
-| `TAIL_SERVICE_TOKEN` | — (from the `materializer-auth` Secret, key `service-token`) | the read-only service credential, for schema fetches only |
+| `TAIL_APP_NAME` | `<release>-tail` | names the member in logs and views |
+| `TAIL_CONTROL_PLANE_URL` | — (required) | in-cluster `http://<release>-control-plane-app-api:6065` (`develop-` prefixed in dev): session checks and schema fetches |
+| `TAIL_SERVICE_TOKEN` | — (from the `<release>-auth` Secret, key `service-token`) | the read-only service credential, for schema fetches only |
 | `TAIL_TABLE_EVENTS_TOPIC` | `materialization-table-events` | the topic it follows (prefixed per overlay) |
-| `TAIL_REQUESTS_TOPIC` | `materializer-tail-requests` | the tick topic, for owner computation (prefixed per overlay) |
+| `TAIL_REQUESTS_TOPIC` | `<release>-tail-requests` | the tick topic, for owner computation (prefixed per overlay) |
 | `TAIL_FORGET_AFTER_SECONDS` | `300` | a table no tick names for this long is dropped |
 | `TAIL_MEMORY_BUDGET_BYTES` | `2684354560` (2.5 GiB) | resident buffer bytes across every table before retained rows are dropped and the largest table pauses |
 | `TAIL_SESSION_CHECK_SECONDS` | `5` | how long a checked session is trusted |
@@ -657,8 +657,8 @@ maintenance settings do (17 §17.7).
 - **Ticks.** `services/live_tail.py::build_live_tail_messages(table, config, issued_at)` returns the
   `tail_tick`s and `tail_cancel`s of §5.1; `handlers/maintenance.py` yields them routed `tail` from
   the existing `schedule_table_maintenance` step (it still writes nothing — `ShardRoutingTests` stays
-  green); the `maintenance` agent gains an output topic `materializer-tail-requests` (declared,
-  **64 partitions**, predicate `route == "tail"`), patched to `develop-materializer-tail-requests` in
+  green); the `maintenance` agent gains an output topic `<release>-tail-requests` (declared,
+  **64 partitions**, predicate `route == "tail"`), patched to `midstream-tail-requests` in
   the dev overlay. No new work step: no `WORK_STEPS`, filter or task change (16 §16.3). The control
   plane only *sends* to the new topic, so the deploy needs no forced consumer-group rebalance.
 - **Settings** (§6.5): control-plane scope, resolved with overrides by `resolve_config`, carried by
@@ -798,7 +798,7 @@ were in the tail a moment ago are now in a data file, each exactly once (§7).
 
 ## 6. Contracts
 
-### 6.1 `materializer-tail-requests` (new topic)
+### 6.1 `<release>-tail-requests` (new topic)
 
 **64 partitions**; key `tail:<materialization_id>:<table>` (`models/live_tail.py::live_tail_routing_key`);
 value `LiveTailMessage.to_dict()`:
@@ -821,7 +821,7 @@ value `LiveTailMessage.to_dict()`:
 `tail_cancel` carries `kind`, `target`, `issued_at`, `reason` (`table_dropping`,
 `materialization_deleting`). A malformed message is logged and dropped. Producer: the control plane's
 `maintenance` agent; consumer: the tail app's `tail-worker` agent. Declared by both (`declare: true`,
-`partitions: 64`), whichever starts first, as `materializer-maintenance-requests` is. The partition
+`partitions: 64`), whichever starts first, as `<release>-maintenance-requests` is. The partition
 count bounds the app's members; changing it later moves every table once.
 
 ### 6.2 The tail HTTP API (tail app)
@@ -1352,7 +1352,7 @@ after Run was pressed; light and dark themes.
 
 Deploy per the lab procedure (overlay → kustomize → chart → helm; the tail app added to the overlay
 as the maintenance app was, with its `kaspr.io/app` label patches by selector, its topic names, env
-and package ref; an HTTPRoute rule for `/tail/*` to `develop-materializer-tail-app-api`). Start with
+and package ref; an HTTPRoute rule for `/tail/*` to `midstream-tail-app-api`). Start with
 **2 members**. Then:
 
 0. **Routing self-check.** Within the first minute of ticks, no `tail_routing_mismatch` in either
@@ -1502,7 +1502,7 @@ in handbook 19 before phase 3 starts; a miss re-opens §9 and §11.1:
 
 - **Phase 0:** golden equality of the seal's output; the regenerated fixture differs only in ids;
   the full Python suite green.
-- **Phase 1:** the §13.1 rows for the control plane green; `kubectl kustomize` of every overlay;
+- **Phase 1:** the §13.1 rows for the control plane green; `helm template` of every overlay;
   `ShardRoutingTests`; the full Python suite green.
 - **Phase 2:** every Python row of §13.5 green, `test_tail_exactly_once.py` included; the §13.6
   thresholds met on the lab; lab steps 0–19 run and recorded; the Kaspr confirmations (§15 phase 2,
@@ -1559,7 +1559,7 @@ Each phase ends with the repo's checks: `python -m unittest discover -s python/t
 | Detail and list payloads | `web/responses.py`, `storage/materializations.py` (`list_materializations` item shape) |
 | Settings: config fields + env parsing; catalog entries | `config.py`, `settings/catalog.py` |
 | Tick messages and the scheduler | `models/live_tail.py` (new), `models/__init__.py`, `services/live_tail.py` (new), `handlers/maintenance.py` (yield `tail` outputs from `schedule_table_maintenance`) |
-| Manifests: the `maintenance` agent's new output (64 partitions); overlay patch | `manifests/base/agents/maintenance.yaml`, `manifests/dev/kustomization.yaml` (and any other name-prefixing overlay) |
+| Manifests: the `maintenance` agent's new output (64 partitions); overlay patch | `charts/midstream/templates/agents/maintenance.yaml`, `charts/midstream/values.yaml` (and any other name-prefixing overlay) |
 | Tests | `test_web.py`, `test_request_intake.py`, `test_models.py`, `test_settings.py`, `test_runtime_settings.py`, `test_maintenance.py`, `test_live_tail_scheduler.py` (new), `test_agent_manifests.py` |
 | Docs | handbook 04 (§4.5, §4.6, §4.8.1), 05 (§5.4, §5.9), 06 (§6.1 inventory, new §6.18), 07 (§7.13), 17 (§17.3) |
 
@@ -1570,7 +1570,7 @@ Each phase ends with the repo's checks: `python -m unittest discover -s python/t
 | Package | `python/src/midstream/tail_app/__init__.py`, `config.py`, `buffer.py` (pure), `consumer.py` (the member's one source consumer + fake seam), `events.py` (the table-events follower), `table_tail.py` (one table: activation and parking, seed, ingest, serve), `routing.py` (owner partition, member map, forwarding), `serve.py` (Parquet), `peek.py` (the head peek: its dedicated consumer, the buffer path, the cache), `auth.py` (session check, `authorize_tail`), `control_plane.py` (schema fetch, session fetch, with the service token), `worker.py` (tables by key, ticks, forget-after, budget), `handlers.py` (thin: `handle_tail_message`, `advance_tail`, `tail_rows_view`, `tail_health_view`, `tail_members_view`, `tail_head_view`) — all new |
 | `principal_from_description` | `identity/principals.py` |
 | `describe_consumer_group` | `kafka/admin.py` (decode assignments and Faust `ClientMetadata` from member metadata) |
-| Manifests | `manifests/base/tail/app.yaml` (replicas 2, resources, env incl. `TAIL_SERVICE_TOKEN` from the `materializer-auth` Secret), `tail-worker.yaml` (agent on `materializer-tail-requests`, `partitions: 64`, `declare: true`), `tail-step.yaml` (task every 5 s: forget stale tables, trim, refresh the member map, refresh end offsets and re-evaluate the `backlogged`/`catching_up`/`paused` states), `manifests/base/webviews/tail-rows.yaml`, `tail-health.yaml`, `tail-members.yaml`, `tail-head.yaml` (labelled `kaspr.io/app: materializer-tail`); `manifests/base/kustomization.yaml`; `manifests/dev/kustomization.yaml` (labels by selector, topic names, `TAIL_*` env, the Secret name, package ref) |
+| Manifests | `charts/midstream/templates/tail/app.yaml` (replicas 2, resources, env incl. `TAIL_SERVICE_TOKEN` from the `<release>-auth` Secret), `tail-worker.yaml` (agent on `<release>-tail-requests`, `partitions: 64`, `declare: true`), `tail-step.yaml` (task every 5 s: forget stale tables, trim, refresh the member map, refresh end offsets and re-evaluate the `backlogged`/`catching_up`/`paused` states), `charts/midstream/templates/webviews/tail-rows.yaml`, `tail-health.yaml`, `tail-members.yaml`, `tail-head.yaml` (labelled `kaspr.io/app: materializer-tail`); `charts/midstream/templates/kustomization.yaml`; `charts/midstream/values.yaml` (labels by selector, topic names, `TAIL_*` env, the Secret name, package ref) |
 | Tests | `python/tests/tail_support.py`, `test_tail_buffer.py`, `test_tail_routing.py`, `test_tail_app.py`, `test_tail_parity.py` (new), `test_kafka_admin.py`, `test_agent_manifests.py`, `test_package_layout.py` (the new subpackage imports) |
 | Docs | handbook 02 (§2.10b the tail app), 03 (§3.4 constants), 04 (§4.1: the `/tail/v1` endpoints are the console's alone, documented in 19, not part of the public API), 10 (a section pointing to the new doc), new `docs/handbook/19-live-tail.md` (the model, the contracts, ownership and routing, exactly once, capacity and sizing, operating it), 12 (runbook entries: health and members views, pauses, re-seeds, moves, sizing in §12.10), 14 (limits), README table; `AGENTS.md` project map (`tail_app/`) |
 | **Verification items, first thing** | (a) Kaspr's key serializer for the control plane's `topicSend` keys is `raw` and the producer's partitioner is aiokafka's default: produce one tick and compare its partition with the owner computation (the self-check does this continuously). (b) `describe_consumer_groups` in the installed aiokafka returns member metadata and assignments in a form the decoder handles, and the Faust `ClientMetadata` decompresses with `PartitionAssignor._decompress`; if not, use the FQDN fallback (the pod name from the static member's instance id and this member's own `K_WEB_HOST` suffix). (c) How Kaspr deserializes a `json` agent input and what it does with a value that is not UTF-8 JSON: nothing in `runtime_app/` produces `RuntimeMalformedRecord` today (only `state.py` consumes it), so the writer never sees such a value — mirror that outcome (no row; position advances). (d) Measure the row builder's cost per record and the resident-bytes-per-raw factor on the lab's record shapes, and the re-assign hiccup, to replace §9's and §11.1's estimates |
@@ -1630,8 +1630,8 @@ Facts this plan relies on, and where each was checked:
   control plane cached by token hash (`auth/principal.ts`).
 - Pointer freshness 2 s / 5 s / 5 min — `web/server/config.ts`.
 - The maintenance tick pattern: `services/table_maintenance.py`, `handlers/maintenance.py`,
-  `manifests/base/agents/maintenance.yaml`, `manifests/base/tasks/schedule-table-maintenance.yaml`;
-  the maintenance app's shape — `maintenance_app/`, `manifests/base/maintenance/`, the dev overlay's
+  `charts/midstream/templates/agents/maintenance.yaml`, `charts/midstream/templates/tasks/schedule-table-maintenance.yaml`;
+  the maintenance app's shape — `maintenance_app/`, `charts/midstream/templates/maintenance/`, the dev overlay's
   label and topic patches.
 - `authorize`, `Principal.can`, `Principal.describe`, `Grants.dataset_limit` — `identity/authorization.py`,
   `identity/principals.py`.
@@ -1645,7 +1645,7 @@ Facts this plan relies on, and where each was checked:
   `canonical_url` settings — `kaspr/types/settings.py`; WebViews with one content type per view,
   `application/octet-stream` through `web.bytes` with `headersSelector`/`statusCodeSelector` —
   `kaspr/types/models/webview/response.py`; a view reads query parameters as
-  `manifests/base/webviews/topics-list.yaml` does.
+  `charts/midstream/templates/webviews/topics-list.yaml` does.
 - The operator: a headless Service per app, pods addressed as `<app>-<i>.<headless>.<ns>.svc.cluster.local`
   (`kasprapp.py::prepare_fqdn`), `web_host` set to that FQDN on the container (~1931), `<app>-app-api`
   on `webPort` (`kasprapp_resources.py`) — `kaspr-operator/kaspr/resources/`.
@@ -1673,7 +1673,7 @@ Decided by the owner on 2026-10-23:
 | D5 | Live mode is on by default on a tail-enabled materialization, with a visible toggle kept in the address bar; it pauses while the tab is hidden |
 | D6 | Rows during a schema change are served at once under the current schema and counted as settling; nothing is held |
 | D7 | Bounds and sizing as §6.5 and §11.1: 250,000 rows / 256 MiB per table, 120 s retention, a 5,000 records/s ceiling per table, 2.5 GiB per member, members at requests 1 CPU / 2 GiB, limits 2 CPU / 4 GiB; **two members** for the owner's fleet of ≤ 500 topics at 1–50 records/s with tables tailed while watched (three if every table is kept always on) |
-| D8 | **The tail is a KasprApp of its own, `materializer-tail`** (§3.5); the child-process and in-control-plane hostings are rejected |
+| D8 | **The tail is a KasprApp of its own, `<release>-tail`** (§3.5); the child-process and in-control-plane hostings are rejected |
 | D9 | The tail app reads `materialization-table-events` itself |
 | D10 | Authorization is the control plane's rule, rebuilt from `GET /auth/session` with the person's token, checked by the receiving member and again by the owner |
 | D11 | Version 4.1.0 for the control plane and the console (additive, 16 §16.3) |

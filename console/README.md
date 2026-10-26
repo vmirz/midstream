@@ -5,7 +5,7 @@ tables each materialization fills, one per source topic, each in a dataset. Cons
 control plane 3.0.
 
 The console is a self-contained application: a small Node backend-for-frontend (BFF) plus a
-React client. It has **no source dependency on `python/` or `manifests/`** — it talks to the
+React client. It has **no source dependency on `python/` or `charts/`** — it talks to the
 control plane exclusively over its public HTTP API, so this directory can be lifted into its own
 repository without changes beyond `CONTROL_PLANE_URL`.
 
@@ -64,7 +64,7 @@ npm install
 cp .env.example .env          # point CONTROL_PLANE_URL at your control plane
 
 # In another shell, expose the dev control plane:
-kubectl -n midstream port-forward svc/develop-materializer-control-plane-app-api 6065:6065
+kubectl -n midstream port-forward svc/midstream-control-plane-app-api 6065:6065
 
 npm run dev                   # server on :8787, Vite client on :5173
 ```

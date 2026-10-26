@@ -13,15 +13,15 @@ of 1.0. §6.16 lists what 1.0 removed.
 | `materialization-table-events` | each runtime's committer agent; the maintenance app's `maintenance-worker` agent and `maintenance-step` task | `table-events` agent; every member of the tail app, with a plain consumer of no group (19) | `materialization:<id>` (§6.6) |
 | `materialization-schema-authority-updates` | `settings-intake`, `workflow-apply` | every runtime's `settings` agent | `runtime-settings` (§6.7) |
 | `<runtime>-commits` | the runtime's pipeline and commit-timer tasks, its committer (wakeups) | the runtime's committer agent | the constant `commits` (§6.8) |
-| `materializer-maintenance-requests` | the control plane's `maintenance` agent, the `materializations-maintenance` WebView | the maintenance app's `maintenance-worker` agent | `maintenance:<id>:<table>` (§6.17) |
-| `materializer-tail-requests` | the control plane's `maintenance` agent | the tail app's `tail-worker` agent | `tail:<id>:<table>` (§6.18) |
-| `materializer-control-plane-schedule-requests` | `workflow-apply`, `resource-observation` | the Kaspr scheduler | `materialization:<id>` |
-| `materializer-settings-requests` | the `settings-update` WebView; the `settings-bootstrap` task | `settings-intake` agent | `settings:<scope>` (§6.14) |
-| `materializer-identity-requests` | the auth, users, groups, roles, dataset and token WebViews; `request-intake` (claims and releases of table names); `identity-bootstrap` and `identity-maintenance` tasks | `identity-intake` agent | `identity`, always (§6.15) |
+| `<release>-maintenance-requests` | the control plane's `maintenance` agent, the `materializations-maintenance` WebView | the maintenance app's `maintenance-worker` agent | `maintenance:<id>:<table>` (§6.17) |
+| `<release>-tail-requests` | the control plane's `maintenance` agent | the tail app's `tail-worker` agent | `tail:<id>:<table>` (§6.18) |
+| `<release>-control-plane-app-schedule-requests` | `workflow-apply`, `resource-observation` | the Kaspr scheduler | `materialization:<id>` |
+| `<release>-settings-requests` | the `settings-update` WebView; the `settings-bootstrap` task | `settings-intake` agent | `settings:<scope>` (§6.14) |
+| `<release>-identity-requests` | the auth, users, groups, roles, dataset and token WebViews; `request-intake` (claims and releases of table names); `identity-bootstrap` and `identity-maintenance` tasks | `identity-intake` agent | `identity`, always (§6.15) |
 
-The dev overlay prefixes every name with `develop-` (and writes the scheduler topic as
-`develop-materializer-control-plane-app-schedule-requests`, §6.9). Runtime topics carry the runtime
-app's name, which already has the prefix.
+Every topic name starts with the Helm release name, the scheduler topic as
+`<release>-control-plane-app-schedule-requests` (§6.9). Runtime topics carry the runtime
+app's name, which already starts with it.
 
 > **Key convention split.** Control-plane topics (`requests`, `work`, `table-events`) key on the
 > **prefixed** `materialization:<id>` (`materialization_routing_key`). The heartbeat topic keys on
@@ -32,7 +32,7 @@ app has `topicAllowDeclare: true`). The table-events topic is new in 1.0: a depl
 a running control plane needs one consumer-group rebalance (14 §14.3); the 1.0 rollout starts the
 control plane from zero members anyway (12 §12.13).
 
-`materialization-schema-authority-updates` kept its 0.x name so no overlay had to rename it; it now
+`materialization-schema-authority-updates` kept its 0.x name so no deployment had to rename it; it now
 carries only runtime settings (§6.7).
 
 ## 6.2 Routed-output envelope
@@ -107,12 +107,12 @@ requests to `<runtime>-commits`.)
 
 The control plane's `maintenance` agent yields `{"route": "maintenance", "key": "maintenance:<id>:<table>",
 "value": MaintenanceMessage}` (`services/table_maintenance.py::maintenance_output`), sent on
-`materializer-maintenance-requests` by its second output (§6.17).
+`<release>-maintenance-requests` by its second output (§6.17).
 
 ### Route `tail`
 
 The same agent yields `{"route": "tail", "key": "tail:<id>:<table>", "value": LiveTailMessage}`
-(`services/live_tail.py::live_tail_output`), sent on `materializer-tail-requests` by its third
+(`services/live_tail.py::live_tail_output`), sent on `<release>-tail-requests` by its third
 output (§6.18).
 
 ### Scheduler header semantics
@@ -607,18 +607,17 @@ retention loses nothing that matters.
 
 ## 6.9 Scheduler topic
 
-`materializer-control-plane-schedule-requests` (base) /
-`develop-materializer-control-plane-app-schedule-requests` (dev patches).
+`<release>-control-plane-app-schedule-requests`: the control plane's Kaspr app id,
+`<release>-control-plane-app`, plus `-schedule-requests`, as the scheduler names it.
 
 Consumed by the Kaspr scheduler, enabled by `spec.config.schedulerEnabled: true` and
 `schedulerCronEnabled: true` on the control-plane app. The scheduler holds the message until
 `x-scheduler-deliver-at`, then republishes the `value` to `x-scheduler-deliver-to` with the original
 key.
 
-> **Naming discrepancy.** The base agent manifests write to
-> `materializer-control-plane-schedule-requests`; the dev patches write to
-> `develop-materializer-control-plane-app-schedule-requests` (note the extra `-app-`). If delayed
-> work silently disappears, this is the first thing to check (14 §14.2).
+> Before the chart, the base manifests wrote to a topic without the `-app-` segment while the dev
+> overlay wrote to the right one (14 §14.2). The chart derives the name from the app id. If delayed
+> work silently disappears, compare the agents' second output with the scheduler's topic first.
 
 ## 6.10 Complete message flow for a create
 
@@ -708,17 +707,17 @@ key.
    payload.
 4. Add the producing call site in a `services/` module, or the runtime's `committer.py`.
 5. Add the consuming handler in `handlers/` (control plane) or `runtime_app/handlers/`.
-6. Wire the topic in `manifests/base/agents/<agent>.yaml` (input topic, or output with predicate),
+6. Wire the topic in `charts/midstream/templates/agents/<agent>.yaml` (input topic, or output with predicate),
    or in a runtime template.
-7. Add the dev-overlay patch in `manifests/dev/kustomization.yaml`.
+7. Derive its name from the release in the template, as every other topic's is.
 8. If the topic name should be configurable, add it to `ControlPlaneConfig` **and** to the
-   control-plane app env **and** to the dev overlay env replacement.
+   control-plane app template's env.
 9. Add a round-trip test in `python/tests/test_models.py` and a behavior test in the nearest
    `test_*.py`.
 10. Run `python -m unittest discover -s python/tests -p 'test_*.py' -v` and
-    `kubectl kustomize manifests/dev`.
+    `helm template midstream charts/midstream -f charts/midstream/ci/test-values.yaml`.
 
-## 6.14 `materializer-settings-requests`
+## 6.14 `<release>-settings-requests`
 
 **Producers:** the `settings-update` WebView (`PATCH /settings/{scope}`), after validating the
 change; the `settings-bootstrap` task, once at every start.
@@ -752,7 +751,7 @@ The task's request, keyed `settings:runtime` so it applies in order with that sc
 When the `runtime` scope has no lineage, the agent begins one, saves it, and yields the scope's
 delivery to every runtime (§6.7); otherwise it does nothing.
 
-## 6.15 `materializer-identity-requests`
+## 6.15 `<release>-identity-requests`
 
 **Producers:** the views that change people, groups, roles, datasets, their grants and access tokens
 (`users-*`, `groups-*`, `roles-*`, `datasets-*` mutations, `auth-password`, `auth-tokens-create`,
@@ -813,7 +812,7 @@ the tables' changelogs as sensitive. See 18.
 | The control plane's `schema-proposals` agent, the runtime's `schema-updates` and `signals` agents | the runtime's `committer` and `settings` agents |
 | The `compact_object_manifests` and `cleanup_destination_objects` steps | `drop_table` (§6.4); the object manifest is gone (11) |
 
-## 6.17 `materializer-maintenance-requests`
+## 6.17 `<release>-maintenance-requests`
 
 What the control plane tells the maintenance app (07 §7.13, 10 §10.10). Six partitions, declared by
 the app's `maintenance-worker` agent and by the control plane's `maintenance` agent, whichever starts
@@ -843,7 +842,7 @@ a `maintenance_tick` per table `active` or `retired` of every materialization no
 A request adds `job`, `request_id` and `requested_by`; a cancel adds `reason` (`table_dropping`,
 `materialization_deleting`) and may carry `running`. A malformed message is logged and dropped.
 
-## 6.18 `materializer-tail-requests`
+## 6.18 `<release>-tail-requests`
 
 What the control plane tells the tail app, the KasprApp that serves the newest records of the
 materializations' tables from Kafka before they are committed (19). **64 partitions**, declared by

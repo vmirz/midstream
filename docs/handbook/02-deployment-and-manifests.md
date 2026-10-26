@@ -4,62 +4,59 @@ Everything in this system is deployed as Kubernetes custom resources managed by 
 operator (`kaspr.io/v1alpha1`) plus two RBAC objects. There are no Deployments, Services, or
 Ingresses authored in this repository — the Kaspr operator derives those from `KasprApp`.
 
-## 2.1 Kustomize structure
+## 2.1 The chart
+
+Everything is deployed by one Helm chart, `charts/midstream`: three `KasprApp`s with their agents,
+tasks, tables and views, the console's Deployment and Service, the control plane's Role and
+RoleBinding, and an optional HTTPRoute or Ingress. Every resource, topic and table is named after
+the release (`fullnameOverride` replaces the release name), so one namespace can hold several
+installations and nothing in the chart carries a fixed name.
 
 ```
-manifests/
-  kustomization.yaml            resources: [./dev, ./staging, ./prod]   ← aggregate, rarely used directly
-  base/
-    kustomization.yaml          100 resources + configurations: kustomconfig.yaml
-    kustomconfig.yaml           (empty file — placeholder)
-    apps/control-plane.yaml
-    agents/{identity-intake,maintenance,request-intake,resource-observation,runtime-status,
-            settings-intake,table-events,workflow-apply}.yaml
-    tasks/{identity-bootstrap,identity-maintenance,purge-deleted-materializations,
-           refresh-consumer-lag,settings-bootstrap,sweep-observations,
-           sweep-observations-startup}.yaml
-    tables/{state,settings,directory,identity-audit}.yaml
-    roles/{control-plane-kasprapp-role,control-plane-kasprapp-rolebinding}.yaml
-    webviews/materializations-{list,create,detail,schema,schema-versions,schema-version,
-                              table,maintenance,stop,resume,update,delete}.yaml
-    webviews/catalog-{config,namespaces,namespace,tables,table,table-commit,table-metrics,
-                      tables-create,table-drop,transactions}.yaml
-    webviews/settings-{read,update,history}.yaml
-    webviews/{system-version,system-settings,topics-analyze,topics-list}.yaml
-    webviews/auth-{login,logout,refresh,session,sessions,password,tokens-list,tokens-create,
-                   tokens-revoke}.yaml
-    webviews/users-{list,detail,create,update,delete,password,sign-out,unlock}.yaml
-    webviews/{groups,roles}-{list,detail,create,update,delete}.yaml
-    webviews/{permissions-list,audit-list,identity-request}.yaml
-    webviews/datasets-{list,create,detail,update,delete,grants,grant-update,table}.yaml
-  dev/kustomization.yaml        namePrefix: develop- + ~80 JSON-6902 patches   ← the only substantive overlay
-  staging/kustomization.yaml    resources: [../base]                            ← pass-through
-  prod/kustomization.yaml       resources: [../base]                            ← pass-through
+charts/midstream/
+  Chart.yaml                    version = appVersion = the platform version
+  values.yaml                   every value, documented in place
+  README.md                     requirements and the values table
+  ci/                           values files the tests render: test, minimal, no tail and no console
+  templates/
+    _helpers.tpl                derived names, labels, the package reference, storage, GCS, the runtime spec
+    control-plane/app.yaml      the control plane; control-plane/rbac.yaml its Role and RoleBinding
+    maintenance/                app.yaml, maintenance-worker.yaml (agent), maintenance-step.yaml (task)
+    tail/                       app.yaml, tail-worker.yaml (agent), tail-step.yaml (task); off with tail.enabled=false
+    agents/   tasks/   tables/  the control plane's 8 agents, 8 tasks and 4 tables
+    webviews/                   71 views: the HTTP API, the REST catalog, the tail app's four
+    console/deployment.yaml     the console: Deployment, Service, optional PersistentVolumeClaim; off with console.enabled=false
+    route.yaml                  HTTPRoute (route.enabled) or Ingress (ingress.enabled): /catalog to the control plane, the rest to the console
+    NOTES.txt                   what helm prints after an install
 ```
 
-Render and validate:
+Derived names, with a release called `midstream`:
+
+| Kind | Names |
+|------|-------|
+| Kaspr apps | `midstream-control-plane`, `midstream-maintenance`, `midstream-tail`; their Services `<app>-app-api`, consumer groups `<app>-app` |
+| Agents, tasks, views | `midstream-request-intake`, `midstream-sweep-observations`, `midstream-materializations-create`, … |
+| Tables | `midstream-state`, `midstream-settings`, `midstream-directory`, `midstream-identity-audit`; `spec.name` stays bare |
+| Topics | `midstream-materialization-requests`, `-work`, `-status`, `-table-events`, `-schema-authority-updates`; `midstream-settings-requests`, `-identity-requests`, `-maintenance-requests`, `-tail-requests`; the scheduler's `midstream-control-plane-app-schedule-requests` |
+| Runtimes | `midstream-mat-<id>` (`controlPlane.settings.runtimeNamePrefix`), their tables under `<destination>/midstream/` (`storagePrefix`) |
+| Secrets | `midstream-auth` unless `auth.existingSecret`; the Kafka and GCS Secrets are named in values |
+
+Lint, render and apply:
 
 ```bash
-kubectl kustomize manifests/base
-kubectl kustomize manifests/dev
-kubectl kustomize manifests/staging
-kubectl kustomize manifests/prod
+helm lint charts/midstream -f charts/midstream/ci/test-values.yaml
+helm template midstream charts/midstream -n midstream -f my-values.yaml | less
+helm upgrade --install midstream charts/midstream -n midstream --create-namespace -f my-values.yaml
 ```
 
-Apply:
-
-```bash
-kubectl apply -k manifests/dev
-```
-
-> `manifests/base/kustomconfig.yaml` is an **empty file** referenced under `configurations:`.
-> Kustomize tolerates it. Do not delete it without also removing the reference.
+`docs/install.md` walks through a first installation; `python/tests/test_agent_manifests.py` renders
+the chart with every file under `ci/` and checks the wiring (13 §13.3).
 
 ## 2.2 Resource inventory (base)
 
 | Kind | Name | Purpose |
 |------|------|---------|
-| KasprApp | `materializer-control-plane` | The control-plane application |
+| KasprApp | `<release>-control-plane` | The control-plane application |
 | KasprTable | `state` | Global single table for all control-plane records |
 | KasprTable | `settings` | Global table of settings overrides and their history ([17](./17-settings.md)) |
 | KasprTable | `directory` | Global table of users, groups, custom roles, datasets, their grants, the claims of table names, sessions and sign-in state ([18](./18-identity-and-access.md)); `identity` before 3.0 |
@@ -70,8 +67,8 @@ kubectl apply -k manifests/dev
 | KasprAgent | `runtime-status` | Applies runtime heartbeats to persisted status |
 | KasprAgent | `table-events` | Applies what runtimes report about their tables to the table records and schema projections |
 | KasprAgent | `maintenance` | The retention sweep, the consumer-lag refresh and the maintenance and tail apps' table ticks, asked for by the tasks below; records each measured lag |
-| KasprAgent | `settings-intake` | `materializer-settings-requests` → apply to the `settings` table; delivers runtime settings |
-| KasprAgent | `identity-intake` | `materializer-identity-requests` → apply to the `directory` and `identity-audit` tables; answer claims of table names on `materialization-work` |
+| KasprAgent | `settings-intake` | `<release>-settings-requests` → apply to the `settings` table; delivers runtime settings |
+| KasprAgent | `identity-intake` | `<release>-identity-requests` → apply to the `directory` and `identity-audit` tables; answer claims of table names on `materialization-work` |
 | KasprTask | `sweep-observations` | Cron `*/2 * * * *`, `onLeader: true` |
 | KasprTask | `sweep-observations-startup` | Runs once at startup, `onLeader: true` |
 | KasprTask | `refresh-consumer-lag` | Cron `*/1 * * * *` |
@@ -106,30 +103,27 @@ kubectl apply -k manifests/dev
 | KasprWebView | `groups-{list,detail,create,update,delete}`, `roles-{list,detail,create,update,delete}` | `/groups[/{group_id}]`, `/roles[/{role_id}]` |
 | KasprWebView | `permissions-list`, `audit-list`, `identity-request` | `GET /permissions`, `GET /audit`, `GET /identity/requests/{request_id}` |
 | KasprWebView | `datasets-list`, `datasets-create`, `datasets-detail`, `datasets-update`, `datasets-delete`, `datasets-grants`, `datasets-grant-update`, `datasets-table` | `/datasets`, `/datasets/{dataset}`, its grants and its tables (04 §4.15) |
-| KasprApp | `materializer-maintenance` | **The maintenance app** (`maintenance/app.yaml`): compaction, expiry and orphan cleanup of every materialization's tables (10 §10.10) |
-| KasprAgent | `maintenance-worker` | the maintenance app's: `materializer-maintenance-requests` → its worker; table events → `materialization-table-events` |
+| KasprApp | `<release>-maintenance` | **The maintenance app** (`maintenance/app.yaml`): compaction, expiry and orphan cleanup of every materialization's tables (10 §10.10) |
+| KasprAgent | `maintenance-worker` | the maintenance app's: `<release>-maintenance-requests` → its worker; table events → `materialization-table-events` |
 | KasprTask | `maintenance-step` | the maintenance app's: every 5 s on every member, finishes jobs and starts those due |
-| KasprApp | `materializer-tail` | **The tail app** (`tail/app.yaml`): the newest records of the tables people watch, served to the console before they are committed (19) |
-| KasprAgent | `tail-worker` | the tail app's: `materializer-tail-requests` (64 partitions) → the ticks and cancels of the tables the member owns |
+| KasprApp | `<release>-tail` | **The tail app** (`tail/app.yaml`): the newest records of the tables people watch, served to the console before they are committed (19) |
+| KasprAgent | `tail-worker` | the tail app's: `<release>-tail-requests` (64 partitions) → the ticks and cancels of the tables the member owns |
 | KasprTask | `tail-step` | the tail app's: every 5 s on every member — its loops, seeding, parking, trims and bounds |
 | KasprWebView | `tail-rows`, `tail-head`, `tail-health`, `tail-members` | the tail app's `/tail/v1/…` (19 §19.9), for the console alone |
-| Role | `materializer-control-plane-kasprapp-manager` | get/create/patch/delete on Kaspr CRDs; get/list on pods |
-| RoleBinding | `materializer-control-plane-kasprapp-manager` | Binds Role to SA `materializer-control-plane-app` |
+| Role | `<release>-control-plane-kasprapp-manager` | get/create/patch/delete on Kaspr CRDs; get/list on pods |
+| RoleBinding | `<release>-control-plane-kasprapp-manager` | Binds Role to SA `<release>-control-plane-app` |
 
 ## 2.3 The control-plane KasprApp
 
-`manifests/base/apps/control-plane.yaml`
+`charts/midstream/templates/control-plane/app.yaml`
 
 ### Core spec
 
 ```yaml
 spec:
   replicas: 1
-  bootstrapServers: crs-kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092
-  authentication:
-    type: scram-sha-512
-    username: materializer-control-plane-user
-    passwordSecret: { secretName: materializer-control-plane-user, passwordKey: password }
+  bootstrapServers: <kaspr.bootstrapServers>
+  authentication: <kaspr.authentication>            # scram-sha-512, scram-sha-256 or plain
   storage: { type: persistent-claim, class: default, size: 1Gi, deleteClaim: True }
   config:
     schedulerEnabled: true
@@ -167,53 +161,39 @@ Notes:
 ```yaml
 pythonPackages:
   packages:
-    - git+ssh://git@github.com/TotalWineLabs/kaspr-kafka-materializer.git@main#egg=midstream&subdirectory=python
+    - git+https://github.com/vmirz/midstream.git@main#egg=midstream&subdirectory=python
   installPolicy: { retries: 3, timeout: 600, onFailure: block }
 ```
 
-The control plane installs **itself** from git over SSH at pod start. `onFailure: block`
-means a failed install prevents the app from starting rather than running a stale version.
-
-The dev overlay replaces `@main` with `@develop`.
+Every app installs the package when its pod starts, from `package.source`: `git` installs this
+repository at `package.git.ref` over https (no deploy key: the repository is public); `index`
+installs `midstream==<package.index.version>` from PyPI or `package.index.url`, with
+`package.index.credentialsSecret` for a private index. `onFailure: block` means a failed install
+prevents the app from starting rather than running a stale version. The runtimes get the same block
+through the runtime spec, with the control plane pinning the exact revision (10 §10.1).
 
 ### Secrets consumed
 
-| Secret | Key(s) | Mounted at | Used for |
-|--------|--------|------------|----------|
-| `github-deploy-key` | `id_ed25519`, `known_hosts` | `/var/run/secrets/github-ssh` (init container, `defaultMode: 256`) | Cloning the package over SSH |
-| `kafka-materializer-gcp-credentials` | `google_application_credentials.json` | `/app/gcp` (kaspr container, read-only) | GCS access via `GOOGLE_APPLICATION_CREDENTIALS` |
-| `materializer-control-plane-user` | `password` | referenced by `authentication.passwordSecret` | Kafka SCRAM-SHA-512 auth |
-| `materializer-auth` (`develop-materializer-auth` in dev) | `signing-key`, `previous-signing-key`, `service-token`, `bootstrap-admin-email`, `bootstrap-admin-password` | `AUTH_*` env vars, each `optional: true` | Session signing, the console's service token, the first administrator ([18](./18-identity-and-access.md) §18.11) |
+| Value | Default | Key(s) | Used for |
+|-------|---------|--------|----------|
+| `kaspr.authentication.passwordSecret` | none, required | `password` | the Kafka user's password, for every app and runtime |
+| `gcs.credentialsSecret` | none: application default credentials | `google_application_credentials.json` (`gcs.credentialsKey`), mounted at `/app/gcp` and named by `GOOGLE_APPLICATION_CREDENTIALS` | GCS access for the apps, the runtimes and the console |
+| `auth.existingSecret` | `<release>-auth` | `signing-key`, `previous-signing-key`, `service-token`, `bootstrap-admin-email`, `bootstrap-admin-password`, each `optional: true` | session signing, the console's and the tail app's service token, the first administrator ([18](./18-identity-and-access.md) §18.11) |
+| `console.hmacSecret` | none | `CONSOLE_GCS_HMAC_KEY_ID`, `CONSOLE_GCS_HMAC_SECRET` | the console's direct `gs://` scans |
+| `package.index.credentialsSecret` | none | `username`, `password` | a private package index |
 
-**Never** commit, echo, or reproduce the contents of these secrets. They are referenced by
-name only.
+**Never** commit, echo, or reproduce the contents of these secrets. The chart references them by
+name only; `docs/install.md` creates them.
 
-Every `materializer-auth` key is optional so that a deployment without the Secret still starts.
-Without `signing-key`, though, nobody can sign in and every request is a guest's; create the Secret
-before the first deploy ([18](./18-identity-and-access.md) §18.12).
-
-### Init container SSH configuration
-
-```yaml
-pythonPackagesInitContainer:
-  env:
-    - name: GIT_SSH_COMMAND
-      value: >-
-        ssh -i /var/run/secrets/github-ssh/id_ed25519
-        -o IdentitiesOnly=yes
-        -o UserKnownHostsFile="/tmp/github_known_hosts /var/run/secrets/github-ssh/known_hosts"
-        -o StrictHostKeyChecking=accept-new
-```
+Every `auth` key is optional so that a deployment without the Secret still starts. Without
+`signing-key`, though, nobody can sign in and every request is a guest's; create the Secret before
+the first install ([18](./18-identity-and-access.md) §18.12).
 
 ### Scheduling constraints
 
-Both the control plane and every generated runtime carry:
-
-```yaml
-nodeSelector: { app: sipapi }
-tolerations:
-  - { effect: NoSchedule, key: app, operator: Equal, value: twmapp }
-```
+`kaspr.nodeSelector` and `kaspr.tolerations` are rendered into the control plane, the maintenance
+and tail apps and, through the runtime spec, every runtime; the console has `console.nodeSelector`
+and `console.tolerations` of its own. Both are empty by default.
 
 ### The embedded runtime app spec
 
@@ -225,8 +205,8 @@ Base value (abridged; see `control-plane.yaml:115-204`):
 
 ```yaml
 replicas: 16                     # replaced by each materialization's own replica count
-bootstrapServers: crs-kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092
-authentication: { type: scram-sha-512, username: materializer-control-plane-user, ... }
+bootstrapServers: <kaspr.bootstrapServers>
+authentication: <kaspr.authentication>
 storage: { type: persistent-claim, class: default, size: 64Mi, deleteClaim: true }   # replaced by the materialization's storage_size
 resources:                       # every runtime pod, whatever its topic - see below
   requests: { cpu: 0.5, memory: 1Gi }
@@ -239,11 +219,10 @@ verticalPodAutoscaler:           # the members' CPU request from their use (§2.
   minAllowed: { cpu: 100m }
   maxAllowed: { cpu: 1500m }
 config: { topicAllowDeclare: true, brokerRebalanceTimeout: 300 }
-pythonPackages:
-  packages: [ git+ssh://...@main#egg=midstream&subdirectory=python ]
+pythonPackages:                  # the same block as the apps'; the control plane pins the revision
+  packages: [ git+https://github.com/vmirz/midstream.git@main#egg=midstream&subdirectory=python ]
 template:
-  pod: { nodeSelector, tolerations, volumes: [github-ssh, gcp-credentials] }
-  pythonPackagesInitContainer: { env: [GIT_SSH_COMMAND], volumeMounts: [github-ssh] }
+  pod: { nodeSelector, tolerations, volumes: [gcp-credentials] }
   kasprContainer:
     env:
       - name: RUNTIME_MEMBER_ID
@@ -299,12 +278,12 @@ The control plane adds `K_STREAM_WAIT_EMPTY=false`, `K_STORE_ROCKSDB_WRITE_BUFFE
 | `CONTROL_PLANE_TABLE_EVENTS_TOPIC` | `materialization-table-events` |
 | `CONTROL_PLANE_STORAGE_PREFIX` | `materializer` (dev: `develop`): the directory under the destination every materialization's tables are created in, which keeps deployments sharing a bucket apart (`ICEBERG_NAMESPACE` before 3.0; a table's Iceberg namespace is its dataset) |
 | `CONTROL_PLANE_DELETED_RETENTION_HOURS`, `…_DEFAULT_RUNTIME_STORAGE_SIZE`, `…_DEFAULT_RUNTIME_REPLICAS` | retention of deleted records; a new runtime's volume per member (`64Mi`: it holds only the state table, 10 §10.8) and default replicas. The control plane's own volume is its KasprApp's `storage` (1Gi), the maintenance app's likewise |
-| `CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC` | `materializer-settings-requests` |
-| `CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC` | `materializer-identity-requests` |
-| `AUTH_SIGNING_KEY`, `…_PREVIOUS_SIGNING_KEY`, `…_SERVICE_TOKEN`, `…_BOOTSTRAP_ADMIN_EMAIL`, `…_BOOTSTRAP_ADMIN_PASSWORD` | from the `materializer-auth` Secret |
+| `CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC` | `<release>-settings-requests` |
+| `CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC` | `<release>-identity-requests` |
+| `AUTH_SIGNING_KEY`, `…_PREVIOUS_SIGNING_KEY`, `…_SERVICE_TOKEN`, `…_BOOTSTRAP_ADMIN_EMAIL`, `…_BOOTSTRAP_ADMIN_PASSWORD` | from the `<release>-auth` Secret |
 | `PROTOCOL_LOGGING_ENABLED` | `"true"` |
 
-Notably **absent** from manifests (code defaults apply):
+Notably **absent** from the chart (code defaults apply):
 `CONTROL_PLANE_TABLE_NAME` (default `state`),
 `PROTOCOL_LOG_SLOW_WAIT_SECONDS` (default `30`), and the catalog settings
 (`catalog_api_enabled`, `catalog_base_url`, 03).
@@ -315,7 +294,7 @@ set here until it is reset; see [17 — Settings](./17-settings.md).
 
 ## 2.4 The global tables
 
-`manifests/base/tables/state.yaml`
+`charts/midstream/templates/tables/state.yaml`
 
 ```yaml
 kind: KasprTable
@@ -334,7 +313,7 @@ prefix scans (used by `GET /materializations` and by the sweep) work from any in
 All control-plane records live in this one table, namespaced by key prefix. See
 [05 — Data model reference](./05-data-model-reference.md) § key layout.
 
-`manifests/base/tables/settings.yaml` declares a second table, **`settings`**, with the same shape
+`charts/midstream/templates/tables/settings.yaml` declares a second table, **`settings`**, with the same shape
 (global, JSON, 3 partitions). It holds the settings overrides chosen in the console and the last 100
 changes of each scope. Only the `settings-intake` agent writes it. Every operation that reads
 configuration binds it as `settings_table`. See [17 — Settings](./17-settings.md) §17.4.
@@ -355,7 +334,7 @@ Python that delegates to the installed package.
 ```
 input:  materialization-requests (declare: true)
 output: materialization-work               route "work",     key value["key"]
-        materializer-identity-requests     route "identity", key identity_routing_key()
+        <release>-identity-requests     route "identity", key identity_routing_key()
 tables: state → control_plane_table, settings → settings_table
 entrypoint: handlers.request_intake.handle_request_event_for_output
 ```
@@ -372,7 +351,7 @@ filter: step in {start_discovery, create_table, apply_runtime, delete_runtime,
                  cleanup_runtime_kafka, drop_table, purge_materialization_records}
 outputs (route-discriminated):
   1. materialization-work                              when route == "work"
-  2. materializer-control-plane-schedule-requests       when route == "scheduler"
+  2. <release>-control-plane-app-schedule-requests       when route == "scheduler"
   3. <dynamic via nameSelector>, declare: true, partitions: 1   when route == "topic"
 init:   KafkaTopicDiscoveryService.from_environment()
         AIOKafkaAdminClient.from_environment()
@@ -446,7 +425,7 @@ filter: step in {purge_deleted_materializations, refresh_consumer_lag, record_co
                  schedule_table_maintenance}
 tables: state → control_plane_table, settings → settings_table
 output: materialization-work               when route == "work"         (keyed by the materialization)
-        materializer-maintenance-requests  when route == "maintenance"  (keyed by the table;
+        <release>-maintenance-requests  when route == "maintenance"  (keyed by the table;
                                            declare: true, partitions: 6)
 init:   get_metadata_client()   (the process-wide Kafka metadata client, shared with the topic views)
 entrypoint: async execute_maintenance → await handlers.maintenance.handle_maintenance_work_async
@@ -467,13 +446,13 @@ runtimes' maintenance settings resolved from the `settings` table, to the mainte
 bounded batch, and runs on the loop. Like `execute_work`, the map is the second operation of its
 pipeline, so it must return the handler's generator, never yield one: Kaspr cannot iterate an async
 generator there. `tests/test_agent_manifests.py` (`MaintenanceEventLoopTests`) holds it to that
-shape, and `OverlayTopicWiringTests` checks that every overlay sends its output to the topic it
+shape, and `ValuesWiringTests` checks that, with every values file, it sends its output to the topic it
 consumes.
 
 ### `settings-intake`
 
 ```
-input:  materializer-settings-requests (declare: true)
+input:  <release>-settings-requests (declare: true)
 tables: settings → settings_table
 output: <dynamic via nameSelector>   when route == "topic"   (runtime-settings deliveries)
 entrypoint: handlers.settings.handle_settings_request_for_output  (a generator)
@@ -485,7 +464,7 @@ The only writer of the `settings` table. A runtime-scope change also yields a de
 ### `identity-intake`
 
 ```
-input:  materializer-identity-requests (declare: true)
+input:  <release>-identity-requests (declare: true)
 output: materialization-work               route "work", key value["key"] (the materialization)
 tables: directory → directory_table, identity-audit → audit_table, settings → settings_table,
         state → control_plane_table (read only: the claim sweep)
@@ -512,9 +491,9 @@ The sweep tasks are `onLeader: true`, so only the elected leader emits them. The
 `refresh-consumer-lag`, `purge-deleted-materializations` and `schedule-table-maintenance` tasks ask
 the `maintenance` agent for their work; `identity-bootstrap` (at startup) and
 `identity-maintenance` (cron `41 * * * *`), both `onLeader: true`, send a `bootstrap` or
-`maintenance` request to `materializer-identity-requests` keyed `identity`
+`maintenance` request to `<release>-identity-requests` keyed `identity`
 ([18](./18-identity-and-access.md) §18.8). `settings-bootstrap` (at startup, `onLeader: true`)
-sends a `bootstrap` request to `materializer-settings-requests` keyed `settings:runtime`
+sends a `bootstrap` request to `<release>-settings-requests` keyed `settings:runtime`
 ([17](./17-settings.md) §17.5).
 
 ### `sweep-observations`
@@ -548,7 +527,7 @@ Identical, but no `schedule:` block (fires once at app start) and passes
 ## 2.7 RBAC
 
 ```yaml
-Role materializer-control-plane-kasprapp-manager (ns midstream)
+Role <release>-control-plane-kasprapp-manager (ns midstream)
   apiGroups: [kaspr.io]
   resources: [kasprapps, kasprtables, kaspragents, kasprtasks]
   verbs:     [get, create, patch, delete]
@@ -557,8 +536,8 @@ Role materializer-control-plane-kasprapp-manager (ns midstream)
   resources: [pods]
   verbs:     [get, list]
 
-RoleBinding materializer-control-plane-kasprapp-manager
-  subjects: [ ServiceAccount materializer-control-plane-app ]
+RoleBinding <release>-control-plane-kasprapp-manager
+  subjects: [ ServiceAccount <release>-control-plane-app ]
 ```
 
 Observations:
@@ -570,7 +549,7 @@ Observations:
   for their restart counts and last exits, which show members that keep restarting (08 §8.3, row
   3d). Since 4.4; without the rule the observation goes on without them, reported once.
 - **`kasprwebviews` is not granted.** Runtimes never create WebViews.
-- The dev overlay patches the RoleBinding subject to `develop-materializer-control-plane-app`
+- The RoleBinding's subject is `<release>-control-plane-app`, the service account kaspr-operator gives the control plane's pods
   because `namePrefix` does not rewrite RBAC subject names automatically.
 
 ## 2.8 Web views
@@ -598,7 +577,7 @@ Read views (`list`, `detail`) have a single `map` operation and no `statusCodeSe
 (the `detail` view has an empty `statusCodeSelector:` key — harmless).
 
 `settings-update` has the same three-step shape: `prepare-settings-change` calls
-`web.settings.update_settings`, `send-settings-request` sends to `materializer-settings-requests`
+`web.settings.update_settings`, `send-settings-request` sends to `<release>-settings-requests`
 keyed by `settings_routing_key(scope)`, and the view answers `202`.
 
 Every WebView binds the `directory` table as `directory_table`, and the first line of its Python is
@@ -610,7 +589,7 @@ are the signed-in person's email (`principal.attribution`), and `submitted_by_id
 unknown permission, or sends an identity request with any key but `identity_routing_key()`.
 
 Directory changes (`users-create`, `groups-update`, …) have the same three-step shape as the
-materialization mutations, sending to `materializer-identity-requests` and answering `202`. The
+materialization mutations, sending to `<release>-identity-requests` and answering `202`. The
 auth views answer at once with a status their first operation chooses, and send an event only
 when there is one (`topicSend` with a `predicate`).
 
@@ -623,84 +602,45 @@ view's first operation that returns a coroutine is awaited by Kaspr, and the dic
 response body. A synchronous call to Kafka there would hold every other request until Kafka
 answered; `TopicsAnalyzeEventLoopTests` fails if `topics-analyze` goes back to one.
 
-Every overlay that prefixes names must patch each mutation WebView's table and request topic.
-`test_agent_manifests.OverlayTopicWiringTests` renders every overlay and fails when a WebView reads
-a table the overlay does not define or sends to a topic no agent in it consumes.
+Every table and request topic a WebView names derives from the release.
+`test_agent_manifests.ValuesWiringTests` renders the chart with every values file and fails when a
+WebView reads a table the chart does not define or sends to a topic no agent in it consumes.
 
 The list view probes three request shapes to find `limit`:
 `request.query_params` → `request.query` → `request.rel_url.query`.
 
 Full API details: [04 — HTTP API reference](./04-http-api-reference.md).
 
-## 2.9 The dev overlay in detail
+## 2.9 Values and derived names
 
-`manifests/dev/kustomization.yaml` is the only overlay that changes behavior. It applies
-`namePrefix: develop-` plus targeted JSON-6902 patches.
+The chart has no overlays: one `values.yaml` holds every default, and an installation changes what it
+needs in a values file of its own (`docs/install.md` §3). What the Kustomize dev overlay once did
+with a name prefix and some eighty patches, the chart does with one derived name:
+`include "midstream.fullname"`, the release name unless `fullnameOverride` says otherwise, prefixes
+every resource, topic and table, and every binding, `topicSend` and label is written in terms of it.
+A template cannot name a topic the agents do not consume unless it spells the suffix wrong, which
+`ValuesWiringTests` catches with each values file under `ci/`.
 
-### What `namePrefix` does automatically
+| Values | What they decide |
+|--------|------------------|
+| `package.*` | where the Python package comes from: this repository at a ref, or a release from an index |
+| `kaspr.*` | the Kafka address and authentication, the Kaspr version, storage class and scheduling of every Kaspr pod, runtimes included |
+| `gcs.*`, `auth.*` | the GCS credential Secret, if any, and the auth Secret |
+| `controlPlane.settings.*` | the deployment settings of 03 §3.2 (destination, prefixes, limits); `controlPlane.runtime.*` the runtime spec of §2.3 |
+| `maintenance.*`, `tail.*` | the two apps' replicas, resources, autoscaling and their request topics' partitions; `tail.enabled` |
+| `console.*` | the console's image, variables, cache volume and placement; `console.enabled` |
+| `route.*`, `ingress.*`, `rbac.create`, `tables.partitions` | how it is reached, the Role, the global tables' partitions |
 
-Renames `metadata.name` on every resource:
-`materializer-control-plane` → `develop-materializer-control-plane`, `state` → `develop-state`,
-`request-intake` → `develop-request-intake`, etc.
+The CPU of every runtime member, the memory of the seals and the compaction child, and the live
+settings are not values: the first two are the runtime spec's `resources` (§2.3, 12 §12.10), the
+last the Settings page's (17).
 
-### What must be patched manually
+Two things the overlays got wrong are gone with them: the scheduler topic is derived from the app id
+(14 §14.2), and every installation's runtimes may declare their topics.
 
-`namePrefix` does **not** rewrite values inside `spec:`, so each of these is patched explicitly:
+## 2.10 Runtime resources (created at runtime, not in the chart)
 
-| Patch target | Change |
-|--------------|--------|
-| KasprApp `materializer-control-plane` | package ref `@main` → `@develop`; entire `kasprContainer.env` replaced |
-| RoleBinding | subject `materializer-control-plane-app` → `develop-materializer-control-plane-app` |
-| every KasprAgent / KasprWebView / KasprTask / KasprTable labelled `kaspr.io/app=materializer-control-plane` (`labelSelector`) | label `kaspr.io/app: develop-materializer-control-plane` |
-| the maintenance app's agent and task (`labelSelector: kaspr.io/app=materializer-maintenance`) | label `kaspr.io/app: develop-materializer-maintenance`. Without the selectors, the blanket patch would hand them to the control plane (`test_the_maintenance_app_owns_its_agent_and_task`) |
-| KasprApp `materializer-maintenance` | package ref → `@develop`; `MAINTENANCE_APP_NAME` → `develop-materializer-maintenance` |
-| `maintenance-worker` | input topic → `develop-materializer-maintenance-requests`, output topic 0 → `develop-materialization-table-events` |
-| `maintenance-step` | `topicSend` → `develop-materialization-table-events` |
-| `request-intake` | input topic, output topic 0 (`develop-materialization-work`), output topic 1 (`develop-materializer-identity-requests`), table names |
-| `resource-observation` | input topic, output topic 0, output topic 1 (scheduler), table name |
-| `maintenance` | input topic, output topic 0, output topic 1 (`develop-materializer-maintenance-requests`), table names |
-| `runtime-status` | input topic, table name |
-| `table-events` | input topic, table names |
-| `workflow-apply` | input topic, output topic 0, output topic 1 (scheduler), table name |
-| `sweep-observations`, `sweep-observations-startup`, `refresh-consumer-lag`, `purge-deleted-materializations`, `schedule-table-maintenance` | `topicSend` name → `develop-materialization-work` |
-| every WebView that binds the state table | table name → `develop-state`; mutation views (`create`, `stop`, `resume`, `update`, `delete`) also `topicSend` → `develop-materialization-requests`, and `materializations-maintenance` → `develop-materializer-maintenance-requests` |
-| every agent and WebView that binds the settings table | table name → `develop-settings` |
-| `settings-intake` | input topic → `develop-materializer-settings-requests` |
-| `settings-update`, `settings-bootstrap` | `topicSend` → `develop-materializer-settings-requests` |
-| every WebView, and `identity-intake` | directory table → `develop-directory`; `identity-intake` also `identity-audit` → `develop-identity-audit`, `state` → `develop-state`, `settings` → `develop-settings`, input topic → `develop-materializer-identity-requests` and output topic 0 → `develop-materialization-work` |
-| every view that sends an identity request, `identity-bootstrap`, `identity-maintenance` | `topicSend` → `develop-materializer-identity-requests` |
-| `audit-list` | table → `develop-identity-audit` |
-| KasprApp `materializer-control-plane` env | `AUTH_*` read the `develop-materializer-auth` Secret |
-
-### Dev-specific behavioral changes
-
-| Setting | Base | Dev |
-|---------|------|-----|
-| Package git ref | `@main` | `@develop` |
-| `CONTROL_PLANE_RUNTIME_NAME_PREFIX` | `kaspr` | `develop` |
-| Table names | `state`, `settings`, `directory`, `identity-audit` | `develop-state`, `develop-settings`, `develop-directory`, `develop-identity-audit` |
-| Materialization topics | `materialization-*` | `develop-materialization-*` |
-| Iceberg namespace | `materializer` | `develop` |
-| Settings request topic | `materializer-settings-requests` | `develop-materializer-settings-requests` |
-| Identity request topic | `materializer-identity-requests` | `develop-materializer-identity-requests` |
-| Auth Secret | `materializer-auth` | `develop-materializer-auth` |
-| Scheduler topic in patches | `materializer-control-plane-schedule-requests` | `develop-materializer-control-plane-app-schedule-requests` |
-| Runtime app spec | `resources` (0.5-1 CPU, 1Gi) and `config: {topicAllowDeclare: true, brokerRebalanceTimeout: 300}` | the same `resources`; `config` **omits** `topicAllowDeclare` |
-
-Two sharp edges worth knowing:
-
-1. **Scheduler topic name drift.** The base manifests target
-   `materializer-control-plane-schedule-requests` (no `-app-`), while the dev patches target
-   `develop-materializer-control-plane-app-schedule-requests` (with `-app-`). If delayed work
-   silently disappears in one environment, check whether the topic the Kaspr scheduler actually
-   consumes matches the topic the agents write to.
-2. **Dev runtimes may not declare topics.** The dev `CONTROL_PLANE_RUNTIME_APP_SPEC`
-   sets `config: { brokerRebalanceTimeout: 300 }` without `topicAllowDeclare: true`, so dev
-   runtimes may not be allowed to declare their topics.
-
-## 2.10 Runtime resources (created at runtime, not in `manifests/`)
-
-The eight per-materialization resources are **not** in `manifests/`. They are rendered from Jinja2
+The eight per-materialization resources are **not** in the chart. They are rendered from Jinja2
 templates and applied by the control plane via server-side apply (10 §10.1).
 
 | Resource name | Kind | Bounded length |
@@ -737,18 +677,18 @@ the consumer group `<runtime-app>-app`, then `drop_table` deletes the table's ob
 
 ## 2.10a The maintenance app
 
-`manifests/base/maintenance/`: a KasprApp of its own, `materializer-maintenance`, with one agent and
+`charts/midstream/templates/maintenance/`: a KasprApp of its own, `<release>-maintenance`, with one agent and
 one task (10 §10.10):
 
 | Resource | Does |
 |---|---|
-| KasprApp `materializer-maintenance` | 1 replica; requests 0.5 CPU / 1 GiB, limits 2 CPU / 3 GiB (a compaction child holds up to ~1.3 GiB), the CPU request then set from use between 100m and 1500m (§2.10c); the same package, Kafka user, GCP credentials and scheduling as the control plane |
-| KasprAgent `maintenance-worker` | consumes `materializer-maintenance-requests` (declared, 6 partitions, keyed by table) and hands each message to the member's worker; outputs table events (route `events`) to `materialization-table-events` |
+| KasprApp `<release>-maintenance` | 1 replica; requests 0.5 CPU / 1 GiB, limits 2 CPU / 3 GiB (a compaction child holds up to ~1.3 GiB), the CPU request then set from use between 100m and 1500m (§2.10c); the same package, Kafka user, GCP credentials and scheduling as the control plane |
+| KasprAgent `maintenance-worker` | consumes `<release>-maintenance-requests` (declared, 6 partitions, keyed by table) and hands each message to the member's worker; outputs table events (route `events`) to `materialization-table-events` |
 | KasprTask `maintenance-step` | every 5 s on every member (not `onLeader`): finishes jobs, starts those due, sends their table events |
 
 | Environment variable | Default | Meaning |
 |---|---|---|
-| `MAINTENANCE_APP_NAME` | `materializer-maintenance` | names the app in its commits' snapshot summaries (`materializer.runtime`) and its table events |
+| `MAINTENANCE_APP_NAME` | `<release>-maintenance` | names the app in its commits' snapshot summaries (`materializer.runtime`) and its table events |
 | `MAINTENANCE_MAX_CONCURRENT_JOBS` | `1` | long jobs - compactions, orphan cleanups - one member runs at once, across its tables |
 | `MAINTENANCE_FORGET_AFTER_SECONDS` | `300` | a table no tick has named for this long is forgotten and its job stopped |
 | `RUNTIME_MEMBER_ID` | the pod name | names the member in its events |
@@ -760,13 +700,13 @@ tables between them; each table is one member's.
 
 ## 2.10b The tail app
 
-`manifests/base/tail/` and the four `webviews/tail-*.yaml`: a KasprApp of its own,
-`materializer-tail`, labelled `kaspr.io/app: materializer-tail` (19):
+`charts/midstream/templates/tail/` and the four `webviews/tail-*.yaml`: a KasprApp of its own,
+`<release>-tail`, labelled `kaspr.io/app: materializer-tail` (19):
 
 | Resource | Does |
 |---|---|
-| KasprApp `materializer-tail` | 2 replicas; requests 1 CPU / 2 GiB, limits 2 CPU / 4 GiB, the CPU request then set from use between 100m and 1500m (§2.10c); web port 6065; the same package, Kafka user, GCP credentials and scheduling as the control plane |
-| KasprAgent `tail-worker` | consumes `materializer-tail-requests` (declared, **64 partitions**, keyed by table): the member assigned a table's partition owns it |
+| KasprApp `<release>-tail` | 2 replicas; requests 1 CPU / 2 GiB, limits 2 CPU / 4 GiB, the CPU request then set from use between 100m and 1500m (§2.10c); web port 6065; the same package, Kafka user, GCP credentials and scheduling as the control plane |
+| KasprAgent `tail-worker` | consumes `<release>-tail-requests` (declared, **64 partitions**, keyed by table): the member assigned a table's partition owns it |
 | KasprTask `tail-step` | every 5 s on every member (not `onLeader`) |
 | KasprWebView `tail-rows` | `GET /tail/v1/materializations/{id}/tables/{table}`: `contentType: application/octet-stream` (Parquet) with `errorContentType: application/json` |
 | KasprWebView `tail-head` | `GET …/head`: the same content types |
@@ -775,18 +715,18 @@ tables between them; each table is one member's.
 | Environment variable | Base value | Meaning |
 |---|---|---|
 | `RUNTIME_MEMBER_ID` | the pod name | names the member in answers, health and logs |
-| `TAIL_APP_NAME` | `materializer-tail` | the app, as its consumer group and member map name it |
-| `TAIL_CONTROL_PLANE_URL` | `http://materializer-control-plane-app-api:6065` | sessions, schemas and tables |
-| `TAIL_SERVICE_TOKEN` | Secret `materializer-auth`, key `service-token` (optional) | the console's credential and the app's own; without one, every request is `403 console_only` |
+| `TAIL_APP_NAME` | `<release>-tail` | the app, as its consumer group and member map name it |
+| `TAIL_CONTROL_PLANE_URL` | `http://<release>-control-plane-app-api:6065` | sessions, schemas and tables |
+| `TAIL_SERVICE_TOKEN` | Secret `<release>-auth`, key `service-token` (optional) | the console's credential and the app's own; without one, every request is `403 console_only` |
 | `TAIL_TABLE_EVENTS_TOPIC` | `materialization-table-events` | commits and schema changes, read by every member |
-| `TAIL_REQUESTS_TOPIC` | `materializer-tail-requests` | the ticks' topic, as the member map reads the assignment |
+| `TAIL_REQUESTS_TOPIC` | `<release>-tail-requests` | the ticks' topic, as the member map reads the assignment |
 | `TAIL_MEMORY_BUDGET_BYTES` | `2684354560` | resident bytes a member's tables may hold together (19 §19.8) |
 
 The control plane's `maintenance` agent declares and writes the requests topic (its third output,
 route `tail`), so ticks can be sent before the tail app first starts. The partition count bounds the
-useful members and is part of the routing: changing it moves every table. The dev overlay prefixes
-everything `develop-` and patches the app's package ref, env 1–5 (name, control-plane URL, Secret,
-topics), the `kaspr.io/app` labels of its agent, task and views, and the worker's input topic.
+useful members and is part of the routing: changing it moves every table. Its name, topics,
+control-plane URL and Secret derive from the release; `tail.enabled: false` leaves the app, its
+agent, task and views out, and the console shows committed rows only.
 
 `errorContentType` needs Kaspr 0.11.30 and kaspr-operator 0.19.7 or later; with older ones the
 refusals carry the same JSON body as bytes, which the console reads too.
@@ -810,7 +750,7 @@ gets the same request:
 
 Why it is set up this way:
 
-- **CPU only.** Memory stays as the manifests set it. kaspr-operator restarts the container on a
+- **CPU only.** Memory stays as the values set it. kaspr-operator restarts the container on a
   memory resize, because Kaspr sizes its RocksDB block cache from the memory limit when it starts.
   And the apps' memory comes in bursts: a backfill's seal, a compaction child, a watched table's
   buffers. A request lowered over a quiet week would leave the next burst unreserved.
@@ -821,7 +761,7 @@ Why it is set up this way:
 - **Each ceiling stays under its CPU limit.** The VPA would cap a request at the limit. The control
   plane's and the runtimes' memory requests equal their memory limits, so a CPU request at the CPU
   limit would make the pod Guaranteed. A resize may not change a pod's QoS class, so the pod could
-  never be resized in place again. `VerticalPodAutoscalingTests` holds every overlay to this.
+  never be resized in place again. `VerticalPodAutoscalingTests` holds every values file to this.
 - **The 100m floor** keeps an idle app's event loop responsive on a busy node: its Kafka
   heartbeats, its web server. The top of the range follows what each app can use. A worker's event
   loop takes at most a core (one GIL, 12 §12.10), and a runtime's seal child or the maintenance
@@ -835,7 +775,7 @@ Why it is set up this way:
 VPA updater's default `--min-replicas=2`, the updater leaves them alone. They take the
 recommendation when their pod is next created, at a deploy or a restart. An updater run with
 `--in-place-skip-disruption-budget=true` (beta in VPA 1.8) resizes them in place, since a CPU-only
-resize restarts nothing, and still never evicts them; the lab's runs that way. The manifests leave
+resize restarts nothing, and still never evicts them; the lab's runs that way. The chart leaves
 `minReplicas` unset: at `1`, the updater could evict an app's only pod.
 
 **Requirements.** kaspr-operator 0.19.5 or later, for the field and the KasprApp's scale
@@ -859,15 +799,15 @@ way, so restart it too if anything targeted these apps' pods before.
 
 ```bash
 kubectl -n midstream get vpa                       # one per app and one per runtime
-kubectl -n midstream describe vpa develop-materializer-control-plane-app-vpa   # its recommendation
-kubectl -n midstream get kasprapp develop-materializer-control-plane \
+kubectl -n midstream describe vpa midstream-control-plane-app-vpa   # its recommendation
+kubectl -n midstream get kasprapp midstream-control-plane \
   -o jsonpath='{.status.conditions[?(@.type=="VerticalPodAutoscalerReady")]}'
 kubectl -n midstream get events --field-selector reason=InPlaceResizedByVPA
-kubectl -n midstream get pod develop-materializer-control-plane-app-0 \
+kubectl -n midstream get pod midstream-control-plane-app-0 \
   -o jsonpath='{.spec.containers[?(@.name=="kaspr")].resources}'
 ```
 
-**Changing it.** Patch a KasprApp's `/spec/verticalPodAutoscaler` in the overlay, `enabled: false`
+**Changing it.** Set the app's `verticalPodAutoscaler` value, `enabled: false`
 to turn it off, or the runtime spec's for every runtime. Keep `maxAllowed.cpu` under
 `limits.cpu` whenever either changes. A changed runtime spec re-applies every runtime, but a change
 to the VPA alone restarts none: with the CPU only, the pod template does not change. Adding
@@ -878,25 +818,25 @@ the container a `resizePolicy`. The Settings page shows the runtimes' value read
 ## 2.11 Deployment checklist
 
 ```bash
-# 1. Validate manifests render
-kubectl kustomize manifests/dev > /dev/null && echo "dev renders OK"
+# 1. Lint and render
+helm lint charts/midstream -f my-values.yaml
+helm template midstream charts/midstream -n midstream -f my-values.yaml > /tmp/midstream.yaml
 
-# 2. Confirm prerequisite secrets exist (names only — never print contents)
-kubectl -n midstream get secret github-deploy-key kafka-materializer-gcp-credentials \
-        materializer-control-plane-user develop-materializer-auth -o name
+# 2. Confirm the Secrets the values name exist (names only — never print contents)
+kubectl -n midstream get secret midstream-kafka midstream-gcs midstream-auth -o name
 
-# 3. Apply
-kubectl apply -k manifests/dev
+# 3. Install or upgrade
+helm upgrade --install midstream charts/midstream -n midstream --create-namespace -f my-values.yaml
 
-# 4. Watch the app come up
-kubectl -n midstream get kasprapp develop-materializer-control-plane -w
+# 4. Watch the apps come up
+kubectl -n midstream get kasprapp -w
 
 # 5. Verify all child resources are linked
-kubectl -n midstream get kasprapp develop-materializer-control-plane \
+kubectl -n midstream get kasprapp midstream-control-plane \
         -o jsonpath='{.status.linkedResources}' | python -m json.tool
 
 # 6. Port-forward and smoke test
-kubectl -n midstream port-forward svc/develop-materializer-control-plane-app-api 6065:6065 &
+kubectl -n midstream port-forward svc/midstream-control-plane-app-api 6065:6065 &
 curl -s localhost:6065/system/version | python -m json.tool          # public
 curl -s localhost:6065/auth/session | python -m json.tool            # who am I: a guest here
 curl -s localhost:6065/materializations | python -m json.tool        # guests may list by default
@@ -910,7 +850,7 @@ are removed and the control plane comes up from zero members, keeping the identi
 tables — the procedure is 12 §12.13.
 
 **Upgrading to 4.1** adds the tail app and its topic. The control plane only sends to
-`materializer-tail-requests`, so it needs no forced rebalance; the tail app starts with its own
+`<release>-tail-requests`, so it needs no forced rebalance; the tail app starts with its own
 group. Point the console at it with `CONSOLE_TAIL_URL` (web 03).
 
 **Upgrading to 4.2** gives every app a VerticalPodAutoscaler and raises the runtimes' CPU limit to
@@ -932,6 +872,6 @@ formatter; the gates, run locally until then, are:
 ```bash
 python -m unittest discover -s python/tests -p 'test_*.py' -v
 python -m compileall python/src
-kubectl kustomize manifests/base
-kubectl kustomize manifests/dev
+helm lint charts/midstream -f charts/midstream/ci/test-values.yaml
+helm template midstream charts/midstream -n midstream -f charts/midstream/ci/test-values.yaml
 ```

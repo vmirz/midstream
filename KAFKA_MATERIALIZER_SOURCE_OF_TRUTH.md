@@ -6,7 +6,7 @@ part in a few paragraphs and points to the handbook for depth.
 
 Where this document and the code disagree, the implementation is authoritative, in this order:
 
-1. `manifests/`
+1. `charts/midstream/`
 2. `python/src/midstream/`
 3. `python/tests/`
 
@@ -58,24 +58,24 @@ HTTP ─▶ KasprWebView ─▶ materialization-requests ─▶ request-intake �
                          │
              Iceberg tables in GCS ◀── engines via the REST catalog, and the console
                          │            ◀── maintenance app: compaction · expiry · orphans, every table
-                         │                 ▲ ticked each minute on materializer-maintenance-requests
+                         │                 ▲ ticked each minute on <release>-maintenance-requests
                          │            the console ◀── tail app: each watched table's records past its
-                         │                 snapshot, from Kafka (ticked on materializer-tail-requests)
+                         │                 snapshot, from Kafka (ticked on <release>-tail-requests)
                          │
              materialization-table-events ─▶ table-events agent ─▶ control-plane state
 heartbeats ─▶ materialization-status ─▶ runtime-status agent ─┘   ▲
                                          resource-observation agent + sweeps
 ```
 
-- **Control plane** — one long-lived KasprApp, `materializer-control-plane`. Owns the HTTP API and
+- **Control plane** — one long-lived KasprApp, `<release>-control-plane`. Owns the HTTP API and
   the REST catalog, all desired and observed state, creating and dropping tables, Kubernetes
   reconciliation, settings and identity. It never writes data files.
 - **Data plane** — one dedicated KasprApp per materialization, rendered from Jinja2 templates and
   server-side applied. Every member writes files; the one owning `<rt>-commits` commits them.
-- **Maintenance app** — one KasprApp, `materializer-maintenance`, beside the control plane: it
+- **Maintenance app** — one KasprApp, `<release>-maintenance`, beside the control plane: it
   compacts, expires and cleans up every materialization's tables, stopped ones included, so only it
   is sized for compaction's memory. It keeps no state; the control plane ticks it.
-- **Tail app** — one KasprApp, `materializer-tail`: for each table someone watches in the console,
+- **Tail app** — one KasprApp, `<release>-tail`: for each table someone watches in the console,
   the records past its committed snapshot, read from Kafka and built into rows by the seal's own
   code, served to the console alone. The console shows them beside the snapshot, each record once,
   within seconds of being produced (the **live tail**, handbook 19). It keeps no state and never
@@ -83,7 +83,7 @@ heartbeats ─▶ materialization-status ─▶ runtime-status agent ─┘   �
 - **Console** — `/console`, a Node BFF and a React client. It talks to the control plane over HTTP only
   and reads the tables itself; it is meant to be extractable into its own repository.
 
-Every app runs the same Python package (`materializer-control-plane`): the runtime side under
+Every app runs the same Python package (`<release>-control-plane`): the runtime side under
 `runtime_app/`, the maintenance app under `maintenance_app/`, the tail app under `tail_app/`, the
 Iceberg library they share under `lakehouse/`, the control plane everywhere else.
 One wheel, pinned to an exact git commit (handbook 01, 16).
@@ -94,8 +94,7 @@ One wheel, pinned to an exact git commit (handbook 01, 16).
 |---|---|
 | `python/src/midstream/` | The package. `models/` (immutable models with `to_dict`/`from_dict`), `storage/` (table keys, envelopes), `services/` (workflow, request intake, observation, table events), `handlers/` (thin Kaspr adapters), `web/` (WebView logic, the REST catalog views), `lakehouse/` (pointer catalog, table lifecycle, commits, schema policy, maintenance, REST protocol), `runtime/` (template rendering, naming, bindings), `runtime_app/` (writer, pipeline, committer, templates), `maintenance_app/` (ticks, job slots, the compaction child), `tail_app/` (the live tail: ticks, one consumer per member, buffers, answers, routing), `observation/`, `schema/` (discovery), `kubernetes/`, `kafka/`, `scheduler/`, `settings/`, `identity/` |
 | `python/tests/` | The `unittest` suite: the executable specification |
-| `manifests/base/` | The control plane's CRDs: app, agents, tasks, tables, webviews, RBAC; `maintenance/`, the maintenance app's; `tail/` and `webviews/tail-*.yaml`, the tail app's |
-| `manifests/{dev,staging,prod}/` | Overlays; `dev` adds `develop-` prefixes and renames |
+| `charts/midstream/templates/` | The control plane's CRDs: app, agents, tasks, tables, webviews, RBAC; `maintenance/`, the maintenance app's; `tail/` and `webviews/tail-*.yaml`, the tail app's |
 | `console/` | The Midstream Console and its handbook (`console/docs/`) |
 | `docs/handbook/` | The reference manual |
 
@@ -103,13 +102,13 @@ One wheel, pinned to an exact git commit (handbook 01, 16).
 
 Python ≥ 3.12; PyIceberg 0.12 with its minor pinned (the committer uses documented-but-internal
 update APIs); pyarrow ≥ 18; google-cloud-storage ≥ 2.18; Jinja2; PyYAML; kubernetes-asyncio ≥ 33;
-aiokafka from the Kaspr image. Kaspr (`kaspr.io/v1alpha1`) runs on twm-faust. Kustomize renders the
-manifests. Tests are stdlib `unittest`; the console uses `node --test`, `tsc` and Vite. There is no
+aiokafka from the Kaspr image. Kaspr (`kaspr.io/v1alpha1`) runs on twm-faust. Helm renders the
+chart. Tests are stdlib `unittest`; the console uses `node --test`, `tsc` and Vite. There is no
 linter or formatter by design (handbook 01 §1.8).
 
 ## 5. Deployed resources
 
-**Control plane** (`manifests/base/`): one KasprApp; four tables — `state` (everything about
+**Control plane** (`charts/midstream/templates/`): one KasprApp; four tables — `state` (everything about
 materializations), `settings`, `directory` (people, groups, roles, datasets, grants, table-name
 claims; `identity` before 3.0), `identity-audit` — each written by exactly one agent;
 8 agents (`request-intake`, `workflow-apply`, `resource-observation`, `runtime-status`,
@@ -119,13 +118,13 @@ runtime settings' lineage at startup); 67
 WebViews, ten of them the REST catalog under `/catalog` and eight the datasets'. The dev overlay prefixes names with
 `develop-` and must patch every WebView's table bindings (handbook 02).
 
-**The maintenance app** (`manifests/base/maintenance/`): a KasprApp, the agent `maintenance-worker`
-on `materializer-maintenance-requests` (six partitions, keyed by table) and the task
+**The maintenance app** (`charts/midstream/templates/maintenance/`): a KasprApp, the agent `maintenance-worker`
+on `<release>-maintenance-requests` (six partitions, keyed by table) and the task
 `maintenance-step` (every 5 s); 1 GiB requested, 3 GiB limit, one long job at a time per member
 (handbook 02 §2.10a).
 
-**The tail app** (`manifests/base/tail/`): a KasprApp of two members (1 CPU and 2 GiB requested, 2
-and 4 GiB at most), the agent `tail-worker` on `materializer-tail-requests` (64 partitions, keyed by
+**The tail app** (`charts/midstream/templates/tail/`): a KasprApp of two members (1 CPU and 2 GiB requested, 2
+and 4 GiB at most), the agent `tail-worker` on `<release>-tail-requests` (64 partitions, keyed by
 table: a table belongs to the member assigned its partition), the task `tail-step` (every 5 s), and
 four WebViews under `/tail/v1` that answer the console alone (handbook 02 §2.10b, 19).
 
@@ -215,10 +214,10 @@ the materialization (handbook 06 §6.4).
 | `materialization-status` | runtime heartbeats |
 | `materialization-table-events` | `table_committed`, `schema_changed`, `table_error` from committers; `maintenance_started`, `maintenance_completed` and `table_error` from the maintenance app |
 | `materialization-schema-authority-updates` | runtime settings (its 0.x name kept) |
-| `materializer-maintenance-requests` | the maintenance app's ticks, requests and cancels, keyed `maintenance:<id>:<table>` |
-| `materializer-tail-requests` | the tail app's ticks and cancels, each minute for every table, keyed `tail:<id>:<table>` (64 partitions) |
+| `<release>-maintenance-requests` | the maintenance app's ticks, requests and cancels, keyed `maintenance:<id>:<table>` |
+| `<release>-tail-requests` | the tail app's ticks and cancels, each minute for every table, keyed `tail:<id>:<table>` (64 partitions) |
 | `<rt>-commits` | inside a runtime: `data_file_ready`, `schema_change_request`, ticks, wakeups |
-| `materializer-settings-requests`, `materializer-identity-requests` | settings and identity changes, each to its one agent |
+| `<release>-settings-requests`, `<release>-identity-requests` | settings and identity changes, each to its one agent |
 
 Topics added by a deploy keep the old consumer-group assignment until one forced rebalance
 (handbook 06, 14 §14.3).
@@ -377,7 +376,7 @@ run (web 07 §07.9, handbook 19).
 python -m pip install -r requirements-dev.txt
 python -m unittest discover -s python/tests -p 'test_*.py' -v
 python -m compileall python/src
-kubectl kustomize manifests/base && kubectl kustomize manifests/dev
+helm lint charts/midstream -f charts/midstream/ci/test-values.yaml
 cd console && npm install && npm run typecheck && npm test && npm run build
 python python/tests/console_fixture.py      # regenerate the console's fixture table
 ```

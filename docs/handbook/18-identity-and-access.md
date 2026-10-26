@@ -7,7 +7,7 @@ the control plane and the console is authorized.
 Source: `identity/` (`permissions.py`, `principals.py`, `authorization.py`, `tokens.py`,
 `passwords.py`, `secrets.py`, `directory.py`, `validation.py`), `models/identity.py`,
 `storage/identity.py`, `services/identity.py`, `handlers/identity.py`, `web/auth.py`,
-`web/identity.py`, `web/datasets.py`, `web/tokens.py`, `services/table_claims.py`; manifests
+`web/identity.py`, `web/datasets.py`, `web/tokens.py`, `services/table_claims.py`; chart templates
 `tables/{directory,identity-audit}.yaml`, `agents/identity-intake.yaml`, `tasks/identity-*.yaml`,
 `webviews/{auth,users,groups,roles,permissions,audit,identity,datasets}-*.yaml`; console:
 `console/server/auth/`, `console/server/routes/{auth,identity,datasets}.ts`, `console/shared/access.ts`,
@@ -193,8 +193,8 @@ Two **global** KasprTables, JSON, 3 partitions, written only by `identity-intake
 
 | Table (base / dev) | Holds |
 |---|---|
-| `directory` / `develop-directory` | The directory — people, groups, roles, datasets, their grants and the claims of table names — sessions, sign-in state and the outcome of each directory change. Called `identity` before 3.0 |
-| `identity-audit` / `develop-identity-audit` | The audit log |
+| `directory` / `<release>-directory` | The directory — people, groups, roles, datasets, their grants and the claims of table names — sessions, sign-in state and the outcome of each directory change. Called `identity` before 3.0 |
+| `identity-audit` / `<release>-identity-audit` | The audit log |
 
 Global, because every replica authorizes every request from them and a WebView cannot route a
 read to the replica that owns a partition. Every write arrives on one Kafka key (§18.5), so each
@@ -239,7 +239,7 @@ POST /users  (users-create WebView; the same shape for every directory change)
   validate the body; password rules; hash the password (never sent in clear to Kafka)
   preview: run the agent's own handler against an in-memory overlay of the table
            → refuse now with the error the agent would give (400/403/404/409)
-  → materializer-identity-requests   key "identity"   (no table write)
+  → <release>-identity-requests   key "identity"   (no table write)
   ← 202 { request_id, action, entity_type, entity_id, accepted_at, status_url }
 
 identity-intake agent → services/identity.py::apply_identity_request
@@ -377,11 +377,11 @@ tells the person the new one.
 The first line of every WebView's Python:
 
 ```python
-# code-derived (manifests/base/webviews/materializations-detail.yaml)
+# code-derived (charts/midstream/templates/webviews/materializations-detail.yaml)
 principal = authorize(request, directory_table, "materializations.view_details")
 
 # A dataset permission is checked on the dataset a request names
-# (manifests/base/webviews/datasets-grants.yaml)
+# (charts/midstream/templates/webviews/datasets-grants.yaml)
 principal = authorize(request, directory_table, "dataset.manage", dataset=dataset)
 ```
 
@@ -551,7 +551,7 @@ Overridable from the Settings page's **Security** section (`control-plane` scope
 The console's own Security settings: `CONSOLE_SESSION_CHECK_MS` (5,000; 0–60,000) and
 `CONSOLE_SIGN_IN_ATTEMPTS_PER_MINUTE` (10; 1–1,000).
 
-Never overridable, from the **`materializer-auth`** Secret (`develop-materializer-auth` in dev),
+Never overridable, from the **`<release>-auth`** Secret (`midstream-auth` in dev),
 every key optional. The Settings page's Deployment section says only whether each is configured.
 
 | Secret key | Env var | Purpose |
@@ -576,7 +576,7 @@ kubectl create secret generic materializer-auth -n midstream \
 ```
 
 Give the console the same service token as `CONSOLE_SERVICE_TOKEN`. Deploy, force the one
-rebalance a release that adds topics needs (§17.12: 0.6.0 added `materializer-identity-requests`
+rebalance a release that adds topics needs (§17.12: 0.6.0 added `<release>-identity-requests`
 and the changelogs of `identity` and `identity-audit`; 3.0.0 the changelog of `directory`, which
 kaspr-operator 0.19.4 or later rebalances for on its own), sign in as the bootstrap administrator,
 choose a password, and add people. A people's datasets come next: someone with `datasets.create`
@@ -590,7 +590,7 @@ moving it signs everyone out.
 **The console's service token.** There is no separate console token: a console reads with the
 control plane's own `service-token`, given to it as `CONSOLE_SERVICE_TOKEN`. To point a console -
 a developer's included - at a running control plane, copy the value from the Secret
-(`develop-materializer-auth` in dev) without printing it:
+(`midstream-auth` in dev) without printing it:
 
 ```bash
 printf 'CONSOLE_SERVICE_TOKEN=%s\n' \
@@ -606,8 +606,8 @@ the list, never details.
 | Symptom | Cause | Action |
 |---|---|---|
 | Sign-in answers `503`, "no session signing key" | `signing-key` missing or shorter than 32 characters | Fix the Secret, restart the control plane |
-| Sign-in and every change to users, groups or roles answer `500`, and the control-plane log shows `KeyError: '…materializer-identity-requests'`; no administrator was bootstrapped | The consumer group runs on an assignment made before this release added the identity topic: the rebalance was not forced | §17.12, once per environment |
-| A create stays in `claiming_tables` | The claim never reached `identity-intake`, or its answer never reached `workflow-apply`: both now have outputs a renaming overlay must patch (02 §2.9) | Check the overlay; `GET /identity/requests/{claim_request_id}` says whether the directory answered |
+| Sign-in and every change to users, groups or roles answer `500`, and the control-plane log shows `KeyError: '…<release>-identity-requests'`; no administrator was bootstrapped | The consumer group runs on an assignment made before this release added the identity topic: the rebalance was not forced | §17.12, once per environment |
+| A create stays in `claiming_tables` | The claim never reached `identity-intake`, or its answer never reached `workflow-apply`: both have outputs the chart names after the release (02 §2.9) | Check the rendered agents; `GET /identity/requests/{claim_request_id}` says whether the directory answered |
 | Someone cannot see a dataset's schemas or data | The dataset is locked to them: no grant on it to them or their groups, and no dataset permission held everywhere | A dataset owner grants them a role on it (Datasets › the dataset › Access) |
 | The console shows only the list, never details, for everyone | `CONSOLE_SERVICE_TOKEN` unset or not equal to the control plane's | Set it; the console logs a warning at start |
 | Someone is locked out | 10 wrong passwords in a row | **Unlock** on their user page, or wait 15 minutes |
@@ -618,7 +618,7 @@ Inspecting the store:
 
 ```bash
 kafka-console-consumer --bootstrap-server $BROKERS --from-beginning --property print.key=true \
-  --topic develop-materializer-control-plane-app-develop-directory-changelog
+  --topic midstream-control-plane-app-develop-directory-changelog
 ```
 
 The changelog holds password hashes; treat it as sensitive.

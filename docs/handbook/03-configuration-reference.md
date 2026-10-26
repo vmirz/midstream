@@ -84,8 +84,8 @@ revision. With no settings table it returns `get_config()` unchanged.
 | `catalog_metadata_cache_seconds` | `CONTROL_PLANE_CATALOG_METADATA_CACHE_SECONDS` | `5` | integer, `>= 1`; how long a loaded table is answered again from memory |
 | `discovery_sample_records` | `CONTROL_PLANE_DISCOVERY_SAMPLE_RECORDS` | `200` | integer, `>= 1`; records discovery reads to build schema 0 |
 | `discovery_sample_seconds` | `CONTROL_PLANE_DISCOVERY_SAMPLE_SECONDS` | `5` | integer, `>= 1`; how long discovery waits for them |
-| `settings_requests_topic` | `CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC` | `materializer-settings-requests` | none; the topic the settings WebView publishes changes to |
-| `identity_requests_topic` | `CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC` | `materializer-identity-requests` | none; the topic the identity views and tasks publish to |
+| `settings_requests_topic` | `CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC` | `<release>-settings-requests` | none; the topic the settings WebView publishes changes to |
+| `identity_requests_topic` | `CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC` | `<release>-identity-requests` | none; the topic the identity views and tasks publish to |
 | `session_idle_timeout_minutes` | `CONTROL_PLANE_SESSION_IDLE_TIMEOUT_MINUTES` | `480` | integer, `>= 1`; how long a session lasts unused |
 | `session_max_lifetime_hours` | `CONTROL_PLANE_SESSION_MAX_LIFETIME_HOURS` | `168` | integer, `>= 1`; how long a session lasts however active |
 | `session_refresh_minutes` | `CONTROL_PLANE_SESSION_REFRESH_MINUTES` | `10` | integer, `>= 1`; how often a client renews an active session |
@@ -155,9 +155,9 @@ def runtime_name_for_materialization(self, materialization_id: str) -> str:
 So `mat-a1b2c3d4e5f6` becomes `kaspr-mat-a1b2c3d4e5f6` in base and
 `develop-mat-a1b2c3d4e5f6` in dev.
 
-### 3.2.4 Which variables the manifests actually set
+### 3.2.4 Which variables the chart actually sets
 
-Set in `manifests/base/apps/control-plane.yaml`:
+Set in `charts/midstream/templates/control-plane/app.yaml`:
 
 - `CONTROL_PLANE_DEFAULT_NAMESPACE`
 - `CONTROL_PLANE_DEFAULT_LIST_LIMIT`
@@ -167,11 +167,11 @@ Set in `manifests/base/apps/control-plane.yaml`:
 - the requests, work, status, runtime control and table-events topic variables,
   `CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC` and
   `CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC`
-- `CONTROL_PLANE_STORAGE_PREFIX` (`materializer`; dev `develop`)
+- `CONTROL_PLANE_STORAGE_PREFIX` (the release name, unless `controlPlane.settings.storagePrefix` says otherwise)
 - `CONTROL_PLANE_DELETED_RETENTION_HOURS`, `…_DEFAULT_RUNTIME_STORAGE_SIZE`,
   `…_DEFAULT_RUNTIME_REPLICAS`, `…_DEFAULT_DESTINATION_URI`
 - `AUTH_SIGNING_KEY`, `…_PREVIOUS_SIGNING_KEY`, `…_SERVICE_TOKEN`,
-  `…_BOOTSTRAP_ADMIN_EMAIL` and `…_BOOTSTRAP_ADMIN_PASSWORD`, from the `materializer-auth` Secret
+  `…_BOOTSTRAP_ADMIN_EMAIL` and `…_BOOTSTRAP_ADMIN_PASSWORD`, from the `<release>-auth` Secret
 - `PROTOCOL_LOGGING_ENABLED` = `"true"`
 - `GOOGLE_APPLICATION_CREDENTIALS` (consumed by the GCS client, not by `ControlPlaneConfig`)
 
@@ -370,7 +370,7 @@ change and a package release.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `MAINTENANCE_APP_NAME` | `materializer-maintenance` | names the app in its commits and table events |
+| `MAINTENANCE_APP_NAME` | `<release>-maintenance` | names the app in its commits and table events |
 | `MAINTENANCE_MAX_CONCURRENT_JOBS` | `1` | long jobs one member runs at once, across its tables |
 | `MAINTENANCE_FORGET_AFTER_SECONDS` | `300` (≥ 60) | a table no tick names for this long is forgotten, its job stopped |
 
@@ -380,11 +380,11 @@ Read from the app's environment (02 §2.10a); what the jobs do comes with the ti
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `TAIL_APP_NAME` | `materializer-tail` | the app, as its consumer group and the member map name it |
+| `TAIL_APP_NAME` | `<release>-tail` | the app, as its consumer group and the member map name it |
 | `TAIL_CONTROL_PLANE_URL` | none | the control plane's Service: sessions, schemas, tables |
 | `TAIL_SERVICE_TOKEN` | none | the console's credential, which every request must carry, and the app's own for schemas; at least 32 characters, never a config field |
 | `TAIL_TABLE_EVENTS_TOPIC` | `materialization-table-events` | commits and schema changes |
-| `TAIL_REQUESTS_TOPIC` | `materializer-tail-requests` | ticks and cancels |
+| `TAIL_REQUESTS_TOPIC` | `<release>-tail-requests` | ticks and cancels |
 | `TAIL_MEMORY_BUDGET_BYTES` | `2684354560` | resident bytes of a member's tables together |
 | `TAIL_FORGET_AFTER_SECONDS` | `300` | a table no tick names for this long is forgotten |
 | `TAIL_SESSION_CHECK_SECONDS` | `5` | how long a session the control plane answered for is trusted (60 s while it cannot be reached) |
@@ -423,24 +423,24 @@ Kaspr changelog topic suffixes.
 
 ## 3.5 Precedence and effective values in each environment
 
-| Setting | Code default | Base manifest | Dev overlay |
-|---------|-------------|---------------|-------------|
-| Namespace | `midstream` | `midstream` | `midstream` |
-| Runtime name prefix | `kaspr` | `kaspr` | `develop` |
-| Template version | `v1` | `v1` | `v1` |
-| List limit | `30` | `30` | `30` |
-| Requests topic | `materialization-requests` | same | `develop-materialization-requests` |
-| Work topic | `materialization-work` | same | `develop-materialization-work` |
-| Status topic | `materialization-status` | same | `develop-materialization-status` |
-| Runtime control topic | `materialization-schema-authority-updates` | same | `develop-materialization-schema-authority-updates` |
-| Table events topic | `materialization-table-events` | same | `develop-materialization-table-events` |
-| Iceberg namespace | `materializer` | `materializer` | `develop` |
-| Catalog base URL | — | (unset) | (unset) |
-| Protocol logging | `False` | `true` | `true` |
-| Slow-wait threshold | `30s` | (unset → 30) | (unset → 30) |
-| Table name | `state` | `state` | `develop-state` |
-| Settings table | `settings` | `settings` | `develop-settings` |
-| Settings request topic | `materializer-settings-requests` | same | `develop-materializer-settings-requests` |
+| Setting | Code default | The chart |
+|---------|-------------|-----------|
+| Namespace | none: the pod's own, or the variable | the release namespace (downward API) |
+| Runtime name prefix | `kaspr` | the release name |
+| Template version | `v1` | `v1` |
+| List limit | `30` | `30` |
+| Requests topic | `materialization-requests` | `<release>-materialization-requests` |
+| Work topic | `materialization-work` | `<release>-materialization-work` |
+| Status topic | `materialization-status` | `<release>-materialization-status` |
+| Runtime control topic | `materialization-schema-authority-updates` | `<release>-materialization-schema-authority-updates` |
+| Table events topic | `materialization-table-events` | `<release>-materialization-table-events` |
+| Storage prefix | `materializer` | the release name |
+| Catalog base URL | — | (unset) |
+| Protocol logging | `False` | `true` |
+| Slow-wait threshold | `30s` | (unset → 30) |
+| Table name | `state` | `state` | `<release>-state` |
+| Settings table | `settings` | `settings` | `<release>-settings` |
+| Settings request topic | `<release>-settings-requests` | same | `midstream-settings-requests` |
 | Runtime CPU | — | 0.5 request, 1 limit - too little on a busy topic ([12 §12.10](./12-operations-runbook.md)) | same |
 | Runtime memory | — | 1Gi request and limit - likewise | same |
 | Runtime `topicAllowDeclare` | — | `true` | (unset) |
@@ -456,11 +456,11 @@ the override to follow the deployment again.
 with who changed it, and can be reset. See [17 — Settings](./17-settings.md).
 
 **Topic names** — change in three places or the pipeline breaks:
-1. `manifests/base/apps/control-plane.yaml` env var
+1. `charts/midstream/templates/control-plane/app.yaml` env var
 2. the corresponding agent `spec.input.topic.name` / `spec.output.topics[].name`
-3. `manifests/dev/kustomization.yaml` patches
+3. the chart's templates, which derive it from the release
 
-Then re-run `kubectl kustomize manifests/dev` and the unit tests.
+Then re-run `helm template midstream charts/midstream -f charts/midstream/ci/test-values.yaml` and the unit tests.
 
 **Runtime behavior** (batch sizing, commit cadence, schema caps, maintenance) — change it on the
 Settings page's Runtimes, Commits, Schema and Maintenance sections; running runtimes apply it within
