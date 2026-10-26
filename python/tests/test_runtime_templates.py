@@ -56,11 +56,12 @@ def render(materialization: Materialization | None = None, *, config: ControlPla
 
 
 def shipped_runtime_app_spec() -> dict:
-    """The runtime spec `manifests/base` deploys the control plane with."""
+    """The runtime spec the chart deploys the control plane with (`charts/midstream/ci/test-values.yaml`)."""
     import yaml
 
-    manifest = Path(__file__).resolve().parents[2] / "manifests" / "base" / "apps" / "control-plane.yaml"
-    env = yaml.safe_load(manifest.read_text())["spec"]["template"]["kasprContainer"]["env"]
+    from chart_support import document
+
+    env = document("KasprApp", "control-plane")["spec"]["template"]["kasprContainer"]["env"]
     value = next(item["value"] for item in env if item["name"] == "CONTROL_PLANE_RUNTIME_APP_SPEC")
     return yaml.safe_load(value)
 

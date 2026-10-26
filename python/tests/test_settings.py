@@ -3,10 +3,13 @@ from __future__ import annotations
 from dataclasses import fields, replace
 import os
 from pathlib import Path
+import sys
 import unittest
 from collections.abc import Iterable
 from typing import Any
 from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from midstream.config import ControlPlaneConfig, get_config
 from midstream.handlers.settings import build_settings_bootstrap_request, handle_settings_request_for_output
@@ -613,10 +616,9 @@ class SettingsBootstrapTests(unittest.TestCase):
         self.assertRegex(new_settings_lineage("not a time"), LINEAGE_PATTERN)
 
     def test_the_task_sends_what_the_settings_agent_applies(self) -> None:
-        import yaml
+        from chart_support import RELEASE, document
 
-        manifest = Path(__file__).resolve().parents[2] / "manifests" / "base" / "tasks" / "settings-bootstrap.yaml"
-        task = yaml.safe_load(manifest.read_text())
+        task = document("KasprTask", "settings-bootstrap")
         self.assertTrue(task["spec"]["onLeader"])
         self.assertNotIn("schedule", task["spec"], "it runs once, at startup")
         namespace: dict = {}
@@ -625,7 +627,7 @@ class SettingsBootstrapTests(unittest.TestCase):
         exec(operations["build-bootstrap-request"]["map"]["python"], namespace)
         request = namespace["build_request"]()
         send = operations["send-bootstrap-request"]["topicSend"]
-        self.assertEqual(send["name"], "materializer-settings-requests")
+        self.assertEqual(send["name"], f"{RELEASE}-settings-requests")
         exec(send["keySelector"]["python"], namespace)
         # The runtime scope's key, so it applies in order with that scope's changes, in its shard.
         self.assertEqual(namespace["select_key"](request), "settings:runtime")
