@@ -5,6 +5,7 @@ import unittest
 from collections.abc import Iterable
 from unittest.mock import patch
 
+from midstream.runtime.templates import PackageSource
 from midstream.config import ControlPlaneConfig
 from midstream.models import Materialization, SettingOverride, SettingsDocument
 from midstream.runtime import (
@@ -308,10 +309,7 @@ class RenderedRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
         reset_runtime_settings()
         self.addCleanup(reset_runtime_settings)
-        patcher = patch(
-            "midstream.runtime.templates.get_installed_package_revision",
-            return_value="pkg-rev-1",
-        )
+        patcher = patch("midstream.runtime.templates.installed_package_source", return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python"))
         patcher.start()
         self.addCleanup(patcher.stop)
         self.table_records = build_table_records(build_materialization())

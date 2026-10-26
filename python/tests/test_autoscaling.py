@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from table_records import build_table_record, table_specs  # noqa: E402
 
+from midstream.runtime.templates import PackageSource
 from midstream.config import ControlPlaneConfig, get_config  # noqa: E402
 from midstream import config as control_plane_config  # noqa: E402
 from midstream.handlers.maintenance import handle_maintenance_work  # noqa: E402
@@ -184,7 +185,7 @@ class AutoscaleDecisionTests(unittest.TestCase):
 
 class ScaledRenderTests(unittest.TestCase):
     def setUp(self) -> None:
-        patcher = patch("midstream.runtime.templates.get_installed_package_revision", return_value="pkg-rev-1")
+        patcher = patch("midstream.runtime.templates.installed_package_source", return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python"))
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -315,7 +316,7 @@ class AutoscaleAfterLagTests(unittest.TestCase):
 
 class ScaledSweepTests(unittest.TestCase):
     def setUp(self) -> None:
-        patcher = patch("midstream.runtime.templates.get_installed_package_revision", return_value="pkg-rev-1")
+        patcher = patch("midstream.runtime.templates.installed_package_source", return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python"))
         patcher.start()
         self.addCleanup(patcher.stop)
         self.table = FakeTable()

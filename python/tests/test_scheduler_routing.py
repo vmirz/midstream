@@ -5,6 +5,7 @@ from collections.abc import Iterable
 import unittest
 from unittest.mock import patch
 
+from midstream.runtime.templates import PackageSource
 from midstream.handlers import handle_observation_work_for_output, handle_work_event_for_routed_output
 from midstream.models import (
     EventCause,
@@ -146,10 +147,7 @@ def build_status(*, observed_phase: str = "requested") -> MaterializationStatus:
 
 class SchedulerRoutingTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.package_revision_patcher = patch(
-            "midstream.runtime.templates.get_installed_package_revision",
-            return_value="pkg-rev-1",
-        )
+        self.package_revision_patcher = patch("midstream.runtime.templates.installed_package_source", return_value=PackageSource(kind="git", reference="pkg-rev-1", requirement="git+https://github.com/vmirz/midstream.git@pkg-rev-1#egg=midstream&subdirectory=python"))
         self.package_revision_patcher.start()
         self.addCleanup(self.package_revision_patcher.stop)
 
