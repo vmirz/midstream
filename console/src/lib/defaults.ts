@@ -1,7 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 
-import { api } from '@/lib/api';
+import { useDomain } from '@/lib/domains';
 import { DEFAULT_DATASET_NAME_RULES, DEFAULT_TABLE_NAME_RULES, LABEL_MAX_LENGTH, type NameRules } from '@shared/tableNames';
 import type { ConsoleAutoscaling, MaterializationDefaults } from '@shared/types';
 
@@ -9,13 +8,13 @@ import type { ConsoleAutoscaling, MaterializationDefaults } from '@shared/types'
 export const FALLBACK_MAX_TOPICS = 20;
 
 /**
- * The control plane's defaults for a new materialization, and the rules dataset and table names
- * meet.
+ * The page's domain's defaults for a new materialization, and the rules dataset and table names meet
+ * there.
  *
- * Read through the console config, which the shell already holds. A dialog asks again when that
- * copy is more than a minute old, so a control plane that was unreachable when the page loaded is
- * not remembered as having no defaults. Until the defaults arrive — or for someone the console does
- * not give them to — the rules are the console's own copy of the same lists.
+ * Read through the console config, which the shell already holds and reads again every minute, so a
+ * control plane that was unreachable when the page loaded is not remembered as having no defaults.
+ * Until the defaults arrive - or for someone the console does not give them to - the rules are the
+ * console's own copy of the same lists.
  */
 export function useMaterializationDefaults(): {
   defaults: MaterializationDefaults | null;
@@ -27,8 +26,8 @@ export function useMaterializationDefaults(): {
   autoscaling: ConsoleAutoscaling | null;
   loading: boolean;
 } {
-  const config = useConsoleConfig();
-  const defaults = config.data?.materializationDefaults ?? null;
+  const domain = useDomain();
+  const defaults = domain.materializationDefaults;
   const datasetRules = useMemo<NameRules>(
     () =>
       defaults
@@ -52,21 +51,12 @@ export function useMaterializationDefaults(): {
     tableRules,
     labelMaxLength: defaults?.labelMaxLength ?? LABEL_MAX_LENGTH,
     maxTopics: defaults?.maxTopics ?? FALLBACK_MAX_TOPICS,
-    autoscaling: config.data?.autoscaling ?? null,
-    loading: config.isLoading,
+    autoscaling: domain.autoscaling,
+    loading: false,
   };
 }
 
-/** How the control plane scales runtimes far behind their topics, for anyone signed in; null when it cannot say. */
+/** How the page's domain scales runtimes far behind their topics; null when it cannot say. */
 export function useAutoscaling(): ConsoleAutoscaling | null {
-  return useConsoleConfig().data?.autoscaling ?? null;
-}
-
-function useConsoleConfig() {
-  return useQuery({
-    queryKey: ['config'],
-    queryFn: () => api.config(),
-    staleTime: 60_000,
-    retry: 0,
-  });
+  return useDomain().autoscaling;
 }

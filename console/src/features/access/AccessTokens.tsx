@@ -7,8 +7,9 @@ import { RelativeTime } from '@/components/Inline';
 import { Dialog } from '@/components/ui/Dialog';
 import { useToast } from '@/components/ui/Toast';
 import { Badge, Button, EmptyState, Field, Input, Panel, PanelHeader, Select, Skeleton } from '@/components/ui/primitives';
-import { ApiError, api } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { formatTimestamp } from '@/lib/format';
+import { useApi } from '@/lib/domains';
 import type { CpAccessToken, CpAccessTokenCreated, CpAccessTokenList } from '@shared/types';
 
 const LIFETIMES = [7, 30, 90, 180, 365];
@@ -28,6 +29,7 @@ const PERMISSION_BADGES: Record<string, string> = {
  * control plane keeps only a hash.
  */
 export function AccessTokens(): ReactNode {
+  const api = useApi();
   const queryClient = useQueryClient();
   const toast = useToast();
   const tokens = useQuery({ queryKey: ['access-tokens'], queryFn: () => api.accessTokens() });
@@ -157,6 +159,7 @@ function CreateTokenDialog({
   onClose: () => void;
   onCreated: (token: CpAccessTokenCreated) => void;
 }): ReactNode {
+  const api = useApi();
   const [name, setName] = useState('');
   const [permissions, setPermissions] = useState<string[]>(['catalog.read']);
   const [days, setDays] = useState(options.default_expires_in_days);
@@ -304,6 +307,7 @@ function CreateTokenDialog({
 }
 
 function TokenReveal({ token, onClose }: { token: CpAccessTokenCreated; onClose: () => void }): ReactNode {
+  const api = useApi();
   const [copied, setCopied] = useState(false);
   const connection = useQuery({ queryKey: ['catalog-connection'], queryFn: () => api.catalogConnection(), retry: 0 });
   return (

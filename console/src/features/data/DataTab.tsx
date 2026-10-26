@@ -33,10 +33,11 @@ import { PageBody } from '@/components/AppShell';
 import { DataGrid } from '@/components/DataGrid';
 import { useToast } from '@/components/ui/Toast';
 import { Button, EmptyState, Panel, Select, Skeleton } from '@/components/ui/primitives';
-import { ApiError, api } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { formatTimestamp } from '@/lib/format';
+import { useApi, useConsoleConfig, useDomain } from '@/lib/domains';
 import type {
   BrowseFilter,
   CpTableSpec,
@@ -120,6 +121,7 @@ export function DataTab({
   materializationId: string;
   snapshot: DetailSnapshot;
 }): ReactNode {
+  const api = useApi();
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   // The address bar seeds the view once; from then on the view drives the address bar.
@@ -183,10 +185,12 @@ export function DataTab({
     // Once for each snapshot a run reads, not for every answer of the summary.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runSnapshotId]);
-  // Read again each minute while the tab is open: live tail can be switched off, and on, for every materialization.
-  const configQuery = useQuery({ queryKey: ['config'], queryFn: () => api.config(), staleTime: 60_000, refetchInterval: 60_000, retry: 0 });
+  // The console config is read again each minute: live tail can be switched off, and on, for every
+  // materialization of the domain. The domain's own part of it says how its tail is.
+  const configQuery = useConsoleConfig();
+  const domainTail = useDomain().liveTail;
   const summary = summaryQuery.data ?? null;
-  const liveTail = liveTailAvailable(configQuery.data?.liveTail.enabled, materialization);
+  const liveTail = liveTailAvailable(domainTail.enabled, materialization);
   // A table created but with nothing committed yet is queryable through its tail.
   const created = snapshot.detail?.tables.some((table) => table.name === tableName && table.state === 'active') ?? false;
   const queryableNow = tableQueryable({ available: summary?.available, liveTail, created });
@@ -394,7 +398,7 @@ export function DataTab({
   }, [toast]);
 
   // Live: the browse view asks for the tail's newest records every few seconds, while it is seen.
-  const liveRefreshMs = configQuery.data?.liveTail.refreshMs ?? 1_500;
+  const liveRefreshMs = domainTail.refreshMs;
   const hold = liveHold({
     enabled: liveTail && live && !sqlMode,
     visible: pageVisible,
@@ -441,7 +445,7 @@ export function DataTab({
   const tableTopic = tables.find((table) => table.name === tableName)?.source_topic;
   const topicLag = tableTopic ? (snapshot.detail?.status.consumer_lag?.topics?.[tableTopic]?.total_lag ?? null) : null;
   const notice = liveTail
-    ? tailNotice(run?.tail, { live: live && !sqlMode, hold, maxRows: configQuery.data?.liveTail.maxRows ?? null, lag: topicLag })
+    ? tailNotice(run?.tail, { live: live && !sqlMode, hold, maxRows: domainTail.maxRows, lag: topicLag })
     : null;
   const [liveWarning, setLiveWarning] = useState<TailNotice | null>(null);
   const runFinished = run !== null && run.state !== 'running';

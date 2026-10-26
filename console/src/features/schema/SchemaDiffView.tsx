@@ -5,8 +5,8 @@ import { useState, type ReactNode } from 'react';
 import { FieldName, TypeChip } from './SchemaFieldTable';
 import { EmptyState, Panel, PanelHeader, SegmentedControl, Skeleton } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
-import { api } from '@/lib/api';
 import { humanize } from '@/lib/format';
+import { useApi } from '@/lib/domains';
 import type { SchemaChangeKind, SchemaDiffEntry } from '@shared/types';
 
 const KIND_STYLE: Record<SchemaChangeKind, { icon: ReactNode; label: string; accent: string; hint: string }> = {
@@ -80,6 +80,7 @@ export function SchemaDiffView({
   from: number | null;
   to: number | null;
 }): ReactNode {
+  const api = useApi();
   const [showUnchanged, setShowUnchanged] = useState<'changed' | 'all'>('changed');
 
   const diffQuery = useQuery({

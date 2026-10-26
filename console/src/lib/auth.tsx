@@ -1,18 +1,11 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import { api, onSessionLost } from './api';
+import { api, domainApi, onSessionLost } from './api';
+import { useOptionalDomain } from './domains';
+import { allQueryClients, rootQueryClient } from './queryClient';
 import { can as holds, canAnywhere as holdsAnywhere } from '@shared/access';
-import type { AuthState, CpPrincipal } from '@shared/types';
+import type { AuthState, ConsoleSession, CpPrincipal, SsoProvider } from '@shared/types';
 
 const SESSION_KEY = ['session'] as const;
 
@@ -33,66 +26,100 @@ const NOBODY: CpPrincipal = {
   password_change_required: false,
 };
 
+/**
+ * Who the person using the page is in one domain - or, on the console's own pages, across domains
+ * (handbook 20). Each domain has its own session; a domain the browser has none in sees a guest.
+ */
 export interface Auth {
-  /** Null until the console has answered once. */
+  /** The domain this is about; null for the console's own pages, which answer across domains. */
+  domain: string | null;
+  /** Null until the console has answered once, or while the domain cannot be asked. */
   state: AuthState | null;
   loading: boolean;
   error: Error | null;
   principal: CpPrincipal;
   signedIn: boolean;
-  /** Changes whenever the person using the page changes, so live streams reconnect as them. */
+  /** Changes whenever who the page is used by changes in any domain, so live streams reconnect as them. */
   generation: number;
   /**
    * Whether the person holds a permission: on the dataset with id `datasetId` when one is given and
-   * the permission is held on datasets (`shared/access.ts`), across the deployment otherwise.
-   * Presentation only: the console's server and the control plane decide.
+   * the permission is held on datasets (`shared/access.ts`), across the domain otherwise. Across
+   * domains, held in any. Presentation only: the console's server and the domains decide.
    */
   can: (permission: string, datasetId?: string | null) => boolean;
-  /** Whether the person holds a permission across the deployment, or on at least one dataset. */
+  /** Whether the person holds a permission across the domain, or on at least one of its datasets. */
   canAnywhere: (permission: string) => boolean;
+  /** Sign in to this domain with a password. */
   signIn: (email: string, password: string) => Promise<AuthState>;
+  /** Sign out of this domain; across domains, out of every one. */
   signOut: () => Promise<void>;
-  /** Read the session again, as after a change that may alter what you may do. */
+  /** Read who the browser is again, as after a change that may alter what anyone may do. */
   reload: () => Promise<void>;
-  /** Take a session the console just answered with, as after a password change. */
+  /** Take a session this domain just answered with, as after a password change. */
   adopt: (state: AuthState) => void;
 }
 
-const AuthContext = createContext<Auth | null>(null);
+/** Who the browser is in every domain, and the sign-in providers the console offers. */
+export interface ConsoleAuth {
+  session: ConsoleSession | null;
+  loading: boolean;
+  error: Error | null;
+  generation: number;
+  providers: SsoProvider[];
+  /** The domains the browser has a session in, in the registry's order. */
+  signedInDomains: string[];
+  forDomain: (domain: string) => Auth;
+  /** Across domains: what the console's own pages, which show every domain, ask. */
+  overall: Auth;
+  signOutEverywhere: () => Promise<void>;
+  reload: () => Promise<void>;
+}
+
+const ConsoleAuthContext = createContext<ConsoleAuth | null>(null);
 
 /**
- * The signed-in person, or a guest, for the whole page.
+ * The person using the page, in every domain.
  *
  * Read from `/api/auth/session`, again every minute and when the window regains focus, and at once
- * when any request finds the session gone. A change of person drops every cached answer, since
- * what the previous one could see is not what this one can.
+ * when any request finds a session gone. A change of person in any domain drops every cached answer,
+ * since what the previous one could see is not what this one can.
  */
 export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
-  const queryClient = useQueryClient();
-  const session = useQuery({
-    queryKey: SESSION_KEY,
-    queryFn: () => api.session(),
-    staleTime: 15_000,
-    refetchInterval: 60_000,
-    refetchOnWindowFocus: true,
-    retry: 1,
-  });
+  const session = useQuery(
+    {
+      queryKey: SESSION_KEY,
+      queryFn: () => api.session(),
+      staleTime: 15_000,
+      refetchInterval: 60_000,
+      refetchOnWindowFocus: true,
+      retry: 1,
+    },
+    rootQueryClient,
+  );
 
-  const state = session.data ?? null;
-  const principal = state?.principal ?? NOBODY;
-  const identity = `${principal.kind}:${principal.user_id ?? ''}:${principal.password_change_required}`;
+  const data = session.data ?? null;
+  const identity = data
+    ? Object.entries(data.domains)
+        .map(([id, entry]) => {
+          const principal = entry.state?.principal;
+          return `${id}=${principal?.kind ?? '?'}:${principal?.user_id ?? ''}:${principal?.password_change_required ?? false}`;
+        })
+        .join('|')
+    : null;
   const [generation, setGeneration] = useState(0);
   const lastIdentity = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!state) return;
+    if (identity === null) return;
     if (lastIdentity.current !== null && lastIdentity.current !== identity) {
       setGeneration((value) => value + 1);
       // Everything cached was read as someone else.
-      void queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] !== SESSION_KEY[0] });
+      for (const client of allQueryClients()) {
+        void client.invalidateQueries({ predicate: (query) => query.queryKey[0] !== SESSION_KEY[0] });
+      }
     }
     lastIdentity.current = identity;
-  }, [identity, queryClient, state]);
+  }, [identity]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -100,54 +127,119 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
       if (timer) return;
       timer = setTimeout(() => {
         timer = null;
-        void queryClient.invalidateQueries({ queryKey: SESSION_KEY });
+        void rootQueryClient.invalidateQueries({ queryKey: SESSION_KEY });
       }, 250);
     });
     return () => {
       unsubscribe();
       if (timer) clearTimeout(timer);
     };
-  }, [queryClient]);
+  }, []);
 
-  const adopt = useCallback((next: AuthState) => queryClient.setQueryData(SESSION_KEY, next), [queryClient]);
+  const reload = useCallback(() => rootQueryClient.invalidateQueries({ queryKey: SESSION_KEY }), []);
 
-  const value = useMemo<Auth>(() => {
-    const can = (permission: string, datasetId?: string | null): boolean => holds(principal, permission, datasetId);
-    const canAnywhere = (permission: string): boolean => holdsAnywhere(principal, permission);
-    return {
-      state,
-      loading: session.isLoading,
-      error: (session.error as Error | null) ?? null,
+  const value = useMemo<ConsoleAuth>(() => {
+    const loading = session.isLoading;
+    const error = (session.error as Error | null) ?? null;
+    const signedInDomains = data ? Object.entries(data.domains).filter(([, entry]) => entry.state?.authenticated).map(([id]) => id) : [];
+
+    const forDomain = (domain: string): Auth => {
+      const entry = data?.domains[domain];
+      const state = entry?.state ?? null;
+      const principal = state?.principal ?? NOBODY;
+      const adopt = (next: AuthState): void => {
+        rootQueryClient.setQueryData<ConsoleSession>(SESSION_KEY, (current) =>
+          current ? { ...current, domains: { ...current.domains, [domain]: { state: next, error: null } } } : current,
+        );
+      };
+      return {
+        domain,
+        state,
+        loading,
+        error: entry?.error ? new Error(entry.error) : error,
+        principal,
+        signedIn: principal.kind === 'user',
+        generation,
+        can: (permission, datasetId) => holds(principal, permission, datasetId),
+        canAnywhere: (permission) => holdsAnywhere(principal, permission),
+        signIn: async (email, password) => {
+          const next = await domainApi(domain).signIn(email, password);
+          adopt(next);
+          await reload();
+          return next;
+        },
+        signOut: async () => {
+          try {
+            await domainApi(domain).signOut('current');
+          } finally {
+            await reload();
+          }
+        },
+        reload,
+        adopt,
+      };
+    };
+
+    const states = data ? Object.values(data.domains).flatMap((entry) => (entry.state ? [entry.state] : [])) : [];
+    const signedIn = states.find((state) => state.authenticated) ?? null;
+    const principal = signedIn?.principal ?? states[0]?.principal ?? NOBODY;
+    const overall: Auth = {
+      domain: null,
+      state: signedIn ?? states[0] ?? null,
+      loading,
+      error,
       principal,
-      signedIn: principal.kind === 'user',
+      signedIn: signedInDomains.length > 0,
       generation,
-      can,
-      canAnywhere,
-      signIn: async (email, password) => {
-        const next = await api.signIn(email, password);
-        adopt(next);
-        return next;
+      can: (permission, datasetId) => states.some((state) => holds(state.principal, permission, datasetId)),
+      canAnywhere: (permission) => states.some((state) => holdsAnywhere(state.principal, permission)),
+      signIn: async () => {
+        throw new Error('sign in to a domain: each has its own session');
       },
       signOut: async () => {
         try {
-          await api.signOut('current');
+          await api.signOutEverywhere();
         } finally {
-          queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== SESSION_KEY[0] });
-          await queryClient.invalidateQueries({ queryKey: SESSION_KEY });
+          for (const client of allQueryClients()) client.removeQueries({ predicate: (query) => query.queryKey[0] !== SESSION_KEY[0] });
+          await reload();
         }
       },
-      reload: () => queryClient.invalidateQueries({ queryKey: SESSION_KEY }),
-      adopt,
+      reload,
+      adopt: () => undefined,
     };
-  }, [adopt, generation, principal, queryClient, session.error, session.isLoading, state]);
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+    return {
+      session: data,
+      loading,
+      error,
+      generation,
+      providers: data?.providers ?? [],
+      signedInDomains,
+      forDomain,
+      overall,
+      signOutEverywhere: overall.signOut,
+      reload,
+    };
+  }, [data, generation, reload, session.error, session.isLoading]);
+
+  return <ConsoleAuthContext.Provider value={value}>{children}</ConsoleAuthContext.Provider>;
 }
 
-export function useAuth(): Auth {
-  const context = useContext(AuthContext);
-  if (!context) throw new Error('useAuth must be used inside AuthProvider');
+/** Who the browser is in every domain. */
+export function useConsoleAuth(): ConsoleAuth {
+  const context = useContext(ConsoleAuthContext);
+  if (!context) throw new Error('useConsoleAuth must be used inside AuthProvider');
   return context;
+}
+
+/**
+ * Who the person using the page is: in the page's domain, under `/d/<domain>/`; across domains on
+ * the console's own pages.
+ */
+export function useAuth(): Auth {
+  const all = useConsoleAuth();
+  const domain = useOptionalDomain();
+  return domain ? all.forDomain(domain.id) : all.overall;
 }
 
 /**
@@ -158,7 +250,7 @@ export function useCan(permission: string, datasetId?: string | null): boolean {
   return useAuth().can(permission, datasetId);
 }
 
-/** Whether the person holds a permission across the deployment, or on at least one dataset. */
+/** Whether the person holds a permission across the domain, or on at least one of its datasets. */
 export function useCanAnywhere(permission: string): boolean {
   return useAuth().canAnywhere(permission);
 }

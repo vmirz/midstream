@@ -6,9 +6,9 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ConfirmDialog } from './ConfirmDialog';
 import { BackLink, errorField, expandPermissions, permissionMap, useCatalog, useIdentityChange } from './shared';
 import { Badge, Button, EmptyState, Field, Input, Panel, Select, Skeleton, Textarea } from '@/components/ui/primitives';
-import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
+import { useApi, useDomainPath } from '@/lib/domains';
 import type { CpPermissionCatalog, CpPermissionDefinition, CpRole } from '@shared/types';
 
 /**
@@ -20,6 +20,8 @@ import type { CpPermissionCatalog, CpPermissionDefinition, CpRole } from '@share
  * a custom one.
  */
 export function RoleEditor({ roleId }: { roleId: string }): ReactNode {
+  const domainPath = useDomainPath();
+  const api = useApi();
   const creating = roleId === 'new';
   const [searchParams] = useSearchParams();
   const sourceId = creating ? searchParams.get('from') : roleId;
@@ -37,7 +39,7 @@ export function RoleEditor({ roleId }: { roleId: string }): ReactNode {
   if ((sourceId && (role.error || !role.data)) || catalog.error || !catalog.data) {
     return (
       <div className="space-y-4">
-        <BackLink to="/settings/roles">All roles</BackLink>
+        <BackLink to={domainPath('/settings/roles')}>All roles</BackLink>
         <Panel>
           <EmptyState
             title="This role could not be loaded"
@@ -51,6 +53,8 @@ export function RoleEditor({ roleId }: { roleId: string }): ReactNode {
 }
 
 function RoleForm({ creating, role, catalog }: { creating: boolean; role: CpRole | null; catalog: CpPermissionCatalog }): ReactNode {
+  const domainPath = useDomainPath();
+  const api = useApi();
   const auth = useAuth();
   const navigate = useNavigate();
   const readOnly = !creating && (role?.built_in || !auth.can('roles.manage'));
@@ -103,14 +107,14 @@ function RoleForm({ creating, role, catalog }: { creating: boolean; role: CpRole
       success: () => (creating ? `${name.trim()} created` : 'Role saved'),
       failure: creating ? 'The role was not created' : 'The role was not saved',
       onApplied: (result) => {
-        if (creating && result.status === 'applied') navigate(`/settings/roles/${result.entity_id}`, { replace: true });
+        if (creating && result.status === 'applied') navigate(domainPath(`/settings/roles/${result.entity_id}`), { replace: true });
       },
     },
   );
   const remove = useIdentityChange(() => api.deleteRole(role!.role_id), {
     success: () => `${role?.name} deleted`,
     failure: 'The role was not deleted',
-    onApplied: () => navigate('/settings/roles'),
+    onApplied: () => navigate(domainPath('/settings/roles')),
   });
 
   const changed =
@@ -150,12 +154,12 @@ function RoleForm({ creating, role, catalog }: { creating: boolean; role: CpRole
 
   return (
     <div className="space-y-5">
-      <BackLink to="/settings/roles">All roles</BackLink>
+      <BackLink to={domainPath('/settings/roles')}>All roles</BackLink>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-[17px] font-semibold tracking-tight">{title}</h2>
         <div className="flex gap-2">
           {!creating && auth.can('roles.manage') ? (
-            <Button onClick={() => navigate(`/settings/roles/new?from=${encodeURIComponent(role!.role_id)}`)}>
+            <Button onClick={() => navigate(domainPath(`/settings/roles/new?from=${encodeURIComponent(role!.role_id)}`))}>
               <Copy className="size-3.5" />
               Duplicate
             </Button>
@@ -338,7 +342,7 @@ function RoleForm({ creating, role, catalog }: { creating: boolean; role: CpRole
                 <ul className="mt-1.5 space-y-1 text-[13px]">
                   {role.groups.map((group) => (
                     <li key={group.group_id}>
-                      <Link to={`/settings/groups/${group.group_id}`} className="hover:underline">
+                      <Link to={domainPath(`/settings/groups/${group.group_id}`)} className="hover:underline">
                         {group.name}
                       </Link>
                     </li>

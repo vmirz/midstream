@@ -4,12 +4,14 @@ import { Link } from 'react-router-dom';
 import { Badge, Panel, PanelHeader } from '@/components/ui/primitives';
 import { useCan } from '@/lib/auth';
 import type { CpHeldDatasetGrant } from '@shared/types';
+import { useDomainPath } from '@/lib/domains';
 
 /**
  * Roles held on single datasets: a person's own, and their groups'; or a group's. A dataset's owners
  * grant them, on the dataset's Access tab.
  */
 export function DatasetGrantsPanel({ grants, subject }: { grants: readonly CpHeldDatasetGrant[]; subject: 'user' | 'group' }): ReactNode {
+  const domainPath = useDomainPath();
   const canOpen = useCan('datasets.view');
   return (
     <Panel>
@@ -29,7 +31,7 @@ export function DatasetGrantsPanel({ grants, subject }: { grants: readonly CpHel
             <li key={`${grant.dataset_id}:${grant.principal_type}:${grant.principal_id}`} className="flex flex-wrap items-center justify-between gap-3 px-5 py-2.5 text-[13px]">
               <span className="min-w-0">
                 {canOpen ? (
-                  <Link to={`/datasets/${encodeURIComponent(grant.dataset)}/access`} className="numeric font-medium hover:text-[var(--color-accent)] hover:underline">
+                  <Link to={domainPath(`/datasets/${encodeURIComponent(grant.dataset)}/access`)} className="numeric font-medium hover:text-[var(--color-accent)] hover:underline">
                     {grant.dataset}
                   </Link>
                 ) : (

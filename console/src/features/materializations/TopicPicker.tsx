@@ -15,10 +15,11 @@ import {
 
 import { RelativeTime } from '@/components/Inline';
 import { Badge, FIELD_BASE, Skeleton } from '@/components/ui/primitives';
-import { ApiError, api } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { useCan } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { displayName, formatExact } from '@/lib/format';
+import { useApi } from '@/lib/domains';
 import {
   isDeletedPhase,
   type MaterializationSummary,
@@ -184,6 +185,7 @@ export function TopicPicker({
   /** What saving the topics does, for the hints: `creating` or `saving`. */
   verb?: string;
 }): ReactNode {
+  const api = useApi();
   const triggerId = useId();
   const listId = useId();
   const queryClient = useQueryClient();

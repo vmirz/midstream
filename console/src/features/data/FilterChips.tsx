@@ -7,10 +7,10 @@ import { compactType, groupOf, isComparableType, type ColumnLabel } from './colu
 import { searchFields } from './fieldSearch';
 import { Button, Input, Select, Spinner } from '@/components/ui/primitives';
 import { Popover } from '@/components/ui/Popover';
-import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatCount } from '@/lib/format';
 import { segmentName } from '@/lib/nameSearch';
+import { useApi } from '@/lib/domains';
 import type { BrowseFilter, FilterOperator, QueryColumn } from '@shared/types';
 
 const OPERATORS: { value: FilterOperator; label: string; unary?: boolean; comparable?: boolean }[] = [
@@ -370,6 +370,7 @@ function FilterValue({
   onAdd: (filter: BrowseFilter) => void;
   onCancel: () => void;
 }): ReactNode {
+  const api = useApi();
   const [operator, setOperator] = useState<FilterOperator>('eq');
   const [value, setValue] = useState('');
 

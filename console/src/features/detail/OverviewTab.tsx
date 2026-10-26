@@ -9,9 +9,9 @@ import { RelativeTime } from '@/components/Inline';
 import { StatCard } from '@/components/StatCard';
 import { TimeSeriesChart, type ChartPoint } from '@/components/TimeSeriesChart';
 import { Badge, Button, EmptyState, KeyValue, Panel, PanelHeader, SegmentedControl } from '@/components/ui/primitives';
-import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { useAutoscaling } from '@/lib/defaults';
+import { useApi } from '@/lib/domains';
 import {
   formatBytes,
   formatBytesRate,
@@ -112,6 +112,7 @@ type LagWindow = '15m' | '1h' | '6h';
 const LAG_WINDOWS: Record<LagWindow, number> = { '15m': 15 * 60_000, '1h': 60 * 60_000, '6h': 6 * 60 * 60_000 };
 
 export function DetailOverviewTab({ snapshot }: { snapshot: DetailSnapshot }): ReactNode {
+  const api = useApi();
   const detail = snapshot.detail;
   const progress = detail?.status.runtime_progress;
   const consumerLag = detail?.status.consumer_lag;

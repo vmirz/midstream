@@ -11,13 +11,15 @@ import { Avatar } from '@/components/Avatar';
 import { RelativeTime } from '@/components/Inline';
 import { Dialog } from '@/components/ui/Dialog';
 import { Badge, Button, EmptyState, Field, Input, Panel, PanelHeader, Skeleton, Textarea } from '@/components/ui/primitives';
-import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
+import { useApi, useDomainPath } from '@/lib/domains';
 import type { CpGroupDetail } from '@shared/types';
 
 /** One group: the roles it gives, the people in it, and what that adds up to. */
 export function GroupDetail({ groupId }: { groupId: string }): ReactNode {
+  const domainPath = useDomainPath();
+  const api = useApi();
   const auth = useAuth();
   const group = useQuery({ queryKey: ['group', groupId], queryFn: () => api.group(groupId) });
   const detail = group.data;
@@ -33,7 +35,7 @@ export function GroupDetail({ groupId }: { groupId: string }): ReactNode {
   if (group.error || !detail) {
     return (
       <div className="space-y-4">
-        <BackLink to="/settings/groups">All groups</BackLink>
+        <BackLink to={domainPath('/settings/groups')}>All groups</BackLink>
         <Panel>
           <EmptyState title="This group could not be loaded" description={group.error instanceof Error ? group.error.message : 'It may have been deleted.'} />
         </Panel>
@@ -44,7 +46,7 @@ export function GroupDetail({ groupId }: { groupId: string }): ReactNode {
   const editable = auth.can('groups.manage') && detail.manageable;
   return (
     <div className="space-y-5">
-      <BackLink to="/settings/groups">All groups</BackLink>
+      <BackLink to={domainPath('/settings/groups')}>All groups</BackLink>
       <div className="flex items-start gap-3">
         <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
           <UsersRound className="size-5" />
@@ -78,6 +80,8 @@ export function GroupDetail({ groupId }: { groupId: string }): ReactNode {
 }
 
 function RolesPanel({ group, editable }: { group: CpGroupDetail; editable: boolean }): ReactNode {
+  const domainPath = useDomainPath();
+  const api = useApi();
   const roles = useQuery({ queryKey: ['roles'], queryFn: () => api.roles(), enabled: useAuth().can('roles.view') });
   const [draft, setDraft] = useState<string[]>(group.role_ids);
   useEffect(() => setDraft(group.role_ids), [group.role_ids]);
@@ -123,7 +127,7 @@ function RolesPanel({ group, editable }: { group: CpGroupDetail; editable: boole
           {group.roles.length === 0 ? <li className="px-5 py-4 text-[13px] text-[var(--color-ink-muted)]">No roles.</li> : null}
           {group.roles.map((role) => (
             <li key={role.role_id} className="px-5 py-3 text-[13px]">
-              <Link to={`/settings/roles/${role.role_id}`} className="font-medium hover:underline">
+              <Link to={domainPath(`/settings/roles/${role.role_id}`)} className="font-medium hover:underline">
                 {role.name}
               </Link>
             </li>
@@ -145,6 +149,8 @@ function RolesPanel({ group, editable }: { group: CpGroupDetail; editable: boole
 }
 
 function MembersPanel({ group, editable }: { group: CpGroupDetail; editable: boolean }): ReactNode {
+  const domainPath = useDomainPath();
+  const api = useApi();
   const [adding, setAdding] = useState(false);
   const remove = useIdentityChange((userId: string) => api.updateGroup(group.group_id, { remove_member_ids: [userId] }), {
     success: () => 'Removed from the group',
@@ -174,7 +180,7 @@ function MembersPanel({ group, editable }: { group: CpGroupDetail; editable: boo
         <ul className="divide-y divide-[var(--color-line)]">
           {members.map((member) => (
             <li key={member.user_id} className="flex items-center justify-between gap-3 px-5 py-2.5">
-              <Link to={`/settings/users/${member.user_id}`} className="flex min-w-0 items-center gap-3">
+              <Link to={domainPath(`/settings/users/${member.user_id}`)} className="flex min-w-0 items-center gap-3">
                 <Avatar name={member.display_name} email={member.email} muted={member.status === 'deactivated'} />
                 <span className="min-w-0">
                   <span className="block truncate text-[13px] font-medium">{member.display_name}</span>
@@ -202,6 +208,7 @@ function MembersPanel({ group, editable }: { group: CpGroupDetail; editable: boo
 }
 
 function AddMembersDialog({ open, onClose, group }: { open: boolean; onClose: () => void; group: CpGroupDetail }): ReactNode {
+  const api = useApi();
   const users = useQuery({ queryKey: ['users', 'active', 'name', ''], queryFn: () => api.users({ status: 'active' }), enabled: open });
   const [search, setSearch] = useState('');
   const [chosen, setChosen] = useState<string[]>([]);
@@ -304,6 +311,8 @@ function GroupAccessPanel({ group }: { group: CpGroupDetail }): ReactNode {
 }
 
 function GroupSettingsPanel({ group }: { group: CpGroupDetail }): ReactNode {
+  const domainPath = useDomainPath();
+  const api = useApi();
   const navigate = useNavigate();
   const [name, setName] = useState(group.name);
   const [description, setDescription] = useState(group.description);
@@ -319,7 +328,7 @@ function GroupSettingsPanel({ group }: { group: CpGroupDetail }): ReactNode {
   const remove = useIdentityChange(() => api.deleteGroup(group.group_id), {
     success: () => `${group.name} deleted`,
     failure: 'The group was not deleted',
-    onApplied: () => navigate('/settings/groups'),
+    onApplied: () => navigate(domainPath('/settings/groups')),
   });
   const changed = name.trim() !== group.name || description.trim() !== group.description;
   const nameError = errorField(save.error) === 'name' ? (save.error as Error).message : null;

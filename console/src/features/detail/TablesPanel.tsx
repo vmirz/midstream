@@ -8,6 +8,7 @@ import { Badge, Panel, PanelHeader } from '@/components/ui/primitives';
 import { useAuth } from '@/lib/auth';
 import { formatBytes, formatCount, formatExact } from '@/lib/format';
 import type { CpDetail, CpLiveTable, CpTableSpec, CpTableSummary, TableState } from '@shared/types';
+import { useDomainPath } from '@/lib/domains';
 
 /** A row of the panel: a table, its record once created, and its place in the materialization. */
 interface TableRow {
@@ -42,6 +43,7 @@ function tableRows(detail: CpDetail): TableRow[] {
  * whose dataset the person may not read.
  */
 export function TablesPanel({ detail }: { detail: CpDetail }): ReactNode {
+  const domainPath = useDomainPath();
   const { can } = useAuth();
   const canSeeDatasets = can('datasets.view');
   const materializationId = detail.materialization.materialization_id;
@@ -51,7 +53,7 @@ export function TablesPanel({ detail }: { detail: CpDetail }): ReactNode {
   const lag = detail.status.consumer_lag?.topics ?? {};
   const first = detail.materialization.tables[0]?.name;
   const linkTo = (tab: 'data' | 'table', table: string): string =>
-    `/materializations/${encodeURIComponent(materializationId)}/${tab}${table === first ? '' : `?${TABLE_PARAM}=${encodeURIComponent(table)}`}`;
+    domainPath(`/materializations/${encodeURIComponent(materializationId)}/${tab}${table === first ? '' : `?${TABLE_PARAM}=${encodeURIComponent(table)}`}`);
 
   return (
     <Panel className="overflow-hidden">
@@ -96,7 +98,7 @@ export function TablesPanel({ detail }: { detail: CpDetail }): ReactNode {
                     <span className="flex items-center gap-1.5">
                       {canSeeDatasets ? (
                         <Link
-                          to={`/datasets/${encodeURIComponent(spec.dataset)}`}
+                          to={domainPath(`/datasets/${encodeURIComponent(spec.dataset)}`)}
                           className="numeric text-[var(--color-ink-muted)] hover:text-[var(--color-accent)] hover:underline"
                           title={`Dataset ${spec.dataset}`}
                         >

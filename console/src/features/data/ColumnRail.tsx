@@ -5,9 +5,9 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { ColumnLabelText } from './ColumnLabelText';
 import { compactType, groupColumns, type ColumnGroupId, type ColumnLabel } from './columns';
 import { Input, Skeleton } from '@/components/ui/primitives';
-import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatCount } from '@/lib/format';
+import { useApi } from '@/lib/domains';
 import type { BrowseFilter, QueryColumn } from '@shared/types';
 
 /**
@@ -275,6 +275,7 @@ function ColumnProfilePanel({
   runId: string | null;
   onFilter?: (filter: BrowseFilter) => void;
 }): ReactNode {
+  const api = useApi();
   const profileQuery = useQuery({
     queryKey: ['column-profile', runId, column.name],
     queryFn: () => api.runProfile(runId as string, column.name),

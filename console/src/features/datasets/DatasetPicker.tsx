@@ -3,10 +3,11 @@ import { Check, ChevronsUpDown, Lock, Plus, Search } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 
 import { Button, FIELD_BASE, Input } from '@/components/ui/primitives';
-import { ApiError, api } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { useCan } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { matchName, searchTerms } from '@/lib/nameSearch';
+import { useApi } from '@/lib/domains';
 import { datasetNameProblem, type NameRules } from '@shared/tableNames';
 import type { CpDataset } from '@shared/types';
 
@@ -244,6 +245,7 @@ function NewDatasetForm({
   onCancel: () => void;
   onCreated: (name: string) => void;
 }): ReactNode {
+  const api = useApi();
   const [name, setName] = useState(initialName);
   const [description, setDescription] = useState('');
   const refresh = useRefreshDatasets();

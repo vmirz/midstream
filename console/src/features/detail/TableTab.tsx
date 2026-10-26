@@ -10,10 +10,11 @@ import { RelativeTime } from '@/components/Inline';
 import { StatCard } from '@/components/StatCard';
 import { useToast } from '@/components/ui/Toast';
 import { Badge, Button, EmptyState, KeyValue, Panel, PanelHeader, SegmentedControl, Skeleton } from '@/components/ui/primitives';
-import { ApiError, api } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { useAuth, useCan } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { formatBytes, formatCount, formatDuration, formatExact, formatTimestamp, humanize, shortSnapshotId } from '@/lib/format';
+import { useApi, useDomainPath } from '@/lib/domains';
 import type {
   CatalogConnection,
   CpMaintenanceRun,
@@ -56,6 +57,8 @@ function TableDetail({
   tables: CpTableSpec[];
   onSelectTable: (name: string) => void;
 }): ReactNode {
+  const domainPath = useDomainPath();
+  const api = useApi();
   const materializationId = snapshot.materializationId;
   const tableQuery = useQuery({
     queryKey: ['table', materializationId, table.name],
@@ -69,7 +72,7 @@ function TableDetail({
         <TablePicker tables={tables} value={table.name} onChange={onSelectTable} />
         <span>
           Topic <code className="numeric text-[var(--color-ink)]">{table.source_topic}</code>, in dataset{' '}
-          <Link to={`/datasets/${encodeURIComponent(table.dataset)}`} className="numeric text-[var(--color-ink)] hover:text-[var(--color-accent)] hover:underline">
+          <Link to={domainPath(`/datasets/${encodeURIComponent(table.dataset)}`)} className="numeric text-[var(--color-ink)] hover:text-[var(--color-accent)] hover:underline">
             {table.dataset}
           </Link>
         </span>
@@ -213,6 +216,7 @@ function SnapshotsPanel({
   defaultTable: string | null;
   metadata: TableMetadataView | null;
 }): ReactNode {
+  const domainPath = useDomainPath();
   const navigate = useNavigate();
   const table = spec.name;
   // Reading the table as it was is a query, on its dataset.
@@ -260,7 +264,7 @@ function SnapshotsPanel({
                             const params = new URLSearchParams();
                             if (table !== defaultTable) params.set(TABLE_PARAM, table);
                             const query = params.toString();
-                            navigate(`/materializations/${encodeURIComponent(materializationId)}/data${query ? `?${query}` : ''}`);
+                            navigate(domainPath(`/materializations/${encodeURIComponent(materializationId)}/data${query ? `?${query}` : ''}`));
                           }
                         : undefined
                     }
@@ -334,6 +338,7 @@ function MaintenancePanel({
   several: boolean;
   record: CpTable | null;
 }): ReactNode {
+  const api = useApi();
   const canMaintain = useCan('materializations.maintain');
   const toast = useToast();
   const queryClient = useQueryClient();

@@ -5,9 +5,10 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { PageBody } from '@/components/AppShell';
 import { useToast } from '@/components/ui/Toast';
 import { Badge, Button, EmptyState, Panel, PanelHeader, Select, Skeleton } from '@/components/ui/primitives';
-import { ApiError, api } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
+import { useApi } from '@/lib/domains';
 import type { CpDatasetDetail, CpDatasetGrant, CpDatasetGrantList, CpDatasetRole } from '@shared/types';
 
 import { useRefreshDatasets } from './useDatasets';
@@ -34,6 +35,7 @@ function sortRoles<T extends Pick<CpDatasetRole, 'role_id' | 'name'>>(roles: rea
  * the page says plainly.
  */
 export function DatasetAccess({ dataset }: { dataset: CpDatasetDetail }): ReactNode {
+  const api = useApi();
   const grants = useQuery({ queryKey: ['dataset-grants', dataset.name], queryFn: () => api.datasetGrants(dataset.name), retry: 0 });
   const queryClient = useQueryClient();
   const refreshDatasets = useRefreshDatasets();

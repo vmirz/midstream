@@ -5,9 +5,10 @@ import { Link } from 'react-router-dom';
 
 import { Badge } from '@/components/ui/primitives';
 import { useToast } from '@/components/ui/Toast';
-import { ApiError, api } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
+import { useApi } from '@/lib/domains';
 import type { CpUser, IdentityChangeResult } from '@shared/types';
 
 export { describeAgent, expandPermissions, generatePassword, permissionMap } from './logic';
@@ -17,6 +18,7 @@ export const IDENTITY_QUERY_ROOTS = ['users', 'user', 'groups', 'group', 'roles'
 
 /** The permission catalog, which only changes with a control-plane release. */
 export function useCatalog() {
+  const api = useApi();
   return useQuery({
     queryKey: ['permissions'],
     queryFn: () => api.permissions(),

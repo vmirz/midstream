@@ -3,8 +3,8 @@ import { useState, type ReactNode } from 'react';
 
 import { readJsonShape, writeJsonShape } from './jsonShape';
 import { SegmentedControl } from '@/components/ui/primitives';
-import { api } from '@/lib/api';
 import { formatExact } from '@/lib/format';
+import { useApi } from '@/lib/domains';
 import {
   RUN_EXPORT_FORMATS,
   type ConsoleConfig,
@@ -62,6 +62,7 @@ export function ExportOptions({
   /** A download started. */
   onDone: () => void;
 }): ReactNode {
+  const api = useApi();
   const [shape, setShape] = useState<RunExportShape>(readJsonShape);
   const limit = config?.exportRowLimit ?? Number.POSITIVE_INFINITY;
   const available = run.request.kind === 'sql' ? (run.rowsRetained ?? 0) : run.rows;

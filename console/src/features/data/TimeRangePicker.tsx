@@ -16,9 +16,9 @@ import {
 } from './timeRange';
 import { Popover } from '@/components/ui/Popover';
 import { Button, Input, Select } from '@/components/ui/primitives';
-import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatCount, formatTimestamp, localZone } from '@/lib/format';
+import { useApi } from '@/lib/domains';
 import type { DataSummary, ScopeEstimate } from '@shared/types';
 
 /**
@@ -97,6 +97,7 @@ function PickerBody({
   summary: DataSummary | null;
   onChoose: (spec: TimeRangeSpec) => void;
 }): ReactNode {
+  const api = useApi();
   const [open, setOpen] = useState<'relative' | 'dates' | 'datetimes' | null>(null);
   const presets = useMemo(() => [...CALENDAR_PRESETS, ...LAST_PRESETS, ALL_TIME], []);
 

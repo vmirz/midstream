@@ -8,9 +8,10 @@ import { RelativeTime } from '@/components/Inline';
 import { Dialog } from '@/components/ui/Dialog';
 import { useToast } from '@/components/ui/Toast';
 import { Badge, Button, EmptyState, Field, Input, Panel, PanelHeader, Skeleton } from '@/components/ui/primitives';
-import { ApiError, api } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
+import { useApi, useDomainPath } from '@/lib/domains';
 import type { CpDatasetDetail, CpDatasetTable, DatasetTableState } from '@shared/types';
 
 import { ConfirmDialog } from '../access/ConfirmDialog';
@@ -36,6 +37,8 @@ export function datasetKey(name: string): readonly unknown[] {
  * no tables.
  */
 export function DatasetPage(): ReactNode {
+  const domainPath = useDomainPath();
+  const api = useApi();
   const { name = '', tab } = useParams<{ name: string; tab?: string }>();
   const navigate = useNavigate();
   const { can } = useAuth();
@@ -56,7 +59,7 @@ export function DatasetPage(): ReactNode {
             title={missing ? `There is no dataset ${name}` : 'The dataset could not be loaded'}
             description={dataset.error instanceof ApiError ? dataset.error.message : 'Try again in a moment.'}
             action={
-              <Link to="/datasets" className="text-[13px] text-[var(--color-accent)] hover:underline">
+              <Link to={domainPath('/datasets')} className="text-[13px] text-[var(--color-accent)] hover:underline">
                 All datasets
               </Link>
             }
@@ -74,7 +77,7 @@ export function DatasetPage(): ReactNode {
         meta={
           <>
             <Link
-              to="/datasets"
+              to={domainPath('/datasets')}
               className="inline-flex items-center gap-1 text-[12px] text-[var(--color-ink-muted)] transition-colors hover:text-[var(--color-ink)]"
             >
               <ArrowLeft className="size-3.5" />
@@ -113,7 +116,7 @@ export function DatasetPage(): ReactNode {
                 role="tab"
                 type="button"
                 aria-selected={activeTab === item.key}
-                onClick={() => navigate(`/datasets/${encodeURIComponent(name)}${item.key === 'tables' ? '' : `/${item.key}`}`, { replace: true })}
+                onClick={() => navigate(domainPath(`/datasets/${encodeURIComponent(name)}${item.key === 'tables' ? '' : `/${item.key}`}`), { replace: true })}
                 className={cn(
                   'border-b-2 px-3 pb-2.5 text-[13px] font-medium transition-colors',
                   activeTab === item.key
@@ -212,9 +215,10 @@ function DatasetTables({ dataset }: { dataset: CpDatasetDetail }): ReactNode {
 }
 
 function DatasetTableRow({ dataset, table, readable }: { dataset: string; table: CpDatasetTable; readable: boolean }): ReactNode {
+  const domainPath = useDomainPath();
   const { can } = useAuth();
   const state = STATE_LABELS[table.state] ?? { label: table.state, tone: 'neutral' as const };
-  const detail = `/materializations/${encodeURIComponent(table.materialization_id)}`;
+  const detail = domainPath(`/materializations/${encodeURIComponent(table.materialization_id)}`);
   const tableQuery = `?table=${encodeURIComponent(table.name)}`;
   const canOpen = can('materializations.view_details');
   return (
@@ -252,6 +256,7 @@ function DatasetTableRow({ dataset, table, readable }: { dataset: string; table:
 }
 
 function EditDatasetDialog({ open, onClose, dataset }: { open: boolean; onClose: () => void; dataset: CpDatasetDetail }): ReactNode {
+  const api = useApi();
   const [description, setDescription] = useState(dataset.description);
   const [error, setError] = useState<string | null>(null);
   const queryClient = useQueryClient();
@@ -307,6 +312,8 @@ function EditDatasetDialog({ open, onClose, dataset }: { open: boolean; onClose:
 }
 
 function DeleteDatasetDialog({ open, onClose, dataset }: { open: boolean; onClose: () => void; dataset: CpDatasetDetail }): ReactNode {
+  const domainPath = useDomainPath();
+  const api = useApi();
   const navigate = useNavigate();
   const refresh = useRefreshDatasets();
   const toast = useToast();
@@ -316,7 +323,7 @@ function DeleteDatasetDialog({ open, onClose, dataset }: { open: boolean; onClos
       await refresh();
       toast.success('Dataset deleted', `${dataset.name} is gone; its name can be used again.`);
       onClose();
-      navigate('/datasets');
+      navigate(domainPath('/datasets'));
     },
     onError: (failure: unknown) => toast.error('Could not delete the dataset', failure instanceof ApiError ? failure.message : 'Try again in a moment.'),
   });

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 
 import { notifySessionLost } from './api';
 import { useAuth } from './auth';
-import type { DetailSnapshot, FleetSnapshot } from '@shared/types';
+import { useDomain } from './domains';
+import type { ConsoleFleet, DetailSnapshot } from '@shared/types';
 
 /** Least time between two session checks a failing stream asks for. */
 const SESSION_CHECK_INTERVAL_MS = 30_000;
@@ -71,13 +72,16 @@ function useEventStream<T>(url: string, eventName: string): LiveResult<T> {
   return { data, status };
 }
 
-export function useFleetStream(): LiveResult<FleetSnapshot> {
-  return useEventStream<FleetSnapshot>('/api/stream/fleet', 'fleet');
+/** Every domain's fleet, live, as this person may see each (handbook 20). */
+export function useFleetStream(): LiveResult<ConsoleFleet> {
+  return useEventStream<ConsoleFleet>('/api/stream/fleet', 'fleet');
 }
 
+/** One materialization of the page's domain, live. */
 export function useDetailStream(materializationId: string): LiveResult<DetailSnapshot> {
+  const { id } = useDomain();
   return useEventStream<DetailSnapshot>(
-    `/api/stream/materializations/${encodeURIComponent(materializationId)}`,
+    `/api/d/${encodeURIComponent(id)}/stream/materializations/${encodeURIComponent(materializationId)}`,
     'detail',
   );
 }

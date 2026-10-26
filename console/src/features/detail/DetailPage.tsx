@@ -20,6 +20,7 @@ import { TABLE_PARAM } from '../tables/selectedTable';
 import { useAuth } from '@/lib/auth';
 import { useDetailStream } from '@/lib/live';
 import { readableTables, type CpDetail, type CpTableSpec } from '@shared/types';
+import { useDomainPath } from '@/lib/domains';
 
 /**
  * Each tab, and the dataset permission it needs, beyond seeing the materialization at all, on at
@@ -43,6 +44,7 @@ function tablesRemoved(detail: CpDetail): CpTableSpec[] {
 }
 
 export function DetailPage(): ReactNode {
+  const domainPath = useDomainPath();
   const { materializationId, tab } = useParams<{ materializationId: string; tab?: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -53,7 +55,7 @@ export function DetailPage(): ReactNode {
   const [editing, setEditing] = useState(false);
   const { can } = useAuth();
 
-  if (!materializationId) return <Navigate to="/materializations" replace />;
+  if (!materializationId) return <Navigate to={domainPath('/materializations')} replace />;
 
   const detail = data?.detail ?? null;
   const specs = detail ? readableTables(detail.materialization) : [];
@@ -91,7 +93,7 @@ export function DetailPage(): ReactNode {
         meta={
           <>
             <Link
-              to="/materializations"
+              to={domainPath('/materializations')}
               className="inline-flex items-center gap-1 text-[12px] text-[var(--color-ink-muted)] transition-colors hover:text-[var(--color-ink)]"
             >
               <ArrowLeft className="size-3.5" />
@@ -166,7 +168,7 @@ export function DetailPage(): ReactNode {
                     // The table chosen on one tab is the one the next shows.
                     const table = searchParams.get(TABLE_PARAM);
                     const query = table ? `?${TABLE_PARAM}=${encodeURIComponent(table)}` : '';
-                    navigate(`/materializations/${materializationId}${item.key ? `/${item.key}` : ''}${query}`, {
+                    navigate(domainPath(`/materializations/${materializationId}${item.key ? `/${item.key}` : ''}${query}`), {
                       replace: true,
                     });
                   }}

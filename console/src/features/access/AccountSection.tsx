@@ -9,14 +9,15 @@ import { permissionMap, useCatalog } from './shared';
 import { Avatar } from '@/components/Avatar';
 import { Button, Panel, PanelHeader, Skeleton } from '@/components/ui/primitives';
 import { useToast } from '@/components/ui/Toast';
-import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useApi } from '@/lib/domains';
 
 /**
  * Your own account: who you are signed in as, what you may do, your password, your sessions, and
  * the access tokens external engines sign in with.
  */
 export function AccountSection(): ReactNode {
+  const api = useApi();
   const auth = useAuth();
   const principal = auth.principal;
   const catalog = useCatalog();

@@ -7,8 +7,9 @@ import { Dialog } from '@/components/ui/Dialog';
 import { useToast } from '@/components/ui/Toast';
 import { Button, Field, Input, Select } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
-import { ApiError, api, type CreateMaterializationInput } from '@/lib/api';
+import { ApiError, type CreateMaterializationInput } from '@/lib/api';
 import { useMaterializationDefaults } from '@/lib/defaults';
+import { useApi, useDomainPath } from '@/lib/domains';
 import { labelProblem } from '@shared/tableNames';
 import type { MaterializationSummary, PartitionGranularity } from '@shared/types';
 
@@ -81,6 +82,8 @@ export function CreateMaterializationDialog({
   /** The fleet, so topics that are already materialized can say so. */
   materializations?: readonly MaterializationSummary[];
 }): ReactNode {
+  const domainPath = useDomainPath();
+  const api = useApi();
   const [form, setForm] = useState<FormState>(EMPTY);
   const [submitted, setSubmitted] = useState(false);
   const [fieldError, setFieldError] = useState<{ field: string; message: string } | null>(null);
@@ -154,7 +157,7 @@ export function CreateMaterializationDialog({
       setAdvancedOpen(false);
       void refreshDatasets();
       onClose();
-      navigate(`/materializations/${accepted.materialization_id}`);
+      navigate(domainPath(`/materializations/${accepted.materialization_id}`));
     },
     onError: (error: unknown, input) => {
       const message = error instanceof ApiError ? error.message : 'The control plane rejected the request.';

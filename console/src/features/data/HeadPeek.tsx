@@ -5,8 +5,9 @@ import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { buildColumnLabels, defaultVisibleColumns, gridOrder } from './columns';
 import { DataGrid } from '@/components/DataGrid';
 import { Button } from '@/components/ui/primitives';
-import { ApiError, api } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { formatExact } from '@/lib/format';
+import { useApi } from '@/lib/domains';
 
 /** Records one peek asks for: the newest on the topic, newest first. */
 const PEEK_ROWS = 200;
@@ -38,6 +39,7 @@ export function HeadPeek({
   schemaOrder: readonly string[];
   onClose: () => void;
 }): ReactNode {
+  const api = useApi();
   const query = useQuery({
     queryKey: ['head-peek', materializationId, table],
     queryFn: () => api.tableHead(materializationId, table, PEEK_ROWS),

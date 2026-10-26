@@ -5,14 +5,16 @@ import { Link, useNavigate } from 'react-router-dom';
 
 import { tableHeaderClass } from './shared';
 import { Badge, Button, EmptyState, Input, Panel, Skeleton } from '@/components/ui/primitives';
-import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
+import { useApi, useDomainPath } from '@/lib/domains';
 
 const GRID = 'grid grid-cols-[minmax(0,1.3fr)_minmax(0,2fr)_110px_100px] items-center gap-4';
 
 /** Roles: reusable sets of permissions, given to groups. */
 export function RolesSection(): ReactNode {
+  const domainPath = useDomainPath();
+  const api = useApi();
   const auth = useAuth();
   const navigate = useNavigate();
   const roles = useQuery({ queryKey: ['roles'], queryFn: () => api.roles() });
@@ -30,7 +32,7 @@ export function RolesSection(): ReactNode {
           <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search roles" aria-label="Search roles" className="pl-9" />
         </div>
         {auth.can('roles.manage') ? (
-          <Button variant="primary" onClick={() => navigate('/settings/roles/new')}>
+          <Button variant="primary" onClick={() => navigate(domainPath('/settings/roles/new'))}>
             <Plus className="size-4" />
             Create role
           </Button>
@@ -58,7 +60,7 @@ export function RolesSection(): ReactNode {
           <ul className="divide-y divide-[var(--color-line)]">
             {rows.map((role) => (
               <li key={role.role_id}>
-                <Link to={`/settings/roles/${role.role_id}`} className={cn(GRID, 'px-5 py-3 transition-colors hover:bg-[var(--color-raised)]')}>
+                <Link to={domainPath(`/settings/roles/${role.role_id}`)} className={cn(GRID, 'px-5 py-3 transition-colors hover:bg-[var(--color-raised)]')}>
                   <span className="flex min-w-0 items-center gap-2.5">
                     <ShieldCheck className="size-4 shrink-0 text-[var(--color-accent)]" />
                     <span className="truncate text-[13px] font-medium">{role.name}</span>

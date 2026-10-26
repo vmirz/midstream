@@ -1,9 +1,11 @@
-import { ArrowDown, ArrowUp, Plus, Search } from 'lucide-react';
+import { ArrowDown, ArrowUp, Search } from 'lucide-react';
 import { useDeferredValue, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
-import { CreateMaterializationDialog } from './CreateMaterializationDialog';
+import { NewMaterialization } from '../domains/NewMaterialization';
+import { HiddenDomains } from '../domains/HiddenDomains';
 import { LiveIndicator, PageBody, PageHeader } from '@/components/AppShell';
+import { DomainChip } from '@/components/DomainChip';
 import { RelativeTime } from '@/components/Inline';
 import { PhaseBadge } from '@/components/PhaseBadge';
 import {
@@ -16,12 +18,12 @@ import {
 } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
 import { displayName, formatBytes, formatCount, formatRate, topicsLabel } from '@/lib/format';
-import { useCan } from '@/lib/auth';
-import { useFleetStream } from '@/lib/live';
-import { isDeletedPhase, type MaterializationSummary } from '@shared/types';
+import { domainPath, useManyDomains, useOptionalDomain } from '@/lib/domains';
+import { useFleet, type DomainMaterialization } from '@/lib/fleet';
+import { isDeletedPhase } from '@shared/types';
 
 type FilterKey = 'all' | 'running' | 'pending' | 'stopped' | 'attention' | 'deleted';
-type SortKey = 'updated' | 'name' | 'rows' | 'rate' | 'bytes';
+type SortKey = 'updated' | 'name' | 'rows' | 'rate' | 'bytes' | 'domain';
 
 const FILTERS: { value: FilterKey; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -49,11 +51,17 @@ const COLUMNS: { key: SortKey | null; label: string; className: string }[] = [
 ];
 
 const GRID = 'grid grid-cols-[minmax(0,2.4fr)_150px_110px_100px_100px_80px_120px] items-center gap-4';
+/** With a column for the domain: on the page of every domain, when there are several. */
+const DOMAIN_GRID = 'grid grid-cols-[minmax(0,2.4fr)_minmax(0,1fr)_150px_110px_100px_100px_80px_120px] items-center gap-4';
 
+/** Every domain's materializations, or the page's domain's (handbook 20). */
 export function MaterializationsPage(): ReactNode {
-  const { data, status } = useFleetStream();
-  const [createOpen, setCreateOpen] = useState(false);
-  const canCreate = useCan('materializations.create');
+  const scope = useOptionalDomain();
+  const { data, status } = useFleet(scope?.id ?? null);
+  const manyDomains = useManyDomains();
+  const showDomain = !scope && manyDomains;
+  const grid = showDomain ? DOMAIN_GRID : GRID;
+  const columns = showDomain ? [COLUMNS[0]!, { key: 'domain' as const, label: 'Domain', className: 'text-left' }, ...COLUMNS.slice(1)] : COLUMNS;
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterKey>('all');
   const [sort, setSort] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({
@@ -96,7 +104,7 @@ export function MaterializationsPage(): ReactNode {
       if (!query) return true;
       // What a row shows is what a search matches: its name, id, source topics, datasets and tables
       // (`dataset.table`).
-      return [item.materialization_id, item.name, ...item.source_topics, ...(item.datasets ?? []), ...item.tables]
+      return [item.materialization_id, item.name, item.domain, item.domainName, ...item.source_topics, ...(item.datasets ?? []), ...item.tables]
         .filter((value): value is string => Boolean(value))
         .some((value) => value.toLowerCase().includes(query));
     });
@@ -112,6 +120,8 @@ export function MaterializationsPage(): ReactNode {
           return ((a.rowsPerSecond ?? 0) - (b.rowsPerSecond ?? 0)) * direction;
         case 'bytes':
           return ((a.tableBytes ?? 0) - (b.tableBytes ?? 0)) * direction;
+        case 'domain':
+          return (a.domainName.localeCompare(b.domainName) || displayName(a).localeCompare(displayName(b))) * direction;
         default:
           return (a.updated_at ?? '').localeCompare(b.updated_at ?? '') * direction;
       }
@@ -142,14 +152,7 @@ export function MaterializationsPage(): ReactNode {
             error={data?.controlPlaneError ?? null}
           />
         }
-        actions={
-          canCreate ? (
-            <Button variant="primary" onClick={() => setCreateOpen(true)}>
-              <Plus className="size-4" />
-              New materialization
-            </Button>
-          ) : null
-        }
+        actions={<NewMaterialization materializations={data?.items} />}
       >
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-3 px-6 pb-4">
           <div className="relative min-w-[240px] flex-1">
@@ -157,7 +160,7 @@ export function MaterializationsPage(): ReactNode {
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search by name, id, topic, dataset or table"
+              placeholder={showDomain ? 'Search by name, id, domain, topic, dataset or table' : 'Search by name, id, topic, dataset or table'}
               className="pl-9"
               spellCheck={false}
             />
@@ -166,16 +169,17 @@ export function MaterializationsPage(): ReactNode {
         </div>
       </PageHeader>
 
-      <PageBody>
+      <PageBody className="space-y-4">
+        {data ? <HiddenDomains hidden={data.hidden} what="materializations" /> : null}
         <Panel className="overflow-hidden">
           <div
             className={cn(
-              GRID,
+              grid,
               'border-b border-[var(--color-line)] bg-[var(--color-raised)] px-5 py-2.5',
               'text-[11px] font-medium tracking-wide text-[var(--color-ink-muted)] uppercase',
             )}
           >
-            {COLUMNS.map((column) => (
+            {columns.map((column) => (
               <button
                 key={column.label}
                 type="button"
@@ -231,41 +235,31 @@ export function MaterializationsPage(): ReactNode {
                   >
                     Clear filters
                   </Button>
-                ) : canCreate ? (
-                  <Button variant="primary" onClick={() => setCreateOpen(true)}>
-                    <Plus className="size-4" />
-                    New materialization
-                  </Button>
-                ) : null
+                ) : (
+                  <NewMaterialization materializations={data.items} />
+                )
               }
             />
           ) : (
             <ul className="divide-y divide-[var(--color-line)]">
               {rows.map((item) => (
-                <MaterializationRow key={item.materialization_id} item={item} />
+                <MaterializationRow key={`${item.domain}/${item.materialization_id}`} item={item} grid={grid} showDomain={showDomain} />
               ))}
             </ul>
           )}
         </Panel>
       </PageBody>
 
-      {canCreate ? (
-        <CreateMaterializationDialog
-          open={createOpen}
-          onClose={() => setCreateOpen(false)}
-          materializations={data?.items}
-        />
-      ) : null}
     </>
   );
 }
 
-function MaterializationRow({ item }: { item: MaterializationSummary }): ReactNode {
+function MaterializationRow({ item, grid, showDomain }: { item: DomainMaterialization; grid: string; showDomain: boolean }): ReactNode {
   return (
     <li>
       <Link
-        to={`/materializations/${item.materialization_id}`}
-        className={cn(GRID, 'px-5 py-3 transition-colors hover:bg-[var(--color-raised)]')}
+        to={domainPath(item.domain, `/materializations/${item.materialization_id}`)}
+        className={cn(grid, 'px-5 py-3 transition-colors hover:bg-[var(--color-raised)]')}
       >
         <div className="min-w-0">
           <p className="truncate text-[13px] font-medium">{displayName(item)}</p>
@@ -279,6 +273,12 @@ function MaterializationRow({ item }: { item: MaterializationSummary }): ReactNo
             ) : null}
           </p>
         </div>
+
+        {showDomain ? (
+          <div className="min-w-0">
+            <DomainChip name={item.domainName} id={item.domain} />
+          </div>
+        ) : null}
 
         <div className="flex min-w-0 flex-col items-start gap-1">
           <PhaseBadge phase={item.observed_phase} reason={item.phase_reason} />

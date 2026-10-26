@@ -1,14 +1,16 @@
-import { AlertTriangle, Plus } from 'lucide-react';
-import { useMemo, useState, type ReactNode } from 'react';
+import { AlertTriangle } from 'lucide-react';
+import { useMemo, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
-import { CreateMaterializationDialog } from '../materializations/CreateMaterializationDialog';
+import { HiddenDomains } from '../domains/HiddenDomains';
+import { NewMaterialization } from '../domains/NewMaterialization';
 import { LiveIndicator, PageBody, PageHeader } from '@/components/AppShell';
+import { DomainChip } from '@/components/DomainChip';
 import { PhaseBadge } from '@/components/PhaseBadge';
 import { DistributionBar } from '@/components/Sparkline';
 import { StatCard } from '@/components/StatCard';
 import { TimeSeriesChart } from '@/components/TimeSeriesChart';
-import { Button, EmptyState, Panel, PanelHeader, Skeleton } from '@/components/ui/primitives';
+import { EmptyState, Panel, PanelHeader, Skeleton } from '@/components/ui/primitives';
 import { RelativeTime } from '@/components/Inline';
 import {
   displayName,
@@ -19,16 +21,18 @@ import {
   humanize,
   topicsLabel,
 } from '@/lib/format';
-import { useCan } from '@/lib/auth';
-import { useFleetStream } from '@/lib/live';
-import { isDeletedPhase, type MaterializationSummary } from '@shared/types';
+import { domainPath, useManyDomains, useOptionalDomain } from '@/lib/domains';
+import { useFleet, type DomainMaterialization } from '@/lib/fleet';
+import { isDeletedPhase, type DomainFleet } from '@shared/types';
 
 const ATTENTION_PHASES = new Set(['failed', 'degraded']);
 
+/** Health and throughput of every domain's materializations, or of the page's domain (handbook 20). */
 export function OverviewPage(): ReactNode {
-  const { data, status } = useFleetStream();
-  const [createOpen, setCreateOpen] = useState(false);
-  const canCreate = useCan('materializations.create');
+  const scope = useOptionalDomain();
+  const { data, status } = useFleet(scope?.id ?? null);
+  const manyDomains = useManyDomains();
+  const showDomain = !scope && manyDomains;
 
   // Deleted materializations remain in the fleet payload for the recently-deleted view,
   // so every overview panel works off the active subset.
@@ -72,8 +76,14 @@ export function OverviewPage(): ReactNode {
   return (
     <>
       <PageHeader
-        title="Overview"
-        subtitle="Fleet-wide health and throughput across every materialization."
+        title={scope ? scope.name : 'Overview'}
+        subtitle={
+          scope
+            ? `Health and throughput of every materialization in ${scope.name}.`
+            : showDomain
+              ? 'Health and throughput across every domain and materialization.'
+              : 'Fleet-wide health and throughput across every materialization.'
+        }
         meta={
           <LiveIndicator
             status={status}
@@ -81,14 +91,7 @@ export function OverviewPage(): ReactNode {
             error={data?.controlPlaneError ?? null}
           />
         }
-        actions={
-          canCreate ? (
-            <Button variant="primary" onClick={() => setCreateOpen(true)}>
-              <Plus className="size-4" />
-              New materialization
-            </Button>
-          ) : null
-        }
+        actions={<NewMaterialization materializations={data?.items} />}
       />
 
       <PageBody className="space-y-6">
@@ -100,6 +103,7 @@ export function OverviewPage(): ReactNode {
           </div>
         ) : (
           <>
+            <HiddenDomains hidden={data.hidden} what="materializations" />
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <StatCard
                 label="Materializations"
@@ -183,12 +187,14 @@ export function OverviewPage(): ReactNode {
                 ) : (
                   <ul className="divide-y divide-[var(--color-line)]">
                     {attention.slice(0, 6).map((item) => (
-                      <AttentionRow key={item.materialization_id} item={item} />
+                      <AttentionRow key={`${item.domain}/${item.materialization_id}`} item={item} showDomain={showDomain} />
                     ))}
                   </ul>
                 )}
               </Panel>
             </div>
+
+            {showDomain && data.domains.length > 1 ? <DomainsPanel domains={data.domains} /> : null}
 
             <Panel className="overflow-hidden">
               <PanelHeader
@@ -196,7 +202,7 @@ export function OverviewPage(): ReactNode {
                 description="Ranked by current ingest rate."
                 actions={
                   <Link
-                    to="/materializations"
+                    to={scope ? domainPath(scope.id, '/materializations') : '/materializations'}
                     className="text-[12px] font-medium text-[var(--color-accent)] hover:underline"
                   >
                     View all
@@ -212,13 +218,16 @@ export function OverviewPage(): ReactNode {
               ) : (
                 <ul className="divide-y divide-[var(--color-line)]">
                   {busiest.map((item) => (
-                    <li key={item.materialization_id}>
+                    <li key={`${item.domain}/${item.materialization_id}`}>
                       <Link
-                        to={`/materializations/${item.materialization_id}`}
+                        to={domainPath(item.domain, `/materializations/${item.materialization_id}`)}
                         className="grid grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))] items-center gap-4 px-5 py-3 transition-colors hover:bg-[var(--color-raised)]"
                       >
                         <div className="min-w-0">
-                          <p className="truncate text-[13px] font-medium">{displayName(item)}</p>
+                          <p className="flex items-center gap-2 truncate text-[13px] font-medium">
+                            <span className="truncate">{displayName(item)}</span>
+                            {showDomain ? <DomainChip name={item.domainName} id={item.domain} /> : null}
+                          </p>
                           <p className="truncate text-[12px] text-[var(--color-ink-muted)]" title={item.source_topics.join('\n')}>
                             {topicsLabel(item.source_topics, 2)}
                           </p>
@@ -242,27 +251,58 @@ export function OverviewPage(): ReactNode {
         )}
       </PageBody>
 
-      {canCreate ? (
-        <CreateMaterializationDialog
-          open={createOpen}
-          onClose={() => setCreateOpen(false)}
-          materializations={data?.items}
-        />
-      ) : null}
     </>
   );
 }
 
-function AttentionRow({ item }: { item: MaterializationSummary }): ReactNode {
+/** Each domain's fleet, one row each: what the overview of every domain adds. */
+function DomainsPanel({ domains }: { domains: readonly DomainFleet[] }): ReactNode {
+  return (
+    <Panel className="overflow-hidden">
+      <PanelHeader title="Domains" description="Each domain's materializations and throughput." />
+      <ul className="divide-y divide-[var(--color-line)]">
+        {domains.map((entry) => {
+          const totals = entry.snapshot!.totals;
+          return (
+            <li key={entry.domain}>
+              <Link
+                to={domainPath(entry.domain)}
+                className="grid grid-cols-[minmax(0,1.6fr)_repeat(4,minmax(0,1fr))] items-center gap-4 px-5 py-3 transition-colors hover:bg-[var(--color-raised)]"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-[13px] font-medium">{entry.name}</p>
+                  <p className="numeric truncate text-[12px] text-[var(--color-ink-muted)]">{entry.domain}</p>
+                </div>
+                <span className="text-right text-[13px]">
+                  {formatCount(totals.materializations)} <span className="text-[var(--color-ink-muted)]">materializations</span>
+                </span>
+                <span className="text-right text-[13px] text-[var(--color-ink-muted)]">
+                  {totals.running} running · {totals.failing} failing
+                </span>
+                <span className="numeric text-right text-[13px]">{formatRate(totals.rowsPerSecond, 'rows/s')}</span>
+                <span className="numeric text-right text-[13px] text-[var(--color-ink-muted)]">{formatCount(totals.rowsCommitted)} rows</span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </Panel>
+  );
+}
+
+function AttentionRow({ item, showDomain }: { item: DomainMaterialization; showDomain: boolean }): ReactNode {
   return (
     <li>
       <Link
-        to={`/materializations/${item.materialization_id}`}
+        to={domainPath(item.domain, `/materializations/${item.materialization_id}`)}
         className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-[var(--color-raised)]"
       >
         <AlertTriangle className="size-4 shrink-0 text-[var(--color-phase-paused)]" />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[13px] font-medium">{displayName(item)}</p>
+          <p className="flex items-center gap-2 truncate text-[13px] font-medium">
+            <span className="truncate">{displayName(item)}</span>
+            {showDomain ? <DomainChip name={item.domainName} id={item.domain} /> : null}
+          </p>
           <p className="truncate text-[12px] text-[var(--color-ink-muted)]">
             {humanize(item.phase_reason)} · <RelativeTime value={item.updated_at} />
           </p>

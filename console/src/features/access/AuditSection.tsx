@@ -6,8 +6,8 @@ import { describeAgent, describeDetail } from './logic';
 import { AUDIT_ACTION_LABELS, tableHeaderClass } from './shared';
 import { RelativeTime } from '@/components/Inline';
 import { Badge, Button, EmptyState, Input, Panel, Select, Skeleton } from '@/components/ui/primitives';
-import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { useApi } from '@/lib/domains';
 import type { CpAuditEntry } from '@shared/types';
 
 const ACTIONS: { value: string; label: string }[] = [
@@ -22,6 +22,7 @@ const GRID = 'grid grid-cols-[120px_minmax(0,1.2fr)_minmax(0,1.2fr)_minmax(0,1.3
 
 /** Who signed in, who failed to, and every change to people, groups and roles — newest first. */
 export function AuditSection(): ReactNode {
+  const api = useApi();
   const [action, setAction] = useState('');
   const [outcome, setOutcome] = useState<'' | 'success' | 'failure'>('');
   const [search, setSearch] = useState('');
