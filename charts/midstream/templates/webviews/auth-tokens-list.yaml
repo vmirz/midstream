@@ -1,0 +1,37 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-auth-tokens-list
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: auth-tokens-list
+  description: List the caller's access tokens, never their secrets.
+  request:
+    method: GET
+    path: /auth/tokens
+  processors:
+    pipeline:
+      - read-tokens
+    operations:
+      - name: read-tokens
+        tables:
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+        map:
+          entrypoint: read_tokens
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.tokens import my_access_tokens_view
+
+            def read_tokens(request, directory_table):
+                principal = authorize(request, directory_table, None)
+                return my_access_tokens_view(directory_table, principal)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

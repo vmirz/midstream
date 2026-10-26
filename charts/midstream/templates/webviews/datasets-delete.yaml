@@ -1,0 +1,66 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-datasets-delete
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: datasets-delete
+  description: "Delete a dataset that holds no tables, and emit the request the identity agent applies."
+  request:
+    method: DELETE
+    path: /datasets/{dataset}
+  processors:
+    pipeline:
+      - prepare-request
+      - send-identity-request
+      - return-response
+    operations:
+      - name: prepare-request
+        tables:
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+          - name: {{ include "midstream.fullname" . }}-state
+            paramName: control_plane_table
+        map:
+          entrypoint: prepare_request
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.datasets import delete_dataset_request
+
+            def prepare_request(request, dataset, directory_table, control_plane_table):
+                principal = authorize(request, directory_table, "dataset.manage", dataset=dataset)
+                return delete_dataset_request(directory_table, control_plane_table, principal, dataset, request=request).to_value()
+      - name: send-identity-request
+        topicSend:
+          name: {{ include "midstream.fullname" . }}-identity-requests
+          passThrough: true
+          valueSerializer: json
+          keySelector:
+            python: |
+              def select_key(value):
+                  from midstream.storage.identity import identity_routing_key
+
+                  return identity_routing_key()
+          valueSelector:
+            python: |
+              def select_value(value):
+                  return value["request_event"]
+      - name: return-response
+        map:
+          python: |
+            def return_response(value):
+                return value["response"]
+  response:
+    contentType: application/json
+    statusCodeSelector:
+      onSuccess:
+        python: |
+          def status_code(data):
+              return 202
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

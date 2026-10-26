@@ -6,15 +6,16 @@ topics into Apache Iceberg tables in object storage, exactly once, with schemas 
 themselves, an Iceberg REST catalog any engine can attach, accounts and permissions, and a web
 console that reads the tables directly and follows new records live.
 
-The project is being prepared for its first public release. Until then the repository is the
-reference; an installation guide and a Helm chart arrive with the release.
+The project is being prepared for its first public release. [docs/install.md](docs/install.md)
+installs it from this repository with the Helm chart under `charts/midstream`.
 
 ## What is here
 
 | Path | What it is |
 |------|-----------|
 | `python/` | The Python package: the control plane, the per-materialization runtime, the maintenance and tail apps, and the Iceberg library they share |
-| `manifests/` | Kaspr custom resources and Kustomize overlays for the control plane, maintenance and tail apps |
+| `charts/midstream/` | The Helm chart: the control plane, the maintenance and tail apps, and the console ([README](charts/midstream/README.md)) |
+| `docs/install.md` | Installing it, Secrets included |
 | `console/` | The web console: a Node backend-for-frontend plus a React client ([README](console/README.md), [handbook](console/docs/README.md)) |
 | `docs/handbook/` | The deep reference manual ([start here](docs/handbook/README.md)) |
 | `AGENTS.md` | Repository conventions and guardrails, for people and coding agents alike |
@@ -26,11 +27,12 @@ reference; an installation guide and a Helm chart arrive with the release.
 python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m unittest discover -s python/tests -p 'test_*.py'
 
-# Manifests: render to validate
-kubectl kustomize manifests/dev
+# Chart: lint and render
+helm lint charts/midstream -f charts/midstream/ci/test-values.yaml
+helm template midstream charts/midstream -n midstream -f charts/midstream/ci/test-values.yaml
 
 # Console: point it at a control plane and run it
-kubectl -n midstream port-forward svc/develop-materializer-control-plane-app-api 6065:6065
+kubectl -n midstream port-forward svc/midstream-control-plane-app-api 6065:6065
 cd console && npm install && npm run dev
 ```
 

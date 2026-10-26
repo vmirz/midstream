@@ -1,0 +1,37 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-roles-detail
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: roles-detail
+  description: "Return one role with every permission it grants once implications are added."
+  request:
+    method: GET
+    path: /roles/{role_id}
+  processors:
+    pipeline:
+      - get-role
+    operations:
+      - name: get-role
+        tables:
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+        map:
+          entrypoint: get_role
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.identity import get_role_view
+
+            def get_role(request, role_id, directory_table):
+                principal = authorize(request, directory_table, "roles.view")
+                return get_role_view(directory_table, principal, role_id)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

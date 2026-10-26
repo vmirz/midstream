@@ -1,0 +1,56 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-materializations-schema-version
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: materializations-schema-version
+  description: Return one archived schema of one of a materialization's tables.
+  request:
+    method: GET
+    path: /materializations/{materialization_id}/tables/{table_name}/schema/versions/{schema_version}
+  processors:
+    pipeline:
+      - get-schema-version
+    operations:
+      - name: get-schema-version
+        tables:
+          - name: {{ include "midstream.fullname" . }}-state
+            paramName: control_plane_table
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+        map:
+          entrypoint: get_schema_version
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.materializations import (
+                get_materialization_schema_version_view,
+            )
+
+            def get_schema_version(request, materialization_id, table_name, schema_version, control_plane_table, directory_table):
+                # The schema needs "dataset.view_schema" on the table's dataset, which the view checks.
+                principal = authorize(request, directory_table, "materializations.view_details")
+                raw = None
+                if hasattr(request, "query_params"):
+                    raw = request.query_params.get("raw")
+                elif hasattr(request, "query"):
+                    raw = request.query.get("raw")
+                elif hasattr(request, "rel_url"):
+                    raw = request.rel_url.query.get("raw")
+                return get_materialization_schema_version_view(
+                    control_plane_table,
+                    materialization_id,
+                    table_name,
+                    schema_version,
+                    principal=principal,
+                    raw=raw,
+                )
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

@@ -250,7 +250,7 @@ Reported read-only on the Settings page's **Deployment** section (`DEPLOYMENT_SE
 
 | Setting | Why it stays with the deployment |
 |---|---|
-| Topic names (seven), `K_APP_NAME`, the state, settings and directory table bindings | Must match the manifests' agent and WebView wiring |
+| Topic names (seven), `K_APP_NAME`, the state, settings and directory table bindings | Must match the chart's agent and WebView wiring |
 | `CONTROL_PLANE_STORAGE_PREFIX` | Part of every table's location |
 | `CONTROL_PLANE_CATALOG_BASE_URL` | The address engines reach the control plane at; the console's connection snippets show it |
 | `CONTROL_PLANE_DEFAULT_NAMESPACE` | A namespace needs the runtimes' role, service account and secrets |
@@ -264,7 +264,7 @@ Reported read-only on the Settings page's **Deployment** section (`DEPLOYMENT_SE
 
 ## 17.4 Storage
 
-A separate **`settings`** KasprTable (`manifests/base/tables/settings.yaml`; `develop-settings`
+A separate **`settings`** KasprTable (`charts/midstream/templates/tables/settings.yaml`; `<release>-settings`
 in dev), global, 3 partitions, JSON. It is kept apart from the `state` table on purpose: it holds
 configuration rather than reconciliation state, it has exactly one writer (the `settings-intake`
 agent), and its changelog is the settings' own history in Kafka.
@@ -304,7 +304,7 @@ when a key is found in more than one table shard, the same defence `resolve_enve
 PATCH /settings/{scope}   (settings-update WebView)
   validate: known keys, values in bounds, cross-field rules against what the change would produce,
             base_revision equal to the stored revision (else 409 settings_changed)
-  → materializer-settings-requests   key settings:<scope>        (no table write)
+  → <release>-settings-requests   key settings:<scope>        (no table write)
   ← 202 { scope, request_id, base_revision, accepted_at, status_url }
 
 settings-intake agent → services/settings.py::apply_settings_change
@@ -314,7 +314,7 @@ settings-intake agent → services/settings.py::apply_settings_change
   otherwise → revision + 1, overrides saved, change recorded
               runtime scope: also deliver to every runtime (§17.7)
 
-settings-bootstrap task (at startup, leader) → materializer-settings-requests   key settings:runtime
+settings-bootstrap task (at startup, leader) → <release>-settings-requests   key settings:runtime
 settings-intake agent → services/settings.py::bootstrap_runtime_settings
   runtime scope has a lineage  → nothing
   otherwise → lineage begun and saved, scope delivered to every runtime (§17.7)
@@ -515,7 +515,7 @@ Full shapes: [04 — HTTP API reference](./04-http-api-reference.md).
 
 | Symptom | Cause | Action |
 |---|---|---|
-| Every save fails with `500`, and the control-plane log shows `KeyError: '…materializer-settings-requests'` | The consumer group still runs on an assignment made before 0.5.0 added the settings topics; restarts do not change it (§17.12) | Force one rebalance, as §17.12 describes. Once per environment |
+| Every save fails with `500`, and the control-plane log shows `KeyError: '…<release>-settings-requests'` | The consumer group still runs on an assignment made before 0.5.0 added the settings topics; restarts do not change it (§17.12) | Force one rebalance, as §17.12 describes. Once per environment |
 | A save is refused: "These settings changed after this page loaded" | Someone else saved the same scope first | Reload the page; edits are kept |
 | A runtime stays `pending` | A member has not refreshed: it is busy in a long schema wait, or not consuming | It catches up on its next record or heartbeat; with protocol logging on, `runtime_settings_applied` is logged when a member stores it |
 | A runtime stays `pending` with no revision shown | It runs settings of another lineage — an earlier installation's — and its settings agent has not read this one's delivery yet | It takes them when the agent reads it. If it does not within minutes, the agent is not consuming: see the runtime's log, and re-apply it (stop and resume) |
@@ -527,7 +527,7 @@ Inspecting the store directly:
 
 ```bash
 kafka-console-consumer --bootstrap-server $BROKERS --from-beginning --property print.key=true \
-  --topic develop-materializer-control-plane-app-develop-settings-changelog
+  --topic midstream-control-plane-app-develop-settings-changelog
 ```
 
 ## 17.11 Who can change settings
@@ -573,16 +573,16 @@ To confirm it, list the member's assignment. The two settings topics are missing
 
 ```bash
 kafka-consumer-groups.sh --bootstrap-server $BROKERS --describe --members --verbose \
-  --group develop-materializer-control-plane-app
+  --group midstream-control-plane-app
 ```
 
 To fix it, once per environment, stop the control plane for longer than the session timeout so
 that the broker drops the member. Its next join then runs a full assignment:
 
 ```bash
-kubectl patch kasprapp develop-materializer-control-plane -n midstream --type merge -p '{"spec":{"replicas":0}}'
+kubectl patch kasprapp midstream-control-plane -n midstream --type merge -p '{"spec":{"replicas":0}}'
 # wait until the pod is gone, then longer than K_BROKER_SESSION_TIMEOUT (120 s by default)
-kubectl patch kasprapp develop-materializer-control-plane -n midstream --type merge -p '{"spec":{"replicas":1}}'
+kubectl patch kasprapp midstream-control-plane -n midstream --type merge -p '{"spec":{"replicas":1}}'
 ```
 
 Runtimes keep running meanwhile. The console shows settings read-only until the control plane
@@ -616,7 +616,7 @@ Control plane or runtime:
    `LIVE_SETTING_FIELDS`/`LIVE_SETTING_ENV_VARS`) with its section, label, description, bounds and
    `effect`. The console needs no change: it renders whatever the catalog describes.
 3. If a new handler reads configuration, bind the `settings` table to its operation and pass it
-   (`SettingsWiringTests` enforces this) and patch the binding in every overlay.
+   (`SettingsWiringTests` enforces this).
 4. Tests: `test_settings.py` checks every catalog key is a config field read from its env var and
    that every primary setting has a description.
 

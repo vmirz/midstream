@@ -1,0 +1,59 @@
+# The maintenance app: compaction, snapshot expiry and orphan cleanup of every materialization's
+# tables, off the runtimes, so only this app is sized for compaction's memory (handbook 02 §2.10a).
+# The control plane ticks every maintained table each minute on the maintenance-requests topic,
+# keyed by table; each member maintains the tables of its partitions, a job at a time by default.
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: {{ include "midstream.maintenance" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "midstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: maintenance
+spec:
+  replicas: {{ .Values.maintenance.replicas }}
+  {{- with .Values.kaspr.version }}
+  version: {{ . | quote }}
+  {{- end }}
+  bootstrapServers: {{ required "kaspr.bootstrapServers is required" .Values.kaspr.bootstrapServers | quote }}
+  authentication:
+    {{- include "midstream.authentication" . | nindent 4 }}
+  storage:
+    {{- include "midstream.storage" (dict "root" . "size" .Values.maintenance.storage.size) | nindent 4 }}
+  config:
+    valueSerializer: json
+    topicAllowDeclare: true
+  # A compaction child holds about its memory budget plus a row group; the member itself needs
+  # little besides.
+  resources:
+    {{- toYaml .Values.maintenance.resources | nindent 4 }}
+  {{- with .Values.maintenance.verticalPodAutoscaler }}
+  verticalPodAutoscaler:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  pythonPackages:
+    {{- include "midstream.pythonPackages" . | nindent 4 }}
+  template:
+    pod:
+      {{- include "midstream.podScheduling" . | nindent 6 }}
+      {{- include "midstream.gcsVolumes" . | nindent 6 }}
+    kasprContainer:
+      env:
+        # Names the member in its table events, and so in the console.
+        - name: RUNTIME_MEMBER_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        # Names the app in its commits' snapshot summaries and its table events.
+        - name: MAINTENANCE_APP_NAME
+          value: {{ include "midstream.maintenance" . }}
+        # Compactions and orphan cleanups one member runs at once, across all its tables.
+        - name: MAINTENANCE_MAX_CONCURRENT_JOBS
+          value: {{ .Values.maintenance.maxConcurrentJobs | quote }}
+        {{- include "midstream.gcsEnv" . | nindent 8 }}
+        - name: PROTOCOL_LOGGING_ENABLED
+          value: {{ .Values.maintenance.protocolLogging | quote }}
+        {{- with .Values.maintenance.extraEnv }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- include "midstream.gcsVolumeMounts" . | nindent 6 }}

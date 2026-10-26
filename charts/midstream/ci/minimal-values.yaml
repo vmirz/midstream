@@ -1,0 +1,9 @@
+# The least an installation needs: the Kafka address and credentials; the defaults for everything else.
+kaspr:
+  bootstrapServers: kafka:9092
+  authentication:
+    type: plain
+    username: midstream
+    passwordSecret:
+      secretName: midstream-kafka
+      passwordKey: password

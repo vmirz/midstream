@@ -501,7 +501,7 @@ the flows re-run.
 
 ### On the lab
 
-Against the lab control plane, running 0.5.0 with the dev overlay, reads and validation answered
+Against the lab control plane, running 0.5.0 on the lab, reads and validation answered
 as above and every section rendered in both themes. Every save answered `500` there: the
 control plane's consumer group had kept an assignment from before the settings topics existed
 (main handbook [17 §17.12](../../docs/handbook/17-settings.md)). The save flows above were

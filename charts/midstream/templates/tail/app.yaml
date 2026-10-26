@@ -1,0 +1,78 @@
+{{- if .Values.tail.enabled }}
+# The tail app: the newest records of every materialization's tables, read from Kafka before they
+# are committed, for the console (handbook 19). The control plane ticks every table each minute on
+# the tail-requests topic, keyed by table, so each table is owned by the member Kaspr gives its
+# partition; any member answers any request and forwards what is another's. Nothing is persisted.
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: {{ include "midstream.tail" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "midstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tail
+spec:
+  # Up to the tick topic's partitions; two for availability (handbook 19 §19.9).
+  replicas: {{ .Values.tail.replicas }}
+  {{- with .Values.kaspr.version }}
+  version: {{ . | quote }}
+  {{- end }}
+  bootstrapServers: {{ required "kaspr.bootstrapServers is required" .Values.kaspr.bootstrapServers | quote }}
+  authentication:
+    {{- include "midstream.authentication" . | nindent 4 }}
+  # Kaspr's own: the app keeps no table of its own.
+  storage:
+    {{- include "midstream.storage" (dict "root" . "size" .Values.tail.storage.size) | nindent 4 }}
+  config:
+    valueSerializer: json
+    topicAllowDeclare: true
+    webBasePath: /
+    webPort: {{ .Values.tail.webPort }}
+  resources:
+    {{- toYaml .Values.tail.resources | nindent 4 }}
+  {{- with .Values.tail.verticalPodAutoscaler }}
+  verticalPodAutoscaler:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  pythonPackages:
+    {{- include "midstream.pythonPackages" . | nindent 4 }}
+  template:
+    pod:
+      {{- include "midstream.podScheduling" . | nindent 6 }}
+      {{- include "midstream.gcsVolumes" . | nindent 6 }}
+    kasprContainer:
+      env:
+        # Names the member in its answers, logs and the members view.
+        - name: RUNTIME_MEMBER_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: TAIL_APP_NAME
+          value: {{ include "midstream.tail" . }}
+        # Session checks and schema fetches.
+        - name: TAIL_CONTROL_PLANE_URL
+          value: {{ include "midstream.controlPlaneUrl" . }}
+        # The read-only service credential: schema fetches, and the console's own credential every
+        # request must carry. The control plane's, from the same Secret.
+        - name: TAIL_SERVICE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "midstream.authSecret" . }}
+              key: service-token
+              optional: true
+        - name: TAIL_TABLE_EVENTS_TOPIC
+          value: {{ include "midstream.fullname" . }}-materialization-table-events
+        - name: TAIL_REQUESTS_TOPIC
+          value: {{ include "midstream.fullname" . }}-tail-requests
+        # Resident buffer bytes across every table before retained records are dropped and the
+        # largest table pauses (handbook 19 §19.8).
+        - name: TAIL_MEMORY_BUDGET_BYTES
+          value: {{ .Values.tail.memoryBudgetBytes | int64 | quote }}
+        {{- include "midstream.gcsEnv" . | nindent 8 }}
+        - name: PROTOCOL_LOGGING_ENABLED
+          value: {{ .Values.tail.protocolLogging | quote }}
+        {{- with .Values.tail.extraEnv }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- include "midstream.gcsVolumeMounts" . | nindent 6 }}
+{{- end }}

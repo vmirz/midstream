@@ -153,7 +153,7 @@ class DiscoveryService(Protocol):
 # accept on its input filter.
 #
 # The agent filters its input in a YAML predicate, which cannot import this module, so the list is
-# duplicated in `manifests/base/agents/workflow-apply.yaml`. A step missing from that copy is
+# duplicated in `charts/midstream/templates/agents/workflow-apply.yaml`. A step missing from that copy is
 # published, consumed and dropped in silence — no error, no log, the delete chain simply stops.
 # `test_workflow_apply_agent_filter_matches_dispatcher` keeps the two in step.
 WORKFLOW_APPLY_STEPS = frozenset(

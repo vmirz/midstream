@@ -1,0 +1,39 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-datasets-detail
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: datasets-detail
+  description: "Return one dataset and its tables: each table's name, topic, state and materialization."
+  request:
+    method: GET
+    path: /datasets/{dataset}
+  processors:
+    pipeline:
+      - get-dataset
+    operations:
+      - name: get-dataset
+        tables:
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+          - name: {{ include "midstream.fullname" . }}-state
+            paramName: control_plane_table
+        map:
+          entrypoint: get_dataset
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.datasets import get_dataset_view
+
+            def get_dataset(request, dataset, directory_table, control_plane_table):
+                principal = authorize(request, directory_table, "datasets.view")
+                return get_dataset_view(directory_table, control_plane_table, principal, dataset)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

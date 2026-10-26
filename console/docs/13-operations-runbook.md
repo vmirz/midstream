@@ -10,7 +10,7 @@ The console is a single stateless-ish Node process. It needs:
 | Network to object storage | For the Data and Table tabs: the console reads each table itself |
 | GCP credentials | ADC to read tables' metadata and manifests, and in cached mode their data files; HMAC additionally for direct mode, where DuckDB reads `gs://` in place |
 | TLS at the ingress | The session cookie is `Secure` only for requests that arrived over HTTPS (`CONSOLE_COOKIE_SECURE=auto`); the ingress must set `X-Forwarded-Proto` |
-| `CONSOLE_SERVICE_TOKEN` | The control plane's `service-token` from its `materializer-auth` Secret; without it the live views show only what guests may see ([12](./12-security-model.md#122-authentication-and-authorization)) |
+| `CONSOLE_SERVICE_TOKEN` | The control plane's `service-token` from its `<release>-auth` Secret; without it the live views show only what guests may see ([12](./12-security-model.md#122-authentication-and-authorization)) |
 | A 3.0 control plane | 3.0.0 or later: it keeps each source topic of a materialization in an Iceberg table of its own, in a dataset, which is what the console reads and checks access by. Against an older one every page shows a banner (`controlPlaneCompatible: false`). Someone signs in as its bootstrap administrator first, adds people, and creates the first datasets |
 | Optional persistent volume | For the Parquet cache (cached mode) |
 
@@ -190,7 +190,7 @@ per-materialization failures, set **Console log level** to `debug` on the Settin
 ```bash
 curl -sS localhost:8787/api/health
 kubectl -n midstream get svc | grep app-api
-kubectl -n midstream port-forward svc/develop-materializer-control-plane-app-api 6065:6065
+kubectl -n midstream port-forward svc/midstream-control-plane-app-api 6065:6065
 curl -sS localhost:6065/materializations?limit=10
 ```
 
@@ -213,8 +213,8 @@ was not rebalanced afterwards. See the main handbook,
 
 | Answer on the sign-in page | Cause | Fix |
 |---|---|---|
-| "Sign-in is not configured on this control plane" (`503`) | The control plane has no session signing key | Create its `materializer-auth` Secret with `signing-key` ([18 §18.12](../../docs/handbook/18-identity-and-access.md)) |
-| `500`, and the control plane logs `KeyError: '…materializer-identity-requests'` | The control plane was upgraded to 0.6.0 without the forced rebalance | [17 §17.12](../../docs/handbook/17-settings.md) |
+| "Sign-in is not configured on this control plane" (`503`) | The control plane has no session signing key | Create its `<release>-auth` Secret with `signing-key` ([18 §18.12](../../docs/handbook/18-identity-and-access.md)) |
+| `500`, and the control plane logs `KeyError: '…<release>-identity-requests'` | The control plane was upgraded to 0.6.0 without the forced rebalance | [17 §17.12](../../docs/handbook/17-settings.md) |
 | "Email or password is incorrect." for the bootstrap administrator | The control plane made no administrator: no bootstrap keys in its Secret, or one already exists | Check its log for `is now one`; set the bootstrap keys and restart it |
 | "Too many sign-in attempts" | This address tried more than `CONSOLE_SIGN_IN_ATTEMPTS_PER_MINUTE` times in a minute | Wait a minute |
 | "Too many failed sign-ins. Try again in N minutes" | The control plane locked the email | Wait, or an administrator unlocks it (Settings → Users) |

@@ -1,0 +1,150 @@
+{{- if .Values.console.enabled }}
+# The web console (console/docs): a Node backend-for-frontend and a React client in one process.
+# It reaches the control plane and the tail app through their Services, reads the tables with the
+# GCS credentials, and holds a browser's session in a cookie.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "midstream.console" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "midstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+spec:
+  replicas: {{ .Values.console.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: midstream
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: console
+  template:
+    metadata:
+      labels:
+        {{- include "midstream.labels" . | nindent 8 }}
+        app.kubernetes.io/component: console
+    spec:
+      {{- with .Values.console.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.console.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.console.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: console
+          image: "{{ .Values.console.image.repository }}:{{ default .Chart.AppVersion .Values.console.image.tag }}"
+          imagePullPolicy: {{ .Values.console.image.pullPolicy }}
+          env:
+            - name: PORT
+              value: {{ .Values.console.port | quote }}
+            - name: HOST
+              value: "0.0.0.0"
+            - name: CONTROL_PLANE_URL
+              value: {{ include "midstream.controlPlaneUrl" . }}
+            {{- if .Values.tail.enabled }}
+            - name: CONSOLE_TAIL_URL
+              value: {{ include "midstream.tailUrl" . }}
+            {{- end }}
+            # The control plane's service token: the live views read for everyone with it.
+            - name: CONSOLE_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "midstream.authSecret" . }}
+                  key: service-token
+                  optional: true
+            - name: CONSOLE_DATA_DIR
+              value: /var/lib/midstream-console
+            {{- include "midstream.gcsEnv" . | nindent 12 }}
+            {{- range $name, $value := .Values.console.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+          {{- with .Values.console.hmacSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ . }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.console.port }}
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.console.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/midstream-console
+            {{- if .Values.gcs.credentialsSecret }}
+            - name: gcp-credentials
+              mountPath: /app/gcp
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.console.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "midstream.console" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- with .Values.gcs.credentialsSecret }}
+        - name: gcp-credentials
+          secret:
+            secretName: {{ . }}
+            items:
+              - key: {{ $.Values.gcs.credentialsKey }}
+                path: google_application_credentials.json
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "midstream.console" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "midstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+spec:
+  type: {{ .Values.console.service.type }}
+  selector:
+    app.kubernetes.io/name: midstream
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: console
+  ports:
+    - name: http
+      port: {{ .Values.console.port }}
+      targetPort: http
+{{- if .Values.console.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "midstream.console" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "midstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.console.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.console.persistence.size }}
+{{- end }}
+{{- end }}

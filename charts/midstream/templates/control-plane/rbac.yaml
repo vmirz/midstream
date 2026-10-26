@@ -1,0 +1,47 @@
+{{- if .Values.rbac.create }}
+# What the control plane may do in its namespace: create, read, change and delete the Kaspr
+# resources of every runtime, and read each runtime member's pod for its restarts (handbook 02 §2.7).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "midstream.controlPlane" . }}-kasprapp-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "midstream.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - kaspr.io
+    resources:
+      - kasprapps
+      - kasprtables
+      - kaspragents
+      - kasprtasks
+    verbs:
+      - get
+      - create
+      - patch
+      - delete
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "midstream.controlPlane" . }}-kasprapp-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "midstream.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "midstream.controlPlane" . }}-kasprapp-manager
+subjects:
+  # The service account kaspr-operator gives the control plane's pods.
+  - kind: ServiceAccount
+    name: {{ include "midstream.controlPlane" . }}-app
+{{- end }}

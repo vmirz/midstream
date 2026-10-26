@@ -1,4 +1,8 @@
-"""The agent manifests duplicate knowledge that lives in code; keep the copies honest."""
+"""The chart's agents, tasks and views duplicate knowledge that lives in code; keep the copies honest.
+
+Everything here reads the chart as `helm template` renders it (`chart_support.py`), with the values
+files under `charts/midstream/ci/`: one per installation shape, the way the deployment is made.
+"""
 
 from __future__ import annotations
 
@@ -9,8 +13,13 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import types
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from chart_support import RELEASE, VALUES_FILES, bare, document, documents, python_sources, render  # noqa: E402
 
 from midstream.handlers.maintenance import (
     MAINTENANCE_STEP_TRIGGERS,
@@ -20,14 +29,11 @@ from midstream.models import MaterializationWorkEvent
 from midstream.models.events import WORK_STEPS
 from midstream.services.workflow import WORKFLOW_APPLY_STEPS
 
-MANIFEST_ROOT = Path(__file__).resolve().parents[2] / "manifests" / "base" / "agents"
-
-
-def _filter_step_set(manifest: Path) -> set[str]:
+def _filter_step_set(agent: dict) -> set[str]:
     """Extract the set literal from an agent's `select_work` input filter."""
-    source = manifest.read_text()
+    source = "\n".join(python_sources(agent))
     match = re.search(r"return value\.get\(\"step\"\) in (\{.*?\})", source, re.DOTALL)
-    assert match is not None, f"no step filter found in {manifest.name}"
+    assert match is not None, f"no step filter found in {agent['metadata']['name']}"
     # The YAML block is indented; ast handles the literal once the indentation is gone.
     literal = "\n".join(line.strip() for line in match.group(1).splitlines())
     return set(ast.literal_eval(literal))
@@ -42,7 +48,7 @@ class AgentManifestTests(unittest.TestCase):
         to the filter, every delete published the event, consumed it, and dropped it silently:
         no error, no log, and destination objects were never removed.
         """
-        declared = _filter_step_set(MANIFEST_ROOT / "workflow-apply.yaml")
+        declared = _filter_step_set(document("KasprAgent", "workflow-apply"))
 
         missing = WORKFLOW_APPLY_STEPS - declared
         self.assertEqual(
@@ -64,7 +70,7 @@ class AgentManifestTests(unittest.TestCase):
         A cron task publishes the work event regardless of whether the agent accepts it, so a step
         missing from this filter fails as a task that appears to run and never does anything.
         """
-        declared = _filter_step_set(MANIFEST_ROOT / "maintenance.yaml")
+        declared = _filter_step_set(document("KasprAgent", "maintenance"))
 
         missing = MAINTENANCE_STEPS - declared
         self.assertEqual(
@@ -82,8 +88,7 @@ class AgentManifestTests(unittest.TestCase):
 
     def test_every_maintenance_step_is_scheduled_by_a_task(self) -> None:
         """A handler step that nothing schedules never runs, however correct the handler is."""
-        task_root = MANIFEST_ROOT.parent / "tasks"
-        task_sources = "\n".join(path.read_text() for path in task_root.glob("*.yaml"))
+        task_sources = "\n".join(source for task in documents("KasprTask") for source in python_sources(task))
         unscheduled = {
             step
             for step, builder in MAINTENANCE_STEP_TRIGGERS.items()
@@ -141,15 +146,11 @@ class SettingsWiringTests(unittest.TestCase):
     """Settings reach every component through its own table binding; keep the bindings complete."""
 
     def _operations(self):
-        import yaml
-
-        base = MANIFEST_ROOT.parent
-        for manifest in sorted(base.rglob("*.yaml")):
-            document = yaml.safe_load(manifest.read_text())
-            if not isinstance(document, dict) or document.get("kind") not in ("KasprAgent", "KasprWebView"):
+        for rendered in documents():
+            if rendered.get("kind") not in ("KasprAgent", "KasprWebView"):
                 continue
-            for operation in document["spec"]["processors"].get("operations", []):
-                yield document["metadata"]["name"], operation
+            for operation in rendered["spec"]["processors"].get("operations", []):
+                yield rendered["metadata"]["name"], operation
 
     def test_every_operation_that_reads_configuration_binds_the_settings_table(self) -> None:
         try:
@@ -173,7 +174,7 @@ class SettingsWiringTests(unittest.TestCase):
                 bindings = {table["paramName"]: table["name"] for table in operation.get("tables") or []}
                 self.assertEqual(
                     bindings.get("settings_table"),
-                    "settings",
+                    f"{RELEASE}-settings",
                     f"{name} calls {_called_name(calls[0])} but does not bind the settings table",
                 )
                 for call in calls:
@@ -218,11 +219,11 @@ class WorkflowApplyEventLoopTests(unittest.TestCase):
             import yaml
         except ImportError:
             self.skipTest("pyyaml is required to read manifests")
-        document = yaml.safe_load((MANIFEST_ROOT / "workflow-apply.yaml").read_text())
-        operations = document["spec"]["processors"]["operations"]
+        agent = document("KasprAgent", "workflow-apply")
+        operations = agent["spec"]["processors"]["operations"]
         self.assertEqual(
             [operation["name"] for operation in operations],
-            document["spec"]["processors"]["pipeline"],
+            agent["spec"]["processors"]["pipeline"],
         )
         return operations[1]["map"]
 
@@ -273,12 +274,6 @@ class WorkflowApplyEventLoopTests(unittest.TestCase):
         self.assertIs(received["settings_table"], tables["settings_table"])
 
 
-def _load_manifest(path: Path) -> dict:
-    import yaml
-
-    return yaml.safe_load(path.read_text())
-
-
 def _entrypoint(operation: dict) -> ast.AST:
     tree = ast.parse(operation["python"])
     return next(
@@ -303,13 +298,13 @@ class MaintenanceEventLoopTests(unittest.TestCase):
             import yaml  # noqa: F401
         except ImportError:
             self.skipTest("pyyaml is required to read manifests")
-        document = _load_manifest(MANIFEST_ROOT / "maintenance.yaml")
-        operations = document["spec"]["processors"]["operations"]
+        agent = document("KasprAgent", "maintenance")
+        operations = agent["spec"]["processors"]["operations"]
         self.assertEqual(
             [operation["name"] for operation in operations],
-            document["spec"]["processors"]["pipeline"],
+            agent["spec"]["processors"]["pipeline"],
         )
-        return document
+        return agent
 
     def _execute_maintenance(self) -> dict:
         return self._document()["spec"]["processors"]["operations"][1]["map"]
@@ -367,12 +362,12 @@ class MaintenanceEventLoopTests(unittest.TestCase):
     def test_the_agent_hands_work_back_to_the_topic_it_consumes_keyed_by_materialization(self) -> None:
         """A scheduled step arrives keyed `materialization:__system__`; anything it wrote would land
         in that event's shard of the state table instead of the materialization's own."""
-        document = self._document()
-        topics = document["spec"]["output"]["topics"]
+        agent = self._document()
+        topics = agent["spec"]["output"]["topics"]
 
         self.assertEqual(
             [topic["name"] for topic in topics],
-            [document["spec"]["input"]["topic"]["name"], "materializer-maintenance-requests", "materializer-tail-requests"],
+            [agent["spec"]["input"]["topic"]["name"], f"{RELEASE}-maintenance-requests", f"{RELEASE}-tail-requests"],
         )
         scope: dict = {}
         for selector in ("keySelector", "valueSelector", "predicate"):
@@ -404,7 +399,7 @@ class MaintenanceEventLoopTests(unittest.TestCase):
         for selector in ("keySelector", "valueSelector", "predicate"):
             exec(compile(topic[selector]["python"], f"<{selector}>", "exec"), scope)
         routed = {"route": "tail", "key": "tail:mat-1:orders", "value": {"kind": "tail_tick"}}
-        self.assertEqual("materializer-tail-requests", topic["name"])
+        self.assertEqual(f"{RELEASE}-tail-requests", topic["name"])
         self.assertEqual(scope["select_key"](routed), "tail:mat-1:orders")
         self.assertEqual(scope["select_value"](routed), routed["value"])
         self.assertTrue(scope["should_send"](routed))
@@ -423,8 +418,8 @@ class TopicsAnalyzeEventLoopTests(unittest.TestCase):
             import yaml  # noqa: F401
         except ImportError:
             self.skipTest("pyyaml is required to read manifests")
-        document = _load_manifest(MANIFEST_ROOT.parent / "webviews" / "topics-analyze.yaml")
-        return document["spec"]["processors"]["operations"][0]["map"]
+        view = document("KasprWebView", "topics-analyze")
+        return view["spec"]["processors"]["operations"][0]["map"]
 
     def test_the_view_awaits_the_async_analysis(self) -> None:
         operation = self._analyze()
@@ -487,11 +482,11 @@ class ResourceObservationEventLoopTests(unittest.TestCase):
             import yaml
         except ImportError:
             self.skipTest("pyyaml is required to read manifests")
-        document = yaml.safe_load((MANIFEST_ROOT / "resource-observation.yaml").read_text())
-        operations = document["spec"]["processors"]["operations"]
+        agent = document("KasprAgent", "resource-observation")
+        operations = agent["spec"]["processors"]["operations"]
         self.assertEqual(
             [operation["name"] for operation in operations],
-            document["spec"]["processors"]["pipeline"],
+            agent["spec"]["processors"]["pipeline"],
         )
         return operations[1]["map"]
 
@@ -549,7 +544,7 @@ PUBLIC_WEBVIEWS = frozenset({"system-version"})
 #: The tail app's views, which have no directory table: each hands the request to one of these, and
 #: the view function behind it (`tail_app/views.py`) authorizes through the control plane first -
 #: `authorize_tail` with this permission (handbook 19). `test_tail_security.py` proves it of each.
-TAIL_APP_LABEL = "materializer-tail"
+TAIL_APP_LABEL = f"{RELEASE}-tail"
 TAIL_AUTHORIZED_HANDLERS = {
     "tail_rows": ("tail_rows_view", "data.query"),
     "tail_head": ("tail_head_view", "data.query"),
@@ -576,12 +571,7 @@ class AuthorizationWiringTests(unittest.TestCase):
     """
 
     def _webviews(self):
-        import yaml
-
-        for manifest in sorted((MANIFEST_ROOT.parent / "webviews").glob("*.yaml")):
-            document = yaml.safe_load(manifest.read_text())
-            if isinstance(document, dict) and document.get("kind") == "KasprWebView":
-                yield document
+        yield from documents("KasprWebView")
 
     def test_the_schema_views_pass_raw_on_to_the_view(self) -> None:
         """`?raw=true` reaches the view, which then adds the Iceberg schema: the tail app seeds a table from
@@ -590,7 +580,7 @@ class AuthorizationWiringTests(unittest.TestCase):
             import yaml  # noqa: F401
         except ImportError:
             self.skipTest("pyyaml is required to read manifests")
-        views = {document["metadata"]["name"]: document for document in self._webviews()}
+        views = {bare(view["metadata"]["name"]): view for view in self._webviews()}
         cases = {
             "materializations-schema": ("get_materialization_schema_view", ("mat-1", "orders")),
             "materializations-schema-version": ("get_materialization_schema_version_view", ("mat-1", "orders", "2")),
@@ -627,22 +617,22 @@ class AuthorizationWiringTests(unittest.TestCase):
         from midstream.identity.permissions import PERMISSION_KEYS
 
         checked = 0
-        for document in self._webviews():
-            name = document["metadata"]["name"]
-            first = document["spec"]["processors"]["operations"][0]
+        for view in self._webviews():
+            name = bare(view["metadata"]["name"])
+            first = view["spec"]["processors"]["operations"][0]
             source = (first.get("map") or {}).get("python", "")
             with self.subTest(webview=name):
                 if name in PUBLIC_WEBVIEWS:
                     self.assertNotIn("directory_table", source)
                     continue
-                if document["metadata"].get("labels", {}).get("kaspr.io/app") == TAIL_APP_LABEL:
+                if view["metadata"].get("labels", {}).get("kaspr.io/app") == TAIL_APP_LABEL:
                     self._check_tail_view(name, first, source)
                     continue
                 checked += 1
                 bindings = {table["paramName"]: table["name"] for table in first.get("tables") or []}
                 self.assertEqual(
                     bindings.get("directory_table"),
-                    "directory",
+                    f"{RELEASE}-directory",
                     f"{name} must bind the directory table to authorize its caller",
                 )
                 calls = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)]
@@ -693,7 +683,7 @@ class AuthorizationWiringTests(unittest.TestCase):
             self.skipTest("pyyaml is required to read manifests")
         from midstream.tail_app.handlers import error_body
 
-        views = {document["metadata"]["name"]: document for document in self._webviews()}
+        views = {bare(view["metadata"]["name"]): view for view in self._webviews()}
         for name in ("tail-rows", "tail-head"):
             response = views[name]["spec"]["response"]
             self.assertEqual(("application/octet-stream", "application/json"), (response["contentType"], response.get("errorContentType")), name)
@@ -711,16 +701,16 @@ class AuthorizationWiringTests(unittest.TestCase):
         except ImportError:
             self.skipTest("pyyaml is required to read manifests")
         tail_views = {
-            document["metadata"]["name"]
-            for document in self._webviews()
-            if document["metadata"].get("labels", {}).get("kaspr.io/app") == TAIL_APP_LABEL
+            bare(view["metadata"]["name"])
+            for view in self._webviews()
+            if view["metadata"].get("labels", {}).get("kaspr.io/app") == TAIL_APP_LABEL
         }
         self.assertEqual({"tail-rows", "tail-head", "tail-health", "tail-members"}, tail_views)
-        for document in self._webviews():
-            if document["metadata"]["name"] in tail_views:
+        for view in self._webviews():
+            if bare(view["metadata"]["name"]) in tail_views:
                 continue
-            source = document["spec"]["processors"]["operations"][0].get("map", {}).get("python", "")
-            self.assertNotIn("tail_app", source, f"{document['metadata']['name']} is the control plane's")
+            source = view["spec"]["processors"]["operations"][0].get("map", {}).get("python", "")
+            self.assertNotIn("tail_app", source, f"{view['metadata']['name']} is the control plane's")
 
     def test_identity_requests_are_keyed_to_one_partition(self) -> None:
         """Every identity request shares one key, so the agent applies them strictly in order."""
@@ -728,18 +718,16 @@ class AuthorizationWiringTests(unittest.TestCase):
             import yaml
         except ImportError:
             self.skipTest("pyyaml is required to read manifests")
-        base = MANIFEST_ROOT.parent
         senders = 0
-        for manifest in sorted(base.rglob("*.yaml")):
-            document = yaml.safe_load(manifest.read_text())
-            if not isinstance(document, dict) or document.get("kind") not in ("KasprWebView", "KasprTask"):
+        for rendered in documents():
+            if rendered.get("kind") not in ("KasprWebView", "KasprTask"):
                 continue
-            for operation in document["spec"]["processors"].get("operations", []):
+            for operation in rendered["spec"]["processors"].get("operations", []):
                 send = operation.get("topicSend") or {}
-                if send.get("name") != "materializer-identity-requests":
+                if send.get("name") != f"{RELEASE}-identity-requests":
                     continue
                 senders += 1
-                with self.subTest(resource=document["metadata"]["name"]):
+                with self.subTest(resource=rendered["metadata"]["name"]):
                     self.assertIn("identity_routing_key()", send["keySelector"]["python"])
         self.assertGreaterEqual(senders, 18)
 
@@ -756,29 +744,28 @@ class DirectoryWiringTests(unittest.TestCase):
         import yaml
 
         bound = {}
-        for manifest in sorted((MANIFEST_ROOT.parent / "agents").glob("*.yaml")):
-            document = yaml.safe_load(manifest.read_text())
-            names = {table["name"] for operation in document["spec"]["processors"]["operations"] for table in operation.get("tables") or []}
-            bound[document["metadata"]["name"]] = names
-        self.assertEqual(["identity-intake"], sorted(name for name, tables in bound.items() if "directory" in tables))
+        for agent in documents("KasprAgent"):
+            names = {table["name"] for operation in agent["spec"]["processors"]["operations"] for table in operation.get("tables") or []}
+            bound[bare(agent["metadata"]["name"])] = names
+        self.assertEqual(["identity-intake"], sorted(name for name, tables in bound.items() if f"{RELEASE}-directory" in tables))
 
     def test_the_identity_agent_answers_claims_on_the_work_topic_keyed_by_materialization(self) -> None:
         import yaml
 
-        document = yaml.safe_load((MANIFEST_ROOT.parent / "agents" / "identity-intake.yaml").read_text())
-        (output,) = document["spec"]["output"]["topics"]
-        self.assertEqual("materialization-work", output["name"])
+        agent = document("KasprAgent", "identity-intake")
+        (output,) = agent["spec"]["output"]["topics"]
+        self.assertEqual(f"{RELEASE}-materialization-work", output["name"])
         self.assertIn('value.get("route") == "work"', output["predicate"]["python"])
         self.assertIn('value["key"]', output["keySelector"]["python"])
 
     def test_request_intake_sends_claims_on_the_identity_key(self) -> None:
         import yaml
 
-        document = yaml.safe_load((MANIFEST_ROOT.parent / "agents" / "request-intake.yaml").read_text())
-        topics = {topic["name"]: topic for topic in document["spec"]["output"]["topics"]}
-        self.assertEqual({"materialization-work", "materializer-identity-requests"}, set(topics))
-        self.assertIn("identity_routing_key()", topics["materializer-identity-requests"]["keySelector"]["python"])
-        self.assertIn('value.get("route") == "identity"', topics["materializer-identity-requests"]["predicate"]["python"])
+        agent = document("KasprAgent", "request-intake")
+        topics = {topic["name"]: topic for topic in agent["spec"]["output"]["topics"]}
+        self.assertEqual({f"{RELEASE}-materialization-work", f"{RELEASE}-identity-requests"}, set(topics))
+        self.assertIn("identity_routing_key()", topics[f"{RELEASE}-identity-requests"]["keySelector"]["python"])
+        self.assertIn('value.get("route") == "identity"', topics[f"{RELEASE}-identity-requests"]["predicate"]["python"])
 
 
 def _called_name(call: ast.Call) -> str | None:
@@ -789,61 +776,31 @@ def _called_name(call: ast.Call) -> str | None:
     return None
 
 
-class OverlayTopicWiringTests(unittest.TestCase):
-    """Every overlay must route scheduled work to the topic its agents actually consume.
+class ValuesWiringTests(unittest.TestCase):
+    """Every installation shape must route scheduled work to the topic its agents actually consume.
 
     A `KasprTask` publishes its trigger regardless of whether anything is listening, so a task
-    left on the base topic name in a name-prefixing overlay looks deployed and healthy while every
+    sending to another name than the one its agent consumes looks deployed and healthy while every
     tick vanishes. `compact-object-manifests` shipped with exactly that bug: the task went to
     `materialization-work` while the maintenance agent consumed `develop-materialization-work`.
 
-    This walks the rendered overlays rather than the patch lists, so it catches a task added to
-    `base` without a matching overlay patch — the shape the mistake actually takes.
+    This walks the chart as rendered with each values file under `charts/midstream/ci/`, so it
+    catches a template that names a topic or table differently from the one that declares it.
     """
 
-    OVERLAY_ROOT = MANIFEST_ROOT.parent.parent
-
-    def _render(self, overlay: Path) -> list[dict]:
-        import yaml
-
-        rendered = subprocess.run(
-            ["kubectl", "kustomize", str(overlay)],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return [doc for doc in yaml.safe_load_all(rendered.stdout) if doc]
-
     def test_task_outputs_match_agent_inputs(self) -> None:
-        try:
-            import yaml  # noqa: F401
-        except ImportError:
-            self.skipTest("pyyaml is required to render overlays")
-        if shutil.which("kubectl") is None:
-            self.skipTest("kubectl is required to render overlays")
-
-        overlays = sorted(
-            path
-            for path in self.OVERLAY_ROOT.iterdir()
-            if path.is_dir() and (path / "kustomization.yaml").exists() and path.name != "base"
-        )
-        self.assertTrue(overlays, "no overlays found to check")
-
-        for overlay in overlays:
-            with self.subTest(overlay=overlay.name):
-                try:
-                    documents = self._render(overlay)
-                except subprocess.CalledProcessError as error:
-                    self.skipTest(f"{overlay.name} does not render: {error.stderr.strip()[:200]}")
+        for values in VALUES_FILES:
+            with self.subTest(values=values.name):
+                rendered = render(values)
 
                 consumed = {
                     document["spec"]["input"]["topic"]["name"]
-                    for document in documents
+                    for document in rendered
                     if document.get("kind") == "KasprAgent"
                     and document.get("spec", {}).get("input", {}).get("topic", {}).get("name")
                 }
 
-                for document in documents:
+                for document in rendered:
                     if document.get("kind") != "KasprTask":
                         continue
                     for operation in document["spec"]["processors"].get("operations", []):
@@ -853,119 +810,85 @@ class OverlayTopicWiringTests(unittest.TestCase):
                         self.assertIn(
                             target,
                             consumed,
-                            f"{overlay.name}: task {document['metadata']['name']} publishes to "
-                            f"{target!r}, which no agent in this overlay consumes — its schedule "
+                            f"{values.name}: task {document['metadata']['name']} publishes to "
+                            f"{target!r}, which no agent in this installation consumes — its schedule "
                             f"would fire into nothing. Consumed topics: {sorted(consumed)}",
                         )
 
     def test_maintenance_hands_its_work_to_the_topic_it_consumes(self) -> None:
         """Its retention purges and lag measurements go to the work topic, for the workflow agent
-        and for itself; on a base name the overlay does not use, every one would vanish."""
-        try:
-            import yaml  # noqa: F401
-        except ImportError:
-            self.skipTest("pyyaml is required to render overlays")
-        if shutil.which("kubectl") is None:
-            self.skipTest("kubectl is required to render overlays")
-
-        overlays = sorted(
-            path
-            for path in self.OVERLAY_ROOT.iterdir()
-            if path.is_dir() and (path / "kustomization.yaml").exists() and path.name != "base"
-        )
-        for overlay in overlays:
-            with self.subTest(overlay=overlay.name):
-                try:
-                    documents = self._render(overlay)
-                except subprocess.CalledProcessError as error:
-                    self.skipTest(f"{overlay.name} does not render: {error.stderr.strip()[:200]}")
+        and for itself; on a name no agent consumes, every one would vanish."""
+        for values in VALUES_FILES:
+            with self.subTest(values=values.name):
+                rendered = render(values)
                 maintenance = next(
                     document
-                    for document in documents
+                    for document in rendered
                     if document.get("kind") == "KasprAgent" and document["metadata"]["name"].endswith("maintenance")
                 )
                 consumed = maintenance["spec"]["input"]["topic"]["name"]
                 worker = next(
                     document
-                    for document in documents
+                    for document in rendered
                     if document.get("kind") == "KasprAgent" and document["metadata"]["name"].endswith("maintenance-worker")
                 )
                 tail_worker = next(
-                    document
-                    for document in documents
-                    if document.get("kind") == "KasprAgent" and document["metadata"]["name"].endswith("tail-worker")
+                    (
+                        document
+                        for document in rendered
+                        if document.get("kind") == "KasprAgent" and document["metadata"]["name"].endswith("tail-worker")
+                    ),
+                    None,
                 )
+                tail_topic = maintenance["spec"]["output"]["topics"][2]["name"]
+                if tail_worker is not None:
+                    tail_topic = tail_worker["spec"]["input"]["topic"]["name"]
+                else:
+                    self.assertTrue(tail_topic.endswith("-tail-requests"), f"{values.name}: {tail_topic}")
                 self.assertEqual(
                     [topic["name"] for topic in maintenance["spec"]["output"]["topics"]],
-                    [consumed, worker["spec"]["input"]["topic"]["name"], tail_worker["spec"]["input"]["topic"]["name"]],
-                    f"{overlay.name}: the maintenance agent consumes {consumed!r} but sends its work elsewhere, "
+                    [consumed, worker["spec"]["input"]["topic"]["name"], tail_topic],
+                    f"{values.name}: the maintenance agent consumes {consumed!r} but sends its work elsewhere, "
                     "or ticks tables on a topic the maintenance or tail app does not read",
                 )
 
     def test_the_maintenance_app_owns_its_agent_and_task(self) -> None:
-        """An overlay's blanket label patch once claimed every agent for the control plane: the
+        """A blanket label once claimed every agent for the control plane: the
         maintenance app's agent would then run in the control plane, and the app would have none."""
-        try:
-            import yaml  # noqa: F401
-        except ImportError:
-            self.skipTest("pyyaml is required to render overlays")
-        if shutil.which("kubectl") is None:
-            self.skipTest("kubectl is required to render overlays")
-
-        overlays = sorted(
-            path
-            for path in self.OVERLAY_ROOT.iterdir()
-            if path.is_dir() and (path / "kustomization.yaml").exists() and path.name != "base"
-        )
-        for overlay in overlays:
-            with self.subTest(overlay=overlay.name):
-                try:
-                    documents = self._render(overlay)
-                except subprocess.CalledProcessError as error:
-                    self.skipTest(f"{overlay.name} does not render: {error.stderr.strip()[:200]}")
-                apps = {document["metadata"]["name"] for document in documents if document.get("kind") == "KasprApp"}
-                maintenance_app = next(name for name in apps if name.endswith("materializer-maintenance"))
-                for document in documents:
+        for values in VALUES_FILES:
+            with self.subTest(values=values.name):
+                rendered = render(values)
+                apps = {document["metadata"]["name"] for document in rendered if document.get("kind") == "KasprApp"}
+                maintenance_app = next(name for name in apps if name.endswith("-maintenance"))
+                for document in rendered:
                     if document.get("kind") not in ("KasprAgent", "KasprTask", "KasprWebView", "KasprTable"):
                         continue
                     name = document["metadata"]["name"]
                     owner = document["metadata"].get("labels", {}).get("kaspr.io/app")
-                    self.assertIn(owner, apps, f"{overlay.name}: {name} belongs to no app")
+                    self.assertIn(owner, apps, f"{values.name}: {name} belongs to no app")
                     ours = name.endswith(("maintenance-worker", "maintenance-step"))
-                    self.assertEqual(ours, owner == maintenance_app, f"{overlay.name}: {name} is {owner}'s")
+                    self.assertEqual(ours, owner == maintenance_app, f"{values.name}: {name} is {owner}'s")
 
     def test_the_tail_app_owns_its_agent_task_and_views_and_reaches_this_environment(self) -> None:
         """The tail app's resources are its own, it reads the topics the control plane ticks and the
         committers report on, and it calls this environment's control plane with its credential."""
-        try:
-            import yaml  # noqa: F401
-        except ImportError:
-            self.skipTest("pyyaml is required to render overlays")
-        if shutil.which("kubectl") is None:
-            self.skipTest("kubectl is required to render overlays")
-
-        overlays = sorted(
-            path
-            for path in self.OVERLAY_ROOT.iterdir()
-            if path.is_dir() and (path / "kustomization.yaml").exists() and path.name != "base"
-        )
-        for overlay in overlays:
-            with self.subTest(overlay=overlay.name):
-                try:
-                    documents = self._render(overlay)
-                except subprocess.CalledProcessError as error:
-                    self.skipTest(f"{overlay.name} does not render: {error.stderr.strip()[:200]}")
-                apps = {document["metadata"]["name"]: document for document in documents if document.get("kind") == "KasprApp"}
-                tail_app = next(name for name in apps if name.endswith("materializer-tail"))
-                control_plane = next(name for name in apps if name.endswith("materializer-control-plane"))
+        for values in VALUES_FILES:
+            with self.subTest(values=values.name):
+                rendered = render(values)
+                apps = {document["metadata"]["name"]: document for document in rendered if document.get("kind") == "KasprApp"}
+                tail_app = next((name for name in apps if name.endswith("-tail")), None)
+                control_plane = next(name for name in apps if name.endswith("-control-plane"))
                 ours = ("tail-worker", "tail-step", "tail-rows", "tail-head", "tail-health", "tail-members")
-                for document in documents:
+                if tail_app is None:
+                    self.assertFalse([d["metadata"]["name"] for d in rendered if d["metadata"]["name"].endswith(ours)], f"{values.name}: tail resources without the tail app")
+                    continue
+                for document in rendered:
                     if document.get("kind") not in ("KasprAgent", "KasprTask", "KasprWebView", "KasprTable"):
                         continue
                     name = document["metadata"]["name"]
                     owner = document["metadata"].get("labels", {}).get("kaspr.io/app")
-                    self.assertEqual(name.endswith(ours), owner == tail_app, f"{overlay.name}: {name} is {owner}'s")
-                agents = {document["metadata"]["name"]: document for document in documents if document.get("kind") == "KasprAgent"}
+                    self.assertEqual(name.endswith(ours), owner == tail_app, f"{values.name}: {name} is {owner}'s")
+                agents = {document["metadata"]["name"]: document for document in rendered if document.get("kind") == "KasprAgent"}
                 tail_worker = next(document for name, document in agents.items() if name.endswith("tail-worker"))
                 table_events = next(document for name, document in agents.items() if name.endswith("table-events"))
                 env = {item["name"]: item for item in apps[tail_app]["spec"]["template"]["kasprContainer"]["env"]}
@@ -978,54 +901,39 @@ class OverlayTopicWiringTests(unittest.TestCase):
                 self.assertEqual(
                     cp_env["AUTH_SERVICE_TOKEN"]["valueFrom"]["secretKeyRef"],
                     env["TAIL_SERVICE_TOKEN"]["valueFrom"]["secretKeyRef"],
-                    f"{overlay.name}: the tail app reads another service credential than the control plane",
+                    f"{values.name}: the tail app reads another service credential than the control plane",
                 )
                 self.assertEqual(
                     apps[control_plane]["spec"]["pythonPackages"]["packages"],
                     apps[tail_app]["spec"]["pythonPackages"]["packages"],
-                    f"{overlay.name}: the tail app installs another package than the control plane",
+                    f"{values.name}: the tail app installs another package than the control plane",
                 )
 
-    def test_webviews_use_the_overlay_table_and_request_topic(self) -> None:
-        """A WebView left on a base name reads an empty table and sends requests nobody handles.
+    def test_webviews_use_the_installations_tables_and_request_topics(self) -> None:
+        """A WebView on the wrong table or topic name reads an empty table and sends requests nobody handles.
 
-        Overlays patch each WebView's table and request topic by name, so a WebView added to `base`
-        without its patch renders fine and accepts requests — every one of which then vanishes.
+        Every table and request topic derives from the release, so a template that spells one of them
+        differently renders fine and accepts requests — every one of which then vanishes.
         """
-        try:
-            import yaml  # noqa: F401
-        except ImportError:
-            self.skipTest("pyyaml is required to render overlays")
-        if shutil.which("kubectl") is None:
-            self.skipTest("kubectl is required to render overlays")
-
-        overlays = sorted(
-            path
-            for path in self.OVERLAY_ROOT.iterdir()
-            if path.is_dir() and (path / "kustomization.yaml").exists() and path.name != "base"
-        )
-        for overlay in overlays:
-            with self.subTest(overlay=overlay.name):
-                try:
-                    documents = self._render(overlay)
-                except subprocess.CalledProcessError as error:
-                    self.skipTest(f"{overlay.name} does not render: {error.stderr.strip()[:200]}")
+        for values in VALUES_FILES:
+            with self.subTest(values=values.name):
+                rendered = render(values)
 
                 tables = {
                     document["metadata"]["name"]
-                    for document in documents
+                    for document in rendered
                     if document.get("kind") == "KasprTable"
                 }
                 consumed = {
                     document["spec"]["input"]["topic"]["name"]
-                    for document in documents
+                    for document in rendered
                     if document.get("kind") == "KasprAgent"
                     and document.get("spec", {}).get("input", {}).get("topic", {}).get("name")
                 }
                 # The runtime control topic is consumed by every runtime's settings agent, which the
                 # control plane renders itself: what it consumes is what the app's environment names.
-                consumed |= _runtime_consumed_topics(documents)
-                for document in documents:
+                consumed |= _runtime_consumed_topics(rendered)
+                for document in rendered:
                     if document.get("kind") not in ("KasprWebView", "KasprAgent"):
                         continue
                     name = document["metadata"]["name"]
@@ -1035,8 +943,8 @@ class OverlayTopicWiringTests(unittest.TestCase):
                             self.assertIn(
                                 table.get("name"),
                                 tables,
-                                f"{overlay.name}: {kind} {name} reads table {table.get('name')!r}, "
-                                f"which this overlay does not define. Tables: {sorted(tables)}",
+                                f"{values.name}: {kind} {name} reads table {table.get('name')!r}, "
+                                f"which this installation does not define. Tables: {sorted(tables)}",
                             )
                         if kind == "agent":
                             continue
@@ -1045,8 +953,8 @@ class OverlayTopicWiringTests(unittest.TestCase):
                             self.assertIn(
                                 target,
                                 consumed,
-                                f"{overlay.name}: webview {name} sends to {target!r}, which no agent "
-                                f"in this overlay consumes. Consumed topics: {sorted(consumed)}",
+                                f"{values.name}: webview {name} sends to {target!r}, which no agent "
+                                f"in this installation consumes. Consumed topics: {sorted(consumed)}",
                             )
 
 
@@ -1106,45 +1014,28 @@ class VerticalPodAutoscalingTests(unittest.TestCase):
     """Every Kaspr app of the deployment has its CPU request set from its use (handbook 02 §2.10c).
 
     That is the control plane, the maintenance and tail apps, and the runtime spec every runtime is
-    rendered from, in every overlay: the dev overlay replaces the control plane's environment, so it
-    carries a runtime spec of its own. Each app must be resizable in place: the CPU only, as
+    rendered from, with every values file. Each app must be resizable in place: the CPU only, as
     kaspr-operator restarts the container on a memory resize; the requests only, so the limits stay
     the ceilings; and a ceiling under the CPU limit, since a request equal to every limit makes a pod
     Guaranteed, a QoS class no resize may change.
     """
 
-    OVERLAY_ROOT = MANIFEST_ROOT.parent.parent
-
     def test_every_app_has_its_cpu_request_set_from_use(self) -> None:
-        try:
-            import yaml
-        except ImportError:
-            self.skipTest("pyyaml is required to render overlays")
-        if shutil.which("kubectl") is None:
-            self.skipTest("kubectl is required to render overlays")
+        import yaml
 
-        overlays = sorted(
-            path
-            for path in self.OVERLAY_ROOT.iterdir()
-            if path.is_dir() and (path / "kustomization.yaml").exists() and path.name != "base"
-        )
-        self.assertTrue(overlays, "no overlays found to check")
-        for overlay in overlays:
-            rendered = subprocess.run(["kubectl", "kustomize", str(overlay)], capture_output=True, text=True)
-            if rendered.returncode != 0:
-                self.skipTest(f"{overlay.name} does not render: {rendered.stderr.strip()[:200]}")
+        for values in VALUES_FILES:
             specs = {}
-            for document in yaml.safe_load_all(rendered.stdout):
-                if not document or document.get("kind") != "KasprApp":
+            for document in render(values):
+                if document.get("kind") != "KasprApp":
                     continue
                 name = document["metadata"]["name"]
                 specs[name] = document["spec"]
                 for item in document["spec"]["template"].get("kasprContainer", {}).get("env", []):
                     if item["name"] == "CONTROL_PLANE_RUNTIME_APP_SPEC":
                         specs[f"{name}'s runtime spec"] = yaml.safe_load(item["value"])
-            self.assertTrue(any(name.endswith("runtime spec") for name in specs), f"{overlay.name}: no runtime spec")
+            self.assertTrue(any(name.endswith("runtime spec") for name in specs), f"{values.name}: no runtime spec")
             for name, spec in specs.items():
-                with self.subTest(overlay=overlay.name, app=name):
+                with self.subTest(values=values.name, app=name):
                     autoscaler = spec.get("verticalPodAutoscaler") or {}
                     self.assertIs(autoscaler.get("enabled"), True)
                     self.assertEqual(autoscaler.get("updateMode"), "InPlaceOrRecreate")
@@ -1159,7 +1050,7 @@ class VerticalPodAutoscalingTests(unittest.TestCase):
                     self.assertLess(
                         highest,
                         limit,
-                        f"{overlay.name}: {name} may be given a CPU request of {highest}m against a limit of "
+                        f"{values.name}: {name} may be given a CPU request of {highest}m against a limit of "
                         f"{limit}m; at the limit, beside a memory request at its own, the pod turns "
                         "Guaranteed and can no longer be resized in place",
                     )

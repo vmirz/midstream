@@ -1,0 +1,35 @@
+{{- if .Values.tail.enabled }}
+apiVersion: kaspr.io/v1alpha1
+kind: KasprAgent
+metadata:
+  name: {{ include "midstream.fullname" . }}-tail-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.tail" . }}
+spec:
+  description: Take the control plane's ticks and cancels for the tables this member owns.
+  # Keyed by table, so each table is one member's: the partitions bound how many members share
+  # them, and moving a partition moves its tables.
+  input:
+    topic:
+      name: {{ include "midstream.fullname" . }}-tail-requests
+      valueSerializer: json
+      partitions: {{ .Values.tail.requestPartitions }}
+    declare: true
+  processors:
+    pipeline:
+      - take-message
+    init:
+      python: |
+        from midstream.tail_app.handlers import handle_tail_message
+    operations:
+      - name: take-message
+        map:
+          entrypoint: take
+          python: |
+            # Answers at once and sends nothing: the tail reads on the tail-step task's loops. The
+            # partition the tick arrived on is checked against the one its key hashes to.
+            def take(value):
+                handle_tail_message(value, context=context)
+                return value
+{{- end }}

@@ -1,0 +1,221 @@
+# Midstream: the control plane, the maintenance app, the tail app and the console, on Kaspr.
+#
+# Every resource, topic and table is named after the release: <release>-control-plane,
+# <release>-maintenance-requests, <release>-state, and so on, so one namespace can hold several
+# installations and nothing in the chart carries a fixed name. `fullnameOverride` replaces the
+# release name in every derived name. The handbook (docs/handbook/02-deployment-and-manifests.md)
+# explains each resource; docs/install.md walks through a first installation.
+
+fullnameOverride: ""
+
+# The Python package every Kaspr app installs when its pod starts (handbook 02 §2.3). `git` installs
+# this repository at `ref`; `index` installs `midstream==<version>` from PyPI or the index given.
+package:
+  source: git
+  git:
+    repository: https://github.com/vmirz/midstream.git
+    ref: main
+  index:
+    version: ""              # the release to install; empty takes the chart's appVersion
+    url: ""                  # an index other than PyPI
+    extraUrls: []
+    credentialsSecret: ""    # a Secret with `username` and `password` for a private index
+  installPolicy:
+    retries: 3
+    timeout: 600
+    onFailure: block
+  # Kaspr's shared package cache, a PersistentVolumeClaim per app (`pythonPackages.cache`), for
+  # example {size: 1Gi, storageClass: fast}. Empty takes the operator's defaults.
+  cache: {}
+
+kaspr:
+  version: ""                # the Kaspr image version; empty takes the operator's default
+  bootstrapServers: ""       # required: the Kafka bootstrap address every app and runtime uses
+  # Required: Kaspr's Kafka client authentication, the same for every app and runtime. The type is
+  # scram-sha-512, scram-sha-256 or plain, with the password in a Secret:
+  #   authentication:
+  #     type: scram-sha-512
+  #     username: midstream
+  #     passwordSecret: {secretName: midstream-kafka, passwordKey: password}
+  authentication: {}
+  storageClass: ""           # for every persistent claim; empty takes the cluster's default
+  nodeSelector: {}
+  tolerations: []
+
+gcs:
+  # A Secret holding a service-account key under `credentialsKey`. Every app and runtime mounts it
+  # and reads it through GOOGLE_APPLICATION_CREDENTIALS. Empty: the pods use application default
+  # credentials, for example workload identity.
+  credentialsSecret: ""
+  credentialsKey: google_application_credentials.json
+
+auth:
+  # The Secret with `signing-key`, `previous-signing-key`, `service-token`, `bootstrap-admin-email`
+  # and `bootstrap-admin-password` (handbook 18 §18.11). Empty names <release>-auth. Every key is
+  # optional to Kubernetes, but without `signing-key` nobody can sign in.
+  existingSecret: ""
+
+controlPlane:
+  replicas: 1
+  webPort: 6065
+  storage:
+    size: 1Gi
+  resources:
+    requests:
+      cpu: 0.5
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 512Mi
+  # The CPU request follows use, resized in place; the limits stay the ceilings and the ceiling
+  # stays under the CPU limit, so the pod never turns Guaranteed (handbook 02 §2.10c).
+  verticalPodAutoscaler:
+    enabled: true
+    updateMode: InPlaceOrRecreate
+    controlledResources: [cpu]
+    controlledValues: RequestsOnly
+    minAllowed:
+      cpu: 100m
+    maxAllowed:
+      cpu: 900m
+  # The settings a deployment fixes (handbook 03 §3.2, 17 §17.3); each is CONTROL_PLANE_<KEY>.
+  settings:
+    defaultDestinationUri: ""   # gs://bucket/path the tables go under; set here or on the Settings page
+    storagePrefix: ""           # the directory under the destination; empty takes the release name
+    runtimeNamePrefix: ""       # runtimes are <prefix>-<materialization id>; empty takes the release name
+    runtimeTemplateVersion: v1
+    defaultListLimit: "30"
+    deletedRetentionHours: "168"
+    defaultRuntimeStorageSize: 64Mi
+    defaultRuntimeReplicas: "1"
+  protocolLogging: true
+  extraEnv: []                  # more entries for the container's env
+  # The spec every materialization's runtime is rendered from (handbook 02 §2.3, 10 §10.1): the
+  # control plane sets each runtime's replicas, storage size and package pin on top of it.
+  runtime:
+    resources:
+      requests:
+        cpu: 0.5
+        memory: 1Gi
+      limits:
+        cpu: 2
+        memory: 1Gi
+    verticalPodAutoscaler:
+      enabled: true
+      updateMode: InPlaceOrRecreate
+      controlledResources: [cpu]
+      controlledValues: RequestsOnly
+      minAllowed:
+        cpu: 100m
+      maxAllowed:
+        cpu: 1500m
+    config:
+      topicAllowDeclare: true
+      brokerRebalanceTimeout: 300
+    protocolLogging: true
+    extraEnv: []
+
+# Compaction, snapshot expiry and orphan cleanup of every table (handbook 02 §2.10a): always deployed,
+# since tables left unmaintained grow small files and old snapshots without end.
+maintenance:
+  replicas: 1
+  requestPartitions: 6          # bounds the members that share the tables; changing it moves every table
+  maxConcurrentJobs: 1
+  storage:
+    size: 1Gi
+  resources:
+    requests:
+      cpu: 0.5
+      memory: 1Gi
+    limits:
+      cpu: 2
+      memory: 3Gi
+  verticalPodAutoscaler:
+    enabled: true
+    updateMode: InPlaceOrRecreate
+    controlledResources: [cpu]
+    controlledValues: RequestsOnly
+    minAllowed:
+      cpu: 100m
+    maxAllowed:
+      cpu: 1500m
+  protocolLogging: true
+  extraEnv: []
+
+# The live tail: each watched table's newest records, served to the console (handbook 19).
+tail:
+  enabled: true
+  replicas: 2
+  webPort: 6065
+  requestPartitions: 64         # bounds the members and routes the tables; changing it moves every table
+  memoryBudgetBytes: 2684354560
+  storage:
+    size: 1Gi
+  resources:
+    requests:
+      cpu: 1
+      memory: 2Gi
+    limits:
+      cpu: 2
+      memory: 4Gi
+  verticalPodAutoscaler:
+    enabled: true
+    updateMode: InPlaceOrRecreate
+    controlledResources: [cpu]
+    controlledValues: RequestsOnly
+    minAllowed:
+      cpu: 100m
+    maxAllowed:
+      cpu: 1500m
+  protocolLogging: true
+  extraEnv: []
+
+# The web console (console/docs). It reaches the control plane and the tail app through their
+# Services and reads the tables with the GCS credentials above.
+console:
+  enabled: true
+  image:
+    repository: ghcr.io/vmirz/midstream-console
+    tag: ""                     # empty takes the chart's appVersion
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  replicas: 1
+  port: 8787
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  # CONSOLE_* variables (console/docs/03-configuration-reference.md). The chart sets PORT, HOST,
+  # CONTROL_PLANE_URL, CONSOLE_TAIL_URL, CONSOLE_SERVICE_TOKEN and CONSOLE_DATA_DIR itself.
+  env: {}
+  hmacSecret: ""                # a Secret with CONSOLE_GCS_HMAC_KEY_ID and CONSOLE_GCS_HMAC_SECRET: direct gs:// scans
+  persistence:
+    enabled: false              # keep the Parquet cache across restarts
+    size: 10Gi
+    storageClass: ""
+  nodeSelector: {}
+  tolerations: []
+  service:
+    type: ClusterIP
+
+# How people and engines reach the deployment, off by default: a Gateway API HTTPRoute or an
+# Ingress. `/catalog` goes to the control plane's Iceberg REST catalog, everything else to the console.
+route:
+  enabled: false
+  hostnames: []
+  parentRefs: []                # for example [{name: ingress-gateway, namespace: istio-system, sectionName: https}]
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  tls: []
+
+rbac:
+  create: true                  # the Role the control plane needs to create runtimes
+
+tables:
+  partitions: 3                 # the control plane's four global tables

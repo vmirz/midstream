@@ -1,0 +1,31 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprAgent
+metadata:
+  name: {{ include "midstream.fullname" . }}-runtime-status
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  description: Applies runtime-emitted status and progress updates to persisted control-plane status.
+  input:
+    topic:
+      name: {{ include "midstream.fullname" . }}-materialization-status
+      valueSerializer: json
+    declare: true
+  processors:
+    pipeline:
+      - apply-runtime-status
+    init:
+      python: |
+        from midstream.handlers.runtime_status import handle_runtime_status
+    operations:
+      - name: apply-runtime-status
+        tables:
+          - name: {{ include "midstream.fullname" . }}-state
+            paramName: control_plane_table
+        map:
+          entrypoint: apply_runtime_status
+          python: |
+            def apply_runtime_status(value, control_plane_table):
+                handle_runtime_status(value, control_plane_table)
+                return value

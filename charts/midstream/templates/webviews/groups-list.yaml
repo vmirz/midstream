@@ -1,0 +1,37 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-groups-list
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: groups-list
+  description: "List every group, built-in groups first, with member and role counts."
+  request:
+    method: GET
+    path: /groups
+  processors:
+    pipeline:
+      - list-groups
+    operations:
+      - name: list-groups
+        tables:
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+        map:
+          entrypoint: list_groups
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.identity import list_groups_view
+
+            def list_groups(request, directory_table):
+                principal = authorize(request, directory_table, "groups.view")
+                return list_groups_view(directory_table, principal)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

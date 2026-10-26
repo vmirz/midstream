@@ -6,15 +6,15 @@ The API is exposed by `KasprWebView` custom resources attached to the control-pl
 - **Port:** `6065` (`spec.config.webPort`)
 - **Base path:** `/` (`spec.config.webBasePath`)
 - **Content type:** `application/json` on every response
-- **Service (dev):** `develop-materializer-control-plane-app-api`
+- **Service (dev):** `midstream-control-plane-app-api`
 
 Local access:
 
 ```bash
-kubectl -n midstream port-forward svc/develop-materializer-control-plane-app-api 6065:6065
+kubectl -n midstream port-forward svc/midstream-control-plane-app-api 6065:6065
 ```
 
-The tail app's endpoints, under `/tail/v1` on its own Service (`develop-materializer-tail-app-api`),
+The tail app's endpoints, under `/tail/v1` on its own Service (`midstream-tail-app-api`),
 are not part of this API: they answer the console alone and may change between releases
 ([19 §19.9](./19-live-tail.md)).
 
@@ -34,46 +34,46 @@ is no session.
 | `GET` | `/materializations/{materialization_id}/tables/{table_name}/schema/versions` | `materializations-schema-versions` | as above | 200 | no | no |
 | `GET` | `/materializations/{materialization_id}/tables/{table_name}/schema/versions/{schema_id}` | `materializations-schema-version` | as above | 200 | no | no |
 | `GET` | `/materializations/{materialization_id}/tables/{table_name}` | `materializations-table` | `materializations.view_details` | 200 | no | no |
-| `POST` | `/materializations/{materialization_id}/maintenance` | `materializations-maintenance` | `materializations.maintain` | **202** | **no** | `materializer-maintenance-requests`, one message per table |
+| `POST` | `/materializations/{materialization_id}/maintenance` | `materializations-maintenance` | `materializations.maintain` | **202** | **no** | `<release>-maintenance-requests`, one message per table |
 | `POST` | `/materializations/{materialization_id}/stop` | `materializations-stop` | `materializations.stop` | **202** | **no** | `materialization-requests` |
 | `POST` | `/materializations/{materialization_id}/resume` | `materializations-resume` | `materializations.resume` | **202** | **no** | `materialization-requests` |
 | `PATCH` | `/materializations/{materialization_id}` | `materializations-update` | `materializations.edit`, and `dataset.write` on each dataset a change of topics touches | **202** | **no** | `materialization-requests` |
 | `DELETE` | `/materializations/{materialization_id}` | `materializations-delete` | `materializations.delete`, and `dataset.write` on each dataset it has tables in | **202** | **no** | `materialization-requests` |
 | `GET` | `/datasets` | `datasets-list` | `datasets.view` | 200 | no | no |
-| `POST` | `/datasets` | `datasets-create` | `datasets.create` | **202** | **no** | `materializer-identity-requests` |
+| `POST` | `/datasets` | `datasets-create` | `datasets.create` | **202** | **no** | `<release>-identity-requests` |
 | `GET` | `/datasets/{dataset}` | `datasets-detail` | `datasets.view` | 200 | no | no |
-| `PATCH`, `DELETE` | `/datasets/{dataset}` | `datasets-update`, `datasets-delete` | `dataset.manage` on it | **202** | **no** | `materializer-identity-requests` |
+| `PATCH`, `DELETE` | `/datasets/{dataset}` | `datasets-update`, `datasets-delete` | `dataset.manage` on it | **202** | **no** | `<release>-identity-requests` |
 | `GET` | `/datasets/{dataset}/grants` | `datasets-grants` | `dataset.manage` on it | 200 | no | no |
-| `PUT` | `/datasets/{dataset}/grants/{principal_id}` | `datasets-grant-update` | `dataset.manage` on it | **202** | **no** | `materializer-identity-requests` |
+| `PUT` | `/datasets/{dataset}/grants/{principal_id}` | `datasets-grant-update` | `dataset.manage` on it | **202** | **no** | `<release>-identity-requests` |
 | `GET` | `/datasets/{dataset}/tables/{table}` | `datasets-table` | `datasets.view` | 200 | no | no |
 | `GET` | `/topics` | `topics-list` | `topics.view` | 200 | no | no |
 | `POST` | `/topics/analyze` | `topics-analyze` | `topics.view` | 200 | no | no |
 | `GET` | `/system/version` | `system-version` | — (public) | 200 | no | no |
 | `GET` | `/system/settings` | `system-settings` | `materializations.view` | 200 | no | no |
 | `GET` | `/settings/{scope}` | `settings-read` | `settings.view` | 200 | no | no |
-| `PATCH` | `/settings/{scope}` | `settings-update` | `settings.manage` | **202** | **no** | `materializer-settings-requests` |
+| `PATCH` | `/settings/{scope}` | `settings-update` | `settings.manage` | **202** | **no** | `<release>-settings-requests` |
 | `GET` | `/settings/{scope}/history` | `settings-history` | `settings.view` | 200 | no | no |
-| `POST` | `/auth/login` | `auth-login` | — | 200 | no | `materializer-identity-requests` |
-| `POST` | `/auth/refresh` | `auth-refresh` | session | 200 | no | `materializer-identity-requests` |
-| `POST` | `/auth/logout` | `auth-logout` | any | 200 | no | `materializer-identity-requests` |
+| `POST` | `/auth/login` | `auth-login` | — | 200 | no | `<release>-identity-requests` |
+| `POST` | `/auth/refresh` | `auth-refresh` | session | 200 | no | `<release>-identity-requests` |
+| `POST` | `/auth/logout` | `auth-logout` | any | 200 | no | `<release>-identity-requests` |
 | `GET` | `/auth/session` | `auth-session` | any | 200 | no | no |
 | `GET` | `/auth/sessions` | `auth-sessions` | session | 200 | no | no |
-| `POST` | `/auth/password` | `auth-password` | session | **202** | **no** | `materializer-identity-requests` |
+| `POST` | `/auth/password` | `auth-password` | session | **202** | **no** | `<release>-identity-requests` |
 | `GET` | `/auth/tokens` | `auth-tokens-list` | session | 200 | no | no |
-| `POST` | `/auth/tokens` | `auth-tokens-create` | `catalog.read` on a dataset | **202** | **no** | `materializer-identity-requests` |
-| `DELETE` | `/auth/tokens/{token_id}` | `auth-tokens-revoke` | session: their own token, or anyone's with `users.manage` | **202** | **no** | `materializer-identity-requests` |
+| `POST` | `/auth/tokens` | `auth-tokens-create` | `catalog.read` on a dataset | **202** | **no** | `<release>-identity-requests` |
+| `DELETE` | `/auth/tokens/{token_id}` | `auth-tokens-revoke` | session: their own token, or anyone's with `users.manage` | **202** | **no** | `<release>-identity-requests` |
 | `GET` | `/users` | `users-list` | `users.view` | 200 | no | no |
 | `GET` | `/users/{user_id}` | `users-detail` | `users.view_details` | 200 | no | no |
-| `POST` | `/users` | `users-create` | `users.manage` | **202** | **no** | `materializer-identity-requests` |
-| `PATCH` | `/users/{user_id}` | `users-update` | `users.manage` | **202** | **no** | `materializer-identity-requests` |
-| `DELETE` | `/users/{user_id}` | `users-delete` | `users.manage` | **202** | **no** | `materializer-identity-requests` |
-| `POST` | `/users/{user_id}/password` | `users-password` | `users.manage` | **202** | **no** | `materializer-identity-requests` |
-| `POST` | `/users/{user_id}/sign-out` | `users-sign-out` | `users.manage` | **202** | **no** | `materializer-identity-requests` |
-| `POST` | `/users/{user_id}/unlock` | `users-unlock` | `users.manage` | **202** | **no** | `materializer-identity-requests` |
+| `POST` | `/users` | `users-create` | `users.manage` | **202** | **no** | `<release>-identity-requests` |
+| `PATCH` | `/users/{user_id}` | `users-update` | `users.manage` | **202** | **no** | `<release>-identity-requests` |
+| `DELETE` | `/users/{user_id}` | `users-delete` | `users.manage` | **202** | **no** | `<release>-identity-requests` |
+| `POST` | `/users/{user_id}/password` | `users-password` | `users.manage` | **202** | **no** | `<release>-identity-requests` |
+| `POST` | `/users/{user_id}/sign-out` | `users-sign-out` | `users.manage` | **202** | **no** | `<release>-identity-requests` |
+| `POST` | `/users/{user_id}/unlock` | `users-unlock` | `users.manage` | **202** | **no** | `<release>-identity-requests` |
 | `GET` | `/groups`, `/groups/{group_id}` | `groups-list`, `groups-detail` | `groups.view` | 200 | no | no |
-| `POST`, `PATCH`, `DELETE` | `/groups`, `/groups/{group_id}` | `groups-create`, `groups-update`, `groups-delete` | `groups.manage` | **202** | **no** | `materializer-identity-requests` |
+| `POST`, `PATCH`, `DELETE` | `/groups`, `/groups/{group_id}` | `groups-create`, `groups-update`, `groups-delete` | `groups.manage` | **202** | **no** | `<release>-identity-requests` |
 | `GET` | `/roles`, `/roles/{role_id}` | `roles-list`, `roles-detail` | `roles.view` | 200 | no | no |
-| `POST`, `PATCH`, `DELETE` | `/roles`, `/roles/{role_id}` | `roles-create`, `roles-update`, `roles-delete` | `roles.manage` | **202** | **no** | `materializer-identity-requests` |
+| `POST`, `PATCH`, `DELETE` | `/roles`, `/roles/{role_id}` | `roles-create`, `roles-update`, `roles-delete` | `roles.manage` | **202** | **no** | `<release>-identity-requests` |
 | `GET` | `/permissions` | `permissions-list` | session | 200 | no | no |
 | `GET` | `/audit` | `audit-list` | `audit.view` | 200 | no | no |
 | `GET` | `/identity/requests/{request_id}` | `identity-request` | any (§4.13.4) | 200 | no | no |
@@ -96,9 +96,9 @@ template rendered a paused state — so it never paused anything; `stop` replace
 > read-after-write consistency.
 >
 > `PATCH /settings/{scope}` follows the same rule: it publishes to
-> `materializer-settings-requests`, and the `settings-intake` agent writes the `settings` table.
+> `<release>-settings-requests`, and the `settings-intake` agent writes the `settings` table.
 > See §4.9.3. So do the user, group, role, dataset and grant changes and `POST /auth/password`,
-> which publish to `materializer-identity-requests` for the `identity-intake` agent; see §4.13 and
+> which publish to `<release>-identity-requests` for the `identity-intake` agent; see §4.13 and
 > §4.15. A create, and an edit adding topics, are also accepted before their tables' names are
 > claimed: `claim_request_id` is what a client waits on (§4.5).
 
@@ -129,7 +129,7 @@ def _new_identifier(prefix: str) -> str:
 - `request_id` → `req-<12 hex chars>`, e.g. `req-9f8e7d6c5b4a`
 
 Both can be injected in tests via keyword arguments (`materialization_id=`, `request_id=`),
-but the WebView manifests never pass them, so in production they are always generated.
+but the WebView templates never pass them, so in production they are always generated.
 
 ---
 
@@ -723,7 +723,7 @@ reports.
   "last_error": null,
   "state": "active",
   "maintenance_job": { "job": "compaction", "started_at": "2026-10-18T12:15:00Z", "partition": "2026-10-18",
-                       "attempt": 1, "member_id": "develop-materializer-maintenance-app-0" },
+                       "attempt": 1, "member_id": "midstream-maintenance-app-0" },
   "live": { "member_id": "develop-mat-a1b2c3d4e5f6-app-0", "pending_files": 2 },
   "readable": true,
   "queryable": true
@@ -745,7 +745,7 @@ must keep them as text (the console does, web 06).
 Run a table maintenance job now:
 `{"job": "compaction" | "expire_snapshots" | "orphan_cleanup", "table": "<table name>"}`. With
 `table` the job runs on that table, written or kept; without it, on every table, kept ones included.
-The WebView publishes one `maintenance_request` per table on `materializer-maintenance-requests`,
+The WebView publishes one `maintenance_request` per table on `<release>-maintenance-requests`,
 keyed by the table (06); the maintenance app runs each at its next opportunity, ahead of scheduled
 jobs, whether or not the runtime runs - a stopped materialization's tables included (10 §10.10). The
 outcome arrives as a `maintenance_completed` table event in the table record's `maintenance` history,
@@ -973,7 +973,7 @@ control-plane process.
 {
   "items": [
     { "topic": "__consumer_offsets", "partitions": 50, "replication_factor": 2, "category": "kafka" },
-    { "topic": "develop-materialization-work", "partitions": 3, "replication_factor": 1, "category": "materializer" },
+    { "topic": "midstream-materialization-work", "partitions": 3, "replication_factor": 1, "category": "materializer" },
     { "topic": "joiner-app-orders-changelog", "partitions": 3, "replication_factor": 1, "category": "stream" },
     { "topic": "orders", "partitions": 3, "replication_factor": 1 }
   ],
@@ -1349,7 +1349,7 @@ Examples:
 
 ### Status codes
 
-The WebView manifests define no `onError` selector, and need none: when a handler raises, Kaspr
+The WebView templates define no `onError` selector, and need none: when a handler raises, Kaspr
 builds the response from the exception itself, taking `status_code` for the status and
 `to_response()` for the body. A `WebError` therefore surfaces with its own status. Verified on
 the dev cluster on 2026-10-06: `GET /materializations/mat-doesnotexist00` returned `404` with the
@@ -1678,12 +1678,12 @@ outside its datasets — and stops working when revoked, expired, or its owner i
 `GET /auth/tokens` lists each token's `datasets`, and the datasets the caller could limit one to.
 `DELETE /auth/tokens/{token_id}` revokes one of the caller's tokens, or anyone's with
 `users.manage`; another person's token is `404` to everyone else. Both changes go through
-`materializer-identity-requests` like any directory change, and the audit log records them
+`<release>-identity-requests` like any directory change, and the audit log records them
 (`token.created`, `token.revoked`).
 
 ### 4.13.5 The identity request topic
 
-Every request is published to `materializer-identity-requests` with the key `identity`
+Every request is published to `<release>-identity-requests` with the key `identity`
 ([06](./06-event-and-topic-contracts.md) §6.15):
 
 ```json

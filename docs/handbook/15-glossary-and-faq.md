@@ -180,7 +180,7 @@ the **tail app** from Kafka within seconds, which a console run reads beside the
 each record shows exactly once; the deployment's `live_tail_enabled` turns it off for all of them
 ([19](./19-live-tail.md)).
 
-**Maintenance app** — The `materializer-maintenance` KasprApp, one per environment: compaction,
+**Maintenance app** — The `<release>-maintenance` KasprApp, one per environment: compaction,
 snapshot expiry and orphan cleanup for every materialization's tables, stopped ones and kept ones
 included, sized for compaction so the runtimes need not be
 ([10 §10.10](./10-runtime-internals.md)).
@@ -231,7 +231,7 @@ gap. A twm-faust workaround ([14 §14.3](./14-known-gaps-and-roadmap.md)).
 retained snapshot references, older than `orphan_min_age_hours` (24).
 
 **Owner (live tail)** — The tail app member a table belongs to: the one assigned the partition of
-`materializer-tail-requests` its key `tail:<materialization>:<table>` hashes to ([19 §19.5](./19-live-tail.md)).
+`<release>-tail-requests` its key `tail:<materialization>:<table>` hashes to ([19 §19.5](./19-live-tail.md)).
 
 **Override** — A setting value chosen on the Settings page, stored in the `settings` table; it wins
 over the deployment value until it is reset.
@@ -331,7 +331,7 @@ newest snapshot, totals, offsets, maintenance history and running job, last erro
 files kept, with `destination_cleanup_enabled` off; its name stays taken)
 ([11 §11.7](./11-iceberg-tables-and-storage.md)).
 
-**Tail app** — `materializer-tail`, a KasprApp of its own (`tail_app/`): reads the topics of the
+**Tail app** — `<release>-tail`, a KasprApp of its own (`tail_app/`): reads the topics of the
 tables people watch and serves their records past a snapshot's offsets as Parquet, to the console
 alone. It keeps no state and never writes a table ([19](./19-live-tail.md)).
 
@@ -402,7 +402,7 @@ plane ([18 §18.8](./18-identity-and-access.md)).
 
 **Why is there no local server?**
 The control plane only exists as a KasprApp; its HTTP surface is WebViews. Validate with unit tests
-and `kubectl kustomize`; test end to end against a cluster.
+and `helm template`; test end to end against a cluster.
 
 **What guarantees exactly once into the table?**
 The committed offsets live in the same snapshot as the rows, and the commit is a compare-and-swap:
@@ -557,7 +557,7 @@ No ([14 §14.7](./14-known-gaps-and-roadmap.md)).
 ```bash
 python -m unittest discover -s python/tests -p 'test_*.py'
 python -m compileall -q python/src
-kubectl kustomize manifests/base >/dev/null && kubectl kustomize manifests/dev >/dev/null
+helm lint charts/midstream -f charts/midstream/ci/test-values.yaml
 cd console && npm run typecheck && npm test && npm run build
 ```
 
@@ -576,7 +576,7 @@ runtime tests through `runtime_support.RuntimeHarness`.
 Package pinning raises `RuntimeError` on editable installs ([13 §13.5](./13-testing-and-development.md)).
 
 **I renamed a topic and things broke.**
-Topic names live in `config.py`, `manifests/base/` and every overlay; see
+Topic names live in `config.py` and the chart's templates, derived from the release; see
 [13 §13.6](./13-testing-and-development.md).
 
 ## 15.7 Where to look for what

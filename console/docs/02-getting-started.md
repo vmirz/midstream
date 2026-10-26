@@ -27,7 +27,7 @@ cp .env.example .env
 Edit `.env` and point `CONTROL_PLANE_URL` at a reachable control plane. For the dev cluster:
 
 ```bash
-kubectl -n midstream port-forward svc/develop-materializer-control-plane-app-api 6065:6065
+kubectl -n midstream port-forward svc/midstream-control-plane-app-api 6065:6065
 ```
 
 Then:
@@ -52,7 +52,7 @@ streams — the proxy is explicitly configured not to buffer `text/event-stream`
 Without a session the console shows what a guest may see — by default the materialization list
 and status — with **Sign in** in the sidebar. Signing in needs an account on the control plane
 you point at. On a fresh control plane, the first administrator is the bootstrap account from its
-`materializer-auth` Secret, who chooses a new password at first sign-in and can then add people
+`<release>-auth` Secret, who chooses a new password at first sign-in and can then add people
 under **Settings → Users** ([18 — Identity and access](../../docs/handbook/18-identity-and-access.md)).
 
 For the live views to show details, give the console the control plane's service token:

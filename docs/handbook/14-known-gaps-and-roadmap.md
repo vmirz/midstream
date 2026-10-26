@@ -158,17 +158,13 @@ writers of data. What such a commit cannot do is move the table: `set-location` 
 that put files elsewhere are refused (11 §11.8), and the console reads nothing outside the table's
 location even if a file there is named (web 12 §12.6).
 
-### Scheduler topic-name drift between overlays
+### Scheduler topic-name drift between overlays (resolved by the chart)
 
-| Layer | Topic |
-|-------|-------|
-| `manifests/base/agents/*.yaml` | `materializer-control-plane-schedule-requests` |
-| `manifests/dev` patches | `develop-materializer-control-plane-app-schedule-requests` |
-
-The dev value has an extra `-app-` segment. If either ever disagrees with what the Kaspr scheduler
-actually consumes, **every scheduled follow-up silently vanishes** — observations never re-run,
-sweeps never chain, missing-state retries never fire. Symptom: materializations stick in
-`deploying` with no errors logged. Verify against the running scheduler before changing either.
+Before the chart, the base manifests wrote delayed work to a topic without the `-app-` segment,
+`materializer-control-plane-schedule-requests`, while the dev overlay wrote to the one the Kaspr
+scheduler reads, `develop-materializer-control-plane-app-schedule-requests`. The chart derives the
+name from the control plane's app id for every installation,
+`<release>-control-plane-app-schedule-requests`, and `ValuesWiringTests` renders every values file.
 
 ### Runtime topic deletion is prefix-based
 
@@ -189,11 +185,10 @@ RocksDB write buffer through the app's `K_STORE_ROCKSDB_*` environment instead (
 fix*: mark both fields `x-kubernetes-preserve-unknown-fields: true` (or `additionalProperties: {type:
 string}`) in the operator's CRD.
 
-### The dev overlay's runtimes cannot declare topics
+### Runtimes declare their topics (resolved by the chart)
 
-The base runtime spec sets `config: {topicAllowDeclare: true}`; the dev overlay's replacement
-`CONTROL_PLANE_RUNTIME_APP_SPEC` leaves it out, so dev runtimes depend on the broker
-creating their topics. Whether that is intended is not recorded anywhere.
+The dev overlay's runtime spec once omitted `topicAllowDeclare: true`. The chart renders one runtime
+spec for every installation, from `controlPlane.runtime.config`, with it set.
 
 ### The sweep cannot rescue a materialization that has no runtime yet
 
@@ -332,7 +327,7 @@ and nothing reads them. Deleting a key from every shard needs Kaspr's per-partit
 
 Every runtime pod takes `resources` from `CONTROL_PLANE_RUNTIME_APP_SPEC`; a
 materialization's `resource_profile` is carried but unused, so a busy topic's runtime is limited
-like a quiet one's. Since 4.2 that holds for the limits only, CPU included. The base manifests
+like a quiet one's. Since 4.2 that holds for the limits only, CPU included. The chart's values
 limit each member to 2 CPUs, room for a seal child beside a main process that uses a full core on a
 busy topic (below). A VerticalPodAutoscaler then sets the members' CPU request from what each
 runtime's members use (02 §2.10c). Memory is still the spec's. On the load test, without limits,
@@ -502,7 +497,7 @@ A member runs `MAINTENANCE_MAX_CONCURRENT_JOBS` compactions or orphan cleanups a
 (1 by default), visiting its tables in turn, and a compaction may take up to
 `compaction_timeout_minutes`. Many tables with a backlog each, on one member, wait for each
 other: each gets a job in turn, not a job an interval. Snapshot expiry takes no slot. More replicas
-share the tables, up to the six partitions of `materializer-maintenance-requests`; more slots need
+share the tables, up to the six partitions of `<release>-maintenance-requests`; more slots need
 about 1.3 GiB of memory more each (12 §12.10).
 
 ### A maintenance app restart forgets compaction failures
@@ -639,9 +634,8 @@ cannot forbid an override; a lock would be a per-setting flag checked in
 
 | Issue | File | Impact |
 |-------|------|--------|
-| `kustomconfig.yaml` is empty | `manifests/base/` | referenced under `configurations:` but contributes nothing |
-| RBAC lacks `list`/`watch` | `manifests/base/roles/control-plane-kasprapp-role.yaml` | only `get/create/patch/delete` on four kinds |
-| `workflow-apply` declares its dynamic topic, `resource-observation` does not | `manifests/base/agents/*.yaml` | the latter relies on the topic existing |
+| RBAC lacks `list`/`watch` | `charts/midstream/templates/control-plane/rbac.yaml` | only `get/create/patch/delete` on four kinds |
+| `workflow-apply` declares its dynamic topic, `resource-observation` does not | `charts/midstream/templates/agents/*.yaml` | the latter relies on the topic existing |
 
 None of these break anything today; all are cheap to fix.
 
@@ -677,7 +671,7 @@ Before "fixing" any of these, read the linked section.
 
 | To add… | Start in |
 |---------|----------|
-| A new HTTP endpoint | `web/materializations.py` + a WebView in `manifests/base/webviews/`, authorizing with `authorize(...)` first (18 §18.14) |
+| A new HTTP endpoint | `web/materializations.py` + a WebView in `charts/midstream/templates/webviews/`, authorizing with `authorize(...)` first (18 §18.14) |
 | A new permission | `identity/permissions.py` and the built-in roles, then the views and console routes (the `adding-permissions` skill) |
 | A new setting | `settings/catalog.py`, and `runtime_app/live_settings.py` for a runtime one (the `adding-settings` skill) |
 | A new request action | `services/request_intake.py` `REQUEST_ACTION_TO_STEP` + `EXPECTED_DESIRED_PHASE` |
@@ -697,8 +691,8 @@ Before "fixing" any of these, read the linked section.
 
 **Correctness and safety**
 
-1. Resolve the scheduler topic-name drift between base and dev, with a test that renders both
-   overlays and compares the agents' topics (§14.2).
+1. Done: the chart derives the scheduler topic from the app id, and the chart tests render every
+   values file (§14.2).
 2. Release twm-faust's commit-bookkeeping fixes (`fix-commit-gaps`) and move Kaspr onto the
    release, so ordered batches are needed only for a new materialization's first batch (§14.3).
 3. Make Kaspr rebalance when a static member's assignment lacks topics it subscribes to (§14.3).
@@ -752,7 +746,7 @@ Before "fixing" any of these, read the linked section.
 | Backpressure did not stop consumption | Resolved in 0.7.0: source partitions pause at the backlog limits |
 | `last_error` was sticky | A member clears a data or infrastructure error once it writes again (`runtime_app/state.py`) |
 | Two runtime state systems | The table-backed module is gone; `runtime_app/state.py` is the only one |
-| The dev overlay dropped runtime resource limits | It sets the base's requests and limits; only `topicAllowDeclare` is still missing (§14.2) |
+| The dev overlay dropped runtime resource limits | Resolved by the chart: one runtime spec for every installation, `topicAllowDeclare` included (§14.2) |
 | No `onError` status selector on WebViews: errors might answer `200` | Without one, Kaspr answers with the raised `WebError`'s `status_code` and body (`build_error`, Kaspr's `webview/response.py`) — a `400` for an unknown maintenance job on the lab |
 | `DEFAULT_MANAGED_AGENT_NAMES = ["writer", "schema-proposer"]` | Removed: the agent names come from the rendered template |
 | The authority-update fan-out (O(materializations²)) | **Gone** with the authority topic |

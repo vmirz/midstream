@@ -1,0 +1,55 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprAgent
+metadata:
+  name: {{ include "midstream.fullname" . }}-identity-intake
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  description: Applies changes to users, groups, roles, datasets, their grants and table-name claims, and sessions, in order; the only writer of the directory and the audit log.
+  input:
+    topic:
+      name: {{ include "midstream.fullname" . }}-identity-requests
+      valueSerializer: json
+    declare: true
+  output:
+    topics:
+      # The answer to a claim of table names, for the claiming materialization's workflow: keyed by
+      # the materialization, so it is handled in the materialization's own shard of the state table.
+      - name: {{ include "midstream.fullname" . }}-materialization-work
+        valueSerializer: json
+        keySelector:
+          python: |
+            def select_key(value):
+                return value["key"]
+        valueSelector:
+          python: |
+            def select_value(value):
+                return value["value"]
+        predicate:
+          python: |
+            def should_send(value):
+                return value is not None and value.get("route") == "work"
+  processors:
+    pipeline:
+      - apply-identity-request
+    init:
+      python: |
+        from midstream.handlers.identity import handle_identity_request
+    operations:
+      - name: apply-identity-request
+        tables:
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+          - name: {{ include "midstream.fullname" . }}-identity-audit
+            paramName: audit_table
+          - name: {{ include "midstream.fullname" . }}-settings
+            paramName: settings_table
+          # Read only, by the hourly sweep of table-name claims; this agent never writes it.
+          - name: {{ include "midstream.fullname" . }}-state
+            paramName: control_plane_table
+        map:
+          entrypoint: apply_identity_request
+          python: |
+            def apply_identity_request(value, directory_table, audit_table, settings_table, control_plane_table):
+                return handle_identity_request(value, directory_table, audit_table, settings_table, control_plane_table)

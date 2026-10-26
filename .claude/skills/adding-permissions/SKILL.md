@@ -108,9 +108,9 @@ The first line of the WebView operation's Python, with the directory table bound
 - A view function that takes the `Principal` should also `require(principal, "<key>")`, so it
   cannot be called unchecked from elsewhere.
 - Changes record `principal.attribution` (the email) and `principal.user_id`, never a header.
-- Patch the directory table binding in `manifests/dev/kustomization.yaml` (`develop-directory`),
-  like every other view's. `OverlayTopicWiringTests` renders every overlay directory, including local
-  untracked ones, and fails until they carry it.
+- Bind the directory table as `{{ include "midstream.fullname" . }}-directory` in the view's
+  template, like every other view's. `ValuesWiringTests` renders the chart with every values file
+  under `charts/midstream/ci/` and fails when a view reads a table the chart does not define.
 - `python/tests/test_agent_manifests.py::AuthorizationWiringTests` fails when a view does not call
   `authorize` with a permission the catalog knows. Only `system-version` is public
   (`PUBLIC_WEBVIEWS`); views that authenticate themselves are listed in
@@ -181,7 +181,7 @@ so a new permission appears there with no console change.
 python -m unittest discover -s python/tests -p 'test_identity.py' -v
 python -m unittest discover -s python/tests -p 'test_datasets.py' -v
 python -m unittest discover -s python/tests -p 'test_*.py'
-kubectl kustomize manifests/base >/dev/null && kubectl kustomize manifests/dev >/dev/null
+helm lint charts/midstream -f charts/midstream/ci/test-values.yaml
 cd console && npm test && npm run typecheck && npm run build
 ```
 

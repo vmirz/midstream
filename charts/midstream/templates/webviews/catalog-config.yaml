@@ -1,0 +1,40 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-catalog-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: catalog-config
+  description: "Iceberg REST catalog: the catalog's configuration and the endpoints it answers."
+  request:
+    method: GET
+    path: /catalog/v1/config
+  processors:
+    pipeline:
+      - handle
+    operations:
+      - name: handle
+        tables:
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+          - name: {{ include "midstream.fullname" . }}-settings
+            paramName: settings_table
+        map:
+          entrypoint: handle
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.catalog import catalog_errors, catalog_config_view
+
+            def handle(request, directory_table, settings_table):
+                with catalog_errors():
+                    authorize(request, directory_table, "catalog.read", any_dataset=True)
+                return catalog_config_view(settings_table=settings_table)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data

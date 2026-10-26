@@ -245,7 +245,7 @@ Credentials, paths, and cache budgets are never exposed.
 ## 3.8 Full example: production values
 
 ```bash
-CONTROL_PLANE_URL=http://develop-materializer-control-plane-app-api.midstream.svc.cluster.local:6065
+CONTROL_PLANE_URL=http://midstream-control-plane-app-api.midstream.svc.cluster.local:6065
 PORT=8787
 LOG_LEVEL=info
 

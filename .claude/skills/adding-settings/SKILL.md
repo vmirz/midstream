@@ -75,8 +75,8 @@ and no test catches it — check the id. A new section is §6.
 4. **Wiring** — if a handler or view that did not read configuration before now does, bind the
    `settings` table to its operation (`- name: settings / paramName: settings_table`), pass it to
    the handler, add the entry point to `CONFIG_RESOLVING_ENTRYPOINTS` in
-   `python/tests/test_agent_manifests.py`, and patch the binding in `manifests/dev/kustomization.yaml`
-   (`develop-settings`). `SettingsWiringTests` fails otherwise.
+   `python/tests/test_agent_manifests.py`, and patch the binding in `charts/midstream/values.yaml`
+   (`<release>-settings`). `SettingsWiringTests` fails otherwise.
 
 5. **Never into the runtime spec.** No overridable field may be read while rendering a runtime;
    it would change the spec hash and the sweep would restart every runtime.
@@ -157,9 +157,9 @@ add an `entry(...)` to `consoleDeployment()` in `console/server/routes/settings.
 Never a `ControlPlaneConfig` field and never a value on any page. Follow
 `identity/secrets.py`: read once from the environment into its own frozen object, refuse weak
 values with a logged error, and report only *configured / not configured* in `_deployment_value`
-(console: `config.x ? 'configured' : 'not configured'`). In manifests, take it from a Secret with
-`secretKeyRef` (`optional: true` if the app must start without it), in `manifests/base` and the
-`develop-` Secret name in the dev overlay. Never commit a value; never print one.
+(console: `config.x ? 'configured' : 'not configured'`). In the chart, take it from a Secret with
+`secretKeyRef` (`optional: true` if the app must start without it), the Secret named by a value.
+Never commit a value; never print one.
 
 ## 6. A new section
 
@@ -181,12 +181,12 @@ values with a logged error, and report only *configured / not configured* in `_d
 Settings sections are read-only without `settings.manage`; keep `permission: 'settings.view'`
 unless the section is someone's own (the Account section uses `null`).
 
-## 7. Manifests
+## 7. The chart
 
-An adjustable setting needs no manifest change — its default is in code. Set the env var in
-`manifests/base/apps/control-plane.yaml` (or the runtime spec inside it) only when a deployment
-needs a non-default value, and mirror it in the dev overlay's replaced env list. Never put an
-overridable control-plane setting into the runtime spec env (it changes the spec hash).
+An adjustable setting needs no chart change — its default is in code. Add a value and set the env var
+in `charts/midstream/templates/control-plane/app.yaml` (or the runtime spec helper in `_helpers.tpl`)
+only when a deployment needs to choose it. Never put an overridable control-plane setting into the
+runtime spec env (it changes the spec hash).
 
 ## 8. Documentation
 
@@ -202,7 +202,7 @@ overridable control-plane setting into the runtime spec env (it changes the spec
 python -m unittest python.tests.test_settings python.tests.test_runtime_settings python.tests.test_agent_manifests -v
 python -m unittest discover -s python/tests -p 'test_*.py'
 python -m compileall -q python/src
-kubectl kustomize manifests/base >/dev/null && kubectl kustomize manifests/dev >/dev/null
+helm lint charts/midstream -f charts/midstream/ci/test-values.yaml
 cd console && npm test && npm run typecheck && npm run build
 ```
 

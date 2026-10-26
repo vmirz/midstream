@@ -6,15 +6,15 @@ the console joins them to the committed snapshot so that every record is shown e
 
 Source: `tail_app/` (`worker.py`, `table_tail.py`, `buffer.py`, `ingest.py`, `serve.py`, `views.py`,
 `routing.py`, `consumer.py`, `auth.py`, `peek.py`, `config.py`, `http.py`, `control_plane.py`),
-`services/live_tail.py`, `models/live_tail.py`, `lakehouse/rows.py`; manifests:
-`manifests/base/tail/`, `manifests/base/webviews/tail-*.yaml`, the maintenance agent's third output
-(`manifests/base/agents/maintenance.yaml`); console: `console/server/data/tail.ts`, `console/server/runs/tail.ts`,
+`services/live_tail.py`, `models/live_tail.py`, `lakehouse/rows.py`; chart templates:
+`charts/midstream/templates/tail/`, `charts/midstream/templates/webviews/tail-*.yaml`, the maintenance agent's third output
+(`charts/midstream/templates/agents/maintenance.yaml`); console: `console/server/data/tail.ts`, `console/server/runs/tail.ts`,
 `console/src/features/data/live.ts`. Design: `docs/design/few-second-freshness.md`.
 
 ## 19.1 The model in one paragraph
 
 A runtime commits a table every few minutes, so a committed snapshot is minutes behind its topic.
-The **tail app** (`materializer-tail`, a KasprApp of its own) reads the topic of every table someone
+The **tail app** (`<release>-tail`, a KasprApp of its own) reads the topic of every table someone
 is watching and keeps the records past the table's committed offsets, built into rows by the same
 code the seal uses (`lakehouse/rows.py::build_row`). A console run pins the table's current snapshot,
 then asks the tail app for the records **past that snapshot's offsets** and reads them as one more
@@ -62,15 +62,15 @@ poll across commits, a compaction, runtime restarts and rebalances of the tail a
 
 | Resource | Base name | What it is |
 |---|---|---|
-| KasprApp | `materializer-tail` | 2 replicas, 1 CPU / 2 GiB requested, 2 CPU / 4 GiB limit, the CPU request then set from use (02 §2.10c), web port 6065 |
-| KasprAgent | `tail-worker` | Reads `materializer-tail-requests` (64 partitions): ticks and cancels |
+| KasprApp | `<release>-tail` | 2 replicas, 1 CPU / 2 GiB requested, 2 CPU / 4 GiB limit, the CPU request then set from use (02 §2.10c), web port 6065 |
+| KasprAgent | `tail-worker` | Reads `<release>-tail-requests` (64 partitions): ticks and cancels |
 | KasprTask | `tail-step` | Every 5 s: the member's housekeeping (map refresh, trims, parking, forgetting) |
 | KasprWebView | `tail-rows`, `tail-head`, `tail-health`, `tail-members` | The HTTP API (§19.9) |
 
 The app keeps no state of its own: no KasprTable, no changelog. Everything a member holds is in
 memory and comes back from Kafka and the control plane after a restart. Its labels are
-`kaspr.io/app: materializer-tail`; the dev overlay prefixes it `develop-` and patches its topics,
-control-plane URL and Secret by environment index (§19.12).
+`kaspr.io/app: <release>-tail`; its topics, control-plane URL and Secret derive from the release
+(§19.12).
 
 Kaspr runs every app with Faust's exactly-once processing (`kaspr/app.py`), so each member holds one
 transactional producer per tick partition it is assigned — 32 each with two members — although the
@@ -92,7 +92,7 @@ the maintenance app (`handlers/maintenance.py::_table_maintenance`, `services/li
 
 With `live_tail_enabled` off nothing is sent. Every message is keyed `tail:<materialization>:<table>`
 (`live_tail_routing_key`), so all of a table's messages land on one of the 64 partitions of
-`materializer-tail-requests`, and the member assigned that partition owns the table. A tick's hints
+`<release>-tail-requests`, and the member assigned that partition owns the table. A tick's hints
 lag the table by up to a minute and are never trusted over what the member has seen itself; they
 seed a table and catch a missed event. Topic contract: handbook 06 §6.18.
 
@@ -322,11 +322,11 @@ In brief; web 07 §07.9 has the detail.
 
 | Variable | Default | |
 |---|---|---|
-| `TAIL_APP_NAME` | `materializer-tail` | The KasprApp's name (`develop-` prefixed in dev) |
+| `TAIL_APP_NAME` | `<release>-tail` | The KasprApp's name (`develop-` prefixed in dev) |
 | `TAIL_CONTROL_PLANE_URL` | — | The control plane's Service, for sessions, schemas and tables |
 | `TAIL_SERVICE_TOKEN` | — | From the auth Secret's `service-token`; at least 32 characters |
 | `TAIL_TABLE_EVENTS_TOPIC` | `materialization-table-events` | Commits and schema changes |
-| `TAIL_REQUESTS_TOPIC` | `materializer-tail-requests` | Ticks and cancels (also the `tail-worker` agent's input) |
+| `TAIL_REQUESTS_TOPIC` | `<release>-tail-requests` | Ticks and cancels (also the `tail-worker` agent's input) |
 | `TAIL_MEMORY_BUDGET_BYTES` | 2,684,354,560 | §19.8; keep it well under the pod's limit |
 | `TAIL_FORGET_AFTER_SECONDS` | 300 | §19.6 |
 | `TAIL_SESSION_CHECK_SECONDS` | 5 | §19.10 |

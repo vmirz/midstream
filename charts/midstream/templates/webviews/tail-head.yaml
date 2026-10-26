@@ -1,0 +1,67 @@
+{{- if .Values.tail.enabled }}
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-tail-head
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.tail" . }}
+spec:
+  name: tail-head
+  description: "The newest records on a table's topic, as they will look in the table, apart from it: for the console alone."
+  request:
+    method: GET
+    path: /tail/v1/materializations/{materialization_id}/tables/{table}/head
+  processors:
+    pipeline:
+      - answer
+    operations:
+      - name: answer
+        map:
+          entrypoint: answer
+          python: |
+            from midstream.tail_app.handlers import tail_head
+
+            async def answer(request, materialization_id, table):
+                # Authorizes the caller first, through the control plane: the console's credential,
+                # and "data.query" on the table's dataset (tail_app/auth.py::authorize_tail).
+                return await tail_head(request, materialization_id, table)
+  response:
+    # Parquet: Kaspr sends the bytes as they are. A refusal is the control plane's error body, as
+    # JSON (Kaspr 0.11.30 and kaspr-operator 0.19.7 or later).
+    contentType: application/octet-stream
+    errorContentType: application/json
+    statusCodeSelector:
+      onSuccess:
+        python: |
+          def status_code(data):
+              from midstream.tail_app.handlers import success_status
+
+              return success_status(data)
+    headersSelector:
+      onSuccess:
+        python: |
+          def headers(data):
+              from midstream.tail_app.handlers import success_headers
+
+              return success_headers(data)
+      onError:
+        python: |
+          def headers(error):
+              from midstream.tail_app.handlers import error_headers
+
+              return error_headers(error)
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              from midstream.tail_app.handlers import success_body
+
+              return success_body(data)
+      onError:
+        python: |
+          def body(error):
+              from midstream.tail_app.handlers import error_body
+
+              return error_body(error)
+{{- end }}
