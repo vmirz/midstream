@@ -623,6 +623,35 @@ whole load-test topic (111,031,820 records, 32 partitions, two years by month).
 
 The deployment-wide switch was left alone on the shared lab; the unit suite covers it.
 
+## 13.8i Verified on the lab: the first installation from the published artifacts (1.0.0-rc.1)
+
+On 2026-10-26 the lab was installed from scratch by following `docs/install.md`: the chart
+`oci://ghcr.io/vmirz/charts/midstream` 1.0.0-rc.1 with `package.source: index`, so every app and
+runtime installed `midstream-platform==1.0.0-rc.1` from PyPI, and the console image
+`ghcr.io/vmirz/midstream-console:1.0.0-rc.1`, as the Helm release `midstream` in a new namespace
+`midstream` (kaspr-operator 0.19.8, Kaspr 0.11.31, two brokers with single-replica topics, a
+credential-free listener). The lab's two brokers needed Kaspr's `topicReplicationFactor` at 1, which
+rc.1 could set only through each app's and the runtime spec's `extraEnv` (`K_TOPIC_REPLICATION_FACTOR`);
+`kaspr.config` is the value for it since rc.2.
+
+| Step | Observed |
+|---|---|
+| Secrets and install | The three Secrets of §2, `helm install` from the OCI chart; the control plane, maintenance and tail apps `Ready` and the console available two minutes after the install (each pod's package install about 40 s); the 71 WebViews attached over about six minutes, one every 5 s. |
+| The topics | 23 topics under the release name, every one with replication factor 1; the state changelog with 3 partitions. |
+| §5 | `GET /system/version` → `1.0.0rc1`; `POST /auth/login` as the bootstrap administrator → `password_change_required: true`. |
+| §6 in the console | Through the chart's HTTPRoute and a port-forward (Playwright, Chromium): sign-in, *Choose a new password*, the dataset `sales`, the materialization *Shop* on the lab's `orders` topic (console 14 §14.4). |
+| An empty source topic | `orders` held no records any more (its beginning offsets equal its end offsets): *Shop* reached `running` / `waiting_for_source_records` with a table of the seven Kafka columns and no rows, which is what an empty topic yields. |
+| §6 by the API | `POST /materializations` with `{"name":"Smoke","tables":[{"source_topic":"midstream-smoke-orders","dataset":"sales"}]}` on a scratch topic of six JSON orders: `schema_discovered` within a second, the runtime `midstream-mat-ab6b417c59ab` (one member, its VerticalPodAutoscaler provided) `running` after two minutes, schema 0 with nine inferred fields (`items[].sku` and `items[].qty` among them). |
+| The live tail | The Data tab showed the six records, newest first, about two minutes after the create and before any commit; the tail app forwarded the console's requests from the member that answered to the table's owner (`tail_forwarded`, `tail_served`). |
+| The first commit | Ten minutes after the records were read, at the seal's age ceiling (`max_open_file_age_ceiling_seconds`, 600 s): one batch sealed (6 rows, 7,543 bytes of Parquet), announced, and committed by the committer in 1.2 s as snapshot 1 with offsets `p0: 5`; the table under `<destination>/midstream/mat-ab6b417c59ab/midstream_smoke_orders/` held the data file, two metadata files, the manifest list, the manifest, `catalog-pointer.json` and `version-hint.text`. The console's Overview then read *6 rows committed*, *complete through* the records' time, *7.5 KB, 1 data file, 1 snapshot*; the maintenance app's orphan cleanup had already run on the table (3 listed, 0 deleted). |
+
+One finding is Kaspr's, not Midstream's: the control plane's first scheduled request, 28 minutes
+after its start, crashed the Kaspr scheduler's `distribute` actor with `NotReady("Producer metadata
+for topic 'midstream-control-plane-app-schedule-actions' not available yet")`. Its supervisor
+restarted it at once, but that request (*Shop*'s first delayed observation) was never dispatched:
+`schedule-requests` held four requests and `schedule-actions` three actions. The sweeps brought the
+materialization to `running` instead, and every later request dispatched (14 §14.3).
+
 ## 13.9 Pre-finish checklist
 
 Before considering any change complete:

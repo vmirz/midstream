@@ -321,6 +321,18 @@ writes or deletes it from its own shard. The status copies 1.0's lag refresh lef
 and nothing reads them. Deleting a key from every shard needs Kaspr's per-partition delete, which
 `KasprGlobalTable` does not offer yet.
 
+### The scheduler's first dispatch after a start can be lost
+
+Kaspr 0.11.31's scheduler partitions a request by the producer's partition count of
+`<app id>-schedule-actions`; on the first request after the control plane starts, that metadata can
+still be unfetched, and the `distribute` actor crashes with `NotReady("Producer metadata for topic
+'…-schedule-actions' not available yet")`. Faust's supervisor restarts it at once, and every later
+request dispatches, but the request in flight is gone: on the lab (2026-10-26) it was a new
+materialization's first delayed observation, and the observation sweep (07 §7.7) brought the
+materialization to `running` in its stead. A delayed step that only the scheduler would run again
+is late by one sweep at worst. The fix belongs in Kaspr (`kaspr/scheduler/manager.py`,
+`_request_partition`): wait for the topic's metadata, or retry on `NotReady`.
+
 ## 14.4 Resources and throughput
 
 ### Runtime pods are sized for the whole deployment

@@ -63,6 +63,24 @@ still hold for any harness:
 
 ## 14.4 Browser verification
 
+### 1.0.0-rc.1 on the lab: the console from its image
+
+Verified on 2026-10-26 with Midstream 1.0.0-rc.1 installed from the published chart and the console
+from `ghcr.io/vmirz/midstream-console:1.0.0-rc.1` in the cluster (the chart's Deployment, with the
+HMAC Secret for direct `gs://` scans), reached through the chart's HTTPRoute and a port-forward,
+Playwright (Chromium), light theme (handbook 13 §13.8i).
+
+| Check | Result |
+|---|---|
+| `/api/health` through the route | `status: ok`, `controlPlaneConnected: true`, `version: 1.0.0-rc.1`; the pod's log at start, *data access mode: direct* |
+| A guest | The Overview with the fleet at zero and *Sign in* in the navigation |
+| The bootstrap sign-in | `/sign-in`, then *Choose a new password* with the current, new and confirming fields, **Set password and continue** disabled until all three are filled; afterwards signed in as *Admin*, with Datasets and Settings in the navigation |
+| Datasets › New dataset | `sales` with a description: *Dataset created*, its page with *Tables (0)* and `sales.<table>` spelled out |
+| Materializations › New materialization | *Select topics*, the search listing `orders` with its partitions and the internal topics hidden (29 of them); the one dataset preselected and the table named after the topic, *SQL reads each table as sales.orders*; **Create** → the detail page *Deploying*, *Reconciling toward Running*, the toast *Materialization accepted* |
+| An empty topic | *Running*, *Healthy*; the Data tab with the seven Kafka columns and *No rows match* |
+| The live tail | On a materialization of six JSON orders: the Data tab *6 rows*, the inferred fields (`order_id` … `status`, `items[].sku`, `items[].qty`) with the Kafka metadata collapsed to the timestamp, before the first commit |
+| After the first commit | The Overview *ROWS COMMITTED 6*, *complete through* the records' time, *TABLE SIZE 7.5 KB · 1 data file · 1 snapshots kept*; the Table tab's snapshot row *append +6 +1 6 p0 5*, took 1.2 s, *Orphan cleanup succeeded · 0 files deleted · 3 listed*, the properties naming `sales.midstream_smoke_orders` and its location; the Data tab unchanged, the same six rows now from the snapshot |
+
 ### 4.4.0 on the lab: autoscaling and restart health
 
 Verified on 2026-10-25 with the control plane at `feature/runtime-autoscaling` on the lab, the console
