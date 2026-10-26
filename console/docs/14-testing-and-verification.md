@@ -63,6 +63,32 @@ still hold for any harness:
 
 ## 14.4 Browser verification
 
+### Domains on the lab: one console, two domains
+
+Verified on 2026-10-26 against two domains on the lab — Domain A (the settings home, the console
+beside it) and Domain B (another release, reached through its API route) — on builds
+`1.0.0-rc.3.dev2`–`dev6` of the console, the last on both control planes too, with Dex as the sign-in
+provider; Playwright (Chromium), light theme. The API checks, the faults and the performance against
+rc.2 are in the main handbook, 20 §20.15.
+
+| Screen | Result |
+|---|---|
+| Sign-in page | *Sign in with Dex*, then a password form with a **Domain** choice — *A password signs you in to one domain; each has its own accounts* — and *Forgot your password? Ask an administrator of Domain A* |
+| Through Dex, someone new | Back on the Overview with the toast *Signed in to Domain A, Domain B*; a session cookie for each domain, none for the flow |
+| Through Dex, refused somewhere | *Signed in to Domain A — Domain B: no account there*; refused everywhere: the sign-in page lists each domain's reason (*its email domain is not allowed*, *has no account here*) |
+| Dex down | *Dex cannot be reached right now. Try again in a moment.* on the sign-in page |
+| Overview, all domains | Totals across both, the attention list with each item's domain chip, a **Domains** panel — each domain's materializations, rates and rows |
+| Domain switcher | *All domains*, then each domain with its status dot |
+| A domain the browser is not signed in to | Its page shows *Sign in to Domain B* at `/sign-in/domain_b`, and returns to the page after |
+| Materializations, Datasets, Search | Every domain's, each row saying its domain; search finds tables as `<domain>.<dataset>.<table>` |
+| Data tab | `SELECT … FROM domain_a.shop.orders o JOIN domain_b.finance.payments p …` → *25 rows across domain_a, domain_b* |
+| Table tab › Connect | PyIceberg and Spark on `/catalog` (`lake.domain_a.shop.orders`), DuckDB and Trino on `/d/domain_a/catalog` |
+| Settings (console) | *Your domains* with each session and **Sign out everywhere**; access tokens with where each was made; the Domains section with each domain's version and federation key, the settings home marked; signed in to Domain B alone, only Account, Domains and Change history, and no request for the console's settings |
+| Settings (Domain B) | Users (an account made by a first sign-in through Dex among them), Sign-in — the providers, the first-sign-in policy, allowed email domains, password sign-in — and the audit log in words (*Recorded a token revoked in another domain*) |
+| New access token | *Made in* a domain, *Only these datasets* listing `domain_a.sales`, `domain_a.shop`, `domain_b.finance`; shown once with the catalog URIs; listed as *Only domain_b.finance · made in Domain B*; revoked from the page |
+| A domain unreachable | Its last data, marked, with the reason in the status line and an amber dot in the switcher |
+| Sign out everywhere | Both sessions ended, both cookies cleared |
+
 ### 1.0.0-rc.1 on the lab: the console from its image
 
 Verified on 2026-10-26 with Midstream 1.0.0-rc.1 installed from the published chart and the console
@@ -399,7 +425,7 @@ npm test          # node --test over server/, src/ and shared/ (*.test.ts)
 npm run typecheck # both TypeScript projects
 ```
 
-`node --test` runs the `.ts` files natively, so there is no transform step. **478 tests, 123 suites.**
+`node --test` runs the `.ts` files natively, so there is no transform step. **488 tests, 126 suites.**
 
 | File | Covers |
 |------|--------|
@@ -444,6 +470,8 @@ npm run typecheck # both TypeScript projects
 | `server/routes/sso.test.ts` | Sign-in through a provider, against a stub provider and two stub domains: the redirect with `state`, `nonce` and a PKCE challenge, bound by the flow cookie; the ID token and nonce handed to every domain and a session cookie kept for each that admits the person; a callback that works once — repeated, from another browser or for another provider refused; the provider's own refusal shown without asking any domain; a GitHub token revoked once every domain has checked it; the providers listed in the session; a return path only ever of this console; exactly the registered callback asked for |
 | `server/auth/revocations.test.ts` | A revocation handed to every other domain, saying which could not be told, and never handed back where it came from; the five-minute pass handing on what each domain revoked since it last looked, retrying a domain that was down, carrying on past one it cannot read; the token routes: revoked where the token was made and handed on, and a new token shown only once its domain has recorded it |
 | `server/routes/sql.test.ts` | Statements across domains, over the fixture table in two stub domains: a join of a table of each, each at its own snapshot, saying where each is; native tables as `<domain>_iceberg.<dataset>.<table>`; each table's live tail read from its own domain's tail app as the person is there; a statement without its domain told how to write it; a name no domain holds answered with the tables there are; a table the person may not query in its domain refused, naming it; binding in the editor as it runs; an export only with `data.export` on every table read, each in its own domain |
+| `server/controlPlane/client.test.ts` | A control plane's own errors passed on with their status, and a gateway's bare 404 or HTML 502 — a domain whose route or cluster is gone — read as the control plane being unreachable (`503`) |
+| `server/routes/stream.test.ts` | The merged fleet stream: its first frame at once, with every domain in it, and changes from several domains close together merged into one frame |
 | `server/routes/catalog.test.ts` | The federated Iceberg REST catalog over two stub domains and an unreachable one: the domains that list something for the token as namespaces, the token handed on unchanged; a domain's datasets as two-level namespaces and nothing under a dataset; a domain answered as a namespace and a dataset's requests handed to its domain with the namespace rewritten; a table loaded and committed as its domain answers, the body byte for byte; a domain's refusal passed through, and no such namespace in the Iceberg shape; an unreachable domain named in a `503`; namespaces and tables never made or dropped (`501`, no domain asked); each domain's own catalog handed through as it is |
 | `src/lib/paths.test.ts` | Paths under `/d/<domain>`: a path put under its domain, the domain encoded as a segment; the section read whatever the scope, and kept when the domain changes; search the console's own |
 | `src/lib/fleetMerge.test.ts` | The merged fleet: every domain shown, newest change first, each item saying its domain; one domain alone; the domains the person may not see left out and named; no rate summed while any domain's is unknown; the unreachable domain named, and the whole not connected while it is not. Series summed within a few seconds, a domain's latest point carried forward so a later sample does not read as a dip |

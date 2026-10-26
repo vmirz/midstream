@@ -655,6 +655,16 @@ restarted it at once, but that request (*Shop*'s first delayed observation) was 
 `schedule-requests` held four requests and `schedule-actions` three actions. The sweeps brought the
 materialization to `running` instead, and every later request dispatched (14 §14.3).
 
+## 13.8j Verified on the lab: domains and the shared console
+
+On 2026-10-26 two domains ran on the lab from this chart — Domain A with the shared console, Domain B
+reached only through its API route — after a clean uninstall of 1.0.0-rc.2, whose materializations,
+topics, consumer groups and bucket prefix were deleted first. What was checked, every fault injected,
+the five defects found and fixed, and the performance against rc.2 on the 111-million-record load-test
+topic are in handbook 20 §20.15; the browser record is console 14 §14.4. In short: both backfills
+committed exactly 102,033,103 rows, in 89.4 and 88.9 minutes; the console's requests answered within a
+millisecond or two of rc.2's; nothing on the data path changed between the builds.
+
 ## 13.9 Pre-finish checklist
 
 Before considering any change complete:

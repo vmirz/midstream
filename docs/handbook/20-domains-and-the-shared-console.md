@@ -504,11 +504,73 @@ refused elsewhere and vice versa. Put the same key in its auth Secret and restar
 
 ## 20.15 Validated on the lab
 
-*To be completed from the lab validation: the deployment, each provider's sign-in, the policies, a
-password sign-in, the switcher and the all-domains pages, a statement joining two domains, DuckDB and
-PyIceberg on the federated and the per-domain catalogs (and whether DuckDB reads nested namespaces),
-a token made in one domain used in another and revoked in both, the redirect, a domain down, and the
-performance against 1.0.0-rc.2.*
+On 2026-10-26 the lab ran two domains from this chart, on a clean slate: **Domain A**, the release
+`midstream` with the shared console (the settings home), and **Domain B**, the release `midstream-b`
+in its own namespace with no console, reached by the console only through its API route
+`domain-b-api.local.epilix.com` — as a domain in another cluster would be. Builds under test came from
+a temporary package index and registry on the lab; the last, `1.0.0rc3.dev6`, was rolled onto both
+domains as an upgrade (every app `Ready` and every runtime re-pinned in under two minutes). Dex stood
+in for the sign-in provider (`oidc`). Checks ran through the console's API and in a browser
+(Playwright, Chromium); the record is console 14 §14.4.
+
+| Area | Verified |
+|---|---|
+| Install | Both releases `Ready` two minutes after `helm install`; the administrator's first sign-in in each domain asked for a new password; the console reported both domains `ok` with one federation key |
+| Routing | A cookie per domain (`midstream_session_domain_a`, `…_domain_b`, HttpOnly, Secure, SameSite=Lax); the merged fleet and search across both; `404 unknown_domain`; `domain-a.local.epilix.com/<path>?<query>` → `301` to `/d/domain_a/<path>?<query>`; a change from another site `403`; a person only in Domain B a guest in Domain A |
+| Sign-in through Dex | Someone neither domain knew: an account in both (`open`), signed in to both at once; Domain B `invited`: signed in to A, refused by B (`no_account`), said so; Domain A limited to `example.com`: refused by both, back on the sign-in page with each reason; password sign-in off in Domain B: a person's right password `403 password_sign_in_disabled`, a wrong one still `invalid_credentials`, the administrator still in, Domain A untouched |
+| Access tokens | Made in Domain A: honoured by Domain A, Domain B, the federated catalog and Domain B's API directly; limited to `domain_b.finance`, it lists only Domain B and loads nothing of A; revoked in A, refused by every domain at once; made, limited and revoked from the Account page |
+| SQL | `domain_a.shop.orders JOIN domain_b.finance.payments`: 25 rows before either table's first commit (each domain's live tail) and after; `domain_b_iceberg.…`; a name without its domain refused with the name to write; without a session in Domain B, `401` naming `domain_b.finance` |
+| Catalogs | PyIceberg on `/catalog`: the domains, their datasets, both tables read; PyIceberg on `/d/domain_b/catalog`; DuckDB 2.0 on `/d/domain_a/catalog`, the 102,033,103-row table counted. **DuckDB 2.0 on `/catalog`** lists the domains as schemas but no tables under them, refuses `lake.domain_a.shop.orders` and reads a table only as `lake."domain_a.shop".orders` — so the Connect panel gives DuckDB (and Trino) each domain's own catalog, as decided; Spark and Trino were not run |
+
+**Faults.**
+
+| Fault | What happened |
+|---|---|
+| Domain B unreachable (its route removed, its control plane running) | Marked `unreachable` within 15 s; Domain A unaffected; the merged fleet kept B's last snapshot, marked; a statement naming a B table `503 domain_unreachable`; the federated catalog left B out and answered `503 ServiceUnavailableException` for its namespaces; a token revoked meanwhile reached B through the sync 106 s after B's return |
+| The provider down (Dex scaled to 0) | *Dex cannot be reached right now*, no cookie set; passwords and existing sessions unaffected; with Dex back (new signing keys), sign-in worked at once — each domain read the new keys |
+| Another federation key in Domain B | The console said the keys disagree; a token from A refused by B (`not valid`), honoured by A; with the shared key back, they agreed and new tokens worked in both |
+| A control plane restarted (B, twice; A, the settings home) | Back in 20–52 s; sessions outlived it; while starting, it answered `503 starting` as itself |
+| A misconfigured registry (domain_b sent to Domain A's API) | `domain_b` misconfigured, logged at `error` naming both domains; nothing of it served (`503 domain_misconfigured`), no sign-in to it, never A's materializations twice; served again once corrected |
+| The console restarted | Signed-in browsers stayed signed in; a sign-in half-way through Dex came back *expired — sign in again* |
+| Domain B's tail app down | A statement over both domains ran on B's committed rows, B's tail `unavailable`, A's read; back once the tail app returned |
+
+**Found and fixed during the validation** (each with its regression test): a statement started in one
+domain naming another's table failed with a 500 — the caller is now resolved in each domain a
+statement names (`97df65d`); a gateway's own 404 or 5xx for a domain that is gone was read as the
+control plane's — materializations "not found", a bare 404 to engines — and a domain that had
+answered once never showed unreachable (`84c4a62`); the merged fleet stream held its first frame for
+its 100 ms merge window (`678ad09`); the console Settings page asked for the console's settings before
+it knew the settings home (`c8ba672`); five audit actions showed as codes (`7d38627`).
+
+**Performance against 1.0.0-rc.2** — the same lab, the same 111,031,820-offset load-test topic, the same
+materialization (one replica, autoscaling to 16 members), the console measured the same way:
+
+| Backfill | rc.2 | Domains |
+|---|---|---|
+| Rows committed | 102,033,103 | 102,033,103 |
+| Create to the last commit | 89.4 min | 88.9 min |
+| Average | 19,025 rows/s | 19,137 rows/s |
+| Ingest at 16 members, p50 / p90 | 22,009 / 24,187 rows/s | 22,027 / 23,659 rows/s |
+| Members at 16 after | 6.6 min | 6.7 min |
+
+| Console request (p50 / p90, ms) | rc.2 | Domains |
+|---|---|---|
+| `GET /api/config` | 5.3 / 6.6 | 6.3 / 7.7 |
+| The session | 5.8 / 6.7 | 5.8 / 7.1 |
+| The fleet (rc.2's one; every domain's) | 8.2 / 9.1 | 6.5 / 8.0 |
+| A materialization's detail | 6.5 / 7.8 | 8.0 / 8.5 |
+| Settings | 10.6 / 12.5 | 11.0 / 13.0 |
+| The fleet stream's first event | 7.7 / 19.6 | 7.8 / 10.3 |
+| Password sign-in | 145–210 | 140–203 |
+| Browse the newest rows, all time | 191 | 126 |
+| One month grouped by partition (SQL) | 17.7 s | 16.8 s |
+| `count(*)` over all time (SQL) | 207 s, 1,192 files | 249 s, 1,467 files |
+
+The last row scans every data file: the two tables differed only in how far compaction had gone when
+it ran, and per file the scan is the same (0.174 s and 0.170 s). Nothing on the data path — runtime,
+committer, maintenance app, tail app — changed between the two builds. Idle, the control plane, the
+maintenance and tail apps and a fresh console used what they did on rc.2 (the console 2–3 millicores
+and 68–98 MiB; the control plane 8 millicores and 139 MiB); Domain B's own apps add their share.
 
 ## 20.16 Known edges
 
