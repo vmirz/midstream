@@ -30,6 +30,7 @@ helm install midstream charts/midstream -n midstream --create-namespace -f my-va
 | `package.source` | `index` | `index` installs `midstream-platform==<package.index.version>`, the chart's appVersion unless set, from PyPI or `package.index.url`; `git` installs `package.git.repository` at `package.git.ref`, for development |
 | `kaspr.bootstrapServers` | required | the Kafka bootstrap address every app and runtime uses |
 | `kaspr.authentication` | required | Kaspr's Kafka client authentication: `type` (`scram-sha-512`, `scram-sha-256`, `plain`), `username`, `passwordSecret`; a listener without authentication takes `{type: plain}` alone |
+| `kaspr.tls` | unset | TLS to the brokers, passed to every app and runtime as the KasprApp's `tls`: `{}` turns it on (SASL_SSL with authentication, SSL with `{type: plain}` alone) |
 | `kaspr.config` | `{}` | Kaspr settings every app and runtime share, as the KasprApp CRD spells them (`topicReplicationFactor: 1` on a cluster with fewer than three brokers); the chart's own keys cannot be overridden |
 | `kaspr.version` | the operator's default | the Kaspr image version |
 | `kaspr.storageClass` | the cluster's default | the class of every persistent claim |

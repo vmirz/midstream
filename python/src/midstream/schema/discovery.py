@@ -28,6 +28,7 @@ import os
 import time
 from typing import Any
 
+from midstream.kafka.tls import kafka_ssl_context
 from midstream.models import Materialization
 from midstream.utils.background_loop import AdapterTimeoutError, BackgroundLoop
 
@@ -249,6 +250,9 @@ async def sample_topics(
     }
     if security_protocol is not None:
         consumer_kwargs["security_protocol"] = security_protocol
+    ssl_context = kafka_ssl_context(security_protocol)
+    if ssl_context is not None:
+        consumer_kwargs["ssl_context"] = ssl_context
     if sasl_mechanism is not None:
         consumer_kwargs["sasl_mechanism"] = sasl_mechanism
     if sasl_username is not None:

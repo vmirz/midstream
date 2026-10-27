@@ -399,6 +399,9 @@ bootstrapServers: {{ .Values.kaspr.bootstrapServers | quote }}
 authentication:
   {{- toYaml . | nindent 2 }}
 {{- end }}
+{{- with include "midstream.kafkaTls" . }}
+{{ . }}
+{{- end }}
 storage:
   {{- include "midstream.storage" (dict "root" . "size" .Values.controlPlane.settings.defaultRuntimeStorageSize) | nindent 2 }}
 resources:
@@ -435,4 +438,14 @@ template:
 {{- fail "kaspr.authentication.type is required: scram-sha-512, scram-sha-256 or plain" -}}
 {{- end -}}
 {{- toYaml $auth -}}
+{{- end -}}
+
+{{/*
+TLS to the brokers: kaspr.tls, unless unset or null, is every KasprApp's `tls`, the runtimes' included,
+as the CRD spells it. `{}` turns TLS on; kaspr-operator reads no field of it.
+*/}}
+{{- define "midstream.kafkaTls" -}}
+{{- if not (kindIs "invalid" .Values.kaspr.tls) -}}
+tls: {{ toJson .Values.kaspr.tls }}
+{{- end -}}
 {{- end -}}

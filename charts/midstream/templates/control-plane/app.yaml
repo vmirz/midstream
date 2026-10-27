@@ -19,6 +19,9 @@ spec:
   bootstrapServers: {{ required "kaspr.bootstrapServers is required: the Kafka bootstrap address every app and runtime uses" .Values.kaspr.bootstrapServers | quote }}
   authentication:
     {{- include "midstream.authentication" . | nindent 4 }}
+  {{- with include "midstream.kafkaTls" . }}
+  {{- . | nindent 2 }}
+  {{- end }}
   storage:
     {{- include "midstream.storage" (dict "root" . "size" .Values.controlPlane.storage.size) | nindent 4 }}
   # Delayed work rides the Kaspr scheduler: observation backoff, retries. kaspr.config adds the
