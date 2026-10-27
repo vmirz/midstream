@@ -28,6 +28,7 @@ from importlib import import_module
 from typing import Any, Protocol, TypeVar
 
 from midstream.kafka.admin import AsyncRunner
+from midstream.kafka.tls import kafka_ssl_context
 
 LOGGER = logging.getLogger(__name__)
 
@@ -355,6 +356,7 @@ class AIOKafkaMetadataClient:
         return {
             "bootstrap_servers": self.bootstrap_servers,
             "security_protocol": self.security_protocol or "PLAINTEXT",
+            "ssl_context": kafka_ssl_context(self.security_protocol),
             "sasl_mechanism": self.sasl_mechanism or "PLAIN",
             "sasl_plain_username": self.sasl_username,
             "sasl_plain_password": self.sasl_password,

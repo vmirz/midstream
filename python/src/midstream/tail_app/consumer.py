@@ -35,6 +35,7 @@ import os
 from typing import Any, NamedTuple
 
 from midstream.kafka.metadata import track_no_topics
+from midstream.kafka.tls import kafka_ssl_context
 
 LOGGER = logging.getLogger(__name__)
 
@@ -200,9 +201,11 @@ def kafka_settings(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
     bootstrap = (env.get("K_KAFKA_BOOTSTRAP_SERVERS") or "").strip()
     if not bootstrap:
         raise RuntimeError("K_KAFKA_BOOTSTRAP_SERVERS is required for the tail's consumers")
+    protocol = (env.get("K_KAFKA_SECURITY_PROTOCOL") or "PLAINTEXT").strip()
     return {
         "bootstrap_servers": bootstrap,
-        "security_protocol": (env.get("K_KAFKA_SECURITY_PROTOCOL") or "PLAINTEXT").strip(),
+        "security_protocol": protocol,
+        "ssl_context": kafka_ssl_context(protocol),
         "sasl_mechanism": (env.get("K_KAFKA_SASL_MECHANISM") or "PLAIN").strip(),
         "sasl_plain_username": env.get("K_KAFKA_AUTH_USERNAME") or None,
         "sasl_plain_password": env.get("K_KAFKA_AUTH_PASSWORD") or None,
