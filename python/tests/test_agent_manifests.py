@@ -1148,6 +1148,33 @@ class KasprConfigTests(unittest.TestCase):
         self.assertEqual({"valueSerializer": "json", "topicAllowDeclare": True, "brokerRebalanceTimeout": 300}, runtime["config"])
 
 
+class KafkaTlsTests(unittest.TestCase):
+    """`kaspr.tls` is every KasprApp's `tls`, the runtimes' included, as the CRD spells it.
+
+    `{}` turns TLS to the brokers on and kaspr-operator reads no field of it, so the chart passes the
+    value through as given. Unset, no app and no runtime has one.
+    """
+
+    def test_every_app_and_the_runtimes_take_kaspr_tls_as_given(self) -> None:
+        import yaml
+
+        seen = set()
+        for values in DOMAIN_VALUES_FILES:
+            with self.subTest(values=values.name):
+                kaspr = yaml.safe_load(values.read_text()).get("kaspr") or {}
+                apps = documents("KasprApp", values)
+                control_plane = next(app for app in apps if app["metadata"]["name"].endswith("-control-plane"))
+                env = {item["name"]: item for item in control_plane["spec"]["template"]["kasprContainer"]["env"]}
+                runtime = yaml.safe_load(env["CONTROL_PLANE_RUNTIME_APP_SPEC"]["value"])
+                for name, spec in [(app["metadata"]["name"], app["spec"]) for app in apps] + [("runtime", runtime)]:
+                    if "tls" in kaspr:
+                        self.assertEqual(kaspr["tls"], spec["tls"], name)
+                    else:
+                        self.assertNotIn("tls", spec, name)
+                seen.add("tls" in kaspr)
+        self.assertEqual({True, False}, seen, "the values files render TLS both on and off")
+
+
 class PackageSourceTests(unittest.TestCase):
     """The chart installs the release it belongs to unless an installation chooses the development source.
 

@@ -19,6 +19,9 @@ spec:
   bootstrapServers: {{ required "kaspr.bootstrapServers is required" .Values.kaspr.bootstrapServers | quote }}
   authentication:
     {{- include "midstream.authentication" . | nindent 4 }}
+  {{- with include "midstream.kafkaTls" . }}
+  {{- . | nindent 2 }}
+  {{- end }}
   storage:
     {{- include "midstream.storage" (dict "root" . "size" .Values.maintenance.storage.size) | nindent 4 }}
   config:

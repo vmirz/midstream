@@ -48,6 +48,9 @@ kaspr:
   #     username: midstream
   #     passwordSecret: {secretName: midstream-kafka, passwordKey: password}
   authentication: {}
+  # TLS to the brokers, passed to every app and runtime as the KasprApp's `tls`: `{}` turns it on
+  # (SASL_SSL with authentication, SSL with `{type: plain}` alone). Unset: no TLS.
+  # tls: {}
   # Kaspr settings every app and runtime share, as the KasprApp CRD's `config` spells them: for
   # example `topicReplicationFactor: 1` on a cluster with fewer than three brokers (Kaspr's default
   # is 3). The keys the chart relies on (serializers, topic declaration, the scheduler, the web port)

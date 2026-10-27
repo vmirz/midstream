@@ -20,6 +20,9 @@ spec:
   bootstrapServers: {{ required "kaspr.bootstrapServers is required" .Values.kaspr.bootstrapServers | quote }}
   authentication:
     {{- include "midstream.authentication" . | nindent 4 }}
+  {{- with include "midstream.kafkaTls" . }}
+  {{- . | nindent 2 }}
+  {{- end }}
   # Kaspr's own: the app keeps no table of its own.
   storage:
     {{- include "midstream.storage" (dict "root" . "size" .Values.tail.storage.size) | nindent 4 }}

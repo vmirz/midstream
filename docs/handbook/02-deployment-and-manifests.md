@@ -129,6 +129,7 @@ spec:
   replicas: 1
   bootstrapServers: <kaspr.bootstrapServers>
   authentication: <kaspr.authentication>            # scram-sha-512, scram-sha-256 or plain
+  tls: <kaspr.tls>                                  # when set; {} turns TLS to the brokers on
   storage: { type: persistent-claim, class: default, size: 1Gi, deleteClaim: True }
   config:
     schedulerEnabled: true
@@ -162,6 +163,10 @@ Notes:
 - `webPort: 6065` and `webBasePath: /` define the HTTP surface.
 - `kaspr.config` adds an installation's shared Kaspr settings to every app and runtime,
   `topicReplicationFactor` on a small cluster for one; the keys above stay the chart's.
+- `kaspr.tls`, when set, is the `tls` of every app and, through the runtime spec, every runtime,
+  as the CRD spells it. `{}` turns TLS to the brokers on: kaspr-operator, which reads no field of
+  it, has the app connect with `SASL_SSL`, or with `SSL` when `kaspr.authentication` is
+  `{type: plain}` alone.
 
 ### Package installation
 
@@ -215,6 +220,7 @@ Base value (abridged; see `control-plane.yaml:115-204`):
 replicas: 16                     # replaced by each materialization's own replica count
 bootstrapServers: <kaspr.bootstrapServers>
 authentication: <kaspr.authentication>
+tls: <kaspr.tls>                 # when set
 storage: { type: persistent-claim, class: default, size: 64Mi, deleteClaim: true }   # replaced by the materialization's storage_size
 resources:                       # every runtime pod, whatever its topic - see below
   requests: { cpu: 0.5, memory: 1Gi }

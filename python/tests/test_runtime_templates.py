@@ -416,6 +416,17 @@ class RuntimeTemplateTests(unittest.TestCase):
         self.assertNotEqual(spec_hash(render(config=off)), spec_hash(render(config=ControlPlaneConfig(runtime_app_spec=shipped))))
         self.assertNotIn("verticalPodAutoscaler", render()["kaspr_app"]["spec"])
 
+    def test_a_runtime_takes_kafka_tls_from_the_deployment(self) -> None:
+        # The shipped runtime spec carries `kaspr.tls` (`{}` turns TLS to the brokers on), and the
+        # control plane renders it as written. Turning it off changes the spec hash, so running
+        # runtimes are applied again without it.
+        shipped = shipped_runtime_app_spec()
+        with_tls = render(config=ControlPlaneConfig(runtime_app_spec=shipped))
+        self.assertEqual({}, with_tls["kaspr_app"]["spec"]["tls"])
+        without = render(config=ControlPlaneConfig(runtime_app_spec={key: value for key, value in shipped.items() if key != "tls"}))
+        self.assertNotIn("tls", without["kaspr_app"]["spec"])
+        self.assertNotEqual(spec_hash(with_tls), spec_hash(without))
+
     def test_the_state_store_flushes_its_writes_long_before_they_could_fill_a_members_volume(self) -> None:
         # RocksDB keeps a memtable's writes in its write-ahead log until it flushes, at the write
         # buffer's size; at Kaspr's 64 MiB a busy runtime's log alone would outgrow a 64Mi volume.

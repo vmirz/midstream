@@ -13,6 +13,8 @@ kaspr:
     passwordSecret:
       secretName: midstream-kafka
       passwordKey: password
+  # A TLS listener, as the KasprApp CRD spells it.
+  tls: {}
   storageClass: standard
   # Shared Kaspr settings; the chart's own keys cannot be overridden (the serializer stays json).
   config:
