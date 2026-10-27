@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 290" width="760" role="img" aria-label="Both topologies come from one chart: the console beside a domain, or alone" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8c959f"/></marker>
+  </defs>
+  <text x="24" y="28" font-size="15" font-weight="600" fill="#1f2328">Both topologies come from one chart: the console beside a domain, or alone</text>
+  <text x="24" y="60" font-weight="600" fill="#1f2328">Default: the console in Domain A's release</text>
+  <text x="396" y="60" font-weight="600" fill="#1f2328">A platform cluster: the console alone</text>
+
+  <!-- Left: the console in Domain A's release -->
+  <rect x="24" y="72" width="340" height="104" rx="8" fill="none" stroke="#8c959f" stroke-width="1.25"/>
+  <text x="40" y="94" font-weight="600" fill="#1f2328">Cluster A</text>
+  <rect x="40" y="104" width="156" height="56" rx="8" fill="#0969da" fill-opacity="0.12" stroke="#0969da" stroke-width="2"/>
+  <text x="52" y="128" font-weight="600" fill="#1f2328">Shared console</text>
+  <text x="52" y="146" font-size="11.5" fill="#656d76">A local, B, C remote</text>
+  <rect x="212" y="104" width="136" height="56" rx="8" fill="none" stroke="#8c959f" stroke-width="1.25"/>
+  <text x="224" y="128" font-weight="600" fill="#1f2328">Control plane A</text>
+  <text x="224" y="146" font-size="11.5" fill="#656d76">maintenance, tail</text>
+  <rect x="24" y="200" width="162" height="64" rx="8" fill="none" stroke="#8c959f" stroke-width="1.25"/>
+  <text x="36" y="224" font-weight="600" fill="#1f2328">Cluster B</text>
+  <text x="36" y="242" font-size="11.5" fill="#656d76">control plane B, apps</text>
+  <rect x="202" y="200" width="162" height="64" rx="8" fill="none" stroke="#8c959f" stroke-width="1.25"/>
+  <text x="214" y="224" font-weight="600" fill="#1f2328">Cluster C</text>
+  <text x="214" y="242" font-size="11.5" fill="#656d76">control plane C, apps</text>
+  <g fill="none" stroke="#8c959f" stroke-width="1.25">
+    <path d="M118 176V200" marker-end="url(#arrow)"/>
+    <path d="M118 176V188H283V200" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- Right: a platform cluster running only the console -->
+  <rect x="396" y="72" width="340" height="88" rx="8" fill="none" stroke="#8c959f" stroke-width="1.25"/>
+  <text x="412" y="94" font-weight="600" fill="#1f2328">Platform cluster</text>
+  <rect x="412" y="104" width="308" height="40" rx="8" fill="#0969da" fill-opacity="0.12" stroke="#0969da" stroke-width="2"/>
+  <text x="424" y="128" font-weight="600" fill="#1f2328">Shared console</text>
+  <text x="548" y="128" font-size="11.5" fill="#656d76">every domain remote</text>
+  <rect x="396" y="200" width="104" height="64" rx="8" fill="none" stroke="#8c959f" stroke-width="1.25"/>
+  <text x="408" y="224" font-weight="600" fill="#1f2328">Cluster A</text>
+  <text x="408" y="242" font-size="11.5" fill="#656d76">Domain A</text>
+  <rect x="514" y="200" width="104" height="64" rx="8" fill="none" stroke="#8c959f" stroke-width="1.25"/>
+  <text x="526" y="224" font-weight="600" fill="#1f2328">Cluster B</text>
+  <text x="526" y="242" font-size="11.5" fill="#656d76">Domain B</text>
+  <rect x="632" y="200" width="104" height="64" rx="8" fill="none" stroke="#8c959f" stroke-width="1.25"/>
+  <text x="644" y="224" font-weight="600" fill="#1f2328">Cluster C</text>
+  <text x="644" y="242" font-size="11.5" fill="#656d76">Domain C</text>
+  <g fill="none" stroke="#8c959f" stroke-width="1.25">
+    <path d="M566 160V180H448V200" marker-end="url(#arrow)"/>
+    <path d="M566 160V200" marker-end="url(#arrow)"/>
+    <path d="M566 160V180H684V200" marker-end="url(#arrow)"/>
+  </g>
+</svg>

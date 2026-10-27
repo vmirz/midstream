@@ -1,4 +1,4 @@
-{{- if .Values.tail.enabled }}
+{{- if include "midstream.tailEnabled" . }}
 apiVersion: kaspr.io/v1alpha1
 kind: KasprAgent
 metadata:

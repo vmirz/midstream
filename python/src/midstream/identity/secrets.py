@@ -19,6 +19,8 @@ LOGGER = logging.getLogger(__name__)
 SIGNING_KEY_ENV = "AUTH_SIGNING_KEY"
 PREVIOUS_SIGNING_KEY_ENV = "AUTH_PREVIOUS_SIGNING_KEY"
 SERVICE_TOKEN_ENV = "AUTH_SERVICE_TOKEN"
+FEDERATION_KEY_ENV = "AUTH_FEDERATION_KEY"
+PREVIOUS_FEDERATION_KEY_ENV = "AUTH_PREVIOUS_FEDERATION_KEY"
 BOOTSTRAP_ADMIN_EMAIL_ENV = "AUTH_BOOTSTRAP_ADMIN_EMAIL"
 BOOTSTRAP_ADMIN_PASSWORD_ENV = "AUTH_BOOTSTRAP_ADMIN_PASSWORD"
 BOOTSTRAP_ADMIN_FIRST_NAME_ENV = "AUTH_BOOTSTRAP_ADMIN_FIRST_NAME"
@@ -48,15 +50,17 @@ class BootstrapAdmin:
 
 @dataclass(frozen=True, slots=True)
 class IdentitySecrets:
-    """Signing keys, the console's service token, and the bootstrap administrator.
+    """Signing keys, the federation keys, the console's service token, and the bootstrap administrator.
 
     `signing_keys[0]` signs new sessions; every key verifies them, so a key can be rotated by
-    moving the current one to the previous slot without signing everyone out.
+    moving the current one to the previous slot without signing everyone out. `federation_keys`
+    work the same way for access tokens, which every domain shares a key for (handbook 20).
     """
 
     signing_keys: tuple[SigningKey, ...] = ()
     service_token: str | None = None
     bootstrap_admin: BootstrapAdmin | None = None
+    federation_keys: tuple[SigningKey, ...] = ()
 
     @property
     def can_sign_in(self) -> bool:
@@ -69,6 +73,14 @@ class IdentitySecrets:
     def key(self, key_id: str) -> SigningKey | None:
         return next((key for key in self.signing_keys if key.key_id == key_id), None)
 
+    @property
+    def current_federation_key(self) -> SigningKey | None:
+        """The key new access tokens are signed with; None, and no access token can be made."""
+        return self.federation_keys[0] if self.federation_keys else None
+
+    def federation_key(self, key_id: str) -> SigningKey | None:
+        return next((key for key in self.federation_keys if key.key_id == key_id), None)
+
 
 def signing_key(secret: str) -> SigningKey:
     """A signing key from its secret text."""
@@ -78,16 +90,8 @@ def signing_key(secret: str) -> SigningKey:
 
 def identity_secrets_from_environment(environ: Mapping[str, str]) -> IdentitySecrets:
     """Read the identity secrets from an environment, dropping any that are too weak to use."""
-    keys: list[SigningKey] = []
-    # A previous key only verifies, so it matters only beside a current key that signs.
-    for name in (SIGNING_KEY_ENV, PREVIOUS_SIGNING_KEY_ENV):
-        value = (environ.get(name) or "").strip()
-        if not value or (name == PREVIOUS_SIGNING_KEY_ENV and not keys):
-            continue
-        if len(value) < MIN_SECRET_LENGTH:
-            LOGGER.error("%s is shorter than %d characters and is ignored", name, MIN_SECRET_LENGTH)
-            continue
-        keys.append(signing_key(value))
+    keys = _key_pair(environ, SIGNING_KEY_ENV, PREVIOUS_SIGNING_KEY_ENV)
+    federation = _key_pair(environ, FEDERATION_KEY_ENV, PREVIOUS_FEDERATION_KEY_ENV)
 
     service_token = (environ.get(SERVICE_TOKEN_ENV) or "").strip() or None
     if service_token is not None and len(service_token) < MIN_SECRET_LENGTH:
@@ -104,7 +108,27 @@ def identity_secrets_from_environment(environ: Mapping[str, str]) -> IdentitySec
             first_name=(environ.get(BOOTSTRAP_ADMIN_FIRST_NAME_ENV) or "").strip() or "Admin",
             last_name=(environ.get(BOOTSTRAP_ADMIN_LAST_NAME_ENV) or "").strip() or "User",
         )
-    return IdentitySecrets(signing_keys=tuple(keys), service_token=service_token, bootstrap_admin=bootstrap)
+    return IdentitySecrets(
+        signing_keys=tuple(keys),
+        service_token=service_token,
+        bootstrap_admin=bootstrap,
+        federation_keys=tuple(federation),
+    )
+
+
+def _key_pair(environ: Mapping[str, str], current: str, previous: str) -> list[SigningKey]:
+    """A key and the one it replaced. A previous key only verifies, so it matters only beside a
+    current key that signs."""
+    keys: list[SigningKey] = []
+    for name in (current, previous):
+        value = (environ.get(name) or "").strip()
+        if not value or (name == previous and not keys):
+            continue
+        if len(value) < MIN_SECRET_LENGTH:
+            LOGGER.error("%s is shorter than %d characters and is ignored", name, MIN_SECRET_LENGTH)
+            continue
+        keys.append(signing_key(value))
+    return keys
 
 
 @lru_cache(maxsize=1)

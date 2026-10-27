@@ -19,6 +19,7 @@ const { loadCatalog, summarize } = await import('../data/catalog.ts');
 const { logicalColumns } = await import('../data/logical.ts');
 const { BrowseRun } = await import('./browse.ts');
 const { validateStatement } = await import('./store.ts');
+const { sourcesFor } = await import('./testing.ts');
 const { StatementRun } = await import('./statement.ts');
 const { resetTables } = await import('../iceberg/table.ts');
 const { resetSnapshotCaches } = await import('../iceberg/snapshot.ts');
@@ -36,8 +37,8 @@ const LOCATION = FIXTURE_LOCATION;
 /** The materialization's tables, as the control plane lists them. */
 /** The materialization's two tables, in two datasets: SQL reads `shop.orders` and `finance.payments`. */
 const TABLES = [
-  { name: 'orders', dataset: 'shop', datasetId: 'ds-000000000001', location: LOCATION },
-  { name: 'payments', dataset: 'finance', datasetId: 'ds-000000000002', location: PAYMENTS_LOCATION },
+  { domain: 'domain_a', materializationId: 'mat-a1b2c3d4e5f6', name: 'orders', dataset: 'shop', datasetId: 'ds-000000000001', location: LOCATION },
+  { domain: 'domain_a', materializationId: 'mat-a1b2c3d4e5f6', name: 'payments', dataset: 'finance', datasetId: 'ds-000000000002', location: PAYMENTS_LOCATION },
 ];
 const admit = async (): Promise<() => void> => () => undefined;
 
@@ -67,10 +68,11 @@ function runOver(catalog: Catalog): InstanceType<typeof BrowseRun> {
 
 function makeBrowse(catalog: Catalog, request: { filters?: Array<{ column: string; operator: 'eq'; value: string }> } = {}): InstanceType<typeof BrowseRun> {
   return new BrowseRun({
+    domain: 'domain_a',
     materializationId: 'mat-a1b2c3d4e5f6',
     ownerId: 'usr-test',
     tableName: 'orders',
-    datasets: [{ id: 'ds-000000000001', name: 'shop' }],
+    datasets: [{ domain: 'domain_a', id: 'ds-000000000001', name: 'shop' }],
     request: { kind: 'browse', range: { from: null, to: null }, ...request },
     catalog,
     columns: logicalColumns(catalog.schema, catalog.forkMap),
@@ -81,17 +83,18 @@ function makeBrowse(catalog: Catalog, request: { filters?: Array<{ column: strin
 function statementOver(catalog: Catalog, sql: string): InstanceType<typeof StatementRun> {
   const columns = logicalColumns(catalog.schema, catalog.forkMap);
   return new StatementRun({
+    domain: 'domain_a',
     materializationId: 'mat-a1b2c3d4e5f6',
     ownerId: 'usr-test',
     tableName: 'orders',
-    datasets: [{ id: 'ds-000000000001', name: 'shop' }],
+    datasets: [{ domain: 'domain_a', id: 'ds-000000000001', name: 'shop' }],
     request: { kind: 'sql', range: { from: null, to: null }, sql },
     catalog,
     columns,
     admit,
     statement: sql,
-    sources: [{ namespace: 'shop', name: 'orders', catalog, columns }],
-    tableNames: TABLES.map((table) => `${table.dataset}.${table.name}`),
+    sources: [{ domain: 'domain_a', namespace: 'shop', datasetId: 'ds-000000000001', name: 'orders', catalog, columns, tail: null }],
+    tableNames: TABLES.map((table) => `${table.domain}.${table.dataset}.${table.name}`),
   });
 }
 
@@ -102,7 +105,14 @@ async function finished<T extends Run>(run: T): Promise<T> {
 
 /** Start a run as the route does, over both tables, and wait for it to end. */
 async function started(request: RunRequest): Promise<Run> {
-  const run = await startRun({ materializationId: 'mat-a1b2c3d4e5f6', ownerId: 'usr-test', tables: TABLES, request });
+  const run = await startRun({
+    domain: 'domain_a',
+    materializationId: 'mat-a1b2c3d4e5f6',
+    ownerId: 'usr-test',
+    tables: TABLES,
+    request,
+    ...(request.kind === 'sql' ? sourcesFor(request.sql ?? '', TABLES) : {}),
+  });
   if (!run.isTerminal()) {
     await new Promise<void>((resolve) => {
       const stop = run.subscribe((snapshot) => {
@@ -179,33 +189,33 @@ describe('a run over an Iceberg table', () => {
 
   it('answers statements over the logical and the native table alike', async () => {
     const catalog = await loadCatalog('mat-a1b2c3d4e5f6', LOCATION);
-    const logical = await finished(statementOver(catalog, 'SELECT count(*) AS n, sum(total) AS total FROM shop.orders'));
+    const logical = await finished(statementOver(catalog, 'SELECT count(*) AS n, sum(total) AS total FROM domain_a.shop.orders'));
     assert.deepEqual((await logical.readPage(0, 1)).rows[0], { n: 12, total: 661 });
     const native = await finished(
-      statementOver(catalog, 'SELECT customer.phone__v2.number AS number FROM iceberg.shop.orders WHERE _kafka_offset = 10'),
+      statementOver(catalog, 'SELECT customer.phone__v2.number AS number FROM domain_a_iceberg.shop.orders WHERE _kafka_offset = 10'),
     );
     assert.equal(native.state, 'succeeded', native.error?.message ?? '');
     assert.deepEqual((await native.readPage(0, 1)).rows, [{ number: '5550100' }]);
   });
 
   it('binds a statement while it is typed without opening anything', async () => {
-    const check = (sql: string): Promise<void> =>
-      validateStatement({ materializationId: 'mat-a1b2c3d4e5f6', tables: TABLES, sql });
-    await check('SELECT "customer.phone.number", count(*) FROM shop.orders GROUP BY 1');
-    await check('SELECT customer.phone__v2.number, unnest(items).sku FROM iceberg.shop.orders');
-    await check('SELECT o.status, sum(p.amount) FROM shop.orders o JOIN finance.payments p USING (order_id) GROUP BY 1');
-    await check('SELECT method FROM iceberg.finance.payments');
-    await assert.rejects(() => check('SELECT nope FROM shop.orders'), /nope/);
-    await assert.rejects(() => check('SELECT amount FROM shop.orders'), /amount/, 'payments’ column is not orders’');
+    const check = (sql: string): Promise<void> => validateStatement({ ...sourcesFor(sql, TABLES), sql });
+    await check('SELECT "customer.phone.number", count(*) FROM domain_a.shop.orders GROUP BY 1');
+    await check('SELECT customer.phone__v2.number, unnest(items).sku FROM domain_a_iceberg.shop.orders');
+    await check('SELECT o.status, sum(p.amount) FROM domain_a.shop.orders o JOIN domain_a.finance.payments p USING (order_id) GROUP BY 1');
+    await check('SELECT method FROM domain_a_iceberg.finance.payments');
+    await assert.rejects(() => check('SELECT nope FROM domain_a.shop.orders'), /nope/);
+    await assert.rejects(() => check('SELECT amount FROM domain_a.shop.orders'), /amount/, 'payments’ column is not orders’');
     await assert.rejects(() => check(`SELECT * FROM read_csv_auto('/etc/hosts')`), /Permission Error|disabled by configuration|Cannot access/);
-    await assert.rejects(() => check('SELECT * FROM iceberg.shop.customers'), /native tables are iceberg\.shop\.orders and iceberg\.finance\.payments/);
-    await assert.rejects(() => check('SELECT * FROM shop.customers'), /tables are shop\.orders and finance\.payments/);
-    await assert.rejects(() => check('SELECT * FROM orders'), /shop\.orders/, 'a bare name is pointed at its canonical one');
+    // The route refuses a table no domain holds before binding (`routes/data.ts`); bound anyway, it is not there.
+    await assert.rejects(() => check('SELECT * FROM domain_a_iceberg.shop.customers'), /domain_a_iceberg/);
+    await assert.rejects(() => check('SELECT * FROM domain_a.shop.orders JOIN domain_a.shop.customers USING (order_id)'), /customers does not exist!\nDid you mean "orders"/);
+    await assert.rejects(() => check('SELECT * FROM orders'), /domain_a\.shop\.orders/, 'a bare name is pointed at its full one');
   });
 
   it('cannot list or read another run’s stored result, however the statement names it', async () => {
     const catalog = await loadCatalog('mat-a1b2c3d4e5f6', LOCATION);
-    const other = await finished(statementOver(catalog, 'SELECT count(*) AS n FROM shop.orders'));
+    const other = await finished(statementOver(catalog, 'SELECT count(*) AS n FROM domain_a.shop.orders'));
     assert.equal(other.state, 'succeeded', other.error?.message ?? '');
     const runs = join(dataDir, 'runs');
     const stored = (await readdir(runs, { recursive: true })).filter((name) => name.endsWith('.parquet'));
@@ -287,6 +297,7 @@ describe('a run over an Iceberg table', () => {
       assert.rejects(
         () =>
           startRun({
+            domain: 'domain_a',
             materializationId: 'mat-a1b2c3d4e5f6',
             ownerId: 'usr-test',
             tables: TABLES,
@@ -302,7 +313,7 @@ describe('a run over an Iceberg table', () => {
     const run = await started({
       kind: 'sql',
       range: ALL_TIME,
-      sql: 'SELECT o.order_id, o.status, p.amount, p.method FROM shop.orders o JOIN finance.payments p USING (order_id) ORDER BY o.order_id',
+      sql: 'SELECT o.order_id, o.status, p.amount, p.method FROM domain_a.shop.orders o JOIN domain_a.finance.payments p USING (order_id) ORDER BY o.order_id',
     });
     assert.equal(run.state, 'succeeded', run.error?.message ?? '');
     const rows = (await run.readPage(0, 20)).rows;
@@ -321,7 +332,7 @@ describe('a run over an Iceberg table', () => {
   });
 
   it('reads only the tables a statement names', async () => {
-    const run = await started({ kind: 'sql', table: 'orders', range: ALL_TIME, sql: 'SELECT count(*) AS n, sum(amount) AS paid FROM finance.payments' });
+    const run = await started({ kind: 'sql', table: 'orders', range: ALL_TIME, sql: 'SELECT count(*) AS n, sum(amount) AS paid FROM domain_a.finance.payments' });
     assert.equal(run.state, 'succeeded', run.error?.message ?? '');
     assert.deepEqual((await run.readPage(0, 1)).rows[0], { n: 6, paid: 151.5 });
     assert.deepEqual(run.snapshot().tables.map((table) => table.name), ['payments']);
@@ -353,7 +364,7 @@ describe('a run over an Iceberg table', () => {
       table: 'orders',
       asOf: third,
       range: ALL_TIME,
-      sql: 'SELECT (SELECT count(*) FROM shop.orders) AS orders, (SELECT count(*) FROM finance.payments) AS payments',
+      sql: 'SELECT (SELECT count(*) FROM domain_a.shop.orders) AS orders, (SELECT count(*) FROM domain_a.finance.payments) AS payments',
     });
     assert.equal(run.state, 'succeeded', run.error?.message ?? '');
     assert.deepEqual((await run.readPage(0, 1)).rows[0], { orders: 10, payments: 6 });
@@ -373,7 +384,7 @@ describe('a run over an Iceberg table', () => {
     const run = await started({
       kind: 'sql',
       range: { from, to: from + 4 * 60_000 },
-      sql: 'SELECT (SELECT count(*) FROM shop.orders) AS orders, (SELECT count(*) FROM finance.payments) AS payments, (SELECT count(*) FROM shop.orders JOIN finance.payments USING (order_id)) AS joined',
+      sql: 'SELECT (SELECT count(*) FROM domain_a.shop.orders) AS orders, (SELECT count(*) FROM domain_a.finance.payments) AS payments, (SELECT count(*) FROM domain_a.shop.orders JOIN domain_a.finance.payments USING (order_id)) AS joined',
     });
     assert.equal(run.state, 'succeeded', run.error?.message ?? '');
     assert.deepEqual((await run.readPage(0, 1)).rows[0], { orders: 4, payments: 4, joined: 4 });

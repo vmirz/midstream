@@ -1,6 +1,6 @@
 # 16 — Known Gaps and Roadmap
 
-Deliberate omissions and real limitations of console 3.0. Check here before filing something as a
+Deliberate omissions and real limitations of the console. Check here before filing something as a
 bug. The control plane's own list is handbook [14](../../docs/handbook/14-known-gaps-and-roadmap.md).
 
 ## 16.1 Security and access
@@ -12,7 +12,11 @@ bug. The control plane's own list is handbook [14](../../docs/handbook/14-known-
 | Lifecycle permissions are per action | Anyone who may stop or delete may stop or delete any materialization — deleting, editing the topics and dropping tables also need write access to the tables' datasets | A grant cannot be scoped to a materialization (handbook 14 §14.8) |
 | Names are not secret | Anyone who may see datasets sees every dataset's name and its tables' names, locked ones included; anyone who may see materializations sees their topics, totals and status | Schemas and data are what a dataset role guards |
 | ~~An access token reads every table~~ | **Resolved** in 3.0: a token holds no more than its maker on each dataset, and can be limited to datasets (handbook 18 §18.15) | |
-| No single sign-on, no password recovery, no email | People sign in with a password an administrator gave them | The control plane is designed for SSO (handbook 18 §18.13) |
+| ~~No single sign-on~~ | **Resolved**: Entra ID, GitHub, Google or any OpenID Connect provider, into every domain at once, each domain checking the result itself (handbook 20 §20.7) | |
+| No password recovery, no email | A password is reset by an administrator | Sign-in through a provider needs neither |
+| The federation key is one secret for every domain | Whoever holds it can make an access token any domain honours, for anyone there | Keep it in each domain's auth Secret only; rotate it everywhere together ([12 §12.2](./12-security-model.md)) |
+| A provider's sign-in in progress lives in one console process | With several replicas, the callback must reach the replica that started it; a restart forgets flows in progress | Sticky sessions, as for runs ([13 §13.4](./13-operations-runbook.md)) |
+| No `request` first-sign-in policy | Someone a domain has never seen is either made an account (`open`) or refused (`invited`); there is no pending account for an administrator to approve | Handbook 20 §20.16 |
 | The sign-in limit trusts reported addresses | A client reaching the pod without the ingress can choose its address and evade the per-address limit | The control plane's per-email lockout still applies |
 | No CSP header | Weaker XSS defence in depth | React escaping is the current control; CodeMirror needs `style-src 'unsafe-inline'` |
 | No rate limiting beyond sign-in | A signed-in client can open many SSE connections or issue many queries | DuckDB limits bound each query, not the request rate |
@@ -156,7 +160,7 @@ Ordered by value per unit of effort.
 ### Longer term
 
 10. **Shared state for horizontal scaling** — series and run state in Redis or similar.
-11. **Single sign-on** (OIDC) and **per-materialization access**, with per-table access tokens.
+11. **Per-materialization access**, with per-table access tokens.
 12. **A second execution tier** for arbitrary queries at much larger scale: engines on the REST
     catalog already read the same tables.
 

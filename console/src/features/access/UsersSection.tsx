@@ -8,9 +8,9 @@ import { Chips, UserStatusBadges, tableHeaderClass } from './shared';
 import { Avatar } from '@/components/Avatar';
 import { RelativeTime } from '@/components/Inline';
 import { Button, EmptyState, Input, Panel, Select, Skeleton } from '@/components/ui/primitives';
-import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
+import { useApi, useDomainPath } from '@/lib/domains';
 import type { CpUser, UserFilter, UserSort } from '@shared/types';
 
 const FILTER_LABELS: Record<UserFilter, string> = {
@@ -31,6 +31,7 @@ const GRID = 'grid grid-cols-[minmax(0,2fr)_minmax(0,1.6fr)_minmax(0,1fr)_120px]
 
 /** Everyone who can sign in, like a team directory: who they are, their groups, how active they are. */
 export function UsersSection(): ReactNode {
+  const api = useApi();
   const auth = useAuth();
   const [filter, setFilter] = useState<UserFilter>('active');
   const [sort, setSort] = useState<UserSort>('name');
@@ -143,6 +144,7 @@ export function UsersSection(): ReactNode {
 }
 
 function UserRow({ user, link }: { user: CpUser; link: boolean }): ReactNode {
+  const domainPath = useDomainPath();
   const content = (
     <div className={cn(GRID, 'px-5 py-3', link && 'transition-colors hover:bg-[var(--color-raised)]')}>
       <span className="flex min-w-0 items-center gap-3">
@@ -164,5 +166,5 @@ function UserRow({ user, link }: { user: CpUser; link: boolean }): ReactNode {
       <RelativeTime value={user.last_active_at} className="text-right text-[12px] text-[var(--color-ink-muted)]" />
     </div>
   );
-  return <li>{link ? <Link to={`/settings/users/${user.user_id}`}>{content}</Link> : content}</li>;
+  return <li>{link ? <Link to={domainPath(`/settings/users/${user.user_id}`)}>{content}</Link> : content}</li>;
 }

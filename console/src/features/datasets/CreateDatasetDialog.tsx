@@ -5,8 +5,9 @@ import { useNavigate } from 'react-router-dom';
 import { Dialog } from '@/components/ui/Dialog';
 import { useToast } from '@/components/ui/Toast';
 import { Button, Field, Input } from '@/components/ui/primitives';
-import { ApiError, api } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { useMaterializationDefaults } from '@/lib/defaults';
+import { useApi, useDomainPath } from '@/lib/domains';
 import { datasetNameProblem } from '@shared/tableNames';
 
 import { useRefreshDatasets } from './useDatasets';
@@ -16,6 +17,8 @@ import { useRefreshDatasets } from './useDatasets';
  * it, and everyone signed in can read it until its owners say otherwise.
  */
 export function CreateDatasetDialog({ open, onClose }: { open: boolean; onClose: () => void }): ReactNode {
+  const domainPath = useDomainPath();
+  const api = useApi();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +43,7 @@ export function CreateDatasetDialog({ open, onClose }: { open: boolean; onClose:
       const created = result.name ?? name.trim();
       toast.success('Dataset created', result.status === 'applied' ? `${created} is ready for tables.` : `${created} is being created.`);
       onClose();
-      navigate(`/datasets/${encodeURIComponent(created)}`);
+      navigate(domainPath(`/datasets/${encodeURIComponent(created)}`));
     },
     onError: (failure: unknown) => setError(failure instanceof ApiError ? failure.message : 'The dataset could not be created.'),
   });

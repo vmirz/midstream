@@ -37,13 +37,24 @@ Two consequences worth remembering:
 | `CONSOLE_SERVE_CLIENT` | bool | `true` | When false, the server does not serve `dist/` and returns JSON 404s for non-API paths |
 | `CONSOLE_CORS_ORIGIN` | string | unset | When set, registers `@fastify/cors` with this origin. Leave unset when the client is same-origin |
 
-## 3.3 Control plane
+## 3.3 Domains: the control planes the console serves
+
+The console serves any number of **domains**, each a Midstream deployment with its own control plane
+and tail app (handbook 20). Which, and how to reach them, is its **registry**:
 
 | Variable | Type | Default | Effect |
 |----------|------|---------|--------|
-| `CONTROL_PLANE_URL` | string | `http://localhost:6065` | Base URL. Trailing slashes are stripped |
-| `CONTROL_PLANE_TIMEOUT_MS` | int | `10000` | Per-request timeout via `AbortSignal.timeout` |
-| `CONSOLE_TAIL_URL` | string | unset | The tail app's base URL (handbook 19): in a cluster its Service, `http://<release>-tail-app-api:6065`; from a laptop, the control plane's host where an HTTPRoute sends `/tail/` to that Service. Trailing slashes are stripped. Unset, the console shows committed rows only. Fixed by the deployment (shown under Deployment) |
+| `CONSOLE_DOMAINS_FILE` | path | unset | The registry, a JSON file: `[{id, name, local, settingsHome, controlPlaneUrl, tailUrl}]`. The chart renders it (`console.domains`) and mounts it at `/etc/midstream/domains.json` |
+| `CONSOLE_DOMAINS` | JSON | unset | The same registry inline, for development. With neither, one domain, `local`, at `http://localhost:6065`, the settings home |
+| `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN` | string | unset | Each domain's service token (`<ID>` its id upper-cased): the credential the console reads that domain's shared live views with. Must equal that control plane's `AUTH_SERVICE_TOKEN`; unset, the domain's views read as a guest |
+| `CONSOLE_URL` | URL | unset | The URL people use, without a trailing slash: where providers send people back to (`<url>/api/auth/sso/<provider>/callback`) and old hostnames redirect to. Unset, the URL each request arrived at, for development |
+| `CONTROL_PLANE_TIMEOUT_MS` | int | `10000` | Per-request timeout via `AbortSignal.timeout`, for every domain |
+
+The console refuses to start on a registry that breaks a rule — an id that cannot be a domain's
+(`shared/tableNames.ts::domainIdProblem`), two settings homes or none, a domain named twice, a remote
+domain without its URL. A domain's `tailUrl` is its tail app's base URL (handbook 19): the
+local domain's Service, `http://<release>-tail-app-api:6065`, or another domain's API hostname, whose
+`/tail/` goes to that Service; empty, its tables show committed rows only.
 
 `CONSOLE_DEFAULT_SUBMITTED_BY` was removed in 0.14.0: changes are attributed to the signed-in
 person by the control plane. Console 1.0 retired `CONSOLE_OBJECT_MANIFEST_ENABLED`,
@@ -55,14 +66,24 @@ are ignored (`RETIRED_SETTINGS`, `server/settings/catalog.ts`).
 
 | Variable | Type | Default | Effect |
 |----------|------|---------|--------|
-| `CONSOLE_SERVICE_TOKEN` | string | unset | The credential the console reads its shared live views with — the fleet, details, schemas, topics and its own settings. Must equal the control plane's `AUTH_SERVICE_TOKEN`; it can read, never change. Unset, those views read as a guest and show only what guests may see, and the console logs a warning at start |
-| `CONSOLE_SESSION_COOKIE` | string | `console_session` | Name of the HttpOnly cookie holding a browser's session. Renaming it signs everyone out |
+| `CONSOLE_SESSION_COOKIE` | string | `midstream_session` | The prefix of the HttpOnly cookies holding a browser's sessions, one per domain: `<name>_<domain id>`; `<name>-flow` binds a sign-in through a provider to its browser. Renaming it signs everyone out |
 | `CONSOLE_COOKIE_SECURE` | `auto` \| `true` \| `false` | `auto` | Whether the cookie is `Secure`. `auto` follows the scheme the request arrived with, as the ingress reports it (`trustProxy`), so it is Secure behind TLS and still works on `http://localhost` |
 | `CONSOLE_SESSION_CHECK_MS` | int | `5000` | How long the console trusts a session it checked with the control plane before asking again. Deactivating someone reaches this console within this long. Overridable (Security) |
 | `CONSOLE_SIGN_IN_ATTEMPTS_PER_MINUTE` | int | `10` | Sign-in attempts one client address may make per minute before the console answers `429`. Overridable (Security) |
 
-Session lifetimes, password rules and lockouts are the control plane's settings
+Session lifetimes, password rules and lockouts are each control plane's settings
 ([18 §18.11](../../docs/handbook/18-identity-and-access.md)); the console follows them.
+
+**Single sign-on** — the console's registration with each provider (handbook 18 §18.17, 20 §20.7). A
+provider with all its values is offered on the sign-in page; each domain decides whether it accepts
+it. Fixed by the deployment; the secrets come from Secrets and are shown only as configured.
+
+| Variables | For |
+|----------|-----|
+| `CONSOLE_SSO_ENTRA_TENANT_ID`, `CONSOLE_SSO_ENTRA_CLIENT_ID`, `CONSOLE_SSO_ENTRA_CLIENT_SECRET` | Microsoft Entra ID: one tenant |
+| `CONSOLE_SSO_GITHUB_CLIENT_ID`, `CONSOLE_SSO_GITHUB_CLIENT_SECRET` | GitHub: an OAuth App |
+| `CONSOLE_SSO_GOOGLE_CLIENT_ID`, `CONSOLE_SSO_GOOGLE_CLIENT_SECRET`, `CONSOLE_SSO_GOOGLE_HOSTED_DOMAIN` | Google; the hosted domain is a hint to the account chooser |
+| `CONSOLE_SSO_OIDC_ISSUER`, `CONSOLE_SSO_OIDC_CLIENT_ID`, `CONSOLE_SSO_OIDC_CLIENT_SECRET`, `CONSOLE_SSO_OIDC_LABEL`, `CONSOLE_SSO_OIDC_SCOPES` (`openid email profile`) | Any OpenID Connect issuer: Dex, Okta, Keycloak, Auth0 |
 
 ## 3.4 Live refresh cadence
 
@@ -245,7 +266,9 @@ Credentials, paths, and cache budgets are never exposed.
 ## 3.8 Full example: production values
 
 ```bash
-CONTROL_PLANE_URL=http://midstream-control-plane-app-api.midstream.svc.cluster.local:6065
+CONSOLE_DOMAINS_FILE=/etc/midstream/domains.json
+CONSOLE_DOMAIN_DOMAIN_B_SERVICE_TOKEN=...          # Domain B's AUTH_SERVICE_TOKEN
+CONSOLE_URL=https://midstream.example.com
 PORT=8787
 LOG_LEVEL=info
 
@@ -316,17 +339,19 @@ plane is unreachable. The Settings page is then read-only, because the overrides
 
 **Not overridable.** Everything that sizes the pod, wires it to its environment, or is read once
 at startup stays with the deployment. The Settings page lists these read-only under
-**Deployment**: `PORT`/`HOST`, `CONTROL_PLANE_URL`, `CONSOLE_TAIL_URL`, `CONSOLE_VERSION`, the HMAC credentials,
+**Deployment**: `PORT`/`HOST`, `CONSOLE_URL`, the registry (its domains and the settings home), `CONSOLE_VERSION`, the HMAC credentials,
 `CONSOLE_DUCKDB_MEMORY_LIMIT`, `CONSOLE_DUCKDB_THREADS`, `CONSOLE_RUN_CONCURRENCY`,
 `CONSOLE_RUN_SCAN_CONCURRENCY` (they size `UV_THREADPOOL_SIZE` at start), `CONSOLE_DATA_DIR`,
 `CONSOLE_PARQUET_CACHE_MAX_BYTES`, `CONSOLE_CORS_ORIGIN`, `CONSOLE_SERVE_CLIENT`, and the
-sign-in wiring — `CONSOLE_SERVICE_TOKEN` (shown only as configured or not),
-`CONSOLE_SESSION_COOKIE` and `CONSOLE_COOKIE_SECURE`.
+sign-in wiring — `CONSOLE_SESSION_COOKIE`, `CONSOLE_COOKIE_SECURE` and each single sign-on provider
+(shown as configured or not). Each domain's own Deployment section shows how the console reaches it:
+its control plane, its tail app and whether its service token is configured.
 
 Changing any of these settings needs `settings.manage`; reading them, `settings.view`.
 
-The control plane's and runtimes' settings are on the same page. They are described in the main
-handbook, [17 — Settings](../../docs/handbook/17-settings.md).
+The console's settings are stored in its **settings home** and edited on `/settings`; each domain's
+control-plane and runtime settings are on that domain's page, `/d/<domain>/settings`. They are
+described in the main handbook, [17 — Settings](../../docs/handbook/17-settings.md).
 
 ## 3.x Obtaining GCS HMAC credentials
 

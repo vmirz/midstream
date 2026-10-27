@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
-from midstream.config import ControlPlaneConfig
+from midstream.config import ControlPlaneConfig, domain_identity_from_environment
+from midstream.identity.secrets import IdentitySecrets, get_identity_secrets
 from midstream.settings import resolve_config
 from midstream.storage.table import TableProtocol
 from midstream.table_names import (
@@ -19,16 +21,31 @@ from midstream.version import PACKAGE_VERSION
 COMPONENT = "control-plane"
 
 
-def version_view() -> dict[str, Any]:
-    """Report the running control-plane version.
+def version_view(
+    *,
+    config: ControlPlaneConfig | None = None,
+    secrets: IdentitySecrets | None = None,
+) -> dict[str, Any]:
+    """Report the running control-plane version, and which domain it is.
 
     Separate from the materialization views because it answers a question about the deployment
     rather than about any materialization: which build is serving this API. Runtimes report their
     own version through status events, so the console can show when the two have drifted apart.
+    The shared console checks `domain` against its registry, and compares `federation_key_id` - the
+    first 8 hex characters of the federation key's SHA-256, never the key - across domains, since
+    every domain must share the key that signs access tokens (handbook 20).
     """
+    if config is None:
+        domain_id, domain_name = domain_identity_from_environment(os.environ)
+    else:
+        domain_id, domain_name = config.domain_id, config.domain_name
+    identity_secrets = get_identity_secrets() if secrets is None else secrets
+    federation_key = identity_secrets.current_federation_key
     return {
         "component": COMPONENT,
         "version": PACKAGE_VERSION,
+        "domain": None if domain_id is None else {"id": domain_id, "name": domain_name or domain_id},
+        "federation_key_id": None if federation_key is None else federation_key.key_id,
     }
 
 

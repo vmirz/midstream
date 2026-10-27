@@ -14,8 +14,9 @@ const QueryEditor = lazy(() =>
 /**
  * The statement editor, for questions filters cannot ask.
  *
- * Every table of the materialization the person may query — each in its dataset: `sales.orders` —
- * is bounded by the time range picker, exactly as the structured view is, so a statement is as cheap
+ * Every table a statement reads is named in full, `<domain>.<dataset>.<table>` (handbook 20): the
+ * materialization's own, and any other the person may query, in any domain. Each is bounded by the
+ * time range picker, exactly as the structured view is, so a statement is as cheap
  * as the range is narrow without having to say so in its own WHERE; a statement joins them by name.
  * Run is the tab's one Run control; the editor adds only its keyboard shortcut. With live tail on,
  * Auto re-run runs the statement again a few seconds after each run finishes, so its answer follows
@@ -24,7 +25,9 @@ const QueryEditor = lazy(() =>
 export function SqlPanel({
   sql,
   tableName,
+  domain,
   tables,
+  otherTables = [],
   tableColumns,
   rangeLabel,
   columns,
@@ -37,8 +40,12 @@ export function SqlPanel({
   sql: string;
   /** The table on screen: what the statement was started from. */
   tableName: string;
+  /** The domain the materialization is in: the first part of its tables' names. */
+  domain: string;
   /** Every table of the materialization the person may query, which a statement may read by name. */
   tables: readonly CpTableSpec[];
+  /** Tables of other materializations, in any domain, a statement may also name: offered as it is written. */
+  otherTables?: ReadonlyArray<{ domain: string; dataset: string; name: string }>;
   /** Each table's column names, for completion. */
   tableColumns: Record<string, string[]>;
   rangeLabel: string;
@@ -65,11 +72,11 @@ export function SqlPanel({
               {tables.map((table, index) => (
                 <span
                   key={table.name}
-                  title={`The rows of topic ${table.source_topic}; its native columns are iceberg.${table.dataset}.${table.name}`}
+                  title={`The rows of topic ${table.source_topic}; its native columns are ${domain}_iceberg.${table.dataset}.${table.name}`}
                 >
                   {index > 0 ? ', ' : ''}
                   <code className="numeric">
-                    {table.dataset}.{table.name}
+                    {domain}.{table.dataset}.{table.name}
                   </code>
                 </span>
               ))}{' '}
@@ -77,8 +84,8 @@ export function SqlPanel({
             </>
           ) : (
             <>
-              <code className="numeric" title={`Its native columns are iceberg.${dataset}.${tableName}`}>
-                {dataset}.{tableName}
+              <code className="numeric" title={`Its native columns are ${domain}_iceberg.${dataset}.${tableName}`}>
+                {domain}.{dataset}.{tableName}
               </code>{' '}
               holds the rows in
             </>
@@ -139,7 +146,9 @@ export function SqlPanel({
           <QueryEditor
             value={sql}
             tableName={tableName}
+            domain={domain}
             tables={tables}
+            otherTables={otherTables}
             tableColumns={tableColumns}
             columns={columns}
             onChange={onChange}

@@ -63,20 +63,22 @@ await new Promise<void>((resolve) => tail.listen(0, '127.0.0.1', resolve));
 
 const dataDir = await mkdtemp(join(tmpdir(), 'console-data-routes-'));
 process.env.CONSOLE_DATA_DIR = dataDir;
-process.env.CONSOLE_TAIL_URL = `http://127.0.0.1:${(tail.address() as AddressInfo).port}`;
-process.env.CONSOLE_SERVICE_TOKEN = 'console-service-credential-0123456789abcdef';
+/** The domain's service token: what its tail app requires of the console. */
+const SERVICE_TOKEN = 'console-service-credential-0123456789abcdef';
 
 const { installTestAuth, testPrincipal } = await import('../auth/testing.ts');
-const { controlPlane } = await import('../controlPlane/client.ts');
+const { installTestDomains } = await import('../domains/testing.ts');
+const domains = await installTestDomains(['domain_a'], {
+  entries: { domain_a: { tailUrl: `http://127.0.0.1:${(tail.address() as AddressInfo).port}`, serviceToken: SERVICE_TOKEN } },
+});
+const domain = domains.require('domain_a');
 const { ConsoleError } = await import('../errors.ts');
 const { setObjectReader } = await import('../iceberg/io.ts');
 const { setObjectPathResolver } = await import('../data/objects.ts');
 const { resetTables } = await import('../iceberg/table.ts');
 const { FIXTURE_DIR, FIXTURE_LOCATION, fixturePath, fixtureReader } = await import('../iceberg/testing.ts');
-const { liveStore } = await import('../live/store.ts');
 const { resetRuns } = await import('../runs/store.ts');
-const { registerDataRoutes } = await import('./data.ts');
-const { invalidateMaterializationDefaults } = await import('./system.ts');
+const { registerDataRoutes, registerRunRoutes } = await import('./data.ts');
 const { config } = await import('../config.ts');
 
 import type { CpDetail, CpPrincipal, CpSystemSettings, HeadPeek, RunRefresh, RunSnapshot } from '../../shared/types.ts';
@@ -169,8 +171,8 @@ function detail(): CpDetail {
   } as unknown as CpDetail;
 }
 
-const getDetail = liveStore.getDetail.bind(liveStore);
-const settings = controlPlane.settings.bind(controlPlane);
+const getDetail = domain.live.getDetail.bind(domain.live);
+const settings = domain.controlPlane.settings.bind(domain.controlPlane);
 
 before(() => {
   setObjectReader(fixtureReader());
@@ -182,15 +184,15 @@ beforeEach(() => {
   liveTailOn = true;
   headOff = false;
   tailAnswers = FIXTURE_TAIL.map((answer) => ({ after: answer.after, file: answer.file, headers: answerHeaders(answer) }));
-  liveStore.getDetail = async () => detail();
-  controlPlane.settings = async () => ({ live_tail_enabled: true }) as CpSystemSettings;
-  invalidateMaterializationDefaults();
+  domain.live.getDetail = async () => detail();
+  domain.controlPlane.settings = async () => ({ live_tail_enabled: true }) as CpSystemSettings;
+  domain.invalidateSystemSettings();
   resetTables();
 });
 
 afterEach(async () => {
-  liveStore.getDetail = getDetail;
-  controlPlane.settings = settings;
+  domain.live.getDetail = getDetail;
+  domain.controlPlane.settings = settings;
   await resetRuns();
 });
 
@@ -208,14 +210,15 @@ async function app(principal: CpPrincipal): Promise<FastifyInstance> {
     reply.code(error.statusCode ?? 500).send(error instanceof ConsoleError ? error.toBody() : { error: { code: 'internal_error', message: String(error) } }),
   );
   installTestAuth(server, principal);
-  await registerDataRoutes(server);
+  await registerRunRoutes(server);
+  await server.register(async (scope) => registerDataRoutes(scope), { prefix: '/api/d/:domain' });
   return server;
 }
 
 async function finishedRun(server: FastifyInstance, body: Record<string, unknown> = {}): Promise<RunSnapshot> {
   const created = await server.inject({
     method: 'POST',
-    url: `/api/materializations/${MATERIALIZATION}/runs`,
+    url: `/api/d/domain_a/materializations/${MATERIALIZATION}/runs`,
     payload: { kind: 'browse', range: { from: null, to: null }, ...body },
   });
   assert.equal(created.statusCode, 201, created.body);
@@ -235,7 +238,7 @@ describe('runs and their tails', () => {
     assert.equal(run.rows, 12 + 4);
     assert.equal(run.tail?.status, 'complete');
     assert.equal(asked[0]?.headers.authorization, 'Bearer token-test');
-    assert.equal(asked[0]?.headers['x-console-token'], config.serviceToken);
+    assert.equal(asked[0]?.headers['x-console-token'], SERVICE_TOKEN);
 
     asked.length = 0;
     const without = await finishedRun(server, { liveTail: false });
@@ -252,8 +255,8 @@ describe('runs and their tails', () => {
   });
 
   it('say the tail is off when the control plane’s is', async () => {
-    controlPlane.settings = async () => ({ live_tail_enabled: false }) as CpSystemSettings;
-    invalidateMaterializationDefaults();
+    domain.controlPlane.settings = async () => ({ live_tail_enabled: false }) as CpSystemSettings;
+    domain.invalidateSystemSettings();
     const run = await finishedRun(await app(reader()));
     assert.deepEqual([run.tail?.status, run.tail?.reason], ['off', 'control_plane']);
   });
@@ -261,7 +264,7 @@ describe('runs and their tails', () => {
   it('refuse a liveTail that is not a boolean', async () => {
     const response = await (await app(reader())).inject({
       method: 'POST',
-      url: `/api/materializations/${MATERIALIZATION}/runs`,
+      url: `/api/d/domain_a/materializations/${MATERIALIZATION}/runs`,
       payload: { kind: 'browse', range: { from: null, to: null }, liveTail: 'yes' },
     });
     assert.equal(response.statusCode, 400);
@@ -302,7 +305,7 @@ describe('refreshing a run', () => {
 
 describe('the head peek', () => {
   it('shows the topic’s newest records in the table’s columns, with the peek’s headers, and starts no run', async () => {
-    const response = await (await app(reader())).inject({ url: `/api/materializations/${MATERIALIZATION}/tables/orders/head` });
+    const response = await (await app(reader())).inject({ url: `/api/d/domain_a/materializations/${MATERIALIZATION}/tables/orders/head` });
     assert.equal(response.statusCode, 200, response.body);
     const peek = response.json() as HeadPeek;
     assert.equal(peek.rows.length, 4);
@@ -324,27 +327,27 @@ describe('the head peek', () => {
   });
 
   it('needs data.query on the table’s dataset, and asks the tail app nothing otherwise', async () => {
-    const response = await (await app(formerReader())).inject({ url: `/api/materializations/${MATERIALIZATION}/tables/orders/head` });
+    const response = await (await app(formerReader())).inject({ url: `/api/d/domain_a/materializations/${MATERIALIZATION}/tables/orders/head` });
     assert.equal(response.statusCode, 403);
     assert.equal(asked.length, 0);
   });
 
   it('bounds how many records it asks for', async () => {
     const server = await app(reader());
-    assert.equal((await server.inject({ url: `/api/materializations/${MATERIALIZATION}/tables/orders/head?rows=0` })).statusCode, 400);
-    assert.equal((await server.inject({ url: `/api/materializations/${MATERIALIZATION}/tables/orders/head?rows=10001` })).statusCode, 400);
-    await server.inject({ url: `/api/materializations/${MATERIALIZATION}/tables/orders/head?rows=25` });
+    assert.equal((await server.inject({ url: `/api/d/domain_a/materializations/${MATERIALIZATION}/tables/orders/head?rows=0` })).statusCode, 400);
+    assert.equal((await server.inject({ url: `/api/d/domain_a/materializations/${MATERIALIZATION}/tables/orders/head?rows=10001` })).statusCode, 400);
+    await server.inject({ url: `/api/d/domain_a/materializations/${MATERIALIZATION}/tables/orders/head?rows=25` });
     assert.equal(asked[0]?.query.get('rows'), '25');
   });
 
   it('says the tail is off, for the materialization or at the tail app', async () => {
     liveTailOn = false;
-    const off = await (await app(reader())).inject({ url: `/api/materializations/${MATERIALIZATION}/tables/orders/head` });
+    const off = await (await app(reader())).inject({ url: `/api/d/domain_a/materializations/${MATERIALIZATION}/tables/orders/head` });
     assert.equal(off.statusCode, 404);
     assert.equal((off.json() as { error: { code: string } }).error.code, 'live_tail_off');
     liveTailOn = true;
     headOff = true;
-    const notTailed = await (await app(reader())).inject({ url: `/api/materializations/${MATERIALIZATION}/tables/orders/head` });
+    const notTailed = await (await app(reader())).inject({ url: `/api/d/domain_a/materializations/${MATERIALIZATION}/tables/orders/head` });
     assert.equal(notTailed.statusCode, 404);
     assert.deepEqual(
       [(notTailed.json() as { error: { code: string; details: { reason: string } } }).error.code, (notTailed.json() as { error: { details: { reason: string } } }).error.details.reason],
@@ -353,7 +356,7 @@ describe('the head peek', () => {
   });
 
   it('refuses a table the materialization does not have', async () => {
-    const response = await (await app(reader())).inject({ url: `/api/materializations/${MATERIALIZATION}/tables/payments/head` });
+    const response = await (await app(reader())).inject({ url: `/api/d/domain_a/materializations/${MATERIALIZATION}/tables/payments/head` });
     assert.equal(response.statusCode, 400);
   });
 });

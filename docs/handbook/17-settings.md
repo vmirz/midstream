@@ -129,6 +129,18 @@ advanced sits behind the section's **Advanced** toggle.
 | `sign_in_lockout_minutes` | `…SIGN_IN_LOCKOUT_MINUTES` | 15 | 1–1,440 | Lockout duration |
 | `audit_log_retention_days` | `…AUDIT_LOG_RETENTION_DAYS` | 90 | 1–3,650 | Audit log retention |
 
+**Sign-in** — single sign-on and password sign-in ([18 — Identity and access](./18-identity-and-access.md) §18.17)
+
+| Key | Env var | Default | Bounds | Label |
+|---|---|---|---|---|
+| `sso_entra_enabled` | `…SSO_ENTRA_ENABLED` | off (chart: `auth.sso.entra.enabled`) | — | Microsoft Entra ID |
+| `sso_github_enabled` | `…SSO_GITHUB_ENABLED` | off | — | GitHub |
+| `sso_google_enabled` | `…SSO_GOOGLE_ENABLED` | off | — | Google |
+| `sso_oidc_enabled` | `…SSO_OIDC_ENABLED` | off | — | Other single sign-on |
+| `sso_first_sign_in` | `…SSO_FIRST_SIGN_IN` | `open` | `open`, `invited` | First sign-in |
+| `sso_allowed_email_domains` | `…SSO_ALLOWED_EMAIL_DOMAINS` | empty: any | at most 50 email domains | Allowed email domains |
+| `password_sign_in_enabled` | `…PASSWORD_SIGN_IN_ENABLED` | on | — | Password sign-in (danger: off, administrators only) |
+
 **Live tail** — the newest records of a materialization's tables, served from Kafka before they are
 committed ([19 — The live tail](./19-live-tail.md)). The first two are the control plane's own; the
 rest travel with the tail app's ticks, so a change reaches it within a minute (§17.7).
@@ -146,7 +158,9 @@ rest travel with the tail app's ticks, so a change reaches it within a minute (�
 
 The Security section's seven are described in [18 — Identity and access](./18-identity-and-access.md)
 §18.11. `default_partition_granularity` is the first `enum` setting: its definition lists `options`,
-and the page shows a select.
+and the page shows a select. `sso_allowed_email_domains` is the one `domain_list`: comma- or
+space-separated email domains, stored lowercase and comma-separated (`config.normalize_email_domains`),
+empty for any.
 
 Cross-field rules: the default replica count may not exceed the maximum; the idle timeout may not
 be longer than the maximum session length; the renewal interval must be shorter than the idle
@@ -483,12 +497,20 @@ A console change request carries `fallbacks` — what each changed setting reads
 overridden — because the control plane cannot know the console's defaults, and the change history
 should read on its own.
 
-**Saving.** `PATCH /api/settings` takes one change per scope, validates console values itself,
-forwards control-plane then runtime then console changes, and stops at the first refusal. It then
-waits — up to 10 seconds — until each request id appears in its scope's `recent_request_ids`
-(applied) or as its `last_rejection` (refused), and answers with the settings as they now are:
-`200` when applied, `202` when the control plane accepted but has not applied them yet, `409`
-when refused.
+**Two pages, since domains** (20 §20.5). The console's own settings are stored in exactly one
+domain's control plane, the **settings home** (`console.domains[].settingsHome`): `/settings` edits
+them through `GET`/`PATCH /api/settings`, which reads and saves only the `console` scope there and
+needs `settings.view`/`settings.manage` in the settings home. Each domain's control-plane and
+runtime settings are on its own page, `/d/<domain>/settings`, through
+`GET`/`PATCH /api/d/<domain>/settings`, which refuses the `console` scope. The console page's change
+history merges the console's and every domain's the person may see.
+
+**Saving.** A save takes one change per scope, validates console values itself, forwards
+control-plane then runtime changes (on a domain's page) or the console change (on the console's),
+and stops at the first refusal. It then waits — up to 10 seconds — until each request id appears in
+its scope's `recent_request_ids` (applied) or as its `last_rejection` (refused), and answers with
+the settings as they now are: `200` when applied, `202` when the control plane accepted but has not
+applied them yet, `409` when refused.
 
 ## 17.9 API
 

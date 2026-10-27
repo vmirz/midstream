@@ -1,4 +1,8 @@
-Midstream {{ .Chart.AppVersion }} is being installed as release {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+Midstream {{ .Chart.AppVersion }} is being installed as release {{ .Release.Name }} in namespace {{ .Release.Namespace }}
+{{- if .Values.controlPlane.enabled }}: domain {{ include "midstream.domainName" . }} ({{ include "midstream.domainId" . }}){{ if .Values.console.enabled }}, with the shared console{{ end }}.
+{{- else }}: the shared console alone.
+{{- end }}
+{{- if .Values.controlPlane.enabled }}
 
 Watch the apps come up (the first start installs the Python package):
 
@@ -8,13 +12,23 @@ The control plane's API, from your machine:
 
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "midstream.controlPlane" . }}-app-api {{ .Values.controlPlane.webPort }}:{{ .Values.controlPlane.webPort }}
   curl -s localhost:{{ .Values.controlPlane.webPort }}/system/version
+{{- if and .Values.route.enabled .Values.route.hostnames }}
+
+Its API hostname, for engines and for a console in another cluster: https://{{ first .Values.route.hostnames }}
+{{- else if and .Values.ingress.enabled .Values.ingress.host }}
+
+Its API hostname, for engines and for a console in another cluster: https://{{ .Values.ingress.host }}
+{{- end }}
+{{- end }}
 {{- if .Values.console.enabled }}
 
-The console:
+The console{{ with include "midstream.consoleUrl" . }} at {{ . }}{{ end }}, serving
+{{- if .Values.console.domains }}{{ range $index, $domain := .Values.console.domains }}{{ if $index }},{{ end }} {{ $domain.id }}{{ end }}{{ else }} {{ include "midstream.domainId" . }}{{ end }}. From your machine:
 
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "midstream.console" . }} {{ .Values.console.port }}:{{ .Values.console.port }}
   open http://localhost:{{ .Values.console.port }}
 {{- end }}
+{{- if .Values.controlPlane.enabled }}
 
 Sign in as the bootstrap administrator named in Secret {{ include "midstream.authSecret" . }}; the first sign-in asks for a
 new password. Then create a dataset and a materialization. docs/install.md in the repository has every step.
@@ -22,4 +36,9 @@ new password. Then create a dataset and a materialization. docs/install.md in th
 
 No destination is configured yet: set controlPlane.settings.defaultDestinationUri, or Settings › Materializations ›
 Destination in the console, before creating a materialization.
+{{- end }}
+{{- else }}
+
+Each domain's own release names its bootstrap administrator: sign in to each through the console.
+docs/install.md §7 and handbook 20 have the steps.
 {{- end }}

@@ -6,15 +6,16 @@ import { Link, useNavigate } from 'react-router-dom';
 import { BuiltInMark, Chips, errorField, formatDate, tableHeaderClass, useIdentityChange } from './shared';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button, EmptyState, Field, Input, Panel, Skeleton, Textarea } from '@/components/ui/primitives';
-import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
+import { useApi, useDomainPath } from '@/lib/domains';
 import type { CpGroup } from '@shared/types';
 
 const GRID = 'grid grid-cols-[minmax(0,2fr)_120px_minmax(0,1.6fr)_120px] items-center gap-4';
 
 /** Groups bundle people so access is given once, to the group, through its roles. */
 export function GroupsSection(): ReactNode {
+  const api = useApi();
   const auth = useAuth();
   const groups = useQuery({ queryKey: ['groups'], queryFn: () => api.groups() });
   const [search, setSearch] = useState('');
@@ -79,9 +80,10 @@ export function memberLabel(group: Pick<CpGroup, 'membership' | 'member_count'>)
 }
 
 function GroupRow({ group }: { group: CpGroup }): ReactNode {
+  const domainPath = useDomainPath();
   return (
     <li>
-      <Link to={`/settings/groups/${group.group_id}`} className={cn(GRID, 'px-5 py-3 transition-colors hover:bg-[var(--color-raised)]')}>
+      <Link to={domainPath(`/settings/groups/${group.group_id}`)} className={cn(GRID, 'px-5 py-3 transition-colors hover:bg-[var(--color-raised)]')}>
         <span className="flex min-w-0 items-center gap-2.5">
           <UsersRound className="size-4 shrink-0 text-[var(--color-accent)]" />
           <span className="min-w-0">
@@ -103,6 +105,8 @@ function GroupRow({ group }: { group: CpGroup }): ReactNode {
 }
 
 function NewGroupDialog({ open, onClose }: { open: boolean; onClose: () => void }): ReactNode {
+  const domainPath = useDomainPath();
+  const api = useApi();
   const navigate = useNavigate();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -111,7 +115,7 @@ function NewGroupDialog({ open, onClose }: { open: boolean; onClose: () => void 
     failure: 'The group was not created',
     onApplied: (result) => {
       onClose();
-      if (result.status === 'applied') navigate(`/settings/groups/${result.entity_id}`);
+      if (result.status === 'applied') navigate(domainPath(`/settings/groups/${result.entity_id}`));
     },
   });
   const { reset } = create;

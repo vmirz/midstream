@@ -1,3 +1,4 @@
+{{- if include "midstream.controlPlaneEnabled" . }}
 apiVersion: kaspr.io/v1alpha1
 kind: KasprAgent
 metadata:
@@ -29,3 +30,4 @@ spec:
             def apply_runtime_status(value, control_plane_table):
                 handle_runtime_status(value, control_plane_table)
                 return value
+{{- end }}

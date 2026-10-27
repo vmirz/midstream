@@ -14,14 +14,16 @@ import { Avatar } from '@/components/Avatar';
 import { CopyButton, RelativeTime } from '@/components/Inline';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button, EmptyState, Field, Input, Panel, PanelHeader, Skeleton } from '@/components/ui/primitives';
-import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useApi, useDomainPath } from '@/lib/domains';
 import type { CpPermissionCatalog, CpUserDetail } from '@shared/types';
 
 type Confirm = 'sign-out' | 'deactivate' | 'reactivate' | 'delete' | null;
 
 /** One person's account: who they are, their groups, what they may do and why, and their sessions. */
 export function UserDetail({ userId }: { userId: string }): ReactNode {
+  const domainPath = useDomainPath();
+  const api = useApi();
   const auth = useAuth();
   const navigate = useNavigate();
   const user = useQuery({ queryKey: ['user', userId], queryFn: () => api.user(userId) });
@@ -53,7 +55,7 @@ export function UserDetail({ userId }: { userId: string }): ReactNode {
   const remove = useIdentityChange(() => api.deleteUser(userId), {
     success: () => `${name} was deleted`,
     failure: 'The account was not deleted',
-    onApplied: () => navigate('/settings/users'),
+    onApplied: () => navigate(domainPath('/settings/users')),
   });
 
   if (user.isLoading) {
@@ -67,7 +69,7 @@ export function UserDetail({ userId }: { userId: string }): ReactNode {
   if (user.error || !detail) {
     return (
       <div className="space-y-4">
-        <BackLink to="/settings/users">All users</BackLink>
+        <BackLink to={domainPath('/settings/users')}>All users</BackLink>
         <Panel>
           <EmptyState
             title="This user could not be loaded"
@@ -80,7 +82,7 @@ export function UserDetail({ userId }: { userId: string }): ReactNode {
 
   return (
     <div className="space-y-5">
-      <BackLink to="/settings/users">All users</BackLink>
+      <BackLink to={domainPath('/settings/users')}>All users</BackLink>
 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 items-center gap-4">
@@ -226,6 +228,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }): Reac
 }
 
 function ProfilePanel({ user, editable }: { user: CpUserDetail; editable: boolean }): ReactNode {
+  const api = useApi();
   const [draft, setDraft] = useState({ first_name: user.first_name, last_name: user.last_name, email: user.email });
   useEffect(() => setDraft({ first_name: user.first_name, last_name: user.last_name, email: user.email }), [user]);
   const save = useIdentityChange(
@@ -272,6 +275,7 @@ function ProfilePanel({ user, editable }: { user: CpUserDetail; editable: boolea
 }
 
 function GroupsPanel({ user, editable }: { user: CpUserDetail; editable: boolean }): ReactNode {
+  const api = useApi();
   const current = useMemo(() => user.groups.map((group) => group.group_id), [user.groups]);
   const [draft, setDraft] = useState<string[]>(current);
   useEffect(() => setDraft(current), [current]);
@@ -356,6 +360,7 @@ export function AccessPanel({ user, catalog }: { user: Pick<CpUserDetail, 'permi
 }
 
 function ResetPasswordDialog({ open, onClose, user }: { open: boolean; onClose: () => void; user: CpUserDetail }): ReactNode {
+  const api = useApi();
   const minimum = usePasswordMinimum();
   const [password, setPassword] = useState('');
   const reset = useIdentityChange(() => api.setUserPassword(user.user_id, password), {

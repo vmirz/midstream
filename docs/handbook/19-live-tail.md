@@ -294,8 +294,10 @@ plane with (handbook 18 §18.9); no row reaches a log line, and neither does a t
 
 In brief; console 07 §07.9 has the detail.
 
-- `CONSOLE_TAIL_URL` names the tail app (in a cluster its Service; from a laptop the HTTPRoute's
-  `/tail/` rule on the control plane's host). Unset, the console shows committed rows only.
+- Each domain's `tailUrl` in the console's registry names its tail app (in the same cluster its
+  Service, which the chart sets for its own domain; in another cluster, or from a laptop, the
+  `/tail/` rule on the domain's API host — chapter 20). Unset, that domain's tables show committed
+  rows only.
 - A run of a table fetches the tail past its snapshot's
   offsets and keeps it as a Parquet file in the run's own directory: an object like any data file,
   first in newest-first order, counted, filtered, pruned by its time bounds, and read by statements
@@ -355,7 +357,7 @@ reaches the tail app within a minute. **The console's** four (`liveTailEnabled`,
 
 | Situation | What happens |
 |---|---|
-| The tail app is down or unreachable, `CONSOLE_TAIL_URL` wrong | Runs show committed rows and say the live tail is unavailable; Live keeps asking |
+| The tail app is down or unreachable, the domain's `tailUrl` wrong | Runs show committed rows and say the live tail is unavailable; Live keeps asking |
 | A member restarts | Static membership brings it back to its partitions; its tables re-seed from the committed offsets on the next request or tick |
 | Members are added or removed | Tables move with their tick partitions; a request meanwhile is `409 tail_rebalancing`, retried on the next refresh |
 | A table was just created, activated or moved | `503 tail_not_ready` until it is answerable; the console's wait covers a quiet table's activation |
@@ -413,7 +415,7 @@ in the map.
 control plane, the schema. A table that cannot seed is retried; one whose topic is gone every 30 s.
 
 **From a laptop.** The lab's HTTPRoute sends `/tail/` on the control plane's host to the tail app's
-Service, so a console run locally can set `CONSOLE_TAIL_URL` to that host.
+Service, so a console run locally can give its domain that host as its `tailUrl` (`CONSOLE_DOMAINS`).
 
 ## 19.17 Verification
 

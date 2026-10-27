@@ -1,3 +1,4 @@
+{{- if include "midstream.controlPlaneEnabled" . }}
 apiVersion: kaspr.io/v1alpha1
 kind: KasprTable
 metadata:
@@ -11,3 +12,4 @@ spec:
   keySerializer: json
   valueSerializer: json
   partitions: {{ .Values.tables.partitions }}
+{{- end }}

@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 
 import { Badge, Panel, PanelHeader } from '@/components/ui/primitives';
 import type { RuntimeRollout, RuntimeRolloutState } from '@shared/types';
+import { useDomainPath } from '@/lib/domains';
 
 const STATE_LABELS: Record<RuntimeRolloutState, { label: string; tone: 'running' | 'pending' | 'paused' | 'neutral'; hint: string }> = {
   current: { label: 'Current', tone: 'running', hint: 'Every member runs this revision.' },
@@ -26,6 +27,7 @@ const STATE_LABELS: Record<RuntimeRolloutState, { label: string; tone: 'running'
  * installation's (handbook 17 §17.7): those are shown until it drops them.
  */
 export function RuntimeRolloutPanel({ rollout }: { rollout: RuntimeRollout | null }): ReactNode {
+  const domainPath = useDomainPath();
   if (!rollout) return null;
   const followed = rollout.revision > 0 || rollout.pending > 0;
   const running = rollout.total - rollout.stopped;
@@ -74,7 +76,7 @@ export function RuntimeRolloutPanel({ rollout }: { rollout: RuntimeRollout | nul
             return (
               <li key={item.materializationId} className="flex items-center justify-between gap-4 px-5 py-2.5 text-[13px]">
                 <Link
-                  to={`/materializations/${encodeURIComponent(item.materializationId)}`}
+                  to={domainPath(`/materializations/${encodeURIComponent(item.materializationId)}`)}
                   className="min-w-0 truncate font-medium hover:text-[var(--color-accent)]"
                 >
                   {item.name || item.materializationId}

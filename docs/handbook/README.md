@@ -34,6 +34,7 @@ aspirational design prose.
 | 17 | [Settings](./17-settings.md) | What can be changed from the console without a redeploy? What wins over an env var? Where are overrides stored, and how do runtimes get them? |
 | 18 | [Identity and access](./18-identity-and-access.md) | How do people sign in? What may each of them do, on each dataset? Where are users, groups, roles, datasets, grants and sessions stored? How are table names kept unique? How is every request authorized? |
 | 19 | [The live tail](./19-live-tail.md) | How do a table's newest records reach the console within seconds? How is each shown exactly once with the committed snapshot? What does the tail app hold, which member serves a table, and who may read it? |
+| 20 | [Domains and the shared console](./20-domains-and-the-shared-console.md) | How do several deployments work as one? What does the console's registry say? How does single sign-on reach every domain? How does one access token work everywhere, a statement join domains, and the federated catalog route? |
 
 ---
 
@@ -44,6 +45,7 @@ aspirational design prose.
 | `/AGENTS.md` | Short always-on agent instructions: commands, project map, guardrails. Read first, kept under 300 lines. |
 | `/docs/source-of-truth.md` | Condensed single-file end-to-end narrative. Good for a one-shot overview; this handbook is the deep reference. |
 | `/console/docs/` | The Midstream Console's own handbook (17 documents), cited here as `console <n>`. |
+| `/docs/design/` | Design specifications: `few-second-freshness.md` (the live tail, built as handbook 19) and `multi-domain.md` (domains and the shared console: any number of control planes under one console with single sign-on; built as handbook 20). |
 
 ---
 

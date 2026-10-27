@@ -1,21 +1,23 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
-import { authOf, callerOf, permit, permitAnywhere, requireOnDatasets, type DatasetRef } from '../auth/guard.ts';
+import { authIn, authInResolving, callerOf, domainOf, permit, permitAnywhere, permitInSomeDomain, requireOnDatasets, type DatasetRef } from '../auth/guard.ts';
 import { config } from '../config.ts';
 import { ConsoleError, badRequest } from '../errors.ts';
 import { logger } from '../logger.ts';
 import { estimateRange, loadCatalog, summarize } from '../data/catalog.ts';
 import { fetchHead, fetchTail, readPeek } from '../data/tail.ts';
-import { liveStore } from '../live/store.ts';
+import { domains } from '../domains/index.ts';
+import type { Domain } from '../domains/domain.ts';
 import { openExport } from '../runs/export.ts';
 import { profileColumn } from '../runs/profile.ts';
-import { getRun, pickTable, refreshRun, startRun, tablesNamed, tablesRead, validateStatement, type RunTableSource } from '../runs/store.ts';
-import type { Run } from '../runs/run.ts';
+import { canonicalName, namedTables, nativeCatalog, unqualifiedReferences } from '../runs/names.ts';
+import { getRun, pickTable, refreshRun, startRun, tablesRead, validateStatement, type ResolvedTable, type RunTableSource } from '../runs/store.ts';
+import { listOf } from '../runs/view.ts';
+import type { Run, RunDataset } from '../runs/run.ts';
 import type { TailAccess } from '../runs/tail.ts';
 import { materializationId, parseBody } from './materializations.ts';
 import { filtersSchema } from './requestSchemas.ts';
-import { liveTailOff } from './system.ts';
 import {
   RUN_EXPORT_FORMATS,
   RUN_EXPORT_SHAPES,
@@ -74,9 +76,12 @@ const exportSchema = z.object({
 });
 const profileSchema = z.object({ column: z.string().min(1).max(1_024) });
 
-/** Whose runs a request may read: the signed-in person's, or this guest address's. */
-function ownerOf(request: FastifyRequest): string {
-  return authOf(request).state.principal.user_id ?? `guest:${request.ip}`;
+/**
+ * Who owns the runs a request starts or reads, in a domain: the person as that domain knows them, or
+ * this guest address. A person has an account in each domain, so a run is theirs in its own domain.
+ */
+function ownerIn(request: FastifyRequest, domain: Domain): string {
+  return `${domain.id}:${authIn(request, domain).state.principal.user_id ?? `guest:${request.ip}`}`;
 }
 
 function runId(request: FastifyRequest): string {
@@ -89,14 +94,16 @@ function runId(request: FastifyRequest): string {
  * Each of a materialization's tables - written or kept - with the dataset SQL names it in,
  * `<dataset>.<table>`, and where it lives once created.
  */
-async function tablesOf(id: string): Promise<RunTableSource[]> {
-  return (await materializationTables(id)).tables;
+async function tablesOf(domain: Domain, id: string): Promise<RunTableSource[]> {
+  return (await materializationTables(domain, id)).tables;
 }
 
-async function materializationTables(id: string): Promise<{ materialization: CpMaterialization; tables: RunTableSource[] }> {
-  const detail = await liveStore.getDetail(id);
+async function materializationTables(domain: Domain, id: string): Promise<{ materialization: CpMaterialization; tables: RunTableSource[] }> {
+  const detail = await domain.live.getDetail(id);
   const locations = new Map(detail.tables.map((table) => [table.name, table.location]));
   const tables = readableTables(detail.materialization).map((table) => ({
+    domain: domain.id,
+    materializationId: id,
     name: table.name,
     dataset: table.dataset,
     datasetId: table.dataset_id,
@@ -110,19 +117,101 @@ async function materializationTables(id: string): Promise<{ materialization: CpM
  * checks itself, or not at all when live tail is off here or in the control plane, or the
  * materialization is not running (`off` says which).
  */
-async function tailAccess(request: FastifyRequest, materialization: CpMaterialization): Promise<TailAccess> {
-  const caller = callerOf(request);
+async function tailAccess(request: FastifyRequest, domain: Domain, materialization: CpMaterialization): Promise<TailAccess> {
+  const caller = callerOf(request, domain);
   const id = materialization.materialization_id;
   return {
-    off: await liveTailOff(materialization),
+    off: await domain.liveTailOff(materialization),
     fetch: (table, after, signal) =>
-      fetchTail(caller, { materializationId: id, table, after, maxRows: config.liveTailMaxRows, timeoutMs: config.liveTailTimeoutMs, signal }),
+      fetchTail(domain, caller, { materializationId: id, table, after, maxRows: config.liveTailMaxRows, timeoutMs: config.liveTailTimeoutMs, signal }),
   };
 }
 
-/** The datasets of some tables, each once, as a refusal names them. */
-function datasetsOf(tables: RunTableSource[]): DatasetRef[] {
-  return [...new Map(tables.map((table) => [table.datasetId, { id: table.datasetId, name: table.dataset }])).values()];
+/**
+ * The tables a statement names, found in their domains (handbook 20): each `<domain>.<dataset>.<table>`
+ * through its domain's live fleet to the materialization that writes it, and its location. Refused,
+ * naming what to write instead: a table named without its domain, and a name no domain holds. The
+ * caller must be allowed to query each table, in its dataset, as their domain knows them - resolved
+ * here in a domain the request did not name, with their session there.
+ */
+async function resolveStatement(
+  request: FastifyRequest,
+  sql: string,
+  runDomain: Domain,
+  own: RunTableSource[],
+): Promise<{ sources: ResolvedTable[]; tableNames: string[] }> {
+  const served = domains().served();
+  const unqualified = unqualifiedReferences(
+    sql,
+    runDomain.live.fleetSnapshot().items.flatMap((item) => item.tables.map((name) => splitName(name))),
+  );
+  if (unqualified.length > 0) {
+    const fixes = unqualified.map((name) =>
+      name.startsWith('iceberg.') ? `${nativeCatalog(runDomain.id)}.${name.slice('iceberg.'.length)} for ${name}` : `${runDomain.id}.${name} for ${name}`,
+    );
+    throw badRequest(`Name every table with its domain: write ${listOf(fixes)}.`, { field: 'sql' });
+  }
+  const sources: ResolvedTable[] = [];
+  const seen = new Set<string>();
+  for (const reference of namedTables(sql, served.map((domain) => domain.id))) {
+    const key = canonicalName(reference.domain, reference.dataset, reference.table);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const domain = domains().require(reference.domain);
+    const qualified = `${reference.dataset}.${reference.table}`;
+    if (domain.status === 'unreachable') throw domainUnreachable(domain, key);
+    const item = domain.live
+      .fleetSnapshot()
+      .items.find((candidate) => candidate.desired_phase !== 'deleted' && candidate.tables.some((name) => name.toLowerCase() === qualified));
+    if (!item) {
+      const inDataset = domain.live
+        .fleetSnapshot()
+        .items.flatMap((candidate) => candidate.tables)
+        .filter((name) => name.toLowerCase().startsWith(`${reference.dataset}.`))
+        .map((name) => `${domain.id}.${name}`);
+      throw badRequest(
+        inDataset.length > 0
+          ? `There is no table ${key}; ${domain.id}.${reference.dataset} holds ${listOf(inDataset)}.`
+          : `There is no table ${key}: ${domain.name} has no dataset ${reference.dataset} with tables.`,
+        { field: 'sql' },
+      );
+    }
+    let found: Awaited<ReturnType<typeof materializationTables>>;
+    try {
+      found = await materializationTables(domain, item.materialization_id);
+    } catch (cause) {
+      if (cause instanceof ConsoleError && cause.code === 'control_plane_unreachable') throw domainUnreachable(domain, key);
+      throw cause;
+    }
+    const { materialization, tables } = found;
+    const table = tables.find((candidate) => `${candidate.dataset}.${candidate.name}`.toLowerCase() === qualified);
+    if (!table) throw badRequest(`There is no table ${key}.`, { field: 'sql' });
+    // Who the person is there, before their session there reads its tail and its datasets are checked.
+    await authInResolving(request, domain);
+    sources.push({ ...table, tail: await tailAccess(request, domain, materialization) });
+  }
+  requireOnTables(request, 'data.query', sources);
+  const tableNames = [...new Set([...own.map((table) => canonicalName(table.domain, table.dataset, table.name)), ...seen])];
+  return { sources, tableNames };
+}
+
+/** A statement naming a table of a domain that cannot be reached now. */
+function domainUnreachable(domain: Domain, table: string): ConsoleError {
+  return new ConsoleError('domain_unreachable', `${domain.name} cannot be reached right now, so ${table} cannot be read. Try again in a moment.`, 503, {
+    reason: 'domain_unreachable',
+    domain: domain.id,
+  });
+}
+
+/** `sales.orders` as its dataset and table. */
+function splitName(name: string): { dataset: string; table: string } {
+  const dot = name.indexOf('.');
+  return { dataset: name.slice(0, dot), table: name.slice(dot + 1) };
+}
+
+/** The datasets of some tables, each once with its domain, as a refusal names them. */
+function datasetsOf(tables: RunTableSource[]): RunDataset[] {
+  return [...new Map(tables.map((table) => [`${table.domain}:${table.datasetId}`, { domain: table.domain, id: table.datasetId, name: table.dataset }])).values()];
 }
 
 /**
@@ -130,13 +219,23 @@ function datasetsOf(tables: RunTableSource[]): DatasetRef[] {
  * they lack it on: a statement over a table someone may not query is refused, whatever else it reads.
  */
 function requireOnTables(request: FastifyRequest, permission: string, tables: RunTableSource[]): void {
-  requireOnDatasets(authOf(request), permission, datasetsOf(tables));
+  requireOnRunDatasets(request, permission, datasetsOf(tables));
+}
+
+/** Refuse a caller who may not do `permission` on each dataset, as they are in its domain. */
+function requireOnRunDatasets(request: FastifyRequest, permission: string, datasets: readonly RunDataset[]): void {
+  const byDomain = new Map<string, DatasetRef[]>();
+  for (const dataset of datasets) byDomain.set(dataset.domain, [...(byDomain.get(dataset.domain) ?? []), { id: dataset.id, name: dataset.name }]);
+  for (const [domainId, refs] of byDomain) {
+    const domain = domains().require(domainId);
+    requireOnDatasets(authIn(request, domain), permission, domains().size > 1 ? refs.map((ref) => ({ ...ref, name: `${domain.id}.${ref.name}` })) : refs);
+  }
 }
 
 /** A run, for whoever started it, while they may still `permission` on every dataset it reads. */
 function ownRun(request: FastifyRequest, permission = 'data.query'): Run {
-  const run = getRun(runId(request), ownerOf(request));
-  requireOnDatasets(authOf(request), permission, run.datasets);
+  const run = getRun(runId(request), (domainId) => ownerIn(request, domains().require(domainId)));
+  requireOnRunDatasets(request, permission, run.datasets);
   return run;
 }
 
@@ -146,30 +245,31 @@ export async function registerDataRoutes(app: FastifyInstance): Promise<void> {
    * never a row. The detail page's overview shows it, so it needs only what that page does.
    * `?table=` names the table (the first by default), `?asof=` an older snapshot of it.
    */
-  app.get('/api/materializations/:materializationId/data/summary', { preHandler: permit('materializations.view_details') }, async (request) => {
+  app.get('/materializations/:materializationId/data/summary', { preHandler: permit('materializations.view_details') }, async (request) => {
     const id = materializationId(request);
     const query = parseBody(summarySchema, request.query ?? {});
-    const table = pickTable(await tablesOf(id), query.table);
+    const table = pickTable(await tablesOf(domainOf(request), id), query.table);
     return summarize(await loadCatalog(id, table.location, { snapshotId: query.asof ?? null, table: table.name }));
   });
 
   /** What each time range would read of a table, before anything is read. Drives the time picker's figures. */
-  app.post('/api/materializations/:materializationId/data/estimate', { preHandler: permitAnywhere('data.query') }, async (request) => {
+  app.post('/materializations/:materializationId/data/estimate', { preHandler: permitAnywhere('data.query') }, async (request) => {
     const id = materializationId(request);
     const body = parseBody(estimateSchema, request.body);
-    const table = pickTable(await tablesOf(id), body.table);
+    const table = pickTable(await tablesOf(domainOf(request), id), body.table);
     requireOnTables(request, 'data.query', [table]);
     const catalog = await loadCatalog(id, table.location, { snapshotId: body.asOf ?? null, table: table.name });
     return { asOf: new Date(catalog.loadedAt).toISOString(), estimates: body.ranges.map((range) => estimateRange(catalog, range)) };
   });
 
   /** Bind a statement without running it, so the editor can mark an error while it is typed. */
-  app.post('/api/materializations/:materializationId/data/validate', { preHandler: permitAnywhere('data.query') }, async (request) => {
+  app.post('/materializations/:materializationId/data/validate', { preHandler: permitAnywhere('data.query') }, async (request) => {
     const id = materializationId(request);
     const body = parseBody(validateSchema, request.body);
-    const tables = await tablesOf(id);
-    requireOnTables(request, 'data.query', tablesNamed(tables, body.sql));
-    await validateStatement({ materializationId: id, tables, sql: body.sql });
+    const domain = domainOf(request);
+    const own = await tablesOf(domain, id);
+    const { sources, tableNames } = await resolveStatement(request, body.sql, domain, own);
+    await validateStatement({ sources, sql: body.sql, tableNames });
     return { ok: true };
   });
 
@@ -177,37 +277,24 @@ export async function registerDataRoutes(app: FastifyInstance): Promise<void> {
    * Run: the only way the console executes a query. Returns at once; progress streams. The caller
    * must be allowed to query every table it reads, each in its dataset.
    */
-  app.post('/api/materializations/:materializationId/runs', { preHandler: permitAnywhere('data.query') }, async (request, reply) => {
+  app.post('/materializations/:materializationId/runs', { preHandler: permitAnywhere('data.query') }, async (request, reply) => {
     const id = materializationId(request);
     const body = parseBody(runSchema, request.body);
-    const { materialization, tables } = await materializationTables(id);
-    requireOnTables(request, 'data.query', tablesRead(tables, body));
-    const tail = await tailAccess(request, materialization);
-    const run = await startRun({ materializationId: id, ownerId: ownerOf(request), tables, request: body, tail });
-    return reply.code(201).send(run.snapshot());
-  });
-
-  app.get('/api/runs/:runId', { preHandler: permitAnywhere('data.query') }, async (request) => ownRun(request).snapshot());
-
-  /**
-   * Bring a run up to date: the live tail's newest records appended to it, or a new run in its place
-   * when the table has a newer snapshot or the run is a statement. The Data tab's Live mode calls it
-   * every few seconds for a browse run; a statement's Auto re-run gets a new run each time.
-   */
-  app.post('/api/runs/:runId/refresh', { preHandler: permitAnywhere('data.query') }, async (request): Promise<RunRefresh> => {
-    const run = ownRun(request);
-    const body = parseBody(refreshSchema, request.body ?? {});
-    const { materialization, tables } = await materializationTables(run.materializationId);
-    // A run that replaces this one reads what it reads now: a statement may name tables it did not.
-    requireOnTables(request, 'data.query', tablesRead(tables, run.request));
-    const outcome = await refreshRun({
-      run,
-      ownerId: ownerOf(request),
+    const domain = domainOf(request);
+    const { materialization, tables } = await materializationTables(domain, id);
+    const named = body.kind === 'sql' ? await resolveStatement(request, body.sql, domain, tables) : null;
+    requireOnTables(request, 'data.query', tablesRead(tables, body, named?.sources));
+    const tail = await tailAccess(request, domain, materialization);
+    const run = await startRun({
+      domain: domain.id,
+      materializationId: id,
+      ownerId: ownerIn(request, domain),
       tables,
-      range: body.range ?? null,
-      tail: await tailAccess(request, materialization),
+      request: body,
+      tail,
+      ...(named ? { sources: named.sources, tableNames: named.tableNames } : {}),
     });
-    return { replaced: outcome.replaced, run: outcome.run.snapshot() };
+    return reply.code(201).send(run.snapshot());
   });
 
   /**
@@ -215,15 +302,16 @@ export async function registerDataRoutes(app: FastifyInstance): Promise<void> {
    * tab shows while the table's runtime is too far behind for the tail (`tail.status: backlogged`).
    * Never part of a run, its export or its profiles.
    */
-  app.get('/api/materializations/:materializationId/tables/:table/head', { preHandler: permitAnywhere('data.query') }, async (request): Promise<HeadPeek> => {
+  app.get('/materializations/:materializationId/tables/:table/head', { preHandler: permitAnywhere('data.query') }, async (request): Promise<HeadPeek> => {
     const id = materializationId(request);
     const query = parseBody(headSchema, request.query ?? {});
-    const { materialization, tables } = await materializationTables(id);
+    const domain = domainOf(request);
+    const { materialization, tables } = await materializationTables(domain, id);
     const table = pickTable(tables, (request.params as { table?: string }).table ?? '');
     requireOnTables(request, 'data.query', [table]);
-    const off = await liveTailOff(materialization);
+    const off = await domain.liveTailOff(materialization);
     if (off) throw new ConsoleError('live_tail_off', off.message, 404, { reason: off.reason });
-    const outcome = await fetchHead(callerOf(request), { materializationId: id, table: table.name, rows: query.rows, timeoutMs: config.liveTailTimeoutMs });
+    const outcome = await fetchHead(domain, callerOf(request), { materializationId: id, table: table.name, rows: query.rows, timeoutMs: config.liveTailTimeoutMs });
     if (outcome.kind === 'off' || (outcome.kind === 'unavailable' && outcome.reason === 'not_tailed')) {
       throw new ConsoleError('live_tail_off', outcome.message, 404, { reason: outcome.reason });
     }
@@ -247,27 +335,59 @@ export async function registerDataRoutes(app: FastifyInstance): Promise<void> {
       },
     };
   });
+}
 
-  app.post('/api/runs/:runId/cancel', { preHandler: permitAnywhere('data.query') }, async (request) => {
+/**
+ * Runs, addressed by id: each belongs to the person who started it, as the domain it was started in
+ * knows them, and reading it needs `data.query` again on every dataset it reads, in each one's domain.
+ */
+export async function registerRunRoutes(app: FastifyInstance): Promise<void> {
+  app.get('/api/runs/:runId', { preHandler: permitInSomeDomain('data.query') }, async (request) => ownRun(request).snapshot());
+
+  /**
+   * Bring a run up to date: the live tail's newest records appended to it, or a new run in its place
+   * when the table has a newer snapshot or the run is a statement. The Data tab's Live mode calls it
+   * every few seconds for a browse run; a statement's Auto re-run gets a new run each time.
+   */
+  app.post('/api/runs/:runId/refresh', { preHandler: permitInSomeDomain('data.query') }, async (request): Promise<RunRefresh> => {
+    const run = ownRun(request);
+    const body = parseBody(refreshSchema, request.body ?? {});
+    const domain = domains().require(run.domain);
+    const { materialization, tables } = await materializationTables(domain, run.materializationId);
+    // A run that replaces this one reads what it names now, in each domain as it is now.
+    const named = run.request.kind === 'sql' ? await resolveStatement(request, run.request.sql ?? '', domain, tables) : null;
+    requireOnTables(request, 'data.query', tablesRead(tables, run.request, named?.sources));
+    const outcome = await refreshRun({
+      run,
+      ownerId: ownerIn(request, domain),
+      tables,
+      range: body.range ?? null,
+      tail: await tailAccess(request, domain, materialization),
+      ...(named ? { sources: named.sources, tableNames: named.tableNames } : {}),
+    });
+    return { replaced: outcome.replaced, run: outcome.run.snapshot() };
+  });
+
+  app.post('/api/runs/:runId/cancel', { preHandler: permitInSomeDomain('data.query') }, async (request) => {
     // Anyone may stop their own run, whatever they may still read.
-    const run = getRun(runId(request), ownerOf(request));
+    const run = getRun(runId(request), (domainId) => ownerIn(request, domains().require(domainId)));
     run.cancel();
     return run.snapshot();
   });
 
-  app.get('/api/runs/:runId/rows', { preHandler: permitAnywhere('data.query') }, async (request) => {
+  app.get('/api/runs/:runId/rows', { preHandler: permitInSomeDomain('data.query') }, async (request) => {
     const run = ownRun(request);
     const query = parseBody(rowsSchema, request.query ?? {});
     return run.readPage(query.offset, Math.min(query.limit, config.pageRowLimit));
   });
 
-  app.post('/api/runs/:runId/profile', { preHandler: permitAnywhere('data.query') }, async (request) => {
+  app.post('/api/runs/:runId/profile', { preHandler: permitInSomeDomain('data.query') }, async (request) => {
     const run = ownRun(request);
     return profileColumn(run, parseBody(profileSchema, request.body).column);
   });
 
   /** An export needs `data.export` on every dataset the run read. */
-  app.get('/api/runs/:runId/export', { preHandler: permitAnywhere('data.export') }, async (request, reply: FastifyReply) => {
+  app.get('/api/runs/:runId/export', { preHandler: permitInSomeDomain('data.export') }, async (request, reply: FastifyReply) => {
     const run = ownRun(request, 'data.export');
     const { format, shape } = parseBody(exportSchema, request.query ?? {});
     const download = await openExport(run, format as RunExportFormat, shape);
@@ -287,7 +407,7 @@ export async function registerDataRoutes(app: FastifyInstance): Promise<void> {
    * The current snapshot goes out at once, so a client that connects mid-run — after a page
    * refresh, say — is never blank; then every change until the run ends, when the stream closes.
    */
-  app.get('/api/stream/runs/:runId', { preHandler: permitAnywhere('data.query') }, async (request, reply: FastifyReply) => {
+  app.get('/api/stream/runs/:runId', { preHandler: permitInSomeDomain('data.query') }, async (request, reply: FastifyReply) => {
     const run = ownRun(request);
 
     reply.raw.writeHead(200, {

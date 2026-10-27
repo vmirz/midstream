@@ -5,11 +5,12 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 're
 import { Dialog } from '@/components/ui/Dialog';
 import { useToast } from '@/components/ui/Toast';
 import { Button, Field, Input, KeyValue } from '@/components/ui/primitives';
-import { ApiError, api } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { useMaterializationDefaults } from '@/lib/defaults';
 import { displayName } from '@/lib/format';
+import { useApi } from '@/lib/domains';
 import { labelProblem, normalizeLabel } from '@shared/tableNames';
 import { FixedTableRow, TableDraftRow } from '../datasets/TableDraftRow';
 import { claimRow, defaultDataset, draftProblems, draftTables, type DraftProblem, type TableDraft } from '../datasets/tableDrafts';
@@ -56,6 +57,7 @@ export function EditMaterializationDialog({
   /** The fleet, so a topic another materialization reads says so. */
   materializations?: readonly MaterializationSummary[];
 }): ReactNode {
+  const api = useApi();
   const { materialization, status } = detail;
   const current = materialization.replicas ?? 1;
   // Absent from a control plane before 4.4, which never scales a runtime: nothing to switch.

@@ -2,10 +2,13 @@
 
 ## 1.1 What the console is
 
-The Midstream Console is a real-time web application for operating the Midstream control plane.
-It provides:
+The Midstream Console is a real-time web application for operating Midstream: one console, at one
+URL, over any number of **domains** — Midstream deployments, each with its own control plane, lake
+and directory (handbook 20). It provides:
 
-- a live fleet view of every materialization,
+- one sign-in for every domain, through Microsoft Entra ID, Google, GitHub or any OpenID Connect
+  provider, or a password per domain,
+- a live fleet view of every materialization, in every domain or in one,
 - full lifecycle control (create, stop, resume, edit the label, topics and replica count, delete),
 - datasets: the named groups the tables go in, `<dataset>.<table>` to SQL, and who may use each,
 - complete visibility of every metric the control plane and runtime expose,
@@ -13,15 +16,16 @@ It provides:
 - a view of each of a materialization's Iceberg tables — one per source topic: snapshots, files,
   maintenance — with connection snippets for other engines,
 - a data explorer that reads the tables, at any snapshot they keep, with DuckDB, and joins them in
-  SQL, across datasets — and, where live tail is on, the records the runtimes have not committed yet,
-  within seconds of being produced, following them live,
+  SQL, across datasets and domains (`<domain>.<dataset>.<table>`) — and, where live tail is on, the
+  records the runtimes have not committed yet, within seconds of being produced, following them live,
+- search across every domain, and one Iceberg REST catalog over every domain for external engines,
 
 each part shown and served to a person as far as their roles allow, per dataset for schemas and data.
 
 It is deliberately a **separate application**, not part of the Python package. It depends on the
-control plane only through the public HTTP API — and on the tail app only through its own
+control planes only through their public HTTP API — and on the tail apps only through their own
 (`/tail/v1`, handbook 19) — so `/console` can be lifted into its own repository by copying the directory
-and setting `CONTROL_PLANE_URL` (and `CONSOLE_TAIL_URL`).
+and giving it its registry of domains (`CONSOLE_DOMAINS_FILE`, 03 §3.3).
 
 > **Hard boundary.** Nothing under `/console` may import from `python/`, and nothing in `python/` may
 > import from `/console`. This is stated in the repository `AGENTS.md` and is the single most
@@ -162,8 +166,10 @@ console/
 │   ├── main.ts          Composition root — the only file that wires everything together.
 │   ├── config.ts        The only place that reads process.env.
 │   ├── errors.ts        The only error type crossing the HTTP boundary.
-│   ├── controlPlane/    Outbound: the control plane.
-│   ├── live/            Stateful: polling, snapshots, derived metrics, subscriptions.
+│   ├── domains/         The registry: one Domain per control plane, its client, live store and tail target.
+│   ├── controlPlane/    Outbound: a domain's control plane.
+│   ├── auth/            Who the caller is in each domain; cookies; single sign-on; revocations.
+│   ├── live/            Stateful: polling, snapshots, derived metrics, subscriptions, per domain.
 │   ├── iceberg/         Outbound: reading a table's pointer, metadata, manifests and snapshots.
 │   ├── schema/          Schema comparison.
 │   ├── data/            Outbound: object storage and DuckDB.
@@ -181,16 +187,17 @@ never import from `routes/`.
 
 ## 1.8 What the console is not
 
-- **Not an identity provider.** People sign in through it, but accounts, groups, roles,
-  permissions and sessions belong to the control plane; the console holds a browser's session in a
-  cookie and checks each route's permission. See [12 — Security model](./12-security-model.md).
+- **Not an identity provider.** People sign in through it — with a password per domain, or through
+  a provider whose credential every domain checks itself — but accounts, groups, roles, permissions
+  and sessions belong to each domain's control plane; the console holds one session per domain in a
+  cookie and checks each route's permission in its domain. See [12 — Security model](./12-security-model.md).
 - **Not a source of truth.** Every piece of state it displays originates in the control plane or
   the tables themselves. It writes nothing to either; **Run now** on the Table tab asks the
   control plane, which hands the job to its maintenance app.
 - **Not multi-cloud.** The data explorer is GCS-only, matching the runtime.
-- **Not a general SQL workbench.** Queries are scoped to one materialization's tables at one
-  snapshot and restricted to read-only statements, in a sandbox. Engines on the control plane's
-  Iceberg REST catalog are the general workbench.
+- **Not a general SQL workbench.** Queries read tables by their full names, in any domain the person
+  may query, each at its snapshot, restricted to read-only statements, in a sandbox. Engines on the
+  federated Iceberg REST catalog (`/catalog`) are the general workbench.
 - **Not horizontally stateless.** Two console replicas each keep their own poll loop, their own
   derived series, and their own runs. See
   [13 — Operations runbook](./13-operations-runbook.md#134-running-more-than-one-replica).

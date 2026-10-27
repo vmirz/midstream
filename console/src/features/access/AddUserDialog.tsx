@@ -9,7 +9,7 @@ import { errorField, generatePassword, useIdentityChange } from './shared';
 import { CopyButton } from '@/components/Inline';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button, Field, Input } from '@/components/ui/primitives';
-import { api } from '@/lib/api';
+import { useApi, useDomainPath } from '@/lib/domains';
 
 interface Draft {
   first_name: string;
@@ -26,6 +26,8 @@ const EMPTY: Draft = { first_name: '', last_name: '', email: '', password: '', g
  * first time they do — so only they ever know the password they keep using.
  */
 export function AddUserDialog({ open, onClose }: { open: boolean; onClose: () => void }): ReactNode {
+  const domainPath = useDomainPath();
+  const api = useApi();
   const navigate = useNavigate();
   const minimum = usePasswordMinimum();
   const [draft, setDraft] = useState<Draft>(EMPTY);
@@ -35,7 +37,7 @@ export function AddUserDialog({ open, onClose }: { open: boolean; onClose: () =>
     failure: 'The user was not added',
     onApplied: (result) => {
       onClose();
-      if (result.status === 'applied') navigate(`/settings/users/${result.entity_id}`);
+      if (result.status === 'applied') navigate(domainPath(`/settings/users/${result.entity_id}`));
     },
   });
   const { reset } = create;

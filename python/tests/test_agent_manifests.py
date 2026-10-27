@@ -19,7 +19,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from chart_support import CHART, RELEASE, VALUES_FILES, bare, document, documents, python_sources, render  # noqa: E402
+from chart_support import CHART, DOMAIN_VALUES_FILES, RELEASE, VALUES_FILES, bare, document, documents, python_sources, render  # noqa: E402
 
 from midstream.handlers.maintenance import (
     MAINTENANCE_STEP_TRIGGERS,
@@ -789,7 +789,7 @@ class ValuesWiringTests(unittest.TestCase):
     """
 
     def test_task_outputs_match_agent_inputs(self) -> None:
-        for values in VALUES_FILES:
+        for values in DOMAIN_VALUES_FILES:
             with self.subTest(values=values.name):
                 rendered = render(values)
 
@@ -818,7 +818,7 @@ class ValuesWiringTests(unittest.TestCase):
     def test_maintenance_hands_its_work_to_the_topic_it_consumes(self) -> None:
         """Its retention purges and lag measurements go to the work topic, for the workflow agent
         and for itself; on a name no agent consumes, every one would vanish."""
-        for values in VALUES_FILES:
+        for values in DOMAIN_VALUES_FILES:
             with self.subTest(values=values.name):
                 rendered = render(values)
                 maintenance = next(
@@ -855,7 +855,7 @@ class ValuesWiringTests(unittest.TestCase):
     def test_the_maintenance_app_owns_its_agent_and_task(self) -> None:
         """A blanket label once claimed every agent for the control plane: the
         maintenance app's agent would then run in the control plane, and the app would have none."""
-        for values in VALUES_FILES:
+        for values in DOMAIN_VALUES_FILES:
             with self.subTest(values=values.name):
                 rendered = render(values)
                 apps = {document["metadata"]["name"] for document in rendered if document.get("kind") == "KasprApp"}
@@ -872,7 +872,7 @@ class ValuesWiringTests(unittest.TestCase):
     def test_the_tail_app_owns_its_agent_task_and_views_and_reaches_this_environment(self) -> None:
         """The tail app's resources are its own, it reads the topics the control plane ticks and the
         committers report on, and it calls this environment's control plane with its credential."""
-        for values in VALUES_FILES:
+        for values in DOMAIN_VALUES_FILES:
             with self.subTest(values=values.name):
                 rendered = render(values)
                 apps = {document["metadata"]["name"]: document for document in rendered if document.get("kind") == "KasprApp"}
@@ -915,7 +915,7 @@ class ValuesWiringTests(unittest.TestCase):
         Every table and request topic derives from the release, so a template that spells one of them
         differently renders fine and accepts requests — every one of which then vanishes.
         """
-        for values in VALUES_FILES:
+        for values in DOMAIN_VALUES_FILES:
             with self.subTest(values=values.name):
                 rendered = render(values)
 
@@ -1023,7 +1023,7 @@ class VerticalPodAutoscalingTests(unittest.TestCase):
     def test_every_app_has_its_cpu_request_set_from_use(self) -> None:
         import yaml
 
-        for values in VALUES_FILES:
+        for values in DOMAIN_VALUES_FILES:
             specs = {}
             for document in render(values):
                 if document.get("kind") != "KasprApp":

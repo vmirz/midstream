@@ -3,8 +3,9 @@ import { useState, type FormEvent, type ReactNode } from 'react';
 import { PasswordInput } from './PasswordInput';
 import { Button, Field } from '@/components/ui/primitives';
 import { useToast } from '@/components/ui/Toast';
-import { ApiError, api } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useApi } from '@/lib/domains';
 
 /** The password rules, as the control plane states them; 12 characters when it does not say. */
 export function usePasswordMinimum(): number {
@@ -16,6 +17,7 @@ export function usePasswordMinimum(): number {
  * signed straight back in with the new password.
  */
 export function ChangePasswordForm({ onChanged, submitLabel = 'Change password' }: { onChanged?: () => void; submitLabel?: string }): ReactNode {
+  const api = useApi();
   const auth = useAuth();
   const toast = useToast();
   const minimum = usePasswordMinimum();

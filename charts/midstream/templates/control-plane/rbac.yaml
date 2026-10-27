@@ -1,3 +1,4 @@
+{{- if include "midstream.controlPlaneEnabled" . }}
 {{- if .Values.rbac.create }}
 # What the control plane may do in its namespace: create, read, change and delete the Kaspr
 # resources of every runtime, and read each runtime member's pod for its restarts (handbook 02 §2.7).
@@ -44,4 +45,5 @@ subjects:
   # The service account kaspr-operator gives the control plane's pods.
   - kind: ServiceAccount
     name: {{ include "midstream.controlPlane" . }}-app
+{{- end }}
 {{- end }}

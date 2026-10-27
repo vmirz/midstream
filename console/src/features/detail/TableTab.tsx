@@ -10,10 +10,11 @@ import { RelativeTime } from '@/components/Inline';
 import { StatCard } from '@/components/StatCard';
 import { useToast } from '@/components/ui/Toast';
 import { Badge, Button, EmptyState, KeyValue, Panel, PanelHeader, SegmentedControl, Skeleton } from '@/components/ui/primitives';
-import { ApiError, api } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { useAuth, useCan } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { formatBytes, formatCount, formatDuration, formatExact, formatTimestamp, humanize, shortSnapshotId } from '@/lib/format';
+import { useApi, useDomainPath } from '@/lib/domains';
 import type {
   CatalogConnection,
   CpMaintenanceRun,
@@ -56,6 +57,8 @@ function TableDetail({
   tables: CpTableSpec[];
   onSelectTable: (name: string) => void;
 }): ReactNode {
+  const domainPath = useDomainPath();
+  const api = useApi();
   const materializationId = snapshot.materializationId;
   const tableQuery = useQuery({
     queryKey: ['table', materializationId, table.name],
@@ -69,7 +72,7 @@ function TableDetail({
         <TablePicker tables={tables} value={table.name} onChange={onSelectTable} />
         <span>
           Topic <code className="numeric text-[var(--color-ink)]">{table.source_topic}</code>, in dataset{' '}
-          <Link to={`/datasets/${encodeURIComponent(table.dataset)}`} className="numeric text-[var(--color-ink)] hover:text-[var(--color-accent)] hover:underline">
+          <Link to={domainPath(`/datasets/${encodeURIComponent(table.dataset)}`)} className="numeric text-[var(--color-ink)] hover:text-[var(--color-accent)] hover:underline">
             {table.dataset}
           </Link>
         </span>
@@ -213,6 +216,7 @@ function SnapshotsPanel({
   defaultTable: string | null;
   metadata: TableMetadataView | null;
 }): ReactNode {
+  const domainPath = useDomainPath();
   const navigate = useNavigate();
   const table = spec.name;
   // Reading the table as it was is a query, on its dataset.
@@ -260,7 +264,7 @@ function SnapshotsPanel({
                             const params = new URLSearchParams();
                             if (table !== defaultTable) params.set(TABLE_PARAM, table);
                             const query = params.toString();
-                            navigate(`/materializations/${encodeURIComponent(materializationId)}/data${query ? `?${query}` : ''}`);
+                            navigate(domainPath(`/materializations/${encodeURIComponent(materializationId)}/data${query ? `?${query}` : ''}`));
                           }
                         : undefined
                     }
@@ -334,6 +338,7 @@ function MaintenancePanel({
   several: boolean;
   record: CpTable | null;
 }): ReactNode {
+  const api = useApi();
   const canMaintain = useCan('materializations.maintain');
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -594,16 +599,25 @@ const ENGINES: Array<{ value: Engine; label: string }> = [
   { value: 'duckdb-path', label: 'By path' },
 ];
 
-/** How each engine reads the table `<dataset>.<table>` through the catalog, which attaches as `lake`. */
-function snippet(engine: Engine, connection: CatalogConnection, namespace: string, table: string, location: string): string {
+/**
+ * How each engine reads the table through a catalog, which attaches as `lake` (handbook 20).
+ *
+ * PyIceberg and Spark read nested namespaces, so they attach the federated catalog and name the
+ * table in full, `lake.<domain>.<dataset>.<table>`: one catalog for every domain. DuckDB and Trino
+ * read one level of namespaces, so they attach the domain's own catalog, one per domain, and name
+ * the table `lake.<dataset>.<table>`.
+ */
+export function snippet(engine: Engine, connection: CatalogConnection, namespace: string, table: string, location: string): string {
+  const federated = `${connection.domain}.${namespace}`;
   switch (engine) {
     case 'duckdb':
       return [
         'INSTALL iceberg; LOAD iceberg;',
-        "CREATE SECRET materializer (TYPE ICEBERG, TOKEN '<access token>');",
+        "CREATE SECRET midstream (TYPE ICEBERG, TOKEN '<access token>');",
         '-- DuckDB reads the data files itself, with a GCS HMAC key that can read the bucket:',
         "CREATE SECRET gcs (TYPE GCS, KEY_ID '<HMAC key id>', SECRET '<HMAC secret>');",
-        `ATTACH 'warehouse' AS lake (TYPE ICEBERG, SECRET materializer, ENDPOINT '${connection.uri}');`,
+        `-- One level of namespaces: this domain's own catalog; attach another domain's beside it.`,
+        `ATTACH 'warehouse' AS lake (TYPE ICEBERG, SECRET midstream, ENDPOINT '${connection.uri}');`,
         '',
         `SELECT * FROM lake.${namespace}.${table} LIMIT 10;`,
       ].join('\n');
@@ -611,24 +625,25 @@ function snippet(engine: Engine, connection: CatalogConnection, namespace: strin
       return [
         'from pyiceberg.catalog.rest import RestCatalog',
         '',
-        '# Data files are read with your Google credentials (ADC); the catalog token only lists and loads tables.',
-        `catalog = RestCatalog("lake", uri="${connection.uri}", token="<access token>")`,
-        `table = catalog.load_table("${namespace}.${table}")`,
+        '# Every domain in one catalog. Data files are read with your Google credentials (ADC).',
+        `catalog = RestCatalog("lake", uri="${connection.federatedUri}", token="<access token>")`,
+        `table = catalog.load_table("${federated}.${table}")`,
         'rows = table.scan(row_filter="_kafka_timestamp >= \'2026-01-01T00:00:00+00:00\'").to_arrow()',
       ].join('\n');
     case 'spark':
       return [
+        '# Every domain in one catalog: tables are lake.<domain>.<dataset>.<table>.',
         'spark.sql.catalog.lake=org.apache.iceberg.spark.SparkCatalog',
         'spark.sql.catalog.lake.type=rest',
-        `spark.sql.catalog.lake.uri=${connection.uri}`,
+        `spark.sql.catalog.lake.uri=${connection.federatedUri}`,
         'spark.sql.catalog.lake.token=<access token>',
         'spark.sql.catalog.lake.io-impl=org.apache.iceberg.gcp.gcs.GCSFileIO',
         '',
-        `SELECT * FROM lake.${namespace}.${table} LIMIT 10;`,
+        `SELECT * FROM lake.${federated}.${table} LIMIT 10;`,
       ].join('\n');
     case 'trino':
       return [
-        '# etc/catalog/lake.properties',
+        `# etc/catalog/lake.properties: this domain's own catalog, one level of namespaces.`,
         'connector.name=iceberg',
         'iceberg.catalog.type=rest',
         `iceberg.rest-catalog.uri=${connection.uri}`,

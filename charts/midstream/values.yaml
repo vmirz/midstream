@@ -8,6 +8,15 @@
 
 fullnameOverride: ""
 
+# The domain this release is: one Midstream deployment, with its control plane, apps, lake prefix and
+# directory (docs/handbook/20-domains-and-the-shared-console.md). The id is a URL segment
+# (`/d/<id>/`), a catalog in SQL (`<id>.<dataset>.<table>`) and a namespace level of the federated
+# catalog: a letter, then up to 31 lowercase letters, digits or underscores. Empty takes the release
+# name with `-` read as `_`. The name is what people see; empty takes the id.
+domain:
+  id: ""
+  name: ""
+
 # The Python package every Kaspr app installs when its pod starts (handbook 02 §2.3). `index`, the
 # default, installs the release this chart belongs to, `midstream-platform==<appVersion>`, from PyPI or
 # the index given; `git` installs this repository at `ref`, for development.
@@ -60,12 +69,51 @@ gcs:
   credentialsKey: google_application_credentials.json
 
 auth:
-  # The Secret with `signing-key`, `previous-signing-key`, `service-token`, `bootstrap-admin-email`
-  # and `bootstrap-admin-password` (handbook 18 §18.11). Empty names <release>-auth. Every key is
-  # optional to Kubernetes, but without `signing-key` nobody can sign in.
+  # The Secret with `signing-key`, `previous-signing-key`, `service-token`, `federation-key`,
+  # `previous-federation-key`, `bootstrap-admin-email` and `bootstrap-admin-password` (handbook 18
+  # §18.11). Empty names <release>-auth. Every key is optional to Kubernetes, but without
+  # `signing-key` nobody can sign in, and without `federation-key` no access token can be made or used.
+  # `federation-key` must be the same in every domain: access tokens are signed with it, and every
+  # domain accepts a token any domain made (handbook 20).
   existingSecret: ""
+  # Single sign-on this domain accepts (handbook 18 §18.17). The shared console runs the sign-in and
+  # every domain checks what it hands over itself, so each provider's identity is set here too and
+  # must match the console's own (`console.sso`); an empty value here takes the console's, in a
+  # release that has both. A provider is offered once it is enabled here and in the console.
+  sso:
+    entra:                      # Microsoft Entra ID: one tenant
+      enabled: false
+      tenantId: ""
+      clientId: ""
+    github:                     # GitHub: the console's OAuth App. The client secret is needed here
+      enabled: false            # too: it is how a domain checks that a token was issued to that App.
+      clientId: ""
+      clientSecretSecret: {}    # {name: <Secret>, key: <key>}; empty takes console.sso.github's
+    google:
+      enabled: false
+      clientId: ""
+      hostedDomains: []         # Google Workspace domains accepted (the `hd` claim); empty: any account
+    oidc:                       # any other OpenID Connect provider: Dex, Okta, Keycloak, Auth0
+      enabled: false
+      issuer: ""                # https://idp.example.com, whose /.well-known/openid-configuration is read
+      clientId: ""
+      label: ""                 # the button: "Sign in with <label>"; empty: "Sign in with SSO"
+      # Whether a provider's email counts as verified without an `email_verified` claim: some
+      # issuers vouch for every email they put in a token and leave the claim out.
+      trustEmails: false
+    # What this domain does the first time someone it has never seen signs in through a provider:
+    # `open` makes them an account in All Users, `invited` refuses them until an administrator adds
+    # one. Adjustable later on the Settings page (Sign-in).
+    firstSignIn: open
+    allowedEmailDomains: []     # e.g. [example.com]; empty: any. Adjustable later on the Settings page
+  # Whether people may sign in with a password here. Accounts holding the Administrator role always
+  # may, so the bootstrap administrator can get in. Adjustable later on the Settings page.
+  passwordSignIn: true
 
 controlPlane:
+  # The domain's control plane, its agents, tasks, tables, views and Role. Off, the release deploys
+  # the shared console alone (with console.domains naming every domain), and nothing else.
+  enabled: true
   replicas: 1
   webPort: 6065
   nodeSelector: {}              # empty: kaspr.nodeSelector
@@ -137,6 +185,7 @@ controlPlane:
 # Compaction, snapshot expiry and orphan cleanup of every table (handbook 02 §2.10a): always deployed,
 # since tables left unmaintained grow small files and old snapshots without end.
 maintenance:
+  enabled: true                 # deployed only with the control plane
   replicas: 1
   nodeSelector: {}              # empty: kaspr.nodeSelector
   tolerations: []               # empty: kaspr.tolerations
@@ -166,7 +215,7 @@ maintenance:
 
 # The live tail: each watched table's newest records, served to the console (handbook 19).
 tail:
-  enabled: true
+  enabled: true                 # deployed only with the control plane
   replicas: 2
   webPort: 6065
   nodeSelector: {}              # empty: kaspr.nodeSelector
@@ -195,10 +244,48 @@ tail:
   protocolLogging: true
   extraEnv: []
 
-# The web console (console/docs). It reaches the control plane and the tail app through their
-# Services and reads the tables with the GCS credentials above.
+# The shared console (console/docs): one URL for every domain. It reaches each domain's control plane
+# and tail app through their Services (this release's) or their API hostnames (another cluster's), and
+# reads every domain's tables with the GCS credentials above: one read-only identity for every bucket.
 console:
   enabled: true
+  # The URL people use, without a trailing slash: the providers send people back to
+  # <url>/api/auth/sso/<provider>/callback, and the old hostnames redirect to <url>/d/<domain>/.
+  # Empty takes https://<the first of route.consoleHostnames, or ingress.consoleHost>.
+  url: ""
+  # The domains this console serves (handbook 20). Empty: this release's domain alone. Each entry:
+  #   id, name          as the domain's own release sets them (its domain.id and domain.name)
+  #   local: true       this release's control plane and tail app, reached by their Services
+  #   controlPlaneUrl   another domain's API: https://<its route.hostnames[0]>
+  #   tailUrl           its tail app; usually the same host, whose /tail/ goes to the tail app.
+  #                     Empty: that domain shows committed rows only
+  #   serviceTokenSecret: {name, key}   a Secret here holding that domain's `service-token`
+  #   settingsHome: true  exactly one domain stores the console's own settings
+  domains: []
+  # The OAuth clients the console signs people in with. Register each with the redirect URI
+  # <url>/api/auth/sso/<provider>/callback. Every domain must accept the same client (auth.sso).
+  sso:
+    entra:
+      enabled: false
+      tenantId: ""
+      clientId: ""
+      clientSecretSecret: {}    # {name: <Secret>, key: <key>}
+    github:
+      enabled: false
+      clientId: ""
+      clientSecretSecret: {}
+    google:
+      enabled: false
+      clientId: ""
+      clientSecretSecret: {}
+      hostedDomain: ""          # a hint for Google's account chooser; domains check `hd` themselves
+    oidc:
+      enabled: false
+      issuer: ""
+      clientId: ""
+      clientSecretSecret: {}
+      label: ""
+      scopes: [openid, email, profile]
   image:
     repository: ghcr.io/vmirz/midstream-console
     tag: ""                     # empty takes the chart's appVersion
@@ -214,7 +301,8 @@ console:
       cpu: "2"
       memory: 4Gi
   # CONSOLE_* variables (console/docs/03-configuration-reference.md). The chart sets PORT, HOST,
-  # CONTROL_PLANE_URL, CONSOLE_TAIL_URL, CONSOLE_SERVICE_TOKEN and CONSOLE_DATA_DIR itself.
+  # CONSOLE_URL, CONSOLE_DOMAINS_FILE, the domains' service tokens, the sign-in clients and
+  # CONSOLE_DATA_DIR itself.
   env: {}
   hmacSecret: ""                # a Secret with CONSOLE_GCS_HMAC_KEY_ID and CONSOLE_GCS_HMAC_SECRET: direct gs:// scans
   persistence:
@@ -228,17 +316,27 @@ console:
   service:
     type: ClusterIP
 
-# How people and engines reach the deployment, off by default: a Gateway API HTTPRoute or an
-# Ingress. `/catalog` goes to the control plane's Iceberg REST catalog, everything else to the console.
+# How people, engines and other clusters' consoles reach the deployment, off by default: Gateway API
+# HTTPRoutes or Ingresses (handbook 02 §2.12, 20).
+#   hostnames         this domain's API: the control plane's views and its Iceberg catalog, and /tail/
+#                     for the tail app. A console in another cluster reaches the domain here.
+#   consoleHostnames  the shared console, where console.enabled: its pages, /api and /catalog
+#   redirectFrom      old person-facing hostnames, sent on to <console.url>/d/<domain.id>/<path>
 route:
   enabled: false
   hostnames: []
+  consoleHostnames: []
+  redirectFrom: []
   parentRefs: []                # for example [{name: ingress-gateway, namespace: istio-system, sectionName: https}]
+# The same with an Ingress. Its redirects use ingress-nginx's annotation; with another controller, add
+# the rule by hand (handbook 20 has examples for Gateway API, nginx, Istio, Traefik and HAProxy).
 ingress:
   enabled: false
   className: ""
   annotations: {}
-  host: ""
+  host: ""                      # this domain's API
+  consoleHost: ""               # the shared console
+  redirectFrom: []
   tls: []
 
 rbac:

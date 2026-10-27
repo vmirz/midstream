@@ -12,22 +12,24 @@ import Fastify, { LogController } from 'fastify';
 import { registerAuth } from './auth/guard.ts';
 import { config, dataAccessMode, hmacCredentialWarning } from './config.ts';
 import { ConsoleError } from './errors.ts';
-import { liveStore } from './live/store.ts';
+import { consoleSettings, domains } from './domains/index.ts';
 import { logger } from './logger.ts';
-import { registerAuthRoutes } from './routes/auth.ts';
-import { registerDataRoutes } from './routes/data.ts';
+import { registerAuthRoutes, registerConsoleAuthRoutes } from './routes/auth.ts';
+import { registerDataRoutes, registerRunRoutes } from './routes/data.ts';
 import { registerDatasetRoutes } from './routes/datasets.ts';
 import { registerIdentityRoutes } from './routes/identity.ts';
 import { evictIdleRuns } from './runs/store.ts';
 import { registerMaterializationRoutes } from './routes/materializations.ts';
 import { registerSchemaRoutes } from './routes/schema.ts';
 import { registerTableRoutes } from './routes/table.ts';
-import { registerSettingsRoutes } from './routes/settings.ts';
-import { registerStreamRoutes } from './routes/stream.ts';
+import { registerSearchRoutes } from './routes/search.ts';
+import { registerSsoRoutes } from './routes/sso.ts';
+import { registerCatalogRoutes } from './routes/catalog.ts';
+import { RevocationSync } from './auth/revocations.ts';
+import { registerConsoleSettingsRoutes, registerSettingsRoutes } from './routes/settings.ts';
+import { registerFleetStreamRoutes, registerStreamRoutes } from './routes/stream.ts';
 import { registerSystemRoutes } from './routes/system.ts';
 import { registerTopicRoutes } from './routes/topics.ts';
-import { consoleSettings } from './settings/store.ts';
-import { topicCatalog } from './topics/catalog.ts';
 
 const rootDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 const clientDir = join(rootDir, 'dist');
@@ -59,19 +61,40 @@ async function main(): Promise<void> {
     });
   });
 
-  // Before every route: who is calling, and whether a change comes from this console's own pages.
+  // The domains this console serves; a registry that breaks a rule stops the console here.
+  const served = domains();
+
+  // Before every route: who is calling, in each domain, and whether a change comes from this
+  // console's own pages.
   await registerAuth(app);
-  await registerAuthRoutes(app);
-  await registerIdentityRoutes(app);
+
+  // The console's own routes: what the web app needs first, the session in every domain, every
+  // domain's fleet, search, runs and the console's own settings.
   await registerSystemRoutes(app);
-  await registerMaterializationRoutes(app);
-  await registerDatasetRoutes(app);
-  await registerTopicRoutes(app);
-  await registerSchemaRoutes(app);
-  await registerTableRoutes(app);
-  await registerDataRoutes(app);
-  await registerStreamRoutes(app);
-  await registerSettingsRoutes(app);
+  await registerConsoleAuthRoutes(app);
+  await registerSsoRoutes(app);
+  await registerCatalogRoutes(app);
+  await registerFleetStreamRoutes(app);
+  await registerSearchRoutes(app);
+  await registerRunRoutes(app);
+  await registerConsoleSettingsRoutes(app);
+
+  // Everything about one domain, under /api/d/<domain>/ (handbook 20).
+  await app.register(
+    async (scope) => {
+      await registerAuthRoutes(scope);
+      await registerIdentityRoutes(scope);
+      await registerMaterializationRoutes(scope);
+      await registerDatasetRoutes(scope);
+      await registerTopicRoutes(scope);
+      await registerSchemaRoutes(scope);
+      await registerTableRoutes(scope);
+      await registerDataRoutes(scope);
+      await registerStreamRoutes(scope);
+      await registerSettingsRoutes(scope);
+    },
+    { prefix: '/api/d/:domain' },
+  );
 
   if (config.serveClient && existsSync(join(clientDir, 'index.html'))) {
     // Wildcard matching is disabled so unknown paths fall through to the SPA handler below
@@ -89,16 +112,19 @@ async function main(): Promise<void> {
     });
   }
 
-  // Overrides from the Settings page; the deployment's values apply until they have been read.
-  consoleSettings.start();
-  liveStore.start();
-  // Loaded ahead of the first dialog open; a failure here is retried by the first read.
-  topicCatalog.warm();
+  // Overrides from the Settings page, read from the settings home; the deployment's values apply
+  // until they have been read.
+  consoleSettings().start();
+  served.start();
+  // Token revocations reach every domain: at once from the revoke, and every five minutes after.
+  const revocations = new RevocationSync(() => served.served());
+  revocations.start();
 
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'shutting down console');
-    liveStore.stop();
-    consoleSettings.stop();
+    revocations.stop();
+    served.stop();
+    consoleSettings().stop();
     await app.close();
     process.exit(0);
   };
@@ -107,16 +133,15 @@ async function main(): Promise<void> {
 
   await app.listen({ port: config.port, host: config.host });
   logger.info(
-    { port: config.port, controlPlane: config.controlPlaneUrl, workerPool: Number(process.env.UV_THREADPOOL_SIZE) },
+    {
+      port: config.port,
+      domains: served.all().map((domain) => ({ id: domain.id, controlPlane: domain.controlPlane.baseUrl, tail: domain.tailUrl })),
+      settingsHome: served.home.id,
+      workerPool: Number(process.env.UV_THREADPOOL_SIZE),
+    },
     'midstream console ready',
   );
   logDataAccessMode();
-  if (!config.serviceToken) {
-    logger.warn(
-      'CONSOLE_SERVICE_TOKEN is not set: the live views read the control plane as a guest and show only ' +
-        'what guests may see. Set it to the control plane\'s AUTH_SERVICE_TOKEN.',
-    );
-  }
 
   // Stored statement results are the only thing the console leaves on disk that grows with use.
   const runEviction = setInterval(() => {

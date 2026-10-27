@@ -1,31 +1,36 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ChevronDown, CloudOff, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Navigate, NavLink, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, NavLink, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { PageBody, PageHeader } from '@/components/AppShell';
 import { Button, EmptyState, Panel, PanelHeader, Select, Skeleton } from '@/components/ui/primitives';
 import { useToast } from '@/components/ui/Toast';
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, domainApi } from '@/lib/api';
+import { useAuth, useConsoleAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
+import { domainPath, useConsoleConfig, useOptionalDomain } from '@/lib/domains';
+import { rootQueryClient } from '@/lib/queryClient';
 import type { SettingView, SettingsOverview, SettingsScope } from '@shared/types';
 
 import { DeploymentSection } from './DeploymentSection';
+import { DomainsSection } from './DomainsSection';
 import { HistorySection } from './HistorySection';
 import { RuntimeRolloutPanel } from './RuntimeRollout';
 import { SettingRow, SettingRowList } from './SettingRow';
 import { AccessSectionContent } from '../access/AccessSections';
 import {
+  CONSOLE_SECTIONS,
+  DOMAIN_SECTIONS,
   RUNTIME_SECTIONS,
-  SCOPE_LABELS,
   SETTINGS_GROUPS,
   SETTINGS_KINDS,
   findSection,
   visibleSections,
   type SettingsSection,
 } from './sections';
-import { useAuth } from '@/lib/auth';
 import {
+  SCOPE_LABELS,
   buildChanges,
   conflictNotice,
   draftKey,
@@ -43,17 +48,38 @@ const SCOPE_NOTES: Record<SettingsScope, string> = {
 };
 
 /**
- * Settings: every setting an administrator can change, grouped by what it affects.
+ * Settings: every setting an administrator can change, grouped by what it affects (handbook 20).
  *
- * Values come from the deployment's environment unless changed here; a change is stored with the
+ * Two pages share this one. Inside a domain, `/d/<domain>/settings`, it holds that domain's control
+ * plane's and runtimes' settings and its directory; at `/settings`, the console's own settings,
+ * stored in the settings home, the domains, your account in each and every domain's history.
+ *
+ * Values come from the deployment's environment unless changed here; a change is stored with a
  * control plane and applies without a restart. Edits stay drafts, across sections, until saved.
  */
 export function SettingsPage(): ReactNode {
   const { section: sectionId, itemId } = useParams<{ section?: string; itemId?: string }>();
+  const domain = useOptionalDomain();
   const auth = useAuth();
-  const sections = useMemo(() => visibleSections(auth.signedIn, auth.can), [auth.signedIn, auth.can]);
+  const consoleAuth = useConsoleAuth();
+  const home = useConsoleConfig().data?.settingsHome ?? null;
+  const location = useLocation();
+  // The console's own settings are stored in the settings home, so it is there that seeing and
+  // changing them is decided; inside a domain, the domain decides. Until the console's config names
+  // the home, nothing is decided - not even by the domain this browser happens to be signed in to.
+  const homeAuth = domain ? auth : home === null ? null : consoleAuth.forDomain(home);
+  const can = useCallback(
+    (permission: string, heldIn: 'home' | 'any' = 'home') => (heldIn === 'any' ? auth.can(permission) : (homeAuth?.can(permission) ?? false)),
+    [auth, homeAuth],
+  );
+  const sections = useMemo(
+    () => visibleSections(domain ? DOMAIN_SECTIONS : CONSOLE_SECTIONS, auth.signedIn, can),
+    [domain, auth.signedIn, can],
+  );
   const section = findSection(sectionId, sections);
-  const canView = auth.can('settings.view');
+  const settingsApi = useMemo(() => (domain ? domainApi(domain.id) : api), [domain]);
+  const base = domain ? domainPath(domain.id, '/settings') : '/settings';
+  const canView = can('settings.view');
   const navigate = useNavigate();
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -63,7 +89,7 @@ export function SettingsPage(): ReactNode {
 
   const overview = useQuery({
     queryKey: ['settings'],
-    queryFn: () => api.settings(),
+    queryFn: () => settingsApi.settings(),
     enabled: canView,
     refetchOnWindowFocus: false,
     // While runtime settings are rolling out, follow it; otherwise the page only changes when saved.
@@ -72,7 +98,7 @@ export function SettingsPage(): ReactNode {
   });
   const settings = useMemo(() => settingsByKey(overview.data), [overview.data]);
   const pending = useMemo(() => pendingDrafts(drafts, settings), [drafts, settings]);
-  const readOnly = !overview.data?.controlPlane.reachable || !auth.can('settings.manage');
+  const readOnly = !overview.data?.controlPlane.reachable || !can('settings.manage');
 
   const hasEdits = pending.changed.length > 0;
   useEffect(() => {
@@ -104,12 +130,13 @@ export function SettingsPage(): ReactNode {
   }, []);
 
   const save = useMutation({
-    mutationFn: (current: SettingsOverview) => api.saveSettings(buildChanges(pending.changed, current)),
+    mutationFn: (current: SettingsOverview) => settingsApi.saveSettings(buildChanges(pending.changed, current)),
     onSuccess: (result) => {
       queryClient.setQueryData(['settings'], result);
       void queryClient.invalidateQueries({ queryKey: ['settings-history'] });
-      // The create dialog shows the control plane's defaults from the console config.
-      void queryClient.invalidateQueries({ queryKey: ['config'] });
+      void rootQueryClient.invalidateQueries({ queryKey: ['settings-history'] });
+      // The create dialog shows a domain's defaults, and every page the console's own, from its config.
+      void rootQueryClient.invalidateQueries({ queryKey: ['config'] });
       const scopes = new Set(pending.changed.map(([setting]) => setting.scope));
       setDrafts({});
       setServerErrors({});
@@ -148,8 +175,12 @@ export function SettingsPage(): ReactNode {
     },
   });
 
-  if (sections.length === 0) return <Navigate to="/sign-in" replace />;
-  if (!section) return <Navigate to={`/settings/${sections[0]!.id}`} replace />;
+  if (auth.loading) return null;
+  if (sections.length === 0) {
+    if (auth.signedIn) return <NoSettings domainName={domain?.name ?? null} />;
+    return <Navigate to={domain ? `/sign-in/${encodeURIComponent(domain.id)}` : '/sign-in'} replace state={{ from: location }} />;
+  }
+  if (!section) return <Navigate to={`${base}/${sections[0]!.id}`} replace />;
 
   const dirtySections = new Set(pending.changed.map(([setting]) => setting.section));
   const usesSettings = SETTINGS_KINDS.has(section.kind);
@@ -157,16 +188,18 @@ export function SettingsPage(): ReactNode {
   return (
     <>
       <PageHeader
-        title="Settings"
+        title={domain ? `${domain.name} settings` : 'Settings'}
         subtitle={
-          canView
-            ? 'Configure the control plane, its runtimes and this console, and who may use them. Changes apply without a restart.'
-            : 'Your account, and what you may do here.'
+          domain
+            ? `Configure ${domain.name}'s control plane and runtimes, and who may use it. Changes apply without a restart.`
+            : canView
+              ? 'Configure this console, see the domains it serves, and manage your account in each.'
+              : 'Your account in each domain, and the domains this console serves.'
         }
       />
       <PageBody className="pb-24">
         <div className="grid gap-6 md:grid-cols-[208px_minmax(0,1fr)] md:gap-10">
-          <SettingsNav sections={sections} current={section} dirty={dirtySections} onSelect={(id) => navigate(`/settings/${id}`)} />
+          <SettingsNav sections={sections} current={section} dirty={dirtySections} base={base} onSelect={(id) => navigate(`${base}/${id}`)} />
 
           <div className="min-w-0 space-y-5">
             {itemId && !usesSettings ? null : (
@@ -176,14 +209,17 @@ export function SettingsPage(): ReactNode {
               </header>
             )}
 
-            {!usesSettings ? (
+            {section.kind === 'domains' ? <DomainsSection /> : null}
+            {section.kind === 'history' ? <HistorySection domain={domain?.id ?? null} /> : null}
+            {!usesSettings && section.kind !== 'domains' && section.kind !== 'history' ? (
               <AccessSectionContent section={section} itemId={itemId ?? null} />
             ) : null}
 
             {usesSettings && overview.data && !overview.data.controlPlane.reachable ? (
               <Banner tone="warning" icon={<CloudOff className="size-4" />}>
-                <strong className="font-medium">Settings are read-only.</strong> They are stored with the control
-                plane, which cannot be reached: {overview.data.controlPlane.error ?? 'no answer'}.
+                <strong className="font-medium">Settings are read-only.</strong> They are stored with{' '}
+                {domain ? `${domain.name}'s control plane` : 'the settings home\'s control plane'}, which cannot be reached:{' '}
+                {overview.data.controlPlane.error ?? 'no answer'}.
               </Banner>
             ) : null}
 
@@ -230,7 +266,6 @@ export function SettingsPage(): ReactNode {
               <SectionContent
                 section={section}
                 overview={overview.data}
-                settings={settings}
                 drafts={drafts}
                 serverErrors={serverErrors}
                 readOnly={readOnly}
@@ -252,7 +287,7 @@ export function SettingsPage(): ReactNode {
                     {pending.invalid} {pending.invalid === 1 ? 'needs' : 'need'} fixing
                   </span>
                 ) : (
-                  <span className="ml-2 text-[var(--color-ink-muted)]">in {describeSections(dirtySections)}</span>
+                  <span className="ml-2 text-[var(--color-ink-muted)]">in {describeSections(sections, dirtySections)}</span>
                 )}
               </span>
               <span className="flex items-center gap-2">
@@ -288,7 +323,6 @@ export function SettingsPage(): ReactNode {
 function SectionContent({
   section,
   overview,
-  settings,
   drafts,
   serverErrors,
   readOnly,
@@ -296,14 +330,12 @@ function SectionContent({
 }: {
   section: SettingsSection;
   overview: SettingsOverview;
-  settings: Map<string, SettingView>;
   drafts: Drafts;
   serverErrors: Record<string, string>;
   readOnly: boolean;
   onDraft: (setting: SettingView, draft: Draft | undefined) => void;
 }): ReactNode {
   if (section.kind === 'deployment') return <DeploymentSection entries={overview.deployment} />;
-  if (section.kind === 'history') return <HistorySection settings={settings} retainedPerScope={overview.historyRetained} />;
 
   const rows = sectionSettings(overview, section.id);
   const scopes = [...new Set(rows.map((setting) => setting.scope))];
@@ -322,7 +354,7 @@ function SectionContent({
           ) : (
             <EmptyState
               title="Nothing to change here"
-              description="The control plane did not report any settings for this section; it may be older than this console."
+              description="Nothing in this section is set here: the control plane did not report any of its settings, or it may be older than this console."
             />
           )}
         </Panel>
@@ -404,11 +436,14 @@ function SettingsNav({
   sections,
   current,
   dirty,
+  base,
   onSelect,
 }: {
   sections: SettingsSection[];
   current: SettingsSection;
   dirty: Set<string>;
+  /** Where the page is: `/settings`, or a domain's `/d/<domain>/settings`. */
+  base: string;
   onSelect: (id: string) => void;
 }): ReactNode {
   return (
@@ -437,7 +472,7 @@ function SettingsNav({
               {sections.filter((section) => section.group === group.id).map((section) => (
                 <li key={section.id}>
                   <NavLink
-                    to={`/settings/${section.id}`}
+                    to={`${base}/${section.id}`}
                     className={({ isActive }) =>
                       cn(
                         'flex items-center gap-2.5 rounded-[var(--radius-control)] px-2.5 py-1.5 text-[13px] transition-colors',
@@ -490,10 +525,25 @@ function Banner({
   );
 }
 
-function describeSections(ids: Set<string>): string {
-  const labels = visibleSections(true, () => true)
-    .filter((section) => ids.has(section.id))
-    .map((section) => section.label);
+/** Shown to someone signed in who may see none of a page's sections. */
+function NoSettings({ domainName }: { domainName: string | null }): ReactNode {
+  return (
+    <>
+      <PageHeader title={domainName ? `${domainName} settings` : 'Settings'} />
+      <PageBody>
+        <Panel>
+          <EmptyState
+            title={domainName ? `You do not have access to ${domainName}'s settings` : 'You do not have access to settings'}
+            description="Your groups do not grant it. An administrator can add you to a group that does."
+          />
+        </Panel>
+      </PageBody>
+    </>
+  );
+}
+
+function describeSections(sections: SettingsSection[], ids: Set<string>): string {
+  const labels = sections.filter((section) => ids.has(section.id)).map((section) => section.label);
   if (labels.length <= 2) return labels.join(' and ');
   return `${labels.slice(0, -1).join(', ')} and ${labels.at(-1)}`;
 }

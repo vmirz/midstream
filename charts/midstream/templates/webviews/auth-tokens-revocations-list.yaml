@@ -1,0 +1,40 @@
+{{- if include "midstream.controlPlaneEnabled" . }}
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-auth-tokens-revocations-list
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: auth-tokens-revocations-list
+  description: Every access token revocation this domain holds, signed, for the console to hand to the other domains.
+  request:
+    method: GET
+    path: /auth/tokens/revocations
+  processors:
+    pipeline:
+      - read-revocations
+    operations:
+      - name: read-revocations
+        tables:
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+        map:
+          entrypoint: read_revocations
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.http import query_params
+            from midstream.web.tokens import revocations_view
+
+            def read_revocations(request, directory_table):
+                principal = authorize(request, directory_table, None)
+                return revocations_view(directory_table, principal, query_params(request).get("since"))
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data
+{{- end }}

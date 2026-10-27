@@ -11,17 +11,20 @@ import type { StatementPosition } from '@shared/types';
 const RUN_HINT = navigator.platform.toLowerCase().includes('mac') ? '⌘↵' : 'Ctrl+↵';
 
 /**
- * SQL editor bound to the prepared views of the materialization's tables.
+ * SQL editor bound to the prepared views of the tables a statement may read.
  *
- * Tables are completed by their canonical names, `<dataset>.<table>`, and their native ones,
- * `iceberg.<dataset>.<table>`; a materialization's tables may be in several datasets. Column names
- * are fed in from the run's columns and the tables' schemas, so completion offers exactly the names
- * the views have: field paths without the schema's `payload.` root, and the Kafka metadata.
+ * Tables are completed by their full names, `<domain>.<dataset>.<table>`, and their native ones,
+ * `<domain>_iceberg.<dataset>.<table>` (handbook 20): the materialization's own, with their columns,
+ * and any other the person may name, in any domain. Column names are fed in from the run's columns
+ * and the tables' schemas, so completion offers exactly the names the views have: field paths
+ * without the schema's `payload.` root, and the Kafka metadata.
  */
 export function QueryEditor({
   value,
   tableName,
+  domain,
   tables,
+  otherTables = [],
   tableColumns = {},
   columns,
   onChange,
@@ -31,8 +34,12 @@ export function QueryEditor({
   value: string;
   /** The table on screen; completion offers its columns without a table name. */
   tableName: string;
-  /** Every table a statement may read, each in its dataset: `<dataset>.<table>`. */
+  /** The domain the materialization is in. */
+  domain: string;
+  /** The materialization's tables a statement may read, each in its dataset. */
   tables: ReadonlyArray<{ dataset: string; name: string }>;
+  /** Other tables a statement may name, in any domain: completed by name, their columns unknown here. */
+  otherTables?: ReadonlyArray<{ domain: string; dataset: string; name: string }>;
   /** Each table's columns, for completion after its name. */
   tableColumns?: Record<string, string[]>;
   columns: string[];
@@ -50,21 +57,29 @@ export function QueryEditor({
 }): ReactNode {
   const viewRef = useRef<EditorView | null>(null);
   const extensions = useMemo(() => {
-    const logical: Record<string, Record<string, string[]>> = {};
-    const native: Record<string, Record<string, string[]>> = {};
+    // Catalog, schema, table: `domain_a.sales.orders`, and `domain_a_iceberg.sales.orders` for the
+    // same tables with their native columns, offered by name.
+    const schema: Record<string, Record<string, Record<string, string[]>>> = {};
+    const add = (catalog: string, dataset: string, name: string, names: string[]): void => {
+      const tablesOf = ((schema[catalog] ??= {})[dataset] ??= {});
+      if (!(name in tablesOf) || names.length > 0) tablesOf[name] = names;
+    };
+    for (const table of otherTables) {
+      add(table.domain, table.dataset, table.name, []);
+      add(`${table.domain}_iceberg`, table.dataset, table.name, []);
+    }
     for (const table of tables) {
-      (logical[table.dataset] ??= {})[table.name] = table.name === tableName ? columns : (tableColumns[table.name] ?? []);
-      // `iceberg.<dataset>.<table>`: the same tables with their native columns, offered by name.
-      (native[table.dataset] ??= {})[table.name] = [];
+      add(domain, table.dataset, table.name, table.name === tableName ? columns : (tableColumns[table.name] ?? []));
+      add(`${domain}_iceberg`, table.dataset, table.name, []);
     }
     return [
       lintGutter(),
-      sql({ dialect: PostgreSQL, upperCaseKeywords: true, schema: { ...logical, iceberg: native } }),
+      sql({ dialect: PostgreSQL, upperCaseKeywords: true, schema }),
       // The table on screen's columns, unqualified, wherever a name can stand; `defaultTable` cannot
       // name a table inside a namespace.
       PostgreSQL.language.data.of({ autocomplete: unqualifiedColumns(columns) }),
     ];
-  }, [tableName, tables, tableColumns, columns]);
+  }, [domain, tableName, tables, otherTables, tableColumns, columns]);
   const current = tables.find((table) => table.name === tableName);
 
   const dark = document.documentElement.classList.contains('dark');
@@ -121,14 +136,15 @@ export function QueryEditor({
           Read-only. Query{' '}
           {tables.length > 1 ? (
             <>
-              any of <code className="numeric">{tables.map((table) => `${table.dataset}.${table.name}`).join(', ')}</code> and join them
+              any of <code className="numeric">{tables.map((table) => `${domain}.${table.dataset}.${table.name}`).join(', ')}</code> and join them
             </>
           ) : (
             <code className="numeric">
-              {current?.dataset ?? 'dataset'}.{tableName}
+              {domain}.{current?.dataset ?? 'dataset'}.{tableName}
             </code>
           )}
-          ; columns are named by their field paths, so quote them: <code className="numeric">"{example}"</code>.
+          {otherTables.length > 0 ? ', or any table you may read in any domain, by its full name' : ''}; columns are named by their field paths, so quote
+          them: <code className="numeric">"{example}"</code>.
         </p>
         {/*
           No Run button here. The tab has one Run control, above the grid, and it already reports
@@ -188,7 +204,7 @@ function unqualifiedColumns(columns: readonly string[]): (context: CompletionCon
   return (context) => {
     const word = context.matchBefore(/[\w$]*/);
     if (!word || (word.from === word.to && !context.explicit)) return null;
-    // After `shop.` or an alias's `o.`, the schema completion knows better.
+    // After `domain_a.` or an alias's `o.`, the schema completion knows better.
     if (context.state.sliceDoc(word.from - 1, word.from) === '.') return null;
     return { from: word.from, options, validFor: /^[\w$]*$/ };
   };

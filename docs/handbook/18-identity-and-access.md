@@ -305,8 +305,13 @@ may read its outcome.
    password → `401 unauthenticated` "Email or password is incorrect." (`invalid_credentials`),
    and a `sign_in_failed` event that counts towards a lockout.
 4. A deactivated account with the right password → `403 forbidden` (`account_deactivated`).
-5. Otherwise issue a token and publish `sign_in_succeeded`, which records the session, the
+5. Password sign-in turned off here (`password_sign_in_enabled`, §18.17) and the account does not
+   hold the Administrator role → `403 forbidden` (`password_sign_in_disabled`). Checked after the
+   password, so it tells nobody anything they did not know; audited, never counted towards a lockout.
+6. Otherwise issue a token and publish `sign_in_succeeded`, which records the session, the
    person's activity, clears failed attempts and writes the audit entry.
+
+The same view takes a sign-in through an identity provider, `{provider, credential, nonce}` (§18.17).
 
 Each replica hashes on a pool of two threads, about 64 MiB at most. When more than 32 hashes are
 already waiting, sign-in — and setting or changing a password — answers `429 too_many_attempts`
@@ -445,25 +450,28 @@ audit entries older than `audit_log_retention_days` (90), at most 5,000 per pass
 
 ## 18.9 The console
 
-The console (`/console`) is a client of this API like any other, with three additions of its own.
+The console (`/console`) is a client of this API like any other — of every domain's, one console for
+all of them (chapter 20) — with three additions of its own.
 
-**The session lives in a cookie.** `POST /api/auth/login` forwards the credentials to the control
-plane and stores the returned token in an `HttpOnly`, `SameSite=Lax` cookie
-(`CONSOLE_SESSION_COOKIE`, default `console_session`), `Secure` behind TLS
-(`CONSOLE_COOKIE_SECURE=auto`). The page's scripts never see the token. Scripts may instead send
-`Authorization: Bearer` to the console.
+**The sessions live in cookies, one per domain.** `POST /api/d/<domain>/auth/login` forwards the
+credentials to that domain's control plane and stores the returned token in an `HttpOnly`,
+`SameSite=Lax` cookie of that domain's own (`<CONSOLE_SESSION_COOKIE>_<domain>`, default
+`midstream_session_<domain>`), `Secure` behind TLS (`CONSOLE_COOKIE_SECURE=auto`); a sign-in through
+a provider sets one for every domain that admits the person (§18.17). The page's scripts never see a
+token. Scripts may instead send `Authorization: Bearer` to the console.
 
 **Every route declares a permission.** An `onRequest` hook resolves the caller of every `/api/*`
-request by asking the control plane's `GET /auth/session`, caching the answer for
+request in the route's domain — or in every domain, for the console's own routes — by asking that
+domain's `GET /auth/session`, caching the answer for
 `CONSOLE_SESSION_CHECK_MS` (5 s) keyed by a hash of the token; routes declare
 `permit('<permission>')` or `signedIn()`. Changes are sent to the control plane with the person's
 own token, so the control plane authorizes them again. A route for a dataset permission declares
 `permitAnywhere('<permission>')` — held on at least one dataset — and checks it on the datasets the
 request is about: a Data tab run needs `data.query` on every table it reads, an export
 `data.export`, a schema read `dataset.view_schema` on the table's dataset. Live views — the fleet,
-details, schemas, topics, the console's own settings — are read once for everyone with
-`CONSOLE_SERVICE_TOKEN`, which must equal the control plane's `AUTH_SERVICE_TOKEN`;
-without it they read as a guest. What a live view sends each person is cut down to what they may
+details, schemas, topics, the console's own settings — are read once for everyone, in each domain,
+with that domain's service token, `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN`, which must equal its control
+plane's `AUTH_SERVICE_TOKEN`; without it they read as a guest. What a live view sends each person is cut down to what they may
 see (`live/store.ts::visibleDetail`): a table's schema reaches only those who may read its dataset.
 Event streams check their caller every 30 seconds and close when access is lost.
 
@@ -472,8 +480,8 @@ is not `same-origin`, or whose `Origin` is another host, is refused with `403`
 (`cross_site_request`), on top of `SameSite=Lax`.
 
 **The live tail is read with the person's own session.** A run that reads a table's live tail calls
-the tail app with the person's token as its bearer and `CONSOLE_SERVICE_TOKEN` in
-`X-Console-Token`. The tail app answers the console alone — a request without that header is
+the domain's tail app with the person's token there as its bearer and the domain's service token
+in `X-Console-Token`. The tail app answers the console alone — a request without that header is
 `403 console_only` — and checks the person itself: it resolves the token with `GET /auth/session`,
 rebuilds the principal from its description (`principal_from_description`), and requires
 `data.query` on the table's dataset, a token's dataset limit included, exactly as the control plane
@@ -551,6 +559,15 @@ Overridable from the Settings page's **Security** section (`control-plane` scope
 The console's own Security settings: `CONSOLE_SESSION_CHECK_MS` (5,000; 0–60,000) and
 `CONSOLE_SIGN_IN_ATTEMPTS_PER_MINUTE` (10; 1–1,000).
 
+The **Sign-in** section (`control-plane` scope) holds single sign-on and password sign-in (§18.17):
+
+| Key | Env var (`CONTROL_PLANE_…`) | Default | Takes effect for |
+|---|---|---|---|
+| `sso_entra_enabled`, `sso_github_enabled`, `sso_google_enabled`, `sso_oidc_enabled` | `SSO_<PROVIDER>_ENABLED` | false (the chart: `auth.sso.<provider>.enabled`) | new sign-ins |
+| `sso_first_sign_in` | `SSO_FIRST_SIGN_IN` | `open` (`open` or `invited`) | new sign-ins |
+| `sso_allowed_email_domains` | `SSO_ALLOWED_EMAIL_DOMAINS` | empty: any (a `domain_list`, comma-separated) | new sign-ins |
+| `password_sign_in_enabled` | `PASSWORD_SIGN_IN_ENABLED` | true; off, administrators only | new sign-ins |
+
 Never overridable, from the **`<release>-auth`** Secret (`midstream-auth` in dev),
 every key optional. The Settings page's Deployment section says only whether each is configured.
 
@@ -558,7 +575,8 @@ every key optional. The Settings page's Deployment section says only whether eac
 |---|---|---|
 | `signing-key` | `AUTH_SIGNING_KEY` | Signs sessions. At least 32 characters; without it nobody can sign in and every request is a guest's |
 | `previous-signing-key` | `AUTH_PREVIOUS_SIGNING_KEY` | Still verifies sessions it signed, for rotation |
-| `service-token` | `AUTH_SERVICE_TOKEN` | The console's read-only credential; at least 32 characters; same value as the console's `CONSOLE_SERVICE_TOKEN` |
+| `service-token` | `AUTH_SERVICE_TOKEN` | The console's read-only credential; at least 32 characters; the console's `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN` for this domain (20 §20.2) |
+| `federation-key`, `previous-federation-key` | `AUTH_FEDERATION_KEY`, `AUTH_PREVIOUS_FEDERATION_KEY` | Signs access tokens and their revocations, the **same value in every domain** (§18.15); at least 32 characters. Without it no access token can be made or used |
 | `bootstrap-admin-email`, `bootstrap-admin-password` | `AUTH_BOOTSTRAP_ADMIN_EMAIL`, `…_PASSWORD` | The first administrator (§18.8) |
 
 A key or token shorter than 32 characters is ignored and logged.
@@ -575,7 +593,9 @@ kubectl create secret generic materializer-auth -n midstream \
   --from-literal=bootstrap-admin-password="$(openssl rand -base64 18)"
 ```
 
-Give the console the same service token as `CONSOLE_SERVICE_TOKEN`. Deploy, force the one
+Give the console the same service token as `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN` (the chart does, from
+the Secret each `console.domains[]` entry names), and every domain the same `federation-key`
+(§18.11). Deploy, force the one
 rebalance a release that adds topics needs (§17.12: 0.6.0 added `<release>-identity-requests`
 and the changelogs of `identity` and `identity-audit`; 3.0.0 the changelog of `directory`, which
 kaspr-operator 0.19.4 or later rebalances for on its own), sign in as the bootstrap administrator,
@@ -587,20 +607,21 @@ creates one, and its owners share it (§18.16).
 the maximum session length (7 days), remove `previous-signing-key`. Replacing the key without
 moving it signs everyone out.
 
-**The console's service token.** There is no separate console token: a console reads with the
-control plane's own `service-token`, given to it as `CONSOLE_SERVICE_TOKEN`. To point a console -
-a developer's included - at a running control plane, copy the value from the Secret
-(`midstream-auth` in dev) without printing it:
+**The console's service token.** There is no separate console token: the console reads each domain
+with that control plane's own `service-token`, given to it as `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN`
+(the chart reads it from the Secret each `console.domains[]` entry names). To point a console - a
+developer's included - at a running control plane, copy the value from the Secret (`midstream-auth`)
+without printing it; with no registry, a developer's console serves one domain, `local`:
 
 ```bash
-printf 'CONSOLE_SERVICE_TOKEN=%s\n' \
-  "$(kubectl -n midstream get secret materializer-auth -o jsonpath='{.data.service-token}' | base64 -d)" \
+printf 'CONSOLE_DOMAIN_LOCAL_SERVICE_TOKEN=%s\n' \
+  "$(kubectl -n midstream get secret midstream-auth -o jsonpath='{.data.service-token}' | base64 -d)" \
   >> console/.env  # then restart the console; the npm scripts read console/.env at start
 ```
 
 To replace it, put a new value (at least 32 characters, `openssl rand -base64 48`) in the
-Secret's `service-token` and in every console's `CONSOLE_SERVICE_TOKEN`, then restart the control
-plane and the consoles. Until both hold the same value, a console's live views read as a guest:
+Secret's `service-token` and in the console's `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN` for that domain
+(the Secret its entry names), then restart the control plane and the console. Until both hold the same value, a console's live views read as a guest:
 the list, never details.
 
 | Symptom | Cause | Action |
@@ -609,7 +630,7 @@ the list, never details.
 | Sign-in and every change to users, groups or roles answer `500`, and the control-plane log shows `KeyError: '…<release>-identity-requests'`; no administrator was bootstrapped | The consumer group runs on an assignment made before this release added the identity topic: the rebalance was not forced | §17.12, once per environment |
 | A create stays in `claiming_tables` | The claim never reached `identity-intake`, or its answer never reached `workflow-apply`: both have outputs the chart names after the release (02 §2.9) | Check the rendered agents; `GET /identity/requests/{claim_request_id}` says whether the directory answered |
 | Someone cannot see a dataset's schemas or data | The dataset is locked to them: no grant on it to them or their groups, and no dataset permission held everywhere | A dataset owner grants them a role on it (Datasets › the dataset › Access) |
-| The console shows only the list, never details, for everyone | `CONSOLE_SERVICE_TOKEN` unset or not equal to the control plane's | Set it; the console logs a warning at start |
+| The console shows only the list, never details, for everyone, in one domain | The console's `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN` for it unset or not equal to the control plane's | Set it; the console logs a warning at start |
 | Someone is locked out | 10 wrong passwords in a row | **Unlock** on their user page, or wait 15 minutes |
 | Nobody can manage users | No active administrator and no bootstrap secret | Set `bootstrap-admin-email` / `-password`, restart the control plane |
 | Everyone was signed out | The signing key changed without being moved to the previous slot | Expected; sign in again |
@@ -681,31 +702,46 @@ The full checklist, including the console and the docs, is the `adding-permissio
 
 A person makes an access token for a tool — DuckDB on a laptop, a notebook's PyIceberg, a Spark job
 — so the tool can read the Iceberg REST catalog (11 §11.8) as them without a session that expires in
-hours or a password on disk (`identity/access_tokens.py`, `web/tokens.py`).
+hours or a password on disk (`identity/access_tokens.py`, `web/tokens.py`). One token is good in
+**every domain** where its owner has an account (20 §20.8).
 
-**The token.** `tok_<token_id>_<secret>`: a 12-hex public id and a random secret. It is returned once,
-in the `202` of `POST /auth/tokens`, and never again. The identity table keeps only the secret's
-hash (`secret_hash`) under `token:<token_id>`; the request travels on the identity topic with the
-hash, never the secret. Lost tokens are revoked and replaced, not recovered.
+**The token.** `tok_<base64url claims>.<base64url HMAC-SHA256>`, signed with the **federation key**
+(`federation-key` in the auth Secret, the same value in every domain). Its claims — `jti` (a 12-hex
+id), `iss` (the domain that made it), `own` (its owner: the provider account they signed in with, if
+any, and their email), `perm`, optional `ds` (`<domain>.<dataset>` limits), `iat`, `exp`, `kid` —
+are signed, not encrypted. It is returned once, in the answer to `POST /auth/tokens`, and never again;
+no domain stores its text. The domain that made it keeps a record, `token:<jti>` (name,
+permissions, limits, expiry, `issuer`), for its owner's listing.
 
 **What it may do.** Its `permissions` are a subset of `TOKEN_PERMISSIONS` — `catalog.read` (the
-default) and `catalog.write` — each one its maker held, on some dataset, when making it. It may also
-be **limited to datasets** (`datasets`, by name in the request, kept by id; at most 100), each one
-its maker could read through the catalog. On every request `_token_principal`
-(`identity/authorization.py`) checks the secret against the hash, revocation, expiry and the owner's
-account, then grants the token's permissions **intersected with what the owner holds now, on each
-dataset**, and nothing outside its datasets when it is limited: a token never outlives its owner's
-access. The principal's `kind` is `token`, and changes it makes are attributed to its owner.
+default) and `catalog.write` — each one its maker held, in the minting domain, on the datasets of
+that domain it names or somewhere there. It may be **limited to datasets** of any domain
+(`datasets: ["domain_a.sales", "domain_b.finance"]`; a name without its domain is the minting
+domain's; at most 100). On every request, in whichever domain answers, `_token_principal`
+(`identity/authorization.py`) checks the signature with the current or previous federation key, the
+expiry, that no `revoked:<jti>` record exists, then finds the owner — by provider account, else by
+email; `401 token_unknown_owner` if this domain does not know them, `account_deactivated` if they are
+deactivated — and grants the token's permissions **intersected with what the owner holds here, on
+each dataset**, and nothing outside this domain's datasets named in `ds` when it is limited. A token
+never outlives its owner's access in any domain. The principal's `kind` is `token`.
 
-**Limits.** A name of up to 64 characters; at most 20 live tokens per person; 1–365 days of life
-(90 when none is given). Access is per dataset, not per table: a token that reads one table of a
-dataset reads all of them (14 §14.8).
+**Limits.** A name of up to 64 characters; at most 20 live tokens per person in a domain; 1–365 days
+of life (90 when none is given). Access is per dataset, not per table (14 §14.8).
 
-**Managing them.** The console's Account page lists a person's tokens with their permissions and
-expiry (last use is not tracked), makes new ones — the token is shown once — and revokes them (console 11). A user
-manager can revoke anyone's token through the API. Making and revoking a token are identity requests
-like any directory change — applied by `identity-intake` in order, recorded in the audit log as
-`token.created` and `token.revoked`.
+**Revoking.** `DELETE /auth/tokens/<jti>` on the domain that made it — by its owner, or a user
+manager — marks the record revoked and records `revoked:<jti>` with a **signed revocation**
+(`{jti, exp, signature}`). The console hands that to every other domain's
+`POST /auth/tokens/revocations`, which needs no session — only a revocation signed with the
+federation key is taken — and every five minutes hands on whatever each domain revoked since it last
+looked (`GET /auth/tokens/revocations?since=`, service credential or `users.manage`). A token the
+identity agent refuses to record is revoked as it is refused. Revocations are kept until a day after
+their token expires; the hourly maintenance removes them.
+
+**Managing them.** The console's Account page lists the tokens each domain made for the person, makes
+a new one in the domain chosen — with limits from any domain — and revokes them (console 11). Making,
+revoking and applying another domain's revocation are identity requests, applied by
+`identity-intake` in order and audited as `token.created`, `token.revoked` and
+`token.revocation_applied`.
 
 **Who gets one.** The built-in Dataset Reader role holds `catalog.read`, and All Users holds it on
 every new dataset, so anyone signed in can connect tools to the datasets they read; `catalog.write`
@@ -777,3 +813,44 @@ within the hour.
 show and serve. They do not protect the files: an HMAC key that reads the bucket reads every table in
 it, and so do Google credentials that PyIceberg uses. Restricting a dataset therefore restricts only
 people without such credentials (14 §14.8).
+
+## 18.17 Single sign-on
+
+A domain takes sign-ins through Microsoft Entra ID, Google, GitHub or any OpenID Connect issuer. The
+shared console runs the provider's flow and hands each domain what the provider gave; **each domain
+checks it itself** (`identity/providers/`), so the console never asserts who anyone is (20 §20.7).
+
+**Configuring a provider.** The deployment names the provider's identity — `AUTH_SSO_ENTRA_TENANT_ID`
+and `_CLIENT_ID`; `AUTH_SSO_GITHUB_CLIENT_ID` and `_CLIENT_SECRET` (from a Secret: GitHub's token check
+needs it); `AUTH_SSO_GOOGLE_CLIENT_ID` and `_HOSTED_DOMAINS`; `AUTH_SSO_OIDC_ISSUER`, `_CLIENT_ID`,
+`_LABEL`, `_TRUST_EMAILS` — from the chart's `auth.sso.*` (20 §20.2), the same client the console is
+registered with. The Deployment section shows each configured or not; the Sign-in setting
+`sso_<provider>_enabled` turns it on. `GET /auth/session` lists the providers a domain accepts
+(`providers`, each `{id, type, label}`; `password` with `administrators_only` while password sign-in
+is off).
+
+**The exchange.** `POST /auth/login` with `{"provider": "entra" | "github" | "google" | "oidc",
+"credential": {"id_token"} | {"access_token"}, "nonce"}`:
+
+| Step | Refused with |
+|---|---|
+| The provider configured here and turned on | `403 provider_disabled` |
+| The credential checked: an ID token's signature against the provider's keys (read again for an unknown key, at most once a minute), `iss`, `aud`, `exp`, `iat` within 5 minutes, the nonce matched and used once; Entra's `tid`, Google's `email_verified` and `hd`; the issuer's `email_verified` unless `trustEmails`. GitHub: the token issued to this App (`POST /applications/<id>/token` with the secret), the account and its primary, verified email | `401 invalid_credential`, `403 email_unverified`, `503 provider_unreachable` |
+| The email's domain among `sso_allowed_email_domains`, when any are set | `403 email_not_allowed` |
+| The person found: by the linked provider account (`external-identity:<provider>:<subject>`); else by the email, and linked (`link_identity`, audit `user.identity_linked`); else, under `open`, a new account in All Users (`provision_user`, audit `user.provisioned`) | `403 no_account` under `invited`; `403 account_deactivated` |
+
+A session's method is `sso:<provider>`. A new account has no password until an administrator sets
+one, and its id is derived from the provider account (`usr-<sha256(provider:subject)[:16]>`), so two
+first sign-ins at once make one account. The login view publishes `provision_user`, and its next step
+(`await-account`) holds the answer until the identity agent has made the account — at most 10 s, then
+`503 provisioning`, or `409` when the agent refused it. A known refusal is audited as
+`session.sign_in_failed` with `method: sso:<provider>`; nothing a provider sign-in does counts
+towards a lockout. A session started through a provider is never held back by a password change
+someone else's password requires (§18.6).
+
+**Accounts and providers.** `User.external_identities` lists the provider accounts a person signs in
+with (`sign_in_methods()` reports them as `sso:<provider>`); deleting the person removes the index.
+Group claims from a provider do not drive Midstream's groups: groups are assigned in each domain.
+
+Tests: `python/tests/test_sso.py`; console `server/routes/sso.test.ts`.
+

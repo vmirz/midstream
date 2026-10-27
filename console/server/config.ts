@@ -82,13 +82,19 @@ const deployment = {
   version: str('CONSOLE_VERSION', packageVersion()),
   memberId: str('HOSTNAME', hostname()),
 
-  controlPlaneUrl: str('CONTROL_PLANE_URL', 'http://localhost:6065').replace(/\/+$/, ''),
   /**
-   * The tail app's base URL: where a run fetches the newest records of the tables it reads, those
-   * not committed yet (handbook 19). In a cluster it is the tail app's Service; unset, this console
-   * shows committed rows only.
+   * The URL people use for this console, without a trailing slash: where the sign-in providers send
+   * people back to (`<url>/api/auth/sso/<provider>/callback`) and the old hostnames redirect to.
+   * Unset, the console takes the URL each request arrived at, which suits development only.
    */
-  tailUrl: optional('CONSOLE_TAIL_URL')?.replace(/\/+$/, '') || null,
+  consoleUrl: optional('CONSOLE_URL')?.replace(/\/+$/, '') || null,
+  /**
+   * The domains this console serves (handbook 20): a JSON file the chart renders, or the same JSON
+   * inline for development. With neither, one domain at http://localhost:6065 (`domains/registry.ts`).
+   * Each domain's service token comes from `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN`.
+   */
+  domainsFile: optional('CONSOLE_DOMAINS_FILE'),
+  domainsJson: optional('CONSOLE_DOMAINS'),
 
   dataDir,
   parquetCacheDir: str('CONSOLE_PARQUET_CACHE_DIR', join(dataDir, 'parquet-cache')),
@@ -126,19 +132,35 @@ const deployment = {
   corsOrigin: optional('CONSOLE_CORS_ORIGIN'),
 
   /**
-   * The credential the console reads its live views with: the fleet, details, schemas, topics and
-   * its own settings. The control plane gives it read access only; everything a person changes is
-   * sent with that person's session. Set from the same Secret as the control plane's
-   * AUTH_SERVICE_TOKEN.
+   * The cookies holding a browser's sessions, one per domain: `<name>_<domain id>`. Renaming it
+   * signs everyone out.
    */
-  serviceToken: optional('CONSOLE_SERVICE_TOKEN'),
-  /** The cookie holding a signed-in browser's session. Renaming it signs everyone out. */
-  sessionCookieName: str('CONSOLE_SESSION_COOKIE', 'console_session'),
+  sessionCookieName: str('CONSOLE_SESSION_COOKIE', 'midstream_session'),
   /**
    * Whether the session cookie is marked Secure: `auto` follows the request's scheme, as reported
    * by the ingress, so it is Secure behind TLS and still works on http://localhost.
    */
   cookieSecure: str('CONSOLE_COOKIE_SECURE', 'auto'),
+
+  /**
+   * Single sign-on (handbook 20): this console's registration with each provider. A provider with a
+   * client id and secret is offered on the sign-in page; each domain decides whether it accepts
+   * people from it. The secrets come from Secrets and are never shown.
+   */
+  ssoEntraTenantId: optional('CONSOLE_SSO_ENTRA_TENANT_ID'),
+  ssoEntraClientId: optional('CONSOLE_SSO_ENTRA_CLIENT_ID'),
+  ssoEntraClientSecret: optional('CONSOLE_SSO_ENTRA_CLIENT_SECRET'),
+  ssoGithubClientId: optional('CONSOLE_SSO_GITHUB_CLIENT_ID'),
+  ssoGithubClientSecret: optional('CONSOLE_SSO_GITHUB_CLIENT_SECRET'),
+  ssoGoogleClientId: optional('CONSOLE_SSO_GOOGLE_CLIENT_ID'),
+  ssoGoogleClientSecret: optional('CONSOLE_SSO_GOOGLE_CLIENT_SECRET'),
+  /** A Google Workspace domain the account chooser is limited to; each domain still checks its own. */
+  ssoGoogleHostedDomain: optional('CONSOLE_SSO_GOOGLE_HOSTED_DOMAIN'),
+  ssoOidcIssuer: optional('CONSOLE_SSO_OIDC_ISSUER')?.replace(/\/+$/, '') || null,
+  ssoOidcClientId: optional('CONSOLE_SSO_OIDC_CLIENT_ID'),
+  ssoOidcClientSecret: optional('CONSOLE_SSO_OIDC_CLIENT_SECRET'),
+  ssoOidcLabel: optional('CONSOLE_SSO_OIDC_LABEL'),
+  ssoOidcScopes: str('CONSOLE_SSO_OIDC_SCOPES', 'openid email profile'),
 };
 
 /**
@@ -233,7 +255,7 @@ const tunableDeployment = {
 
   /**
    * The live tail: a run of a table, every materialization's, also reads the records newer than its
-   * snapshot, from the tail app (`CONSOLE_TAIL_URL`), and the Data tab's Live mode
+   * snapshot, from its domain's tail app (the registry's `tailUrl`), and the Data tab's Live mode
    * appends what arrives every `liveTailRefreshMs`. `liveTailMaxRows` bounds one fetch;
    * `liveTailTimeoutMs` is how long a run waits for its tail before it goes on without it.
    */

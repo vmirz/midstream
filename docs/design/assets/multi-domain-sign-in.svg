@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 470" width="760" role="img" aria-label="One provider sign-in becomes a session in every domain" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8c959f"/></marker>
+  </defs>
+  <text x="24" y="28" font-size="15" font-weight="600" fill="#1f2328">One provider sign-in becomes a session in every domain</text>
+
+  <!-- Lanes: Browser, Console, Provider, Domain A, Domain B -->
+  <g fill="none" stroke="#8c959f" stroke-width="1.25">
+    <rect x="20" y="48" width="120" height="32" rx="8"/>
+    <rect x="170" y="48" width="120" height="32" rx="8"/>
+    <rect x="320" y="48" width="120" height="32" rx="8"/>
+    <rect x="470" y="48" width="120" height="32" rx="8"/>
+    <rect x="620" y="48" width="120" height="32" rx="8"/>
+  </g>
+  <g stroke="#d0d7de" stroke-dasharray="4 4">
+    <line x1="80" y1="80" x2="80" y2="444"/>
+    <line x1="230" y1="80" x2="230" y2="444"/>
+    <line x1="380" y1="80" x2="380" y2="444"/>
+    <line x1="530" y1="80" x2="530" y2="444"/>
+    <line x1="680" y1="80" x2="680" y2="444"/>
+  </g>
+  <g text-anchor="middle" font-weight="600" fill="#1f2328">
+    <text x="80" y="68">Browser</text>
+    <text x="230" y="68">Console</text>
+    <text x="380" y="68">Provider</text>
+    <text x="530" y="68">Domain A</text>
+    <text x="680" y="68">Domain B</text>
+  </g>
+
+  <!-- Messages -->
+  <g fill="none" stroke="#8c959f" stroke-width="1.25" marker-end="url(#arrow)">
+    <path d="M80 112H230"/>
+    <path d="M230 144H380"/>
+    <path d="M380 176H230"/>
+    <path d="M230 208H380"/>
+    <path d="M230 240H530"/>
+    <path d="M230 272H680"/>
+    <path d="M530 304H380"/>
+    <path d="M680 336H380"/>
+    <path d="M530 368H230"/>
+    <path d="M680 400H230"/>
+    <path d="M230 432H80"/>
+  </g>
+  <g text-anchor="middle" font-size="11.5" fill="#656d76">
+    <text x="155" y="106">1 · start sign-in</text>
+    <text x="305" y="138">2 · redirect with PKCE</text>
+    <text x="305" y="170">3 · back with a code</text>
+    <text x="305" y="202">4 · code for ID token</text>
+    <text x="305" y="234">5 · login, credential</text>
+    <text x="305" y="266">6 · to every domain</text>
+    <text x="455" y="298">7 · verify with keys</text>
+    <text x="605" y="330">8 · the same</text>
+    <text x="455" y="362">9 · session A</text>
+    <text x="605" y="394">10 · session B</text>
+    <text x="155" y="426">11 · cookies per domain</text>
+  </g>
+</svg>

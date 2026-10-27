@@ -10,6 +10,7 @@ const NOW = Date.parse('2026-10-23T12:00:00.000Z');
 function run(overrides: Partial<RunSnapshot> = {}, request: Partial<RunSnapshot['request']> = {}): RunSnapshot {
   return {
     id: 'run-1',
+    domain: 'domain_a',
     materializationId: 'mat-1',
     request: { kind: 'browse', range: { from: null, to: null }, ...request },
     state: 'succeeded',

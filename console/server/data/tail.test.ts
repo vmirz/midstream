@@ -29,8 +29,8 @@ const port = (server.address() as AddressInfo).port;
 
 const dataDir = await mkdtemp(join(tmpdir(), 'console-tail-client-'));
 process.env.CONSOLE_DATA_DIR = dataDir;
-process.env.CONSOLE_TAIL_URL = `http://127.0.0.1:${port}`;
-process.env.CONSOLE_SERVICE_TOKEN = 'console-service-credential-0123456789abcdef';
+/** The domain whose tail app the stub is: its URL, and its service token. */
+const TARGET = { name: 'Domain A', tailUrl: `http://127.0.0.1:${port}`, serviceToken: 'console-service-credential-0123456789abcdef' };
 
 const { fetchHead, fetchTail, readPeek } = await import('./tail.ts');
 const { config } = await import('../config.ts');
@@ -110,7 +110,7 @@ describe('fetching a tail', () => {
     handler = (_request, response) => {
       response.writeHead(200, { 'content-type': 'application/octet-stream', ...rowsHeaders(FIRST) }).end(FIRST_BYTES);
     };
-    const outcome = await fetchTail(PERSON, REQUEST);
+    const outcome = await fetchTail(TARGET, PERSON, REQUEST);
     assert.equal(outcome.kind, 'rows');
     if (outcome.kind !== 'rows') return;
     assert.deepEqual(
@@ -155,7 +155,7 @@ describe('fetching a tail', () => {
     assert.equal(url.searchParams.get('max_rows'), '500');
     assert.equal(url.searchParams.get('wait_ms'), '1500');
     assert.equal(asked.headers.authorization, `Bearer ${PERSON.token}`);
-    assert.equal(asked.headers['x-console-token'], config.serviceToken);
+    assert.equal(asked.headers['x-console-token'], TARGET.serviceToken);
   });
 
   it('turns every refusal into an outcome the status line can tell apart', async () => {
@@ -175,14 +175,14 @@ describe('fetching a tail', () => {
     ];
     for (const [answer, want] of cases) {
       handler = answer;
-      const outcome = (await fetchTail(PERSON, REQUEST)) as unknown as Record<string, unknown>;
+      const outcome = (await fetchTail(TARGET, PERSON, REQUEST)) as unknown as Record<string, unknown>;
       for (const [key, value] of Object.entries(want)) assert.equal(outcome[key], value, `${JSON.stringify(want)}: ${key}`);
     }
   });
 
   it('reads a backlog’s size and offsets from the refusal', async () => {
     handler = refuse(409, 'tail_backlogged', { behind: 2_500_000, end_offsets: { '0': 3_000_000 }, committed: { '0': 499_999 } });
-    const outcome = await fetchTail(PERSON, REQUEST);
+    const outcome = await fetchTail(TARGET, PERSON, REQUEST);
     assert.deepEqual(outcome, {
       kind: 'backlogged',
       behind: 2_500_000,
@@ -227,7 +227,7 @@ describe('fetching a tail', () => {
     ];
     for (const [name, answer, reason] of cases) {
       handler = answer;
-      const outcome = await fetchTail(PERSON, REQUEST);
+      const outcome = await fetchTail(TARGET, PERSON, REQUEST);
       assert.equal(outcome.kind, 'unavailable', name);
       if (outcome.kind === 'unavailable') assert.equal(outcome.reason, reason, name);
     }
@@ -236,14 +236,14 @@ describe('fetching a tail', () => {
   it('gives up at its timeout, and says so', async () => {
     handler = () => undefined;
     const startedAt = Date.now();
-    const outcome = await fetchTail(PERSON, { ...REQUEST, timeoutMs: 300 });
+    const outcome = await fetchTail(TARGET, PERSON, { ...REQUEST, timeoutMs: 300 });
     assert.ok(Date.now() - startedAt < 1_500);
     assert.deepEqual([outcome.kind, outcome.kind === 'unavailable' ? outcome.reason : null], ['unavailable', 'timeout']);
   });
 
   it('goes without a person’s token when there is none, which the tail app refuses itself', async () => {
     handler = refuse(401, 'sign_in_required');
-    const outcome = await fetchTail({ kind: 'user', token: null }, REQUEST);
+    const outcome = await fetchTail(TARGET, { kind: 'user', token: null }, REQUEST);
     assert.equal(requests[0]?.headers.authorization, undefined);
     assert.equal(outcome.kind === 'unavailable' && outcome.reason, 'forbidden');
   });
@@ -294,7 +294,7 @@ describe('a peek at the topic’s newest records', () => {
         })
         .end(FIRST_BYTES);
     };
-    const outcome = await fetchHead(PERSON, { materializationId: 'mat-a1b2c3d4e5f6', table: 'orders', rows: 200, timeoutMs: 2_000 });
+    const outcome = await fetchHead(TARGET, PERSON, { materializationId: 'mat-a1b2c3d4e5f6', table: 'orders', rows: 200, timeoutMs: 2_000 });
     assert.equal(outcome.kind, 'rows');
     if (outcome.kind !== 'rows') return;
     assert.deepEqual([outcome.rows, outcome.offsets, outcome.behind, outcome.state], [FIRST.rows, { '0': [10, 12], '1': [12, 12] }, 2_500_000, 'backlogged']);

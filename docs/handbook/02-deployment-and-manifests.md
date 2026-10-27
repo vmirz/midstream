@@ -8,7 +8,9 @@ Ingresses authored in this repository — the Kaspr operator derives those from 
 
 Everything is deployed by one Helm chart, `charts/midstream`: three `KasprApp`s with their agents,
 tasks, tables and views, the console's Deployment and Service, the control plane's Role and
-RoleBinding, and an optional HTTPRoute or Ingress. Every resource, topic and table is named after
+RoleBinding, and optional HTTPRoutes or Ingresses. A release is one **domain** (§2.12, 20): its
+control plane and apps, with the console or without it — or the shared console alone, serving any
+number of domains. Every resource, topic and table is named after
 the release (`fullnameOverride` replaces the release name), so one namespace can hold several
 installations and nothing in the chart carries a fixed name.
 
@@ -17,16 +19,19 @@ charts/midstream/
   Chart.yaml                    version = appVersion = the platform version
   values.yaml                   every value, documented in place
   README.md                     requirements and the values table
-  ci/                           values files the tests render: test, minimal, no tail and no console
+  ci/                           values files the tests render: test (a domain with the console serving another),
+                                minimal, domain-only (no console), console-only (no domain)
   templates/
     _helpers.tpl                derived names, labels, the package reference, storage, GCS, the runtime spec
     control-plane/app.yaml      the control plane; control-plane/rbac.yaml its Role and RoleBinding
     maintenance/                app.yaml, maintenance-worker.yaml (agent), maintenance-step.yaml (task)
     tail/                       app.yaml, tail-worker.yaml (agent), tail-step.yaml (task); off with tail.enabled=false
     agents/   tasks/   tables/  the control plane's 8 agents, 8 tasks and 4 tables
-    webviews/                   71 views: the HTTP API, the REST catalog, the tail app's four
-    console/deployment.yaml     the console: Deployment, Service, optional PersistentVolumeClaim; off with console.enabled=false
-    route.yaml                  HTTPRoute (route.enabled) or Ingress (ingress.enabled): /catalog to the control plane, the rest to the console
+    webviews/                   73 views: the HTTP API, the REST catalog, the tail app's four
+    console/deployment.yaml     the console: Deployment, Service, its domains' ConfigMap, optional PersistentVolumeClaim;
+                                off with console.enabled=false
+    route.yaml                  HTTPRoutes (route.enabled) or Ingresses (ingress.enabled): the domain's API, the console,
+                                and redirects from old hostnames (§2.12)
     NOTES.txt                   what helm prints after an install
 ```
 
@@ -853,7 +858,8 @@ tables — the procedure is 12 §12.13.
 
 **Upgrading to 4.1** adds the tail app and its topic. The control plane only sends to
 `<release>-tail-requests`, so it needs no forced rebalance; the tail app starts with its own
-group. Point the console at it with `CONSOLE_TAIL_URL` (console 03).
+group. The console reads it at its domain's `tailUrl` in the registry, which the chart sets for its
+own domain (console 03 §3.3).
 
 **Upgrading to 4.2** gives every app a VerticalPodAutoscaler and raises the runtimes' CPU limit to
 two cores (§2.10c). Use kaspr-operator 0.19.5 or later to get the VPAs: an older one ignores the
@@ -866,7 +872,38 @@ re-applies them with the new limit. No topics change.
 restart does not assign the new topics. Force one rebalance per environment after the deploy, as
 [17 — Settings](./17-settings.md) §17.12 describes. Until then the new agent consumes nothing.
 
-## 2.12 CI
+## 2.12 Routes, domains and the shared console
+
+A release is a **domain** — `domain.id` and `domain.name` — and the switches choose what it deploys
+(handbook 20 for the whole design):
+
+| Values | Deploys |
+|---|---|
+| `controlPlane.enabled: true` (default), `console.enabled: true` (default) | The domain and the console; `console.domains` empty serves this domain alone |
+| `console.enabled: false` | The domain alone: its control plane, maintenance and tail apps |
+| `controlPlane.enabled: false` | The console alone (`maintenance` and `tail` follow the control plane), serving `console.domains` |
+
+`console.domains` is the console's registry (20 §20.2): each domain's id and name; `local: true` for
+this release's own domain, reached by its Services; for another, `controlPlaneUrl`, `tailUrl` and
+`serviceTokenSecret: {name, key}`; and exactly one `settingsHome`. The chart renders it as the
+ConfigMap `<release>-console-domains` and each remote domain's token as
+`CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN`, and refuses a registry that breaks a rule. `console.url` is the
+URL people use; `console.sso.*` the console's OAuth clients and `auth.sso.*` what the domain accepts
+(18 §18.17); every domain's auth Secret holds the same `federation-key` (18 §18.11).
+
+**Routes.** With `route.enabled` the chart renders Gateway API HTTPRoutes:
+
+| HTTPRoute | Hostnames | Rules |
+|---|---|---|
+| `<release>-api` | `route.hostnames`: the domain's API | `/tail/` to the tail app's Service; everything else to the control plane's, `/catalog` included |
+| `<release>-console` | `route.consoleHostnames` | the console's Service: its pages, `/api`, `/catalog` (the federated catalog) and `/d/<domain>/catalog` |
+| `<release>-redirect` | `route.redirectFrom`: old person-facing hostnames | `RequestRedirect`, `ReplacePrefixMatch` `/` → `/d/<domain id>/`, to `console.url`'s host, 301 |
+
+`ingress.host`, `ingress.consoleHost` and `ingress.redirectFrom` render the same as Ingresses, the
+redirect as the nginx `permanent-redirect` annotation; any other controller's redirect is applied by
+hand (20 §20.13). `python/tests/test_chart_domains.py` renders each shape.
+
+## 2.13 CI
 
 Continuous integration is being set up in GitHub Actions. This repository has no linter or
 formatter; the gates, run locally until then, are:

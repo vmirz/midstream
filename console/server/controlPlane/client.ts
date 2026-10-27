@@ -37,6 +37,7 @@ import type {
   SettingsScope,
   SettingValue,
   TableRequest,
+  CpTokenRevocation,
 } from '../../shared/types.ts';
 
 export interface CreateMaterializationInput {
@@ -97,13 +98,15 @@ interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   signal?: AbortSignal;
+  /** How long to wait for an answer, when not the console's usual timeout. */
+  timeoutMs?: number;
 }
 
 const FORWARDED_LIMIT = 256;
 
-function headersFor(caller: Caller): Record<string, string> {
+function headersFor(caller: Caller, serviceToken: string | null): Record<string, string> {
   if (caller.kind === 'service') {
-    return config.serviceToken ? { authorization: `Bearer ${config.serviceToken}` } : {};
+    return serviceToken ? { authorization: `Bearer ${serviceToken}` } : {};
   }
   const headers: Record<string, string> = {};
   if (caller.token) headers.authorization = `Bearer ${caller.token}`;
@@ -123,10 +126,21 @@ function headersFor(caller: Caller): Record<string, string> {
  * session and authorized by the control plane, never with the console's own credential.
  */
 export class ControlPlaneClient {
-  private readonly baseUrl: string;
+  readonly baseUrl: string;
+  private readonly serviceToken: string | null;
 
-  constructor(baseUrl: string = config.controlPlaneUrl) {
-    this.baseUrl = baseUrl;
+  /**
+   * One domain's control plane: its URL, and the service token the console reads that domain's
+   * live views with (handbook 20). Every domain has a client of its own.
+   */
+  constructor(baseUrl: string, serviceToken: string | null = null) {
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.serviceToken = serviceToken;
+  }
+
+  /** Whether this console holds the domain's service token. */
+  get hasServiceToken(): boolean {
+    return this.serviceToken !== null;
   }
 
   /** Call the control plane; a non-2xx answer becomes a `ConsoleError` with its status. */
@@ -144,7 +158,7 @@ export class ControlPlaneClient {
 
   private async send(caller: Caller, path: string, options: RequestOptions): Promise<{ status: number; payload: unknown }> {
     const { method = 'GET', body, signal } = options;
-    const timeout = AbortSignal.timeout(config.controlPlaneTimeoutMs);
+    const timeout = AbortSignal.timeout(options.timeoutMs ?? config.controlPlaneTimeoutMs);
     const composed = signal ? AbortSignal.any([signal, timeout]) : timeout;
 
     let response: Response;
@@ -154,7 +168,7 @@ export class ControlPlaneClient {
         signal: composed,
         headers: {
           accept: 'application/json',
-          ...headersFor(caller),
+          ...headersFor(caller, this.serviceToken),
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -169,7 +183,20 @@ export class ControlPlaneClient {
     }
 
     const text = await response.text();
-    return { status: response.status, payload: text ? safeJsonParse(text) : null };
+    const payload = text ? safeJsonParse(text) : null;
+    // A gateway whose control plane is not there - a route removed, a cluster down - answers these
+    // with a page of its own, never the control plane's JSON error. That is the control plane being
+    // unreachable, not a resource it says is missing: a materialization is not deleted because its
+    // domain's gateway cannot find the domain.
+    if (NOT_THERE.has(response.status) && !isControlPlaneError(payload)) {
+      throw new ConsoleError(
+        'control_plane_unreachable',
+        `control plane at ${this.baseUrl} is unreachable: it answered ${response.status} without the control plane's own error`,
+        503,
+        { reason: `http_${response.status}` },
+      );
+    }
+    return { status: response.status, payload };
   }
 
   /** Every topic in the cluster; `refresh` asks the control plane to reload rather than reuse its cache. */
@@ -325,6 +352,14 @@ export class ControlPlaneClient {
     return this.raw<CpAuthSession>(caller, '/auth/login', { method: 'POST', body: input });
   }
 
+  /**
+   * Hand the domain what a sign-in provider vouched for (handbook 20); it checks it itself. A first
+   * sign-in waits there while the account is made, so this waits longer than other calls.
+   */
+  ssoLogin(caller: Caller, input: { provider: string; credential: Record<string, string>; nonce: string | null }): Promise<CpRawResponse<CpAuthSession>> {
+    return this.raw<CpAuthSession>(caller, '/auth/login', { method: 'POST', body: input, timeoutMs: Math.max(config.controlPlaneTimeoutMs, 25_000) });
+  }
+
   /** Who the caller's session belongs to, or a guest; never refuses. */
   session(caller: Caller, signal?: AbortSignal): Promise<CpAuthSession> {
     return this.request<CpAuthSession>(caller, '/auth/session', { signal });
@@ -360,8 +395,25 @@ export class ControlPlaneClient {
     return this.request<CpAccessTokenCreated>(caller, '/auth/tokens', { method: 'POST', body: input });
   }
 
-  revokeAccessToken(caller: Caller, tokenId: string): Promise<CpIdentityAccepted> {
-    return this.request<CpIdentityAccepted>(caller, `/auth/tokens/${pathId(tokenId, 'token_id')}`, { method: 'DELETE' });
+  /** Revoke a token made here; the answer carries the revocation, signed, to hand to the other domains. */
+  revokeAccessToken(caller: Caller, tokenId: string): Promise<CpIdentityAccepted & { revocation?: CpTokenRevocation }> {
+    return this.request<CpIdentityAccepted & { revocation?: CpTokenRevocation }>(caller, `/auth/tokens/${pathId(tokenId, 'token_id')}`, {
+      method: 'DELETE',
+    });
+  }
+
+  /** Revocations this domain holds, from `since` on (handbook 20); read with the service credential. */
+  tokenRevocations(caller: Caller, since: string | null): Promise<{ revocations: CpTokenRevocation[] }> {
+    const query = since ? `?since=${encodeURIComponent(since)}` : '';
+    return this.request<{ revocations: CpTokenRevocation[] }>(caller, `/auth/tokens/revocations${query}`);
+  }
+
+  /** Hand this domain revocations another signed; it records each it can verify. */
+  applyTokenRevocations(caller: Caller, revocations: CpTokenRevocation[], source: string): Promise<{ request_id: string; accepted: number }> {
+    return this.request<{ request_id: string; accepted: number }>(caller, '/auth/tokens/revocations', {
+      method: 'POST',
+      body: { revocations: revocations.map(({ jti, exp, signature }) => ({ jti, exp, signature })), source },
+    });
   }
 
   /* --------------------------------------------------------------------------- directory */
@@ -485,6 +537,16 @@ function toConsoleError(payload: unknown, status: number): ConsoleError {
   });
 }
 
+/** What a gateway answers when the control plane behind it is not there. */
+const NOT_THERE = new Set([404, 502, 503, 504]);
+
+/** Whether a body is the control plane's own error: JSON with an `error` object. */
+export function isControlPlaneError(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object' || !('error' in payload)) return false;
+  const error = (payload as { error: unknown }).error;
+  return Boolean(error) && typeof error === 'object' && (error as { code?: unknown }).code !== 'invalid_upstream_payload';
+}
+
 /** Snapshot ids are 64-bit, so integers beyond a double's precision are kept as decimal text. */
 function safeJsonParse(text: string): unknown {
   try {
@@ -513,4 +575,3 @@ function extractUpstreamError(payload: unknown): {
   return {};
 }
 
-export const controlPlane = new ControlPlaneClient();

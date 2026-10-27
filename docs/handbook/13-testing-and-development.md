@@ -149,6 +149,9 @@ disagree, the tests win.
 | `test_models.py` | 33 | `to_dict`/`from_dict` round trips and validation for every persisted model, a pending change of topics, a claim's answer, the settings lineage and the live tail's messages included, and the live tail switch of a record from before 4.3 read and dropped |
 | `test_settings.py` | 54 | The settings catalog against config and env vars, precedence, applying changes, views — the runtime view saying how members are autoscaled — the runtime settings' lineage begun at startup (the task's own code run) and carried by every delivery, the runtime rollout by lineage and revision, a runtime upgraded from before lineages included |
 | `test_identity.py` | 85 | Permissions, their scopes and built-in roles, passwords, session and access tokens, authorization, bootstrap, every directory rule, sign-in and lockout, the views; `503 starting` for every caller, the session view and sign-in while a restarted control plane reads its tables back (`StartingTests`) |
+| `test_sso.py` | 37 | Sign-in through a provider (18 §18.17), against a fake of each provider's endpoints: Entra ID by tenant, client and key, Google's verified emails and hosted domains, a generic issuer's discovery, GitHub's token check with the App's secret; nonces used once, old and unsigned tokens refused, an unknown key read again at most once a minute, a provider that cannot be reached; then each domain's side — linking by email, `open` making one account for two sign-ins at once, `invited` refusing without counting towards a lockout, allowed email domains first, a deactivated account, a provider session needing no password change; password sign-in off for everyone but administrators |
+| `test_federated_tokens.py` | 16 | Federated access tokens and revocations (20 §20.8): the format, any change breaking the signature, the previous key still checking; a token made in one domain read in another as its owner there, never with more than they hold there, dataset limits per domain, the owner found by provider account before email, refused where the owner has no account; a revocation signed, forged ones refused by the view and the agent, listed for the console to hand on, kept until its token has expired |
+| `test_chart_domains.py` | 24 | The chart's domains (20 §20.2): a console alone, a domain alone, the control plane told which domain it is, the federation key from the auth Secret, the registry with no token in it and the console rolled when it changes, the routes and the redirect (Gateway API and ingress-nginx), and every values combination the chart refuses |
 | `test_versioning.py` | 8 | Version reporting across the control plane and its runtimes |
 | `test_agent_manifests.py` | 31 | Chart wiring, rendered with every values file under `charts/midstream/ci/`: every app's CPU request set from its use; the `directory` table bound in every view and agent that authorizes (`DirectoryWiringTests`), settings bound where configuration is read, async agent maps, every WebView authorizing (`AuthorizationWiringTests`), identity requests keyed one way, every overlay defining what its views and agents use, the maintenance app owning its agent and task, ticks keyed by table; the tail app's views answering their errors as JSON, the schema views passing `raw` on |
 | `test_topic_catalog.py` | 24 | The topic list: classification, the shared cache, the metadata client's deadlines, analysis off the loop; no metadata request naming a topic, nor a topic left tracked by an offset lookup |
@@ -651,6 +654,16 @@ for topic 'midstream-control-plane-app-schedule-actions' not available yet")`. I
 restarted it at once, but that request (*Shop*'s first delayed observation) was never dispatched:
 `schedule-requests` held four requests and `schedule-actions` three actions. The sweeps brought the
 materialization to `running` instead, and every later request dispatched (14 §14.3).
+
+## 13.8j Verified on the lab: domains and the shared console
+
+On 2026-10-26 two domains ran on the lab from this chart — Domain A with the shared console, Domain B
+reached only through its API route — after a clean uninstall of 1.0.0-rc.2, whose materializations,
+topics, consumer groups and bucket prefix were deleted first. What was checked, every fault injected,
+the five defects found and fixed, and the performance against rc.2 on the 111-million-record load-test
+topic are in handbook 20 §20.15; the browser record is console 14 §14.4. In short: both backfills
+committed exactly 102,033,103 rows, in 89.4 and 88.9 minutes; the console's requests answered within a
+millisecond or two of rc.2's; nothing on the data path changed between the builds.
 
 ## 13.9 Pre-finish checklist
 

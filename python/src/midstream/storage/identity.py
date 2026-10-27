@@ -3,7 +3,8 @@ grants and table-name claims, and the audit log.
 
 Two global tables, written only by the identity agent:
 
-- `directory` holds users and the email index, groups, custom roles, datasets and the dataset name
+- `directory` holds users with the email index and the index of the provider accounts they sign in
+  with, groups, custom roles, datasets and the dataset name
   index, dataset grants, table-name claims, the directory's revision, sessions, access tokens,
   sign-in state and the outcome of each directory request;
 - `identity-audit` holds the audit log, keyed by time so a page of it reads one day at a time.
@@ -42,6 +43,7 @@ from midstream.models.identity import (
     Session,
     SignInGuard,
     TableClaim,
+    TokenRevocation,
     User,
     UserActivity,
 )
@@ -53,10 +55,12 @@ IDENTITY_ROUTING_KEY = "identity"
 
 USER_PREFIX = "user:"
 USER_EMAIL_PREFIX = "user-email:"
+EXTERNAL_IDENTITY_PREFIX = "external-identity:"
 GROUP_PREFIX = "group:"
 ROLE_PREFIX = "role:"
 SESSION_PREFIX = "session:"
 TOKEN_PREFIX = "token:"
+REVOCATION_PREFIX = "revoked:"
 SIGN_IN_PREFIX = "sign-in:"
 ACTIVITY_PREFIX = "activity:"
 REQUEST_PREFIX = "request:"
@@ -70,10 +74,12 @@ CLAIM_RELEASE_PREFIX = "claim-release:"
 
 USER_ENTITY = "user"
 USER_EMAIL_ENTITY = "user-email"
+EXTERNAL_IDENTITY_ENTITY = "external-identity"
 GROUP_ENTITY = "group"
 ROLE_ENTITY = "role"
 SESSION_ENTITY = "session"
 TOKEN_ENTITY = "access-token"
+REVOCATION_ENTITY = "token-revocation"
 SIGN_IN_ENTITY = "sign-in-guard"
 ACTIVITY_ENTITY = "user-activity"
 REQUEST_ENTITY = "identity-request"
@@ -107,6 +113,10 @@ def user_email_key(email: str) -> str:
     return f"{USER_EMAIL_PREFIX}{normalize_email(email)}"
 
 
+def external_identity_key(provider: str, subject: str) -> str:
+    return f"{EXTERNAL_IDENTITY_PREFIX}{provider}:{subject}"
+
+
 def group_key(group_id: str) -> str:
     return f"{GROUP_PREFIX}{group_id}"
 
@@ -117,6 +127,10 @@ def role_key(role_id: str) -> str:
 
 def session_key(user_id: str, session_id: str) -> str:
     return f"{SESSION_PREFIX}{user_id}:{session_id}"
+
+
+def revocation_key(token_id: str) -> str:
+    return f"{REVOCATION_PREFIX}{token_id}"
 
 
 def token_key(token_id: str) -> str:
@@ -307,6 +321,34 @@ def delete_user_email(table: TableProtocol, email: str) -> None:
     _delete(table, user_email_key(email))
 
 
+def find_user_by_external_identity(table: TableProtocol | None, provider: str, subject: str) -> User | None:
+    """The person an identity provider's account signs in as (handbook 20), or None."""
+    payload = _read(table, external_identity_key(provider, subject), EXTERNAL_IDENTITY_ENTITY)
+    if payload is None:
+        return None
+    user = get_user(table, str(payload.get("user_id", "")))
+    if user is None or not any(
+        identity.provider == provider and identity.subject == subject for identity in user.external_identities
+    ):
+        return None
+    return user
+
+
+def save_external_identity(table: TableProtocol, provider: str, subject: str, user_id: str, *, updated_at: str) -> None:
+    _write(
+        table,
+        external_identity_key(provider, subject),
+        entity_type=EXTERNAL_IDENTITY_ENTITY,
+        entity_id=f"{provider}:{subject}",
+        updated_at=updated_at,
+        payload={"provider": provider, "subject": subject, "user_id": user_id},
+    )
+
+
+def delete_external_identity(table: TableProtocol, provider: str, subject: str) -> None:
+    _delete(table, external_identity_key(provider, subject))
+
+
 def default_group(definition: BuiltInGroup) -> Group:
     """A built-in group as it is before anyone has changed it."""
     return Group(
@@ -434,6 +476,31 @@ def save_access_token(table: TableProtocol, token: AccessToken, *, updated_at: s
 
 def delete_access_token(table: TableProtocol, token_id: str) -> None:
     _delete(table, token_key(token_id))
+
+
+def get_token_revocation(table: TableProtocol | None, token_id: str) -> TokenRevocation | None:
+    payload = _read(table, revocation_key(token_id), REVOCATION_ENTITY)
+    return None if payload is None else TokenRevocation.from_dict(payload)
+
+
+def iter_token_revocations(table: TableProtocol | None) -> Iterator[TokenRevocation]:
+    for payload in _scan(table, REVOCATION_PREFIX, REVOCATION_ENTITY).values():
+        yield TokenRevocation.from_dict(payload)
+
+
+def save_token_revocation(table: TableProtocol, revocation: TokenRevocation, *, updated_at: str) -> None:
+    _write(
+        table,
+        revocation_key(revocation.token_id),
+        entity_type=REVOCATION_ENTITY,
+        entity_id=revocation.token_id,
+        updated_at=updated_at,
+        payload=revocation.to_dict(),
+    )
+
+
+def delete_token_revocation(table: TableProtocol, token_id: str) -> None:
+    _delete(table, revocation_key(token_id))
 
 
 # ------------------------------------------------------------------------------------------ datasets

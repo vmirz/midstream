@@ -131,6 +131,33 @@ function nameProblem(name: string, rules: NameRules): string | null {
   return null;
 }
 
+/** The longest domain id (handbook 20). */
+export const DOMAIN_ID_MAX_LENGTH = 32;
+
+/**
+ * What a domain id cannot be besides a dataset's reservations: the console's own URL segments
+ * (`/api`, `/d`, `/catalog`) and the catalog SQL names native tables in. The control plane's
+ * `RESERVED_DOMAIN_IDS` (`table_names.py`) is the same set.
+ */
+export const RESERVED_DOMAIN_IDS: ReadonlySet<string> = new Set([...RESERVED_DATASET_NAMES, 'api', 'd', 'catalog', 'iceberg']);
+
+/** A domain's native tables are `<domain>_iceberg.<dataset>.<table>` in SQL: no domain may end so. */
+export const NATIVE_CATALOG_SUFFIX = '_iceberg';
+
+/**
+ * Why `id` cannot be a domain's id, or null when it can. A domain id is a URL segment of the console
+ * (`/d/<id>/`), a catalog in its SQL (`<id>.<dataset>.<table>`) and a level of the federated
+ * catalog's namespaces, so it follows a dataset name's rule, at most 32 characters, and cannot end
+ * `_iceberg`.
+ */
+export function domainIdProblem(id: string): string | null {
+  if (!id) return 'A domain id is required';
+  if (id.length > DOMAIN_ID_MAX_LENGTH) return `A domain id is at most ${DOMAIN_ID_MAX_LENGTH} characters`;
+  if (!NAME_PATTERN.test(id)) return `"${id}" cannot be a domain id: start with a lowercase letter and use only lowercase letters, digits and underscores`;
+  if (RESERVED_DOMAIN_IDS.has(id) || id.endsWith(NATIVE_CATALOG_SUFFIX)) return `"${id}" cannot be a domain id: the console's URLs or SQL use it`;
+  return null;
+}
+
 /** Why `label` cannot label a materialization, or null when it can; an empty label is the id. */
 export function labelProblem(label: string, maxLength: number = LABEL_MAX_LENGTH): string | null {
   if (CONTROL.test(label)) return 'Use no control characters';

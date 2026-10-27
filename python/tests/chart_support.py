@@ -16,6 +16,18 @@ REPO = Path(__file__).resolve().parents[2]
 CHART = REPO / "charts" / "midstream"
 #: The values files the chart ships for its own checks, one per installation shape.
 VALUES_FILES = tuple(sorted((CHART / "ci").glob("*.yaml")))
+
+
+def _deploys_a_domain(values: Path) -> bool:
+    import yaml
+
+    loaded = yaml.safe_load(values.read_text()) or {}
+    return (loaded.get("controlPlane") or {}).get("enabled", True) is not False
+
+
+#: The values files of releases that deploy a domain - a control plane, its apps and its runtimes.
+#: A release of the shared console alone renders none of them (handbook 20).
+DOMAIN_VALUES_FILES = tuple(path for path in VALUES_FILES if _deploys_a_domain(path))
 #: The release the tests install as; every derived name starts with it.
 RELEASE = "midstream"
 NAMESPACE = "midstream"

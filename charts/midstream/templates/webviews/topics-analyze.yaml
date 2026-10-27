@@ -1,3 +1,4 @@
+{{- if include "midstream.controlPlaneEnabled" . }}
 apiVersion: kaspr.io/v1alpha1
 kind: KasprWebView
 metadata:
@@ -50,3 +51,4 @@ spec:
           def body(data):
               return data
     statusCodeSelector:
+{{- end }}

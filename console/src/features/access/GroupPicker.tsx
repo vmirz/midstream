@@ -4,8 +4,8 @@ import type { ReactNode } from 'react';
 
 import { BuiltInMark } from './shared';
 import { Skeleton } from '@/components/ui/primitives';
-import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { useApi } from '@/lib/domains';
 
 /**
  * Choose the groups someone belongs to. Everyone is in All Users, which is shown and fixed; a group
@@ -20,6 +20,7 @@ export function GroupPicker({
   onChange: (groupIds: string[]) => void;
   disabled?: boolean;
 }): ReactNode {
+  const api = useApi();
   const groups = useQuery({ queryKey: ['groups'], queryFn: () => api.groups() });
   const assignable = (groups.data?.groups ?? []).filter((group) => group.membership === 'assigned');
 

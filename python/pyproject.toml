@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "midstream-platform"
-version = "1.0.0rc2"
+version = "1.0.0rc3"
 description = "Midstream: a streaming platform on Kaspr that materializes Kafka topics into Iceberg tables"
 readme = "README.md"
 license = {text = "MIT"}
@@ -27,6 +27,8 @@ dependencies = [
 	# The minor is pinned: the committer uses documented-but-internal update APIs (lakehouse/catalog.py
 	# `commit_once`, lakehouse/commits.py). The tests exercise them, so a new minor is a deliberate bump.
 	"pyiceberg[pyarrow]>=0.12,<0.13",
+	# Checking identity providers' ID tokens (RS256 and the like) for single sign-on.
+	"PyJWT[crypto]>=2.10,<3",
 	"pyyaml>=6.0.0",
 	"tzdata>=2024.1",
 ]

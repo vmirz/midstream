@@ -23,9 +23,9 @@ import {
   Skeleton,
 } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
-import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { formatCount, formatTimestamp } from '@/lib/format';
+import { useApi } from '@/lib/domains';
 import type { CpSchema, CpSchemaVersionRef, CpTableSpec, DetailSnapshot, SchemaTimeline, TimeSpan } from '@shared/types';
 
 type Mode = 'fields' | 'changes' | 'timeline';
@@ -111,6 +111,7 @@ function TableSchema({
   locked: (table: CpTableSpec) => boolean;
   onSelectTable: (name: string) => void;
 }): ReactNode {
+  const api = useApi();
   const [mode, setMode] = useState<Mode>('fields');
   const [fieldLayout, setFieldLayout] = useState<FieldLayout>('table');
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);

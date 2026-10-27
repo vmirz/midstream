@@ -90,7 +90,7 @@ export class BrowseRun extends Run {
 
   protected async execute(): Promise<void> {
     const range = this.request.range;
-    await this.fetchTails([{ name: this.tableName, catalog: this.catalog }]);
+    await this.fetchTails([{ key: this.tableName, table: this.tableName, catalog: this.catalog }]);
     this.throwIfCancelled();
     const selected = [...this.tailObjects(this.tableName), ...this.catalog.objects].filter((object) => overlapsRange(object, range));
     this.segments = orderObjects(selected, this.order).map((object) => {

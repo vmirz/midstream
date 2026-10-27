@@ -16,7 +16,7 @@ import {
   environmentDefault,
   isEnvironmentSet,
 } from '../config.ts';
-import { SERVICE, controlPlane } from '../controlPlane/client.ts';
+import { SERVICE, type ControlPlaneClient } from '../controlPlane/client.ts';
 import { logger } from '../logger.ts';
 import type {
   CpSettingOverride,
@@ -31,6 +31,16 @@ import { CONSOLE_SETTINGS, consoleSettingDefinition, validConsoleOverrides, type
 const REFRESH_INTERVAL_MS = 30_000;
 
 export class ConsoleSettingsStore {
+  /**
+   * The settings home's control plane: the one domain whose `console` scope stores this console's
+   * overrides (handbook 20). The chart names it; the registry refuses anything but exactly one.
+   */
+  private readonly controlPlane: ControlPlaneClient;
+
+  constructor(controlPlane: ControlPlaneClient) {
+    this.controlPlane = controlPlane;
+  }
+
   private revision = 0;
   private stored: Record<string, CpSettingOverride> = {};
   private updatedAt: string | null = null;
@@ -59,7 +69,7 @@ export class ConsoleSettingsStore {
   refresh(): Promise<CpSettingsScope | null> {
     this.inFlight ??= (async () => {
       try {
-        const scope = await controlPlane.settingsScope(SERVICE, 'console');
+        const scope = await this.controlPlane.settingsScope(SERVICE, 'console');
         this.install(scope);
         return scope;
       } catch (cause) {
@@ -158,4 +168,3 @@ function defaultValue(definition: ConsoleSettingDefinition): SettingValue {
   return value === undefined ? (deploymentSettings[definition.key] as SettingValue) : value;
 }
 
-export const consoleSettings = new ConsoleSettingsStore();

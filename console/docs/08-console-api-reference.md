@@ -1,12 +1,35 @@
 # 08 — Console API Reference
 
 The console exposes its own HTTP API under `/api`. It is not a proxy: read endpoints serve the
-live store's derived state, and write endpoints pass through to the control plane.
+live store's derived state, and write endpoints pass through to a domain's control plane.
 
 - **Base path:** `/api`
 - **Port:** `8787` by default
 - **Content type:** `application/json`, except CSV export and the SSE streams
-- **Auth:** a session cookie set by `POST /api/auth/login`, or `Authorization: Bearer <token>`; without one the caller is a guest. Each route needs the permission in §8.1 — see §8.25 and [12 — Security model](./12-security-model.md)
+- **Auth:** one session cookie per domain, set by signing in to it, or `Authorization: Bearer <token>`; without one the caller is that domain's guest. Each route needs the permission in §8.1, in its domain — see §8.25 and [12 — Security model](./12-security-model.md)
+
+## 8.0 Domains in the path
+
+The console serves any number of domains (handbook 20). **Every route about one domain is under
+`/api/d/<domain>/`**: this document names them by what follows — `GET /api/materializations/:id` is
+`GET /api/d/domain_a/materializations/:id`, `POST /api/auth/login` is
+`POST /api/d/domain_a/auth/login` — and each is authorized in that domain. An unknown domain is
+`404 unknown_domain`; one whose control plane says it is another domain, `503 domain_misconfigured`.
+
+The **console-level** routes, about every domain at once, have no domain in the path:
+
+| Route | Answers |
+|---|---|
+| `GET /api/config`, `GET /api/health` | Every domain as this person may know it (§8.4); each domain's connectivity |
+| `GET /api/auth/session`, `POST /api/auth/logout` | Who the browser is in every domain; signing out of every one (§8.25) |
+| `GET /api/auth/sso/:provider/start`, `GET …/callback`, `GET /api/auth/sso/outcomes/:id` | Signing in through a provider, to every domain at once (§8.25) |
+| `GET /api/fleet`, `GET /api/stream/fleet` | Every domain's fleet in one answer (§8.21) |
+| `GET /api/search?q=` | Materializations, tables and datasets across domains (§8.29) |
+| `GET`/`PATCH /api/settings`, `GET /api/settings/history` | The console's own settings, stored in the settings home (§8.24) |
+| `/api/runs/:runId…`, `/api/stream/runs/:runId` | Runs, addressed by id: a statement may read several domains (§8.17) |
+
+Outside `/api`: the federated Iceberg REST catalog at `/catalog` and each domain's own at
+`/d/<domain>/catalog` (§8.30).
 
 ## 8.1 Endpoint summary
 
@@ -84,8 +107,8 @@ run reads, the table a schema is of, the datasets a run read for its rows and ex
 
 | Header | Required | Effect |
 |--------|----------|--------|
-| `cookie: console_session=…` | for anything a guest may not do | The browser's session, set by `POST /api/auth/login` |
-| `authorization: Bearer <token>` | instead of the cookie | For scripts: a control-plane session token from `POST /auth/login` |
+| `cookie: midstream_session_<domain>=…` | for anything a guest may not do in that domain | The browser's session in each domain, set by `POST /api/d/<domain>/auth/login` or a provider's sign-in |
+| `authorization: Bearer <token>` | instead of the cookies | For scripts: a federated access token, which every domain checks, or one domain's session token from its `POST /auth/login`, which only that domain takes |
 | `content-type: application/json` | on POST with a body | |
 
 `x-console-user` is gone: changes are attributed to whoever is signed in. A change from another
@@ -142,39 +165,41 @@ This endpoint does **not** trigger a refresh, so it is safe to probe frequently.
 
 ```json
 {
-  "controlPlaneUrl": "http://localhost:6065",
+  "domains": [
+    {
+      "id": "domain_a", "name": "Domain A", "settingsHome": true,
+      "status": "ok", "statusMessage": null, "version": "1.0.0", "federationKeyId": "3f9c2a1b", "connected": true,
+      "liveTail": { "configured": true, "enabled": true, "refreshMs": 1500, "maxRows": 100000 },
+      "autoscaling": { "enabled": true, "maxReplicas": 16, "targetMinutes": 30 },
+      "materializationDefaults": { "destinationUri": "gs://my-lake", "namespace": "midstream",
+        "replicas": 1, "maxReplicas": 64, "storageSize": "64Mi", "partitionGranularity": "day",
+        "labelMaxLength": 128, "datasetNameMaxLength": 63, "tableNameMaxLength": 63,
+        "reservedNames": ["…"], "reservedNamespaceNames": ["main", "memory", "…"], "maxTopics": 20 }
+    },
+    { "id": "domain_b", "name": "Domain B", "settingsHome": false, "status": "unreachable", "…": "…" }
+  ],
+  "settingsHome": "domain_a",
+  "federationKeysAgree": true,
   "dataAccessMode": "direct",
   "pageRowLimit": 1000,
   "exportRowLimit": 1000000,
   "resultRowLimit": 1000000,
-  "controlPlaneVersion": "4.0.0",
-  "controlPlaneCompatible": true,
-  "materializationDefaults": { "destinationUri": "gs://my-lake", "namespace": "midstream",
-    "replicas": 1, "maxReplicas": 64, "storageSize": "64Mi", "partitionGranularity": "day",
-    "labelMaxLength": 128, "datasetNameMaxLength": 63, "tableNameMaxLength": 63,
-    "reservedNames": ["…"], "reservedNamespaceNames": ["main", "memory", "…"], "maxTopics": 20 },
   "pollIntervalMs": 2000,
-  "liveTail": { "configured": true, "enabled": true, "refreshMs": 1500, "maxRows": 100000 },
-  "autoscaling": { "enabled": true, "maxReplicas": 16, "targetMinutes": 30 },
-  "version": "4.4.0"
+  "version": "1.0.0"
 }
 ```
 
-Anyone may read it, signed in or not; what only some people need is left out for the rest.
-`liveTail.configured` says a tail app is configured (`CONSOLE_TAIL_URL`); `enabled` that it is, and
-that live tail is on in this console and not off in the control plane; `refreshMs` is how often the
-Data tab's Live mode looks, and `maxRows` the most rows one fetch of a tail takes.
-`autoscaling` is the control plane's runtime autoscaling — whether it scales runtimes that are far
-behind at all, the most members it gives one, and the catch-up time it aims for (handbook 07
-§7.12a) — for anyone signed in, read with the service credential; `null` while the control plane
-cannot be reached, and before 4.4.
-`controlPlaneUrl` is `null` without `settings.view`, and `materializationDefaults` is `null`
-without `materializations.create`, or when the control plane cannot be reached
-([03 §3.7](./03-configuration-reference.md)). The defaults and `pollIntervalMs` are the values in
-force, so an override saved on the Settings page shows here at once.
-
-`controlPlaneCompatible` is `false` for a control plane before 3.0, whose tables are in no datasets,
-and `null` while its version is unknown; the client shows a banner when it is `false`.
+Anyone may read it, signed in or not; what only some people need is left out for the rest. Each
+domain's `status` is `ok`, `unreachable`, `misconfigured` (its control plane says it is another
+domain) or `incompatible` (a release this console does not work with), with `statusMessage` saying
+why; `federationKeyId` the start of the key it signs access tokens with, and `federationKeysAgree`
+false when two reachable domains' differ (handbook 20 §20.8). `liveTail.configured` says the domain
+has a tail app in the registry; `enabled` that it is on in this console and not off in its control
+plane; `refreshMs` is how often Live looks, `maxRows` the most rows one fetch of a tail takes.
+`autoscaling` is the domain's runtime autoscaling, `null` while it cannot be reached.
+`materializationDefaults` is `null` without `materializations.create` in that domain, or while it
+cannot be reached ([03 §3.7](./03-configuration-reference.md)). The defaults and `pollIntervalMs` are
+the values in force, so an override saved on a Settings page shows here at once.
 
 ---
 
@@ -807,17 +832,20 @@ connects mid-run, after a page refresh, is never blank — then at most every 20
 and the terminal one, after which the stream closes. A `: ping` comment every 15 s keeps proxies
 from closing an idle stream.
 
-## 8.21 `GET /api/stream/fleet`
+## 8.21 `GET /api/stream/fleet`, `GET /api/fleet`
 
 ```
 event: fleet
-data: {"generatedAt":"…","connected":true,"totals":{…},"items":[…],"series":[…]}
+data: {"generatedAt":"…","domains":[{"domain":"domain_a","name":"Domain A","access":"ok","snapshot":{"connected":true,"totals":{…},"items":[…],"series":[…]}},
+                                     {"domain":"domain_b","name":"Domain B","access":"sign_in_required","snapshot":null}]}
 ```
 
-- One `fleet` frame immediately on connect (the current snapshot, possibly stale), then one per
-  refresh.
-- `: keep-alive` comment frames every 20 s.
-- Payload is identical to `GET /api/materializations`.
+- Every domain's fleet in one frame: each domain's `snapshot` is what
+  `GET /api/d/<domain>/materializations` answers, when the caller may see that domain's
+  materializations (`access: ok`); otherwise `sign_in_required`, `forbidden` or `unavailable`, and no
+  snapshot. The client merges them (`src/lib/fleetMerge.ts`).
+- One `fleet` frame immediately on connect, then one whenever any domain's fleet refreshes.
+- `: keep-alive` comment frames every 20 s. `GET /api/fleet` answers the same once.
 
 ```bash
 curl -sS -N http://localhost:8787/api/stream/fleet
@@ -852,9 +880,10 @@ that.
 
 ## 8.24 Settings
 
-The Settings page's API. Control-plane and runtime settings are read from and saved to the control
-plane. The console describes and validates its own settings, and stores their overrides with the
-control plane too. Reference for what each setting does: [03 §3.10](./03-configuration-reference.md)
+The Settings pages' API (handbook 17 §17.8). `GET`/`PATCH /api/settings` read and save the console's
+own settings, stored in the settings home's `console` scope (needing `settings.view`/
+`settings.manage` there); `GET`/`PATCH /api/d/<domain>/settings` a domain's control-plane and runtime
+settings. The console describes and validates its own settings. Reference for what each setting does: [03 §3.10](./03-configuration-reference.md)
 and the main handbook's [17 — Settings](../../docs/handbook/17-settings.md).
 
 ### `GET /api/settings`
@@ -866,15 +895,19 @@ and the main handbook's [17 — Settings](../../docs/handbook/17-settings.md).
   "scopes": {
     "control-plane": { "scope": "control-plane", "revision": 13, "updatedAt": "…", "updatedBy": "jane", "settings": [ /* SettingView */ ] },
     "runtime":       { "scope": "runtime", "revision": 1, "…": "…" },
-    "console":       { "scope": "console", "revision": 1, "…": "…" }
+    "console":       null
   },
   "deployment": [ { "component": "console", "key": "controlPlaneUrl", "label": "Control plane",
-                    "value": "http://localhost:6065", "envVar": "CONTROL_PLANE_URL", "description": "…" } ],
+                    "value": "https://midstream-b-api.example.com", "envVar": "CONSOLE_DOMAINS_FILE", "description": "…" } ],
   "rollout": { "revision": 1, "total": 5, "current": 2, "pending": 0, "stopped": 1,
                "notReporting": 1, "unsupported": 1, "materializations": [ /* … */ ] },
   "historyRetained": 100
 }
 ```
+
+That is a domain's page, `GET /api/d/domain_b/settings`. The console's, `GET /api/settings`, has
+the same shape with only `console` set, `rollout` null, and the console's deployment — every
+domain it serves, the settings home, the console URL and its sign-in providers — in `deployment`.
 
 A `SettingView` (`shared/types.ts`) is the same for every scope: `scope`, `key`, `section`,
 `label`, `description`, `kind` (`integer`, `boolean`, `gcs_uri`, `quantity`, `enum`, `string`),
@@ -943,51 +976,87 @@ never sees, and a change to users, groups or roles is answered once it has been 
 
 ### `GET /api/auth/session`
 
+Who the browser is in every domain, and the providers this console signs people in with:
+
 ```json
 {
-  "authenticated": true,
-  "principal": {
-    "kind": "user", "user_id": "usr-3f9c2a1b7d4e", "email": "jane@example.com",
-    "first_name": "Jane", "last_name": "Doe", "display_name": "Jane Doe",
-    "group_ids": ["guest", "all-users", "editor"],
-    "role_ids": ["status-viewer", "viewer", "operator"],
-    "permissions": ["datasets.create", "datasets.view", "materializations.create", "…"],
-    "all_permissions": false,
-    "dataset_permissions": { "ds-5c1e…": ["catalog.read", "data.export", "data.query", "dataset.manage", "dataset.view_schema", "dataset.write"] },
-    "dataset_limit": null,
-    "password_change_required": false
+  "domains": {
+    "domain_a": {
+      "state": {
+        "authenticated": true,
+        "principal": {
+          "kind": "user", "user_id": "usr-3f9c2a1b7d4e", "email": "jane@example.com",
+          "first_name": "Jane", "last_name": "Doe", "display_name": "Jane Doe",
+          "group_ids": ["guest", "all-users", "editor"],
+          "role_ids": ["status-viewer", "viewer", "operator"],
+          "permissions": ["datasets.create", "datasets.view", "materializations.create", "…"],
+          "all_permissions": false,
+          "dataset_permissions": { "ds-5c1e…": ["catalog.read", "data.export", "data.query", "dataset.view_schema"] },
+          "dataset_limit": null,
+          "password_change_required": false
+        },
+        "session": {
+          "session_id": "ses-8c1e0f2a9b3d4c5e", "method": "sso:oidc",
+          "signed_in_at": "2026-10-26T09:00:00Z", "issued_at": "2026-10-26T09:00:00Z",
+          "expires_at": "2026-10-26T17:00:00Z", "session_expires_at": "2026-11-02T09:00:00Z",
+          "refresh_after": "2026-10-26T09:10:00Z"
+        },
+        "providers": [{ "id": "password", "type": "password", "label": "Email and password", "administrators_only": false },
+                      { "id": "oidc", "type": "sso", "label": "Dex" }],
+        "passwordPolicy": { "min_length": 12, "max_length": 256 },
+        "sessionError": null
+      },
+      "error": null
+    },
+    "domain_b": { "state": { "authenticated": false, "principal": { "kind": "guest", "…": "…" }, "…": "…" }, "error": null }
   },
-  "session": {
-    "session_id": "ses-8c1e0f2a9b3d4c5e", "method": "password",
-    "signed_in_at": "2026-10-14T09:00:00Z", "issued_at": "2026-10-14T09:00:00Z",
-    "expires_at": "2026-10-14T17:00:00Z", "session_expires_at": "2026-10-21T09:00:00Z",
-    "refresh_after": "2026-10-14T09:10:00Z"
-  },
-  "providers": [{ "id": "password", "type": "password", "label": "Email and password" }],
-  "passwordPolicy": { "min_length": 12, "max_length": 256 },
-  "sessionError": null
+  "providers": [{ "id": "oidc", "label": "Dex" }]
 }
 ```
 
-`dataset_permissions` lists, by dataset id, what grants on each dataset add to `permissions`
-(dataset permissions only); `console/shared/access.ts::can(principal, key, datasetId)` answers from it.
+Each domain's `state` is what `GET /api/d/<domain>/auth/session` answers — that domain's principal,
+a guest's where the browser has no session there — and `null`, with `error`, while that domain cannot
+check the session. `dataset_permissions` lists, by dataset id, what grants on each dataset add to
+`permissions`; `console/shared/access.ts::can(principal, key, datasetId)` answers from it.
+`providers` at the top are the console's own registrations (03 §3.3a); a domain's `providers` say
+which it accepts.
 
-Never refuses: without a usable session it describes a guest, with `sessionError` saying why a
-presented one could not be used. The one exception is a session the console cannot check because
-the control plane is down: that answers `503` rather than claiming the caller is a guest.
+### `POST /api/d/<domain>/auth/login`
 
-### `POST /api/auth/login`
+Body `{"email", "password"}`: a password signs in to one domain. `200` answers that domain's session
+and sets its cookie; a session this browser already had there is ended in the background. Refusals
+pass the control plane's through (`401` wrong email or password, `403` deactivated or
+`password_sign_in_disabled`, `429` locked out, `503` sign-in not configured), and
+`429 too_many_attempts` (`reason: rate_limited`) comes from the console itself when one address
+tries too often.
 
-Body `{"email", "password"}`. `200` answers the session above and sets the cookie; a session this
-browser already had is ended in the background. Refusals pass the control plane's through
-(`401` wrong email or password, `403` deactivated, `429` locked out, `503` sign-in not configured),
-and `429 too_many_attempts` (`reason: rate_limited`) comes from the console itself when one
-address tries too often.
+### Signing in through a provider
 
-### `POST /api/auth/logout`
+`GET /api/auth/sso/<provider>/start?return=<path>` (`entra`, `github`, `google`, `oidc`) redirects to
+the provider, with PKCE, a `state` bound to the browser by the cookie `<CONSOLE_SESSION_COOKIE>-flow`
+and, for OpenID Connect, a nonce. The provider sends the browser back to
+`GET /api/auth/sso/<provider>/callback?code&state`, which exchanges the code, hands the credential to
+every domain's `POST /auth/login` at once, sets a session cookie for each that admitted the person,
+and redirects to the return path — or `/sign-in` when none did — with `?signin=<id>`.
+`GET /api/auth/sso/outcomes/<id>` then says what each domain answered, for five minutes:
+
+```json
+{ "provider": "oidc", "label": "Dex", "error": null,
+  "domains": [ { "domain": "domain_a", "name": "Domain A", "status": "signed_in", "reason": null, "message": null },
+               { "domain": "domain_b", "name": "Domain B", "status": "refused", "reason": "no_account",
+                 "message": "ada@example.com has no account here. Ask an administrator to add you, then sign in again." } ] }
+```
+
+`status` is `signed_in`, `refused` (with the domain's reason) or `unreachable`; `error` says why the
+sign-in went nowhere before any domain was asked (refused at the provider, expired, another browser).
+An unknown provider is `404`; too many starts from one address `429`.
+
+### `POST /api/d/<domain>/auth/logout`, `POST /api/auth/logout`
 
 Body `{"scope": "current" | "others" | "session", "session_id": "…"}`, `current` by default.
-`current` clears the cookie even if the control plane cannot record the sign-out.
+`current` clears that domain's cookie even if its control plane cannot record the sign-out.
+`POST /api/auth/logout` signs out of every domain the browser has a session in, and answers
+`{"signed_out": true, "domains": ["domain_a", "domain_b"]}`.
 
 Access tokens for external engines are in §8.27.
 
@@ -1103,20 +1172,22 @@ materialization is no longer refused (`materialization_not_running` was 1.0's).
 
 ## 8.27 Access tokens and the catalog connection
 
-Access tokens let external engines read — and, with `catalog.write`, commit to — the tables through
-the control plane's Iceberg REST catalog (handbook 18 §18.15). The console never stores a token's
-text; the control plane keeps only its hash.
+Access tokens let external engines read — and, with `catalog.write`, commit to — tables through the
+Iceberg REST catalogs (handbook 18 §18.15). A token is made in one domain and is good in **every
+domain** where its owner has an account (handbook 20 §20.8). Neither the console nor any domain
+stores its text.
 
-### `GET /api/auth/tokens`
+### `GET /api/d/<domain>/auth/tokens`
 
-The caller's tokens (any signed-in person), never their secrets:
+The tokens this domain made for the caller (any signed-in person), never their text:
 
 ```json
 {
+  "domain": "domain_a",
   "tokens": [
     { "token_id": "b7dd6de1da6c", "name": "DuckDB on my laptop", "permissions": ["catalog.read"],
-      "datasets": [{ "dataset_id": "ds-5c1e…", "name": "sales" }],
-      "created_at": "2026-10-19T03:01:16Z", "expires_at": "2027-01-17T03:01:16Z",
+      "datasets": [{ "name": "domain_a.sales" }, { "name": "domain_b.finance" }], "issuer": "domain_a",
+      "created_at": "2026-10-26T03:01:16Z", "expires_at": "2027-01-24T03:01:16Z",
       "revoked_at": null, "revoked_by": null, "active": true }
   ],
   "limit": 20,
@@ -1124,61 +1195,67 @@ The caller's tokens (any signed-in person), never their secrets:
     { "key": "catalog.read", "label": "Connect external tools to the Iceberg catalog", "granted": true },
     { "key": "catalog.write", "label": "Commit to tables from external tools", "granted": false }
   ],
-  "datasets": [{ "dataset_id": "ds-5c1e…", "name": "sales", "permissions": ["catalog.read"] }],
+  "datasets": [{ "dataset_id": "ds-5c1e…", "name": "domain_a.sales", "permissions": ["catalog.read"] }],
   "max_datasets": 100,
   "default_expires_in_days": 90,
   "max_expires_in_days": 365
 }
 ```
 
-`permissions[].granted` says whether the caller holds that permission on some dataset, and so may give
-it to a token; `datasets`, the datasets they may read through the catalog, and so may limit one to. A
-token's `datasets` is empty when it is not limited.
+`permissions[].granted` says whether the caller holds that permission somewhere in this domain;
+`datasets`, this domain's datasets they read through the catalog, which a token may be limited to.
+The Account page asks every domain the person is signed in to and lists every token at once.
 
-### `POST /api/auth/tokens`
+### `POST /api/d/<domain>/auth/tokens`
 
-Needs `catalog.read` on some dataset. Body, strictly validated:
+Needs `catalog.read` on some dataset of the domain. Body, strictly validated:
 
 ```json
-{ "name": "DuckDB on my laptop", "permissions": ["catalog.read"], "expires_in_days": 90, "datasets": ["sales"] }
+{ "name": "DuckDB on my laptop", "permissions": ["catalog.read"], "expires_in_days": 90, "datasets": ["domain_a.sales", "domain_b.finance"] }
 ```
 
 | Field | Rules |
 |---|---|
 | `name` | 1–64 characters, trimmed; name it after where it will be used |
-| `permissions` | `catalog.read`, `catalog.write` or both; each one the caller must hold, or the control plane answers `403` |
+| `permissions` | `catalog.read`, `catalog.write` or both; each one the caller holds in this domain, or `403` |
 | `expires_in_days` | 1–365 |
-| `datasets` | optional; dataset names, ≤ 100, each one the caller may read through the catalog: the token then holds nothing on any other |
+| `datasets` | optional; `<domain>.<dataset>` names of any domain (a bare name is this domain's), ≤ 100: the token then holds nothing on any other |
 
-`202`, with `cache-control: no-store`, answers the token's text — `tok_<token_id>_<secret>` — this
-once, beside its id, name, permissions and `expires_at`. Only a person signed in makes tokens: a
-request authorized by an access token is refused (`403`, `reason: session_required`). A person holds
-at most 20.
+The console waits until the domain has recorded the token, then answers `201`, with
+`cache-control: no-store`, its text — `tok_<claims>.<signature>` — this once, beside its id, name,
+permissions, `issuer`, `datasets` and `expires_at`; `202` if it is accepted but not yet recorded. A
+token the domain refuses to record (over the limit of 20, a dataset gone) is never shown: the refusal
+is the answer, and the domain revokes it. Only a person signed in makes tokens: a request authorized
+by an access token is refused (`403`, `reason: session_required`).
 
-### `DELETE /api/auth/tokens/:tokenId`
+### `DELETE /api/d/<domain>/auth/tokens/:tokenId`
 
-Revoke a token: your own, or anyone's with `users.manage`. `202` with the control plane's
-acceptance; once the identity agent applies it, an engine using the token is refused at its next
-request — every request checks revocation. An unknown id, or another person's without
-`users.manage`, is a `404`.
-
-### `GET /api/catalog/connection`
-
-Needs `catalog.read` on some dataset. Where engines reach the catalog, for the Connect panel and the
-token page:
+Revoke a token made in this domain: your own, or anyone's with `users.manage`. The console waits for
+the domain to record the revocation, then hands it — signed with the federation key — to every other
+domain, and answers which recorded it now:
 
 ```json
-{ "uri": "https://midstream.example.com/catalog", "configured": true, "enabled": true }
+{ "request_id": "idr-…", "status": "applied", "domains": { "domain_b": "applied", "domain_c": "failed" } }
+```
+
+A domain that could not be told is told again within five minutes (the console reads each domain's
+revocations and hands them on). An unknown id, or another person's without `users.manage`, is `404`.
+
+### `GET /api/d/<domain>/catalog/connection`
+
+Needs `catalog.read` on some dataset of the domain. Where engines reach the catalogs:
+
+```json
+{ "uri": "https://midstream.example.com/d/domain_a/catalog", "federatedUri": "https://midstream.example.com/catalog",
+  "domain": "domain_a", "configured": true, "enabled": true }
 ```
 
 | Field | Meaning |
 |---|---|
-| `uri` | The catalog URI an engine configures: the control plane's `catalog_base_url` with `/catalog`, without `/v1` |
-| `configured` | `false` when `catalog_base_url` is not set, and `uri` is the address the console itself uses — often not one an engine outside the cluster can reach |
-| `enabled` | The control-plane setting `catalog_api_enabled`; when `false` the catalog refuses every request |
-
-Read from the control plane's settings with the console's service credential and kept for a
-minute.
+| `uri` | The domain's own catalog through the console, `<console>/d/<domain>/catalog`: one level of namespaces, the domain's datasets |
+| `federatedUri` | The federated catalog, `<console>/catalog`: namespaces `<domain>.<dataset>` |
+| `configured` | `false` when the console's URL is not configured, and the URIs are the address a request arrived at |
+| `enabled` | The domain's control-plane setting `catalog_api_enabled`; when `false` its catalog refuses every request |
 
 ## 8.28 Datasets
 
@@ -1200,3 +1277,29 @@ user or group change does (`settle`): `200` (`201` for a new dataset), `202` whe
 
 The guards turn away a guest and anyone without the permission on any dataset; the control plane
 decides on the dataset itself, so an owner of one dataset changing another is refused there (`403`).
+
+## 8.29 `GET /api/search?q=&limit=`
+
+Materializations by label, id or topic, tables by `<dataset>.<table>` or `<domain>.<dataset>.<table>`,
+and datasets by name or description — in each domain where the caller may see them
+(`materializations.view`, `datasets.view` there), from the console's live state; `limit` 1–200,
+default 50:
+
+```json
+{ "query": "orders", "truncated": false,
+  "results": [ { "domain": "domain_a", "kind": "table", "id": "sales.orders", "label": "domain_a.sales.orders",
+                 "detail": "orders", "materializationId": "mat-a1b2c3d4e5f6" } ] }
+```
+
+`kind` is `materialization`, `table` or `dataset`; the best matches come first.
+
+## 8.30 The Iceberg REST catalogs: `/catalog` and `/d/<domain>/catalog`
+
+Outside `/api`, for engines: the federated catalog, whose namespaces are `<domain>.<dataset>`
+(`domain_a%1Fsales` in a path), handing each request to the domain the namespace names with the
+caller's bearer token unchanged; and each domain's own catalog, handed through as it is (handbook 20
+§20.10). `GET /catalog/v1/namespaces` lists one namespace per domain whose catalog lists something for
+the token; `?parent=domain_a` that domain's datasets; a table is loaded or committed as its domain
+answers; creating and dropping namespaces or tables, and transactions, are `501`. A domain that cannot
+be reached is `503 ServiceUnavailableException`, naming it.
+

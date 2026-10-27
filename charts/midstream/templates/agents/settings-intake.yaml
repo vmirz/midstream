@@ -1,3 +1,4 @@
+{{- if include "midstream.controlPlaneEnabled" . }}
 apiVersion: kaspr.io/v1alpha1
 kind: KasprAgent
 metadata:
@@ -51,3 +52,4 @@ spec:
           python: |
             def apply_settings_change(value, settings_table):
                 yield from handle_settings_request_for_output(value, settings_table)
+{{- end }}

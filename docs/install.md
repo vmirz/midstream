@@ -1,8 +1,13 @@
 # Installing Midstream
 
 This walks through a first installation: the prerequisites, the Secrets, the chart, the first
-sign-in, the first dataset and materialization, and how to upgrade and remove it. Every command is
-meant to be pasted as it stands; change the names in the first block to yours.
+sign-in, the first dataset and materialization, more domains and sign-in through a provider, and how
+to upgrade and remove it. Every command is meant to be pasted as it stands; change the names in the
+first block to yours.
+
+One installation of the chart is a **domain**: a control plane with its maintenance and tail apps, its
+own accounts, datasets and tables. The console serves every domain from one URL; the first install
+below is one domain with the console beside it, and §7 adds more (handbook 20).
 
 ```bash
 # The names this guide uses. Keep them, or change them once here.
@@ -12,6 +17,7 @@ export KAFKA=kafka-bootstrap.kafka.svc.cluster.local:9092   # the Kafka bootstra
 export KAFKA_USER=midstream        # a SCRAM-SHA-512 user on that cluster
 export BUCKET=gs://my-lake         # the GCS bucket the tables are written to
 export ADMIN_EMAIL=you@example.com # the first administrator
+export DOMAIN=domain_a             # this domain's id: its URL segment /d/<id> and its catalog in SQL
 ```
 
 ## 1. What you need first
@@ -41,21 +47,26 @@ unset KAFKA_PASSWORD
 kubectl -n "$NS" create secret generic "$RELEASE-gcs" \
   --from-file=google_application_credentials.json=/path/to/service-account.json
 
-# Sign-in: a signing key for sessions, the service token the console and the tail app use, and the
-# first administrator. The password is shown once; the first sign-in replaces it.
+# Sign-in: a signing key for sessions, the service token the console and the tail app use, the
+# federation key access tokens are signed with - the same in every domain, so keep it for §7 - and
+# the first administrator. The password is shown once; the first sign-in replaces it.
+FEDERATION_KEY="$(openssl rand -base64 48)"
 BOOTSTRAP_PASSWORD="$(openssl rand -base64 18)"
 kubectl -n "$NS" create secret generic "$RELEASE-auth" \
   --from-literal=signing-key="$(openssl rand -base64 48)" \
   --from-literal=service-token="$(openssl rand -base64 48)" \
+  --from-literal=federation-key="$FEDERATION_KEY" \
   --from-literal=bootstrap-admin-email="$ADMIN_EMAIL" \
   --from-literal=bootstrap-admin-password="$BOOTSTRAP_PASSWORD"
 echo "bootstrap password for $ADMIN_EMAIL: $BOOTSTRAP_PASSWORD"
 unset BOOTSTRAP_PASSWORD
 ```
 
-The auth Secret's keys are read by name (`signing-key`, `service-token`, `bootstrap-admin-email`,
-`bootstrap-admin-password`, and `previous-signing-key` when a key is rotated); the chart only needs
-its name. Without `signing-key` nobody can sign in and every request is a guest's.
+The auth Secret's keys are read by name (`signing-key`, `service-token`, `federation-key`,
+`bootstrap-admin-email`, `bootstrap-admin-password`, and `previous-signing-key` /
+`previous-federation-key` when a key is rotated); the chart only needs its name. Without
+`signing-key` nobody can sign in and every request is a guest's; without `federation-key` nobody can
+make an access token for an engine.
 
 A Kafka listener without authentication needs no Secret: skip the `$RELEASE-kafka` command above and
 set `kaspr.authentication` to `{type: plain}` alone in §3.
@@ -67,6 +78,9 @@ use application default credentials.
 
 ```bash
 cat > midstream-values.yaml <<VALUES
+domain:
+  id: $DOMAIN
+  name: Domain A
 kaspr:
   bootstrapServers: $KAFKA
   authentication:
@@ -128,8 +142,10 @@ kubectl -n "$NS" port-forward "svc/$RELEASE-console" 8787:8787 &
 open http://localhost:8787
 ```
 
-With `route.enabled` or `ingress.enabled` the console is reachable at its host instead, and engines
-reach the Iceberg REST catalog at `https://<host>/catalog`.
+With `route.enabled` or `ingress.enabled` the console is reachable at its host instead
+(`route.consoleHostnames`), and engines reach the Iceberg REST catalog at `https://<console host>/catalog`
+— every domain's, its tables `lake.<domain>.<dataset>.<table>` — or one domain's at
+`https://<console host>/d/<domain>/catalog`.
 
 ## 6. The first dataset and materialization
 
@@ -153,7 +169,50 @@ minutes (handbook 12 §12.2); its runtime appears as a KasprApp named `$RELEASE-
 namespace, and its table at `$BUCKET/$RELEASE/<materialization id>/orders`. The console's Data tab
 shows the rows as they commit, and new records within seconds through the live tail.
 
-## 7. Upgrade and remove
+## 7. More domains, and signing in with a provider
+
+Each further domain is a release of its own, usually in its own cluster, with the console turned off
+there and its API exposed for the shared console to reach (handbook 20 §20.2):
+
+```yaml
+# domain-b-values.yaml, installed as its own release with its own namespace and Secrets; its auth
+# Secret holds the same federation-key as every other domain's.
+domain: {id: domain_b, name: Domain B}
+console: {enabled: false}
+route:
+  enabled: true
+  hostnames: [midstream-b.example.com]          # this domain's API: /, /catalog, /tail/
+  parentRefs: [{name: gateway, namespace: gateway-system}]
+```
+
+The release with the console then lists every domain; the console's own domain needs only
+`local: true`, another domain its URLs and a Secret here holding its `service-token`:
+
+```yaml
+console:
+  url: https://midstream.example.com
+  domains:
+    - {id: domain_a, name: Domain A, local: true, settingsHome: true}
+    - id: domain_b
+      name: Domain B
+      controlPlaneUrl: https://midstream-b.example.com
+      tailUrl: https://midstream-b.example.com
+      serviceTokenSecret: {name: domain-b-service-token, key: service-token}
+route:
+  enabled: true
+  consoleHostnames: [midstream.example.com]
+  redirectFrom: [midstream-a.example.com]       # old hostnames, sent on to /d/domain_a/
+```
+
+**Signing in with a provider.** Register the console with Microsoft Entra ID, GitHub, Google or any
+OpenID Connect provider, with the redirect URI `<console.url>/api/auth/sso/<entra|github|google|oidc>/callback`;
+give the console its client (`console.sso.<provider>`), and every domain the same client id
+(`auth.sso.<provider>`), so each can check what the provider says itself. Each domain decides who
+gets in: its first-sign-in policy (`auth.sso.firstSignIn`, `open` or `invited`), its allowed email
+domains, and whether a password still works there (`auth.passwordSignIn`) — all adjustable later on
+its Settings page. Handbook 20 §20.7 has each provider's registration, step by step.
+
+## 8. Upgrade and remove
 
 ```bash
 helm upgrade "$RELEASE" oci://ghcr.io/vmirz/charts/midstream --version <version> -n "$NS" -f midstream-values.yaml   # re-applies every runtime too
@@ -167,5 +226,6 @@ that removes its runtime, its Kafka topics and its tables. The Secrets and the b
 
 - `docs/handbook/02-deployment-and-manifests.md`: every resource the chart deploys and why.
 - `docs/handbook/12-operations-runbook.md`: diagnosis by phase, sizing, disaster recovery.
-- `docs/handbook/18-identity-and-access.md`: people, groups, roles, datasets and access tokens.
+- `docs/handbook/18-identity-and-access.md`: people, groups, roles, datasets, access tokens and single sign-on.
+- `docs/handbook/20-domains-and-the-shared-console.md`: domains, the shared console and everything across them.
 - `console/docs/13-operations-runbook.md`: running and sizing the console.

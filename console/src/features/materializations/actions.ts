@@ -2,7 +2,8 @@ import { useMutation } from '@tanstack/react-query';
 import { useCallback, useState } from 'react';
 
 import { useToast } from '@/components/ui/Toast';
-import { ApiError, api } from '@/lib/api';
+import { ApiError, domainApi } from '@/lib/api';
+import { useOptionalDomain } from '@/lib/domains';
 import type { CpDetail } from '@shared/types';
 
 export type LifecycleAction = 'stop' | 'resume' | 'delete';
@@ -20,14 +21,17 @@ const LABELS: Record<LifecycleAction, { verb: string; done: string }> = {
  * state — it relies on the live stream to reflect what actually happened.
  */
 export function useLifecycleActions(): {
-  run: (action: LifecycleAction, materializationId: string) => void;
+  /** Act on a materialization of `domain`: the page's own, inside a domain. */
+  run: (action: LifecycleAction, materializationId: string, domain?: string) => void;
   pending: LifecycleAction | null;
 } {
+  const scope = useOptionalDomain();
   const toast = useToast();
   const [pending, setPending] = useState<LifecycleAction | null>(null);
 
   const mutation = useMutation({
-    mutationFn: async ({ action, id }: { action: LifecycleAction; id: string }) => {
+    mutationFn: async ({ action, id, domain }: { action: LifecycleAction; id: string; domain: string }) => {
+      const api = domainApi(domain);
       if (action === 'stop') return api.stop(id);
       if (action === 'resume') return api.resume(id);
       return api.remove(id);
@@ -48,11 +52,12 @@ export function useLifecycleActions(): {
   });
 
   const run = useCallback(
-    (action: LifecycleAction, materializationId: string) => {
+    (action: LifecycleAction, materializationId: string, domain: string | undefined = scope?.id) => {
+      if (!domain) throw new Error('say which domain the materialization is in');
       setPending(action);
-      mutation.mutate({ action, id: materializationId });
+      mutation.mutate({ action, id: materializationId, domain });
     },
-    [mutation],
+    [mutation, scope?.id],
   );
 
   return { run, pending };

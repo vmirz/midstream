@@ -1,17 +1,58 @@
+{{/*
+How people, engines and other clusters' consoles reach the deployment (handbook 02 §2.12, 20):
+  - this domain's API (route.hostnames, ingress.host): /tail/ to the tail app, everything else to the
+    control plane, its Iceberg catalog included. A console in another cluster reaches the domain here.
+  - the shared console (route.consoleHostnames, ingress.consoleHost): its pages, /api and /catalog.
+  - old person-facing hostnames (redirectFrom): a 301 to <console URL>/d/<domain id>/<path>.
+*/}}
+{{- $controlPlane := include "midstream.controlPlaneEnabled" . }}
+{{- $tail := include "midstream.tailEnabled" . }}
 {{- if .Values.route.enabled }}
-# A Gateway API route: the Iceberg REST catalog at /catalog for engines, the console for people.
+{{- if and $controlPlane .Values.route.hostnames }}
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: {{ include "midstream.fullname" . }}
+  name: {{ include "midstream.fullname" . }}-api
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "midstream.labels" . | nindent 4 }}
 spec:
-  {{- with .Values.route.hostnames }}
   hostnames:
+    {{- toYaml .Values.route.hostnames | nindent 4 }}
+  {{- with .Values.route.parentRefs }}
+  parentRefs:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+  rules:
+    {{- if $tail }}
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /tail/
+      backendRefs:
+        - name: {{ include "midstream.tail" . }}-app-api
+          port: {{ .Values.tail.webPort }}
+    {{- end }}
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ include "midstream.controlPlane" . }}-app-api
+          port: {{ .Values.controlPlane.webPort }}
+{{- end }}
+{{- if and .Values.console.enabled .Values.route.consoleHostnames }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "midstream.console" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "midstream.labels" . | nindent 4 }}
+spec:
+  hostnames:
+    {{- toYaml .Values.route.consoleHostnames | nindent 4 }}
   {{- with .Values.route.parentRefs }}
   parentRefs:
     {{- toYaml . | nindent 4 }}
@@ -20,26 +61,55 @@ spec:
     - matches:
         - path:
             type: PathPrefix
-            value: /catalog
-      backendRefs:
-        - name: {{ include "midstream.controlPlane" . }}-app-api
-          port: {{ .Values.controlPlane.webPort }}
-    {{- if .Values.console.enabled }}
-    - matches:
-        - path:
-            type: PathPrefix
             value: /
       backendRefs:
         - name: {{ include "midstream.console" . }}
           port: {{ .Values.console.port }}
-    {{- end }}
+{{- end }}
+{{- if and $controlPlane .Values.route.redirectFrom }}
+{{- $console := required "console.url is required to redirect route.redirectFrom: the URL people are sent on to" (include "midstream.consoleUrl" . | default "") | urlParse }}
+---
+# The old hostnames send people on to the shared console, inside this domain, keeping their path.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "midstream.fullname" . }}-redirect
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "midstream.labels" . | nindent 4 }}
+spec:
+  hostnames:
+    {{- toYaml .Values.route.redirectFrom | nindent 4 }}
+  {{- with .Values.route.parentRefs }}
+  parentRefs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: {{ $console.scheme }}
+            hostname: {{ $console.hostname | quote }}
+            {{- with (regexFind ":[0-9]+$" $console.host) }}
+            port: {{ trimPrefix ":" . }}
+            {{- end }}
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: {{ printf "%s/d/%s/" ($console.path | trimSuffix "/") (include "midstream.domainId" .) | quote }}
+            statusCode: 301
+{{- end }}
 {{- end }}
 {{- if .Values.ingress.enabled }}
+{{- if and $controlPlane .Values.ingress.host }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "midstream.fullname" . }}
+  name: {{ include "midstream.fullname" . }}-api
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "midstream.labels" . | nindent 4 }}
@@ -56,19 +126,51 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   rules:
-    - {{- with .Values.ingress.host }}
-      host: {{ . }}
-      {{- end }}
+    - host: {{ .Values.ingress.host }}
       http:
         paths:
-          - path: /catalog
+          {{- if $tail }}
+          - path: /tail/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "midstream.tail" . }}-app-api
+                port:
+                  number: {{ .Values.tail.webPort }}
+          {{- end }}
+          - path: /
             pathType: Prefix
             backend:
               service:
                 name: {{ include "midstream.controlPlane" . }}-app-api
                 port:
                   number: {{ .Values.controlPlane.webPort }}
-          {{- if .Values.console.enabled }}
+{{- end }}
+{{- if and .Values.console.enabled .Values.ingress.consoleHost }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "midstream.console" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "midstream.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.consoleHost }}
+      http:
+        paths:
           - path: /
             pathType: Prefix
             backend:
@@ -76,5 +178,45 @@ spec:
                 name: {{ include "midstream.console" . }}
                 port:
                   number: {{ .Values.console.port }}
-          {{- end }}
+{{- end }}
+{{- if and $controlPlane .Values.ingress.redirectFrom }}
+{{- $target := printf "%s/d/%s" (required "console.url is required to redirect ingress.redirectFrom: the URL people are sent on to" (include "midstream.consoleUrl" . | default "")) (include "midstream.domainId" .) }}
+---
+# The old hostnames send people on to the shared console, inside this domain, keeping their path. The
+# annotation is ingress-nginx's; another controller needs its own rule (handbook 20).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "midstream.fullname" . }}-redirect
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "midstream.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/permanent-redirect: {{ printf "%s$request_uri" $target | quote }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.redirectFrom }}
+    - host: {{ . }}
+      http:
+        paths:
+          # Never reached: the annotation answers every request with the redirect.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "midstream.controlPlane" $ }}-app-api
+                port:
+                  number: {{ $.Values.controlPlane.webPort }}
+    {{- end }}
+{{- end }}
 {{- end }}

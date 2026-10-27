@@ -2,7 +2,8 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { pageQueryKey } from './live.ts';
-import { ApiError, api } from '@/lib/api';
+import { ApiError } from '@/lib/api';
+import { useApi } from '@/lib/domains';
 import type { RunPage, RunRefresh, RunRequest, RunSnapshot, TimeRange } from '@shared/types';
 
 export { pageQueryKey, pageStage } from './live.ts';
@@ -35,6 +36,7 @@ export interface RunController {
  * status frozen by a dead transport is indistinguishable from a hung query.
  */
 export function useRun(materializationId: string): RunController {
+  const api = useApi();
   const [run, setRun] = useState<RunSnapshot | null>(null);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<ApiError | null>(null);
@@ -172,6 +174,7 @@ export function useRun(materializationId: string): RunController {
  * `revision`, which is part of every page's key.
  */
 export function useRunPage(run: RunSnapshot | null, offset: number, limit: number) {
+  const api = useApi();
   const queryClient = useQueryClient();
   const terminal = run !== null && run.state !== 'running';
   const ready = run ? Math.min(run.rowsReady, offset + limit) : 0;

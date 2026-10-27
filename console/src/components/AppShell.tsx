@@ -1,30 +1,39 @@
-import { Activity, Database, FolderOpen, Info, LogIn, LogOut, Moon, PanelLeftClose, PanelLeftOpen, Settings, Sun, UserRound } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
-import { useCallback, useState, type ReactNode } from 'react';
+import { Activity, Check, ChevronsUpDown, Database, FolderOpen, Info, Layers, LogIn, LogOut, Moon, PanelLeftClose, PanelLeftOpen, Search, Settings, Sun, UserRound } from 'lucide-react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 import { Avatar } from './Avatar';
+import { DomainDot } from './DomainChip';
 import { Dialog } from './ui/Dialog';
 import { Popover } from './ui/Popover';
 import { Button } from './ui/primitives';
 import { cn } from '@/lib/cn';
-import { api } from '@/lib/api';
-import { useAuth, type Auth } from '@/lib/auth';
+import { useConsoleAuth, type Auth } from '@/lib/auth';
+import { sectionOf, sectionPath, useConsoleConfig, useScopeDomainId, type ShellSection } from '@/lib/domains';
 import { formatRelativeTime } from '@/lib/format';
 import { useTicker, type LiveStatus } from '@/lib/live';
+import { FOCUS_SEARCH_EVENT } from '@/lib/shortcuts';
+import type { ConsoleDomain } from '@shared/types';
 
-const NAV_ITEMS = [
-  { to: '/', label: 'Overview', icon: Activity, end: true, permission: 'materializations.view' },
-  { to: '/materializations', label: 'Materializations', icon: Database, end: false, permission: 'materializations.view' },
-  { to: '/datasets', label: 'Datasets', icon: FolderOpen, end: false, permission: 'datasets.view' },
+/** The pages people work in, in every domain or in one (handbook 20). */
+const NAV_ITEMS: Array<{ section: ShellSection; label: string; icon: typeof Activity; permission: string | null }> = [
+  { section: 'overview', label: 'Overview', icon: Activity, permission: 'materializations.view' },
+  { section: 'materializations', label: 'Materializations', icon: Database, permission: 'materializations.view' },
+  { section: 'datasets', label: 'Datasets', icon: FolderOpen, permission: 'datasets.view' },
+  { section: 'search', label: 'Search', icon: Search, permission: null },
 ];
 
 /** Pinned to the bottom of the sidebar, apart from the pages people work in. */
-const SETTINGS_ITEM = { to: '/settings', label: 'Settings', icon: Settings, end: false };
+const SETTINGS_ITEM = { section: 'settings' as const, label: 'Settings', icon: Settings };
 
 /** Settings holds everyone's own account, so it is there for anyone signed in. */
 function canOpenSettings(auth: Auth): boolean {
   return auth.signedIn || auth.can('settings.view');
+}
+
+/** Whether the shell links to a section: anyone may search; the rest need their permission. */
+function navVisible(auth: Auth, permission: string | null): boolean {
+  return permission === null || auth.can(permission);
 }
 
 const SIDEBAR_KEY = 'console.sidebar.collapsed';
@@ -137,17 +146,21 @@ export function AppShell({ children }: { children: ReactNode }): ReactNode {
   const [dark, toggleTheme] = useTheme();
   const [collapsed, toggleSidebar] = useSidebar();
   const [aboutOpen, setAboutOpen] = useState(false);
-  const auth = useAuth();
-  const navItems = NAV_ITEMS.filter((item) => auth.can(item.permission));
-  const settingsVisible = canOpenSettings(auth);
-
-  // Versions change only when a deployment is replaced, so this is fetched once per session.
-  const consoleConfig = useQuery({
-    queryKey: ['config'],
-    queryFn: () => api.config(),
-    staleTime: Number.POSITIVE_INFINITY,
-    retry: 0,
-  });
+  const consoleAuth = useConsoleAuth();
+  const scope = useScopeDomainId();
+  // The shell sits around a domain's pages, so it asks the address which domain they are of.
+  const auth = scope ? consoleAuth.forDomain(scope) : consoleAuth.overall;
+  const navItems = NAV_ITEMS.filter((item) => navVisible(auth, item.permission)).map((item) => ({
+    ...item,
+    to: sectionPath(item.section, scope),
+    end: item.section === 'overview',
+  }));
+  const settingsVisible = canOpenSettings(auth) || canOpenSettings(consoleAuth.overall);
+  const settingsTo = sectionPath('settings', scope);
+  const consoleConfig = useConsoleConfig();
+  const domains = consoleConfig.data?.domains ?? [];
+  const troubled = domains.filter((domain) => domain.status === 'misconfigured' || domain.status === 'incompatible');
+  useSearchShortcut();
 
   return (
     <div className="flex h-full min-h-0">
@@ -166,6 +179,8 @@ export function AppShell({ children }: { children: ReactNode }): ReactNode {
             <span className="truncate text-[13px] font-semibold tracking-tight">Midstream</span>
           )}
         </div>
+
+        {domains.length > 1 ? <DomainSwitcher domains={domains} scope={scope} collapsed={collapsed} /> : null}
 
         <nav className={cn('flex flex-1 flex-col gap-0.5 py-2', collapsed ? 'px-2' : 'px-3')}>
           {navItems.map((item) => (
@@ -190,8 +205,7 @@ export function AppShell({ children }: { children: ReactNode }): ReactNode {
           ))}
           {settingsVisible ? (
             <NavLink
-              to={SETTINGS_ITEM.to}
-              end={SETTINGS_ITEM.end}
+              to={settingsTo}
               title={collapsed ? SETTINGS_ITEM.label : undefined}
               className={({ isActive }) =>
                 cn(
@@ -252,7 +266,7 @@ export function AppShell({ children }: { children: ReactNode }): ReactNode {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <nav className="flex items-center gap-1 border-b border-[var(--color-line)] px-4 py-2 md:hidden">
-          {[...navItems, ...(settingsVisible ? [SETTINGS_ITEM] : [])].map((item) => (
+          {[...navItems, ...(settingsVisible ? [{ ...SETTINGS_ITEM, to: settingsTo, end: false }] : [])].map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -267,7 +281,7 @@ export function AppShell({ children }: { children: ReactNode }): ReactNode {
               {item.label}
             </NavLink>
           ))}
-          {auth.signedIn ? null : (
+          {consoleAuth.overall.signedIn ? null : (
             <NavLink
               to="/sign-in"
               className="ml-auto rounded-[var(--radius-control)] px-3 py-1.5 text-[13px] font-medium text-[var(--color-ink)]"
@@ -276,16 +290,15 @@ export function AppShell({ children }: { children: ReactNode }): ReactNode {
             </NavLink>
           )}
         </nav>
-        {consoleConfig.data?.controlPlaneCompatible === false ? (
+        {troubled.map((domain) => (
           <p
+            key={domain.id}
             role="alert"
             className="border-b border-[color-mix(in_srgb,var(--color-phase-failed)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-phase-failed)_8%,transparent)] px-5 py-2 text-[12px] text-[var(--color-phase-failed)]"
           >
-            This console needs control plane 4.0 or later, which creates every materialization’s tables under the
-            deployment’s destination; the control plane here is {consoleConfig.data.controlPlaneVersion}. Upgrade the control
-            plane, or run a console from before 4.0.
+            {domain.statusMessage}
           </p>
-        ) : null}
+        ))}
         <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
       </div>
 
@@ -306,12 +319,21 @@ export function AppShell({ children }: { children: ReactNode }): ReactNode {
             hint="This web application"
             version={consoleConfig.data?.version ?? null}
           />
-          <VersionRow
-            label="Control plane"
-            hint="Serves the API and reconciles materializations"
-            version={consoleConfig.data?.controlPlaneVersion ?? null}
-          />
+          {domains.map((domain) => (
+            <VersionRow
+              key={domain.id}
+              label={domains.length > 1 ? `${domain.name} control plane` : 'Control plane'}
+              hint={`Serves domain ${domain.id}: its API, and reconciles its materializations`}
+              version={domain.version}
+            />
+          ))}
         </dl>
+        {consoleConfig.data?.federationKeysAgree === false ? (
+          <p className="mt-4 text-[12px] leading-relaxed text-[var(--color-phase-failed)]">
+            The domains sign access tokens with different federation keys: a token made in one is refused in another.
+            Give every domain the same federation-key.
+          </p>
+        ) : null}
         <p className="mt-4 text-[12px] leading-relaxed text-[var(--color-ink-muted)]">
           A materialization&rsquo;s runtime reports its own version, shown on that
           materialization&rsquo;s Overview. A runtime keeps its build until its spec is re-applied,
@@ -323,11 +345,110 @@ export function AppShell({ children }: { children: ReactNode }): ReactNode {
   );
 }
 
+/** ⌘K or Ctrl+K, anywhere: the search page, its box focused. */
+function useSearchShortcut(): void {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'k') return;
+      event.preventDefault();
+      if (pathname === '/search') window.dispatchEvent(new Event(FOCUS_SEARCH_EVENT));
+      else void navigate('/search');
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [navigate, pathname]);
+}
+
 /**
- * The signed-in person, with their account and sign-out; or, for a guest, the way to sign in.
+ * Which part of the console the pages are about: every domain, or one (handbook 20). Choosing keeps
+ * the section - the overview, the lists, settings - that is open.
+ */
+function DomainSwitcher({ domains, scope, collapsed }: { domains: ConsoleDomain[]; scope: string | null; collapsed: boolean }): ReactNode {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const section = sectionOf(pathname);
+  const current = domains.find((domain) => domain.id === scope) ?? null;
+  const choose = (domain: string | null): void => {
+    void navigate(sectionPath(section === 'search' ? 'overview' : section, domain));
+  };
+  const dot = (domain: ConsoleDomain): ReactNode => <DomainDot domain={domain} />;
+  const itemClass =
+    'flex w-full items-center gap-2.5 rounded-[var(--radius-control)] px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-[var(--color-raised)]';
+  return (
+    <div className={cn('pb-1', collapsed ? 'px-2' : 'px-3')}>
+      <Popover
+        side="bottom"
+        width={232}
+        trigger={({ open, toggle, id }) => (
+          <button
+            type="button"
+            onClick={toggle}
+            aria-expanded={open}
+            aria-controls={id}
+            aria-label="Choose a domain"
+            title={collapsed ? (current?.name ?? 'All domains') : undefined}
+            className={cn(
+              'flex w-full items-center gap-2 rounded-[var(--radius-control)] border border-[var(--color-line)] py-1.5 text-[13px] font-medium transition-colors hover:bg-[var(--color-raised)]',
+              collapsed ? 'justify-center px-0' : 'px-2.5',
+            )}
+          >
+            {current ? dot(current) : <Layers className="size-4 shrink-0 text-[var(--color-ink-muted)]" />}
+            {collapsed ? null : <span className="min-w-0 flex-1 truncate text-left">{current?.name ?? 'All domains'}</span>}
+            {collapsed ? null : <ChevronsUpDown className="size-3.5 shrink-0 text-[var(--color-ink-faint)]" />}
+          </button>
+        )}
+      >
+        {({ close }) => (
+          <div className="p-1.5" role="menu">
+            <button
+              type="button"
+              role="menuitem"
+              className={itemClass}
+              onClick={() => {
+                close();
+                choose(null);
+              }}
+            >
+              <Layers className="size-4 shrink-0 text-[var(--color-ink-muted)]" />
+              <span className="flex-1">All domains</span>
+              {scope === null ? <Check className="size-3.5 text-[var(--color-accent)]" /> : null}
+            </button>
+            <div className="my-1 border-t border-[var(--color-line)]" />
+            {domains.map((domain) => (
+              <button
+                key={domain.id}
+                type="button"
+                role="menuitem"
+                disabled={domain.status === 'misconfigured'}
+                className={cn(itemClass, domain.status === 'misconfigured' && 'opacity-50')}
+                onClick={() => {
+                  close();
+                  choose(domain.id);
+                }}
+              >
+                {dot(domain)}
+                <span className="min-w-0 flex-1 truncate">{domain.name}</span>
+                {scope === domain.id ? <Check className="size-3.5 text-[var(--color-accent)]" /> : null}
+              </button>
+            ))}
+          </div>
+        )}
+      </Popover>
+    </div>
+  );
+}
+
+/**
+ * The person using the page, with their account and signing out of every domain; or, for someone
+ * signed in nowhere, the way to sign in.
  */
 function AccountMenu({ collapsed }: { collapsed: boolean }): ReactNode {
-  const auth = useAuth();
+  const consoleAuth = useConsoleAuth();
+  const auth = consoleAuth.overall;
+  const domains = useConsoleConfig().data?.domains ?? [];
+  const signedInNames = consoleAuth.signedInDomains.map((id) => domains.find((domain) => domain.id === id)?.name ?? id);
   const navigate = useNavigate();
   const location = useLocation();
   const itemClass =
@@ -382,6 +503,19 @@ function AccountMenu({ collapsed }: { collapsed: boolean }): ReactNode {
               <p className="truncate text-[12px] text-[var(--color-ink-muted)]">{principal.email}</p>
             </div>
           </div>
+          {domains.length > 1 ? (
+            <p className="px-2.5 pb-2.5 text-[12px] text-[var(--color-ink-muted)]">
+              Signed in to {signedInNames.join(', ')}
+              {signedInNames.length < domains.length ? (
+                <>
+                  {' · '}
+                  <button type="button" className="font-medium text-[var(--color-accent)] hover:underline" onClick={() => { close(); navigate('/sign-in', { state: { from: location } }); }}>
+                    sign in to more
+                  </button>
+                </>
+              ) : null}
+            </p>
+          ) : null}
           <div className="border-t border-[var(--color-line)] pt-1.5">
             <button
               type="button"
@@ -403,7 +537,7 @@ function AccountMenu({ collapsed }: { collapsed: boolean }): ReactNode {
               }}
             >
               <LogOut className="size-4" />
-              Sign out
+              {domains.length > 1 ? 'Sign out everywhere' : 'Sign out'}
             </button>
           </div>
         </div>

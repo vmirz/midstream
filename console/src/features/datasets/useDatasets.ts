@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 
-import { api } from '@/lib/api';
 import type { CpDatasetList } from '@shared/types';
+import { useApi } from '@/lib/domains';
 
 export const DATASETS_KEY = ['datasets'] as const;
 
@@ -11,6 +11,7 @@ export const DATASETS_KEY = ['datasets'] as const;
  * with what they may do with it. Shared by the pickers and the Datasets page.
  */
 export function useDatasets(enabled = true) {
+  const api = useApi();
   return useQuery<CpDatasetList>({ queryKey: DATASETS_KEY, queryFn: () => api.datasets(), staleTime: 15_000, enabled });
 }
 

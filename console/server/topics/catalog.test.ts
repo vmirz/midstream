@@ -5,7 +5,10 @@ import { gunzipSync } from 'node:zlib';
 import Fastify from 'fastify';
 
 import { ConsoleError, upstreamError } from '../errors.ts';
+import { installTestDomains } from '../domains/testing.ts';
 import { registerTopicRoutes } from '../routes/topics.ts';
+
+await installTestDomains(['domain_a']);
 import type { CpTopicList, TopicCatalogResponse } from '../../shared/types.ts';
 import { acceptsGzip, etagMatches, TopicCatalog, toCatalogResponse } from './catalog.ts';
 import { installTestAuth, testPrincipal } from '../auth/testing.ts';
@@ -194,18 +197,18 @@ describe('conditional and encoded responses', () => {
   });
 });
 
-describe('GET /api/topics', () => {
+describe('GET /api/d/<domain>/topics', () => {
   async function app(responses: Array<CpTopicList | Error>) {
     const server = Fastify();
     installTestAuth(server, testPrincipal(['topics.view']));
-    await registerTopicRoutes(server, harness(responses).catalog);
+    await server.register(async (scope) => registerTopicRoutes(scope, harness(responses).catalog), { prefix: '/api/d/:domain' });
     return server;
   }
 
   it('serves gzip with an ETag, then a bodiless 304 for the same version', async () => {
     const server = await app([upstream(['orders'])]);
 
-    const first = await server.inject({ url: '/api/topics', headers: { 'accept-encoding': 'gzip' } });
+    const first = await server.inject({ url: '/api/d/domain_a/topics', headers: { 'accept-encoding': 'gzip' } });
     assert.equal(first.statusCode, 200);
     assert.equal(first.headers['content-encoding'], 'gzip');
     assert.equal(first.headers['cache-control'], 'private, no-cache');
@@ -213,7 +216,7 @@ describe('GET /api/topics', () => {
     assert.equal(parse(gunzipSync(first.rawPayload)).topics[0]!.name, 'orders');
 
     const again = await server.inject({
-      url: '/api/topics',
+      url: '/api/d/domain_a/topics',
       headers: { 'accept-encoding': 'gzip', 'if-none-match': String(first.headers.etag) },
     });
     assert.equal(again.statusCode, 304);
@@ -223,7 +226,7 @@ describe('GET /api/topics', () => {
   it('serves plain JSON to a client that does not accept gzip', async () => {
     const server = await app([upstream(['orders'])]);
 
-    const response = await server.inject({ url: '/api/topics' });
+    const response = await server.inject({ url: '/api/d/domain_a/topics' });
 
     assert.equal(response.headers['content-encoding'], undefined);
     assert.equal(response.json<TopicCatalogResponse>().topics[0]!.name, 'orders');
@@ -232,10 +235,10 @@ describe('GET /api/topics', () => {
   it('refuses anyone who cannot browse topics', async () => {
     const server = Fastify();
     installTestAuth(server, testPrincipal(['materializations.view']));
-    await registerTopicRoutes(server, harness([upstream(['orders'])]).catalog);
+    await server.register(async (scope) => registerTopicRoutes(scope, harness([upstream(['orders'])]).catalog), { prefix: '/api/d/:domain' });
     server.setErrorHandler((error: { statusCode?: number }, _request, reply) => reply.code(error.statusCode ?? 500).send({}));
 
-    const response = await server.inject({ url: '/api/topics' });
+    const response = await server.inject({ url: '/api/d/domain_a/topics' });
 
     assert.equal(response.statusCode, 403);
   });
@@ -243,7 +246,7 @@ describe('GET /api/topics', () => {
   it('answers 503 while the topic list is unavailable', async () => {
     const server = await app([new Error('connection refused')]);
 
-    const response = await server.inject({ url: '/api/topics' });
+    const response = await server.inject({ url: '/api/d/domain_a/topics' });
 
     assert.equal(response.statusCode, 503);
   });

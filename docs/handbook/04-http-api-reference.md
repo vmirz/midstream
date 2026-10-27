@@ -62,6 +62,8 @@ is no session.
 | `GET` | `/auth/tokens` | `auth-tokens-list` | session | 200 | no | no |
 | `POST` | `/auth/tokens` | `auth-tokens-create` | `catalog.read` on a dataset | **202** | **no** | `<release>-identity-requests` |
 | `DELETE` | `/auth/tokens/{token_id}` | `auth-tokens-revoke` | session: their own token, or anyone's with `users.manage` | **202** | **no** | `<release>-identity-requests` |
+| `GET` | `/auth/tokens/revocations` | `auth-tokens-revocations-list` | the console's service token, or `users.manage` | 200 | no | no |
+| `POST` | `/auth/tokens/revocations` | `auth-tokens-revocations-apply` | — (each revocation's federation-key signature) | **202** | **no** | `<release>-identity-requests` |
 | `GET` | `/users` | `users-list` | `users.view` | 200 | no | no |
 | `GET` | `/users/{user_id}` | `users-detail` | `users.view_details` | 200 | no | no |
 | `POST` | `/users` | `users-create` | `users.manage` | **202** | **no** | `<release>-identity-requests` |
@@ -1456,10 +1458,25 @@ Response `200`, the session payload every auth view shares (§4.13.2) plus the t
 | `400 invalid_request` | `field: email \| password` | Missing email or password |
 | `401 unauthenticated` | `invalid_credentials` | Wrong email or wrong password: the same message for both, "Email or password is incorrect." |
 | `403 forbidden` | `account_deactivated` | The right password for a deactivated account |
+| `403 forbidden` | `password_sign_in_disabled` | The right password, but password sign-in is off here and the account is not an administrator's |
 | `429 too_many_attempts` | `locked_out` (+ `retry_after` seconds), `busy` | Too many failed attempts for this email; too many sign-ins at once |
 | `503 unavailable` | `sign_in_unavailable` | The control plane has no signing key |
 
 Emits `sign_in_succeeded` or `sign_in_failed` (§4.13.5).
+
+**Through an identity provider** (18 §18.17; the shared console sends it, 20 §20.7):
+
+```json
+{"provider": "oidc", "credential": {"id_token": "eyJhbGciOiJSUzI1NiIs…"}, "nonce": "c1f…"}
+{"provider": "github", "credential": {"access_token": "gho_…"}, "nonce": null}
+```
+
+`200` as above, `session.method` `sso:<provider>`; the first sign-in of someone the domain has never
+seen answers once their account exists. Refused with `400 invalid_request` (an unknown provider),
+`401 invalid_credential`, `403 provider_disabled`, `email_not_allowed`, `email_unverified`,
+`no_account`, `account_deactivated`, `409` (the account could not be made), `503
+provider_unreachable` or `provisioning`. Emits `sign_in_succeeded`, `link_identity` or
+`provision_user`, or `sign_in_failed` with `method: sso:<provider>`.
 
 ### 4.13.2 Sessions: `GET /auth/session`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/sessions`
 
@@ -1644,16 +1661,18 @@ agent has applied or refused the request, then its outcome:
 Only the person who sent the request, or someone with `users.view`, may read an outcome
 (`403` otherwise). Outcomes are kept for a day.
 
-### 4.13.6 Access tokens: `GET`, `POST /auth/tokens`, `DELETE /auth/tokens/{token_id}`
+### 4.13.6 Access tokens: `GET`, `POST /auth/tokens`, `DELETE /auth/tokens/{token_id}`, revocations
 
 Credentials for tools — an engine reading the REST catalog (§4.14) — carrying some of their
-owner's permissions (18 §18.15). `GET /auth/tokens` lists the caller's tokens (never their secrets)
-and which token permissions the caller could give one.
+owner's permissions, good in **every domain** where the owner has an account (18 §18.15, 20 §20.8).
+`GET /auth/tokens` lists the tokens made in this domain for the caller (never their text), the
+permissions a new one could carry, and this domain's datasets it could be limited to, named
+`<domain>.<dataset>`.
 
 ```bash
 curl -s -X POST localhost:6065/auth/tokens -H "authorization: Bearer $TOKEN" \
      -H 'content-type: application/json' \
-     -d '{"name": "DuckDB on my laptop", "permissions": ["catalog.read"], "expires_in_days": 90, "datasets": ["sales"]}'
+     -d '{"name": "DuckDB on my laptop", "permissions": ["catalog.read"], "expires_in_days": 90, "datasets": ["domain_a.sales", "domain_b.finance"]}'
 ```
 
 `202`, with the token itself — **shown once, never again**:
@@ -1661,25 +1680,32 @@ curl -s -X POST localhost:6065/auth/tokens -H "authorization: Bearer $TOKEN" \
 ```json
 {
   "request_id": "idr-…", "action": "create_access_token", "entity_type": "access_token",
-  "entity_id": "5500b621f521", "accepted_at": "2026-10-18T20:00:00Z",
+  "entity_id": "5500b621f521", "accepted_at": "2026-10-26T20:00:00Z",
   "status_url": "/identity/requests/idr-…",
-  "token": "tok_5500b621f521_…", "token_id": "5500b621f521", "name": "DuckDB on my laptop",
-  "permissions": ["catalog.read"], "datasets": [{"dataset_id": "ds-5c1e…", "name": "sales"}],
-  "expires_at": "2027-01-16T20:00:00Z"
+  "token": "tok_eyJleHAiOjE4…", "token_id": "5500b621f521", "name": "DuckDB on my laptop",
+  "permissions": ["catalog.read"], "issuer": "domain_a",
+  "datasets": [{"name": "domain_a.sales"}, {"name": "domain_b.finance"}],
+  "expires_at": "2027-01-24T20:00:00Z"
 }
 ```
 
 `name` is required, up to 64 characters; `permissions` ⊆ `catalog.read`, `catalog.write` (default
-`catalog.read`), each one the caller holds on some dataset; `expires_in_days` 1–365 (default 90);
-`datasets`, optional, limits the token to those datasets, by name — at most 100, each one the caller
-holds the token's permissions on. At most 20 live tokens per person. A token acts as its owner with
-at most its permissions, on each dataset — and never more than the owner still holds there, nor
-outside its datasets — and stops working when revoked, expired, or its owner is deactivated.
-`GET /auth/tokens` lists each token's `datasets`, and the datasets the caller could limit one to.
-`DELETE /auth/tokens/{token_id}` revokes one of the caller's tokens, or anyone's with
-`users.manage`; another person's token is `404` to everyone else. Both changes go through
-`<release>-identity-requests` like any directory change, and the audit log records them
-(`token.created`, `token.revoked`).
+`catalog.read`), each one the caller holds here, on the named datasets of this domain or on some
+dataset here; `expires_in_days` 1–365 (default 90); `datasets`, optional, limits the token, as
+`<domain>.<dataset>` (a bare name is this domain's) — at most 100. At most 20 live tokens per person
+in a domain (`409 limit`). Without a federation key: `503 no_federation_key`. A token acts as its
+owner with at most its permissions, on each dataset, in whichever domain answers — never more than
+the owner holds there, nor outside its limits — and stops working when revoked, expired, or its owner
+is deactivated or unknown there (`401 token_unknown_owner`).
+
+`DELETE /auth/tokens/{token_id}` revokes one made here, the caller's or, with `users.manage`,
+anyone's; the answer carries the signed revocation, `"revocation": {"jti", "exp", "signature"}`, for
+the console to hand to the other domains. `POST /auth/tokens/revocations` with
+`{"revocations": [{"jti", "exp", "signature"}], "source": "domain_a"}` (at most 100) records revocations
+another domain signed — `403 invalid_signature` for any not signed with this domain's federation keys
+— and `GET /auth/tokens/revocations?since=<instant>` lists the revocations held here, oldest first.
+All changes go through `<release>-identity-requests` like any directory change, and the audit log
+records them (`token.created`, `token.revoked`, `token.revocation_applied`).
 
 ### 4.13.5 The identity request topic
 

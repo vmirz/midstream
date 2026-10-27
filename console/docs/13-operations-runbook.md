@@ -2,16 +2,21 @@
 
 ## 13.1 Deployment shape
 
-The console is a single stateless-ish Node process. It needs:
+The console is a single stateless-ish Node process, one for every domain: there are no per-domain
+consoles. It is installed by the chart — beside a control plane, in the same release, or alone in a
+platform cluster (`controlPlane.enabled=false`) — and needs:
 
 | Requirement | Detail |
 |-------------|--------|
-| Network to the control plane | `CONTROL_PLANE_URL`, usually the in-cluster service `…-app-api:6065` |
-| Network to object storage | For the Data and Table tabs: the console reads each table itself |
-| GCP credentials | ADC to read tables' metadata and manifests, and in cached mode their data files; HMAC additionally for direct mode, where DuckDB reads `gs://` in place |
-| TLS at the ingress | The session cookie is `Secure` only for requests that arrived over HTTPS (`CONSOLE_COOKIE_SECURE=auto`); the ingress must set `X-Forwarded-Proto` |
-| `CONSOLE_SERVICE_TOKEN` | The control plane's `service-token` from its `<release>-auth` Secret; without it the live views show only what guests may see ([12](./12-security-model.md#122-authentication-and-authorization)) |
-| A 3.0 control plane | 3.0.0 or later: it keeps each source topic of a materialization in an Iceberg table of its own, in a dataset, which is what the console reads and checks access by. Against an older one every page shows a banner (`controlPlaneCompatible: false`). Someone signs in as its bootstrap administrator first, adds people, and creates the first datasets |
+| The domain registry | `console.domains[]` in the chart's values, rendered into `CONSOLE_DOMAINS_FILE`: each domain's id, name, `controlPlaneUrl` and optional `tailUrl`, and exactly one `settingsHome` ([03 §3.3](./03-configuration-reference.md), handbook 20) |
+| Network to every domain | Each `controlPlaneUrl`: this release's own Service, or another cluster's API route over TLS; each `tailUrl` the same, for that domain's live tail |
+| One service token per domain | `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN`: that control plane's `service-token`, from its `<release>-auth` Secret; the chart reads it from the Secret each entry names. Without it the domain's live views show only what guests may see ([12](./12-security-model.md#122-authentication-and-authorization)) |
+| Control planes that say who they are | Every domain's control plane at Midstream 1.0 or later, with `domain.id` set to the id the registry gives it: one that says it is another domain is shown nothing of (`misconfigured`). Someone signs in to each as its bootstrap administrator first, adds people, and creates the first datasets |
+| One federation key | The same `federation-key` in every domain's auth Secret, for access tokens that work in every domain; the console's Domains section says when they differ |
+| Network to object storage | For the Data and Table tabs: the console reads each table itself, in whichever domain's bucket |
+| GCP credentials | One read-only identity that reads every domain's lake: ADC to read tables' metadata and manifests, and in cached mode their data files; HMAC additionally for direct mode, where DuckDB reads `gs://` in place |
+| TLS at the ingress | The session cookies are `Secure` only for requests that arrived over HTTPS (`CONSOLE_COOKIE_SECURE=auto`); the ingress must set `X-Forwarded-Proto` |
+| Sign-in providers (optional) | `CONSOLE_URL`, the console's public URL, and each provider's redirect URI registered with it: `<CONSOLE_URL>/api/auth/sso/<provider>/callback` ([03 §3.3a](./03-configuration-reference.md)). Each domain turns the provider on for itself (handbook 18 §18.17) |
 | Optional persistent volume | For the Parquet cache (cached mode) |
 
 Build order matters: **build the client, then start the server.** `@fastify/static` registers
@@ -49,8 +54,8 @@ server build artefact.
 
 | Probe | Endpoint | Success condition |
 |-------|----------|-------------------|
-| Startup / liveness | `GET /api/health` | HTTP 200 (returned even when the control plane is down) |
-| Readiness | `GET /api/health` | HTTP 200 **and** `controlPlaneConnected === true`, if you want to drain traffic during an upstream outage |
+| Startup / liveness | `GET /api/health` | HTTP 200 (returned even when every control plane is down) |
+| Readiness | `GET /api/health` | HTTP 200. Do not make readiness wait on `controlPlaneConnected`: it is true only while every domain is connected, and one domain down must not take the console away from the others. `domains[]` says which is not |
 
 `/api/health` does not trigger a refresh, so probing it every few seconds is free.
 
@@ -96,7 +101,7 @@ results by `CONSOLE_RESULT_ROW_LIMIT` per run. In direct mode the cache is never
 
 The console is **not** cleanly horizontally scalable. Each replica keeps its own:
 
-- poll loop → N replicas means N× control-plane load,
+- poll loops, one per domain → N replicas means N× load on every domain's control plane,
 - derived time series → charts differ per replica,
 - table reads → each replica reads pointers, metadata and manifests itself,
 - Parquet cache → the same objects are downloaded per replica.
@@ -112,14 +117,16 @@ Settings are the exception: they are shared. Every replica reads the console's o
 the control plane every 30 seconds, so a change saved through one replica reaches the others
 within 30 seconds. Sessions need nothing either: the cookie holds a control-plane token any replica
 can check, so a browser can move between replicas without signing in again. A query run lives on
-the replica that started it, which is one more reason for sticky sessions.
+the replica that started it, which is one more reason for sticky sessions — and so is a sign-in
+through a provider: its flow is held by the replica that started it, and a callback that reaches
+another replica is asked to sign in again.
 
 For most deployments a single replica with a sensible restart policy is the right answer. The
 console is a read-mostly operator tool; a few seconds of downtime during a rollout is acceptable.
 
 ## 13.5 Load characteristics
 
-Per refresh pass with defaults:
+Per refresh pass with defaults, for each domain:
 
 ```
 1 × GET /materializations
@@ -151,11 +158,12 @@ Structured JSON via Pino, `service: midstream-console`.
 
 | Level | Message | Meaning |
 |-------|---------|---------|
-| `info` | `midstream console ready` | Listening; includes port, control-plane URL and `workerPool`, the size of Node's worker pool (§13.7) |
+| `info` | `midstream console ready` | Listening; includes port, every domain with its control-plane and tail URLs, the settings home, and `workerPool`, the size of Node's worker pool (§13.7) |
+| `error` | `The console's registry sends <id> to <url>, but that control plane is domain <other>. …` | A registry entry reaches another domain's control plane (or one that names no domain): nothing of that domain is served until the entry is corrected (§13.7) |
 | `info` | `duckdb instance ready` | First query initialised DuckDB |
 | `info` | `console log level changed` | A Settings page change to the log level was applied |
 | `info` | `shutting down console` | SIGTERM/SIGINT received |
-| `warn` | `live refresh failed` | A whole refresh pass failed; `err` has the cause |
+| `warn` | `live refresh failed` | A whole refresh pass of one domain failed; `domain` names it, `err` has the cause |
 | `info` | `data access mode: direct …` / `data access mode: cached …` | At start: how DuckDB reads data files |
 | `warn` | `data access is disabled; the Data tab is unavailable` | At start, or after the Settings page turned the Data explorer off |
 | `warn` | `parquet cache eviction failed` | Cache may exceed its budget |
@@ -166,7 +174,12 @@ Structured JSON via Pino, `service: midstream-console`.
 | `warn` | `topic catalog refresh failed` | The topic list for the create dialog could not be reloaded; the previous list is served |
 | `warn` | `run failed` | A run failed for a reason other than its statement; `err` has the cause and the user sees the message |
 | `warn` | `run eviction failed` | An expired run's stored result could not be deleted from `CONSOLE_RUN_DIR` |
-| `warn` | `CONSOLE_SERVICE_TOKEN is not set: …` | At start: the live views read the control plane as a guest. Set it to the control plane's `AUTH_SERVICE_TOKEN` |
+| `warn` | `this console has no service token for domain <id>: …` | At start: that domain's live views read its control plane as a guest. Set `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN` to its control plane's `AUTH_SERVICE_TOKEN` |
+| `warn` | `a sign-in provider could not be reached` | Starting a sign-in through `provider` failed: its discovery document (generic OIDC) could not be read. The person is told to try again |
+| `warn` | `a sign-in code could not be exchanged` | The provider refused the code, or could not be reached: a wrong client secret, a redirect URI it does not have registered, or an expired code. The person sees the provider's own reason |
+| `warn` | `a GitHub sign-in token could not be revoked` | Harmless: GitHub's token for that sign-in expires on its own; the console never stored it |
+| `warn` | `token revocations could not be handed to a domain; it is told again within five minutes` | A revoked access token is refused by the domain that made it and the others reached; `to` names the one that was not. The 5-minute sync retries |
+| `warn` | `a domain's catalog could not be reached` / `… listed` | An engine's request through `/catalog` or `/d/<domain>/catalog` could not reach that domain; the engine got `503` naming the domain |
 | `warn` | `sign-out could not be recorded with the control plane` | The browser was signed out (cookie cleared), but the control plane did not hear it; the session ends at its idle timeout |
 | `warn` | `ignoring stored console settings this console does not accept` | A stored override is unknown to this console or out of its bounds, probably written by another console version; `settings` lists them. The environment's value applies |
 | `debug` | `detail refresh failed` | One materialization's detail failed; others unaffected |
@@ -175,6 +188,8 @@ Structured JSON via Pino, `service: midstream-console`.
 | `debug` | `run statement failed` | A statement the engine rejected — the user's to fix, so not a warning |
 | `debug` | `console settings could not be read; keeping the ones in force` | The 30-second settings refresh failed; the last overrides stay |
 | `debug` | `session could not be checked with the control plane` | A session check failed; sessions checked in the last minute keep working |
+| `debug` | `control plane identity unavailable` | A domain's minute check of `/system/version` failed; it is shown unreachable until one succeeds |
+| `debug` | `token revocations could not be read from a domain this pass` | The 5-minute sync could not read one domain's revocations; the next pass tries again from the same point |
 | `debug` | `session renewal failed; the current session stays in use` | Renewing a cookie session failed; it stays valid until its own idle timeout |
 | `error` | `unhandled console failure` | Unexpected error; client got a generic 500 |
 | `fatal` | `console failed to start` | Process exits 1 |
@@ -185,17 +200,46 @@ per-materialization failures, set **Console log level** to `debug` on the Settin
 
 ## 13.7 Troubleshooting
 
-### The header shows a control-plane error
+### A domain shows as unreachable
 
 ```bash
-curl -sS localhost:8787/api/health
+curl -sS localhost:8787/api/health            # domains[]: each domain's status and error
 kubectl -n midstream get svc | grep app-api
 kubectl -n midstream port-forward svc/midstream-control-plane-app-api 6065:6065
-curl -sS localhost:6065/materializations?limit=10
+curl -sS localhost:6065/system/version         # version, domain, federation_key_id
 ```
 
-The console keeps showing last-known data during an outage, by design. If the control plane is
-healthy but the console disagrees, check `CONTROL_PLANE_URL` and any network policy.
+The console keeps showing that domain's last-known data during an outage, by design, and every
+other domain as usual. If the control plane is healthy but the console disagrees, check the
+domain's `controlPlaneUrl` (its Settings page, Deployment section) and any network policy between
+the console and it — for a domain in another cluster, its API route and certificate.
+
+### A domain is misconfigured
+
+The console asked the URL its registry gives for the domain, and the control plane there says it is
+another domain, or none: the banner and the start-up log name both. Nothing of that domain is
+served — no views, no sign-in, no catalog — until the registry entry points at the right control
+plane, or the control plane's `domain.id` is set to what the registry calls it. The console checks
+again every minute; no restart is needed once the control plane answers as the right domain.
+
+### Access tokens made in one domain are refused in another
+
+The domains' federation keys differ: the console Settings page's Domains section shows each
+domain's key id, and a banner says when they do not agree. Put the same `federation-key` in every
+domain's auth Secret and restart their control planes (handbook 18 §18.11). A token refused with
+`token_unknown_owner` is the other case: its owner has no account in that domain with the same
+provider account or email.
+
+### Sign-in through a provider fails
+
+The sign-in page lists what each domain answered. If the page says the sign-in *expired, or was
+started in another browser*, the callback came back without the flow cookie, to another replica, or
+more than 10 minutes later. If the provider's own error is shown, the console's registration is
+wrong: the redirect URI must be exactly `<CONSOLE_URL>/api/auth/sso/<provider>/callback`. If a
+domain answers `provider_disabled`, it has not turned that provider on (its Settings › Sign-in);
+`no_account`, its first-sign-in policy is `invited` and nobody added the person; `email_not_allowed`,
+the email's domain is not one it allows; `invalid_credential`, the domain could not check the
+provider's token — its own provider settings (client id, tenant, issuer) differ from the console's.
 
 ### The Settings page is read-only
 
@@ -221,8 +265,9 @@ was not rebalanced afterwards. See the main handbook,
 
 ### Everyone sees only the materialization list
 
-`CONSOLE_SERVICE_TOKEN` is unset or does not match the control plane's, so the live views read as
-a guest. The start-up log says so. Set it and restart.
+The domain's `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN` is unset or does not match its control plane's, so
+that domain's live views read as a guest. The start-up log says so, and the domain's Settings page
+says *not configured*. Set it and restart.
 
 ### Someone was deactivated but still sees pages
 
@@ -238,7 +283,7 @@ it there to follow the deployment again.
 ### The Data tab has no Live toggle
 
 Live follows every running materialization, in a console and a control plane that have the live
-tail on. In order: `CONSOLE_TAIL_URL` unset (the Deployment section says *not configured*); the
+tail on. In order: the domain's `tailUrl` unset (its Deployment section says *not configured*); the
 console's own *Live tail* setting off (Settings › Live tail); the control plane's `live_tail_enabled`
 off, which an open tab notices within two minutes; the materialization stopped; or, against a
 control plane before 4.3, its live tail switched off there. A statement has *Auto re-run* instead.
@@ -246,9 +291,9 @@ control plane before 4.3, its live tail switched off there. A statement has *Aut
 ### The Data tab says Live is unavailable
 
 The run shows committed rows and keeps asking. *Live is unavailable* (in amber at the status line's right;
-its tooltip carries the reason): the tail app cannot be reached at `CONSOLE_TAIL_URL`, or refuses the
-console — `403 console_only` in the console's log means its `CONSOLE_SERVICE_TOKEN` is not the tail
-app's `TAIL_SERVICE_TOKEN`. *Live is starting* or *Live is reconnecting* for more than a
+its tooltip carries the reason): the tail app cannot be reached at the domain's `tailUrl`, or refuses
+the console — `403 console_only` in the console's log means the domain's
+`CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN` is not its tail app's `TAIL_SERVICE_TOKEN`. *Live is starting* or *Live is reconnecting* for more than a
 minute (the table warming up, or moving between members): a tail app member restarting, or the
 table's topic without a leader. The tail app's health view names the table's state and last error
 (handbook 12 §12.7, 19 §19.16).
@@ -365,7 +410,9 @@ term.
 | Switch to direct mode | Set both HMAC variables and restart |
 | Disable data access | Settings → Data explorer → **Data explorer** off; no restart |
 | Change any other tunable | Settings page; see [03 §3.10](./03-configuration-reference.md) for which ones |
-| Verify a deploy | `curl -sS <host>/api/health` then open the UI, sign in, and confirm the header reads `Live` |
+| Verify a deploy | `curl -sS <host>/api/health` — every domain `ok` — then open the UI, sign in, and confirm the header reads `Live` |
+| Add a domain | Install its release, add its entry to `console.domains[]` with the Secret holding its service token, and upgrade the console's release; it appears in the switcher once its control plane answers as that domain (handbook 20) |
+| Sign in to every domain at once | A provider's button on the sign-in page; **Sign out everywhere** in the account menu ends every domain's session |
 | Sign someone out, unlock or reset a password | Settings → Users → their page |
 | See who did what | Settings → Audit log |
 
@@ -418,6 +465,12 @@ term.
     and edit dialogs, *Scaled up to N members* on the Overview — and labels a degraded runtime
     **Unhealthy**. Against an older control plane the switches and the line are not shown. Deploy
     the control plane first, with its role's new `pods` rule (handbook 12 §12.1).
+16. **Domains** (handbook 20): one console serves every domain, on a clean slate. Replace
+    `CONTROL_PLANE_URL`, `CONSOLE_SERVICE_TOKEN` and `CONSOLE_TAIL_URL` with the registry and a
+    service token per domain (§13.1); give every control plane its `domain.id` and the shared
+    federation key; route the old per-domain hostnames to `/d/<domain>` (handbook 02 §2.12). SQL
+    names a table with its domain now, `domain_a.sales.orders`, and an access token made before is
+    refused: make a new one.
 
 ## 13.10 `MalformedSecurityHeader` on every gs:// scan
 

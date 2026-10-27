@@ -290,8 +290,8 @@ its rows touch, in a child process. A seal is committed whole or not at all. It 
 a file per partition first, then writes one partition's file at a time, so it holds one row group
 however far its batch spreads ([10 §10.4](./10-runtime-internals.md)).
 
-**Service token** — The console's read-only credential for its shared live views
-(`AUTH_SERVICE_TOKEN` = `CONSOLE_SERVICE_TOKEN`).
+**Service token** — The console's read-only credential for a domain's shared live views: the
+domain's `AUTH_SERVICE_TOKEN`, given to the console as `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN`.
 
 **Session** — One sign-in: a signed token valid at once, expiring after the idle timeout (8 h) unless
 renewed and after the maximum length (7 days) in any case.

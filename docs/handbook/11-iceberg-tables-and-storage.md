@@ -294,6 +294,12 @@ The facade vends **no storage credentials**: an engine reads data files with its
 on the lab through the HTTPRoute with an access token); Spark and Trino follow the same protocol but
 have not been run against it.
 
+**Across domains.** The shared console serves the same protocol over every domain at
+`<console>/catalog`, whose namespaces are `<domain>.<dataset>`, handing each request to the domain the
+namespace names with the caller's token unchanged; and each domain's own catalog at
+`<console>/d/<domain>/catalog` (20 §20.10). An access token made in any domain is good in every one
+where its owner has an account (18 §18.15).
+
 ## 11.9 Reading a table by hand
 
 DuckDB, by path (no catalog; the version hint names the latest metadata):

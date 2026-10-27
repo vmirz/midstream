@@ -5,6 +5,8 @@
 
 import type { CpPermissionCatalog, CpPermissionDefinition } from '@shared/types';
 
+import { humanize } from '../../lib/format.ts';
+
 export function permissionMap(catalog: CpPermissionCatalog | undefined): Map<string, CpPermissionDefinition> {
   return new Map((catalog?.permissions ?? []).map((permission) => [permission.key, permission]));
 }
@@ -78,4 +80,53 @@ export function describeDetail(value: unknown): string {
       .join('; ');
   }
   return String(value);
+}
+
+/** How a session was started, as a person would say it. */
+export function describeMethod(method: string): string {
+  if (method === 'password') return 'with a password';
+  const provider = method.startsWith('sso:') ? method.slice(4) : method;
+  const names: Record<string, string> = { entra: 'Microsoft', github: 'GitHub', google: 'Google', oidc: 'single sign-on' };
+  return `through ${names[provider] ?? provider}`;
+}
+
+/** What an audit entry's action reads as. */
+export const AUDIT_ACTION_LABELS: Record<string, string> = {
+  'session.signed_in': 'Signed in',
+  'session.sign_in_failed': 'Failed sign-in',
+  'session.locked_out': 'Locked out',
+  'session.signed_out': 'Signed out',
+  'user.created': 'Added a user',
+  'user.updated': 'Changed a user',
+  'user.deactivated': 'Deactivated a user',
+  'user.reactivated': 'Reactivated a user',
+  'user.deleted': 'Deleted a user',
+  'user.password_reset': 'Reset a password',
+  'user.password_changed': 'Changed their password',
+  'user.signed_out': 'Signed a user out everywhere',
+  'user.session_ended': 'Ended a session',
+  'user.unlocked': 'Unlocked a user',
+  'user.bootstrapped': 'Made the first administrator',
+  'user.bootstrap_restored': 'Restored the bootstrap administrator',
+  'user.provisioned': 'Made an account at a first sign-in',
+  'user.identity_linked': 'Linked a sign-in provider',
+  'group.created': 'Created a group',
+  'group.updated': 'Changed a group',
+  'group.deleted': 'Deleted a group',
+  'role.created': 'Created a role',
+  'role.updated': 'Changed a role',
+  'role.deleted': 'Deleted a role',
+  'token.created': 'Made an access token',
+  'token.revoked': 'Revoked an access token',
+  'token.revocation_applied': 'Recorded a token revoked in another domain',
+  'dataset.created': 'Created a dataset',
+  'dataset.updated': 'Changed a dataset',
+  'dataset.deleted': 'Deleted a dataset',
+  'dataset.access_changed': 'Changed who may use a dataset',
+  'directory.seeded': 'Set up the built-in groups',
+};
+
+/** What an audit entry's action reads as: its label, or for one this console does not know, its code in words. */
+export function auditActionLabel(action: string): string {
+  return AUDIT_ACTION_LABELS[action] ?? humanize(action.replace('.', ' '));
 }

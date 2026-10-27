@@ -570,8 +570,15 @@ export interface TableMetadataView {
 
 /** Where external engines reach the Iceberg REST catalog, for the Connect panel. */
 export interface CatalogConnection {
-  /** The catalog URI engines configure: the control plane's address and `/catalog`, without `/v1`. */
+  /**
+   * This domain's own catalog, through the console: `<console>/d/<domain>/catalog`, without `/v1`.
+   * Its namespaces are the domain's datasets, for an engine that does not read nested namespaces.
+   */
   uri: string;
+  /** The federated catalog: `<console>/catalog`, whose namespaces are `<domain>.<dataset>` (handbook 20). */
+  federatedUri: string;
+  /** The domain the table is in: the first level of its federated namespace. */
+  domain: string;
   /** Whether the URI was configured for external engines, or is the address the console itself uses. */
   configured: boolean;
   enabled: boolean;
@@ -1094,7 +1101,13 @@ export interface RunTail {
 
 /** One table a run reads, at the snapshot it is pinned to. */
 export interface RunTableRead {
+  /** Its name in its dataset; SQL reads it as `<domain>.<dataset>.<name>`. */
   name: string;
+  /** The domain, dataset and materialization it is in: a statement may read tables of several (handbook 20). */
+  domain: string;
+  dataset: string;
+  datasetId: string;
+  materializationId: string;
   snapshotId: string | null;
   snapshotAt: string | null;
   /** Read as of an older snapshot than the table's current one. */
@@ -1148,6 +1161,8 @@ export interface RunError {
  */
 export interface RunSnapshot {
   id: string;
+  /** The domain the run was started in: its materialization's (handbook 20). */
+  domain: string;
   materializationId: string;
   request: RunRequest;
   state: RunState;
@@ -1322,7 +1337,7 @@ export interface ConsoleAutoscaling {
 
 /** Whether this console reads live tails, and how often the Data tab's Live mode looks. */
 export interface ConsoleLiveTail {
-  /** A tail app is configured (`CONSOLE_TAIL_URL`). */
+  /** A tail app is configured for the domain (its registry entry's `tailUrl`). */
   configured: boolean;
   /** Configured, and on in this console and in the control plane. */
   enabled: boolean;
@@ -1331,9 +1346,50 @@ export interface ConsoleLiveTail {
   maxRows: number;
 }
 
+/**
+ * A domain this console serves (handbook 20): one Midstream deployment, with its control plane, its
+ * apps, its lake and its directory. `id` is its URL segment, its catalog in SQL and its level of the
+ * federated catalog's namespaces; `name` is what people see.
+ */
+export interface ConsoleDomain {
+  id: string;
+  name: string;
+  /** The one domain whose `console` settings scope stores this console's own overrides. */
+  settingsHome: boolean;
+  /**
+   * Whether the console can work with it: `ok`; `unreachable` while its control plane cannot be
+   * reached; `misconfigured` when that control plane says it is another domain; `incompatible`
+   * when it is a release this console does not work with.
+   */
+  status: 'ok' | 'unreachable' | 'misconfigured' | 'incompatible';
+  /** Why it is not `ok`, in words. */
+  statusMessage: string | null;
+  /** Version of its control plane; null while it cannot be reached. */
+  version: string | null;
+  /**
+   * The first 8 hex characters of the SHA-256 of the key it signs access tokens with; null while it
+   * cannot be reached. Domains that differ refuse each other's tokens.
+   */
+  federationKeyId: string | null;
+  /** Whether the live store reads it now; false shows its last known state as stale. */
+  connected: boolean;
+  liveTail: ConsoleLiveTail;
+  /** Null while its control plane cannot be reached. */
+  autoscaling: ConsoleAutoscaling | null;
+  /** What a new materialization there starts from; null for anyone who cannot create one there. */
+  materializationDefaults: MaterializationDefaults | null;
+}
+
 export interface ConsoleConfig {
-  /** Where the control plane is; null for anyone who cannot see settings. */
-  controlPlaneUrl: string | null;
+  /** Every domain this console serves, in the registry's order. */
+  domains: ConsoleDomain[];
+  /** The id of the settings home: where the console's own settings are stored. */
+  settingsHome: string;
+  /**
+   * Whether every reachable domain signs access tokens with the same key; false when one differs,
+   * and a token made in one domain is refused in another. Null while fewer than two can say.
+   */
+  federationKeysAgree: boolean | null;
   dataAccessMode: 'direct' | 'cached' | 'disabled';
   /** Most rows one page request may return. */
   pageRowLimit: number;
@@ -1341,23 +1397,50 @@ export interface ConsoleConfig {
   exportRowLimit: number;
   /** Rows a statement's result keeps for paging and export; its total is always counted in full. */
   resultRowLimit: number;
-  /** Version of the control plane serving this console; null while it cannot be reached. */
-  controlPlaneVersion: string | null;
-  /**
-   * Whether that control plane is one this console works with: 3.0 or later, whose tables are in
-   * datasets and whose access is granted per dataset. Null while the version is unknown.
-   */
-  controlPlaneCompatible: boolean | null;
-  /**
-   * Null while the control plane cannot be reached, when it predates `GET /system/settings`, or
-   * for anyone who cannot create materializations.
-   */
-  materializationDefaults: MaterializationDefaults | null;
   pollIntervalMs: number;
-  liveTail: ConsoleLiveTail;
-  /** Null while the control plane cannot be reached, and before 4.4, which never scale a runtime. */
-  autoscaling: ConsoleAutoscaling | null;
   version: string;
+}
+
+/**
+ * One domain's part of the fleet, as the console's merged stream sends it: the domain's own fleet
+ * snapshot, when this person may see it there.
+ */
+export interface DomainFleet {
+  domain: string;
+  name: string;
+  /**
+   * `ok` with a snapshot; `sign_in_required` or `forbidden` when this person may not see the
+   * domain's materializations; `unavailable` while the console cannot check who they are there.
+   */
+  access: 'ok' | 'sign_in_required' | 'forbidden' | 'unavailable';
+  snapshot: FleetSnapshot | null;
+}
+
+/** `GET /api/fleet` and the `fleet` event of `/api/stream/fleet`: every domain's fleet. */
+export interface ConsoleFleet {
+  generatedAt: string;
+  domains: DomainFleet[];
+}
+
+/** What `GET /api/search` finds, in one domain. */
+export interface SearchResult {
+  domain: string;
+  kind: 'materialization' | 'dataset' | 'table';
+  /** A materialization's id, a dataset's name, or a table's `<dataset>.<table>`. */
+  id: string;
+  /** What to show: a label, a dataset's name, or `<domain>.<dataset>.<table>`. */
+  label: string;
+  /** A line of context: a materialization's topics, a dataset's description, a table's topic. */
+  detail: string | null;
+  /** The materialization a table belongs to. */
+  materializationId: string | null;
+}
+
+export interface SearchResults {
+  query: string;
+  results: SearchResult[];
+  /** Whether more matched than were returned. */
+  truncated: boolean;
 }
 
 /* ---------------------------------------------------------------- Settings */
@@ -1368,7 +1451,8 @@ export interface ConsoleConfig {
  */
 export const SETTINGS_SCOPES = ['control-plane', 'runtime', 'console'] as const;
 export type SettingsScope = (typeof SETTINGS_SCOPES)[number];
-export type SettingKind = 'boolean' | 'integer' | 'gcs_uri' | 'quantity' | 'enum' | 'string';
+/** `domain_list`: email domains, comma-separated, such as `example.com,corp.example.org`; empty for any. */
+export type SettingKind = 'boolean' | 'integer' | 'gcs_uri' | 'quantity' | 'enum' | 'string' | 'domain_list';
 export type SettingUnit =
   | 'ms'
   | 'seconds'
@@ -1578,10 +1662,14 @@ export interface SettingsOverview {
   generatedAt: string;
   /** Settings are stored with the control plane, so they cannot be saved while it is unreachable. */
   controlPlane: { reachable: boolean; error: string | null };
+  /**
+   * The scopes the page edits: the console's own on the console's Settings page, a domain's control
+   * plane and runtimes on that domain's (handbook 20). The others are null.
+   */
   scopes: {
     'control-plane': SettingsScopeView | null;
     runtime: SettingsScopeView | null;
-    console: SettingsScopeView;
+    console: SettingsScopeView | null;
   };
   deployment: DeploymentSettingView[];
   rollout: RuntimeRollout | null;
@@ -1730,6 +1818,54 @@ export interface AuthState {
   providers: AuthProvider[];
   passwordPolicy: PasswordPolicy | null;
   sessionError: string | null;
+}
+
+/**
+ * `GET /api/auth/session`: who the browser is in each domain - a person with a session, or a guest -
+ * and how people may sign in (handbook 20). Each domain has its own session; signing in through a
+ * provider starts one in every domain that accepts the person.
+ */
+export interface ConsoleSession {
+  domains: Record<string, DomainAuth>;
+  /** The single sign-on providers this console offers; password sign-in is per domain. */
+  providers: SsoProvider[];
+}
+
+/** Who the browser is in one domain, or why the console cannot say. */
+export interface DomainAuth {
+  /** Null while the domain's control plane cannot be asked. */
+  state: AuthState | null;
+  /** Why the domain could not be asked, in words. */
+  error: string | null;
+}
+
+export type SsoProviderId = 'entra' | 'github' | 'google' | 'oidc';
+
+/** A provider the console signs people in with: `entra`, `github`, `google` or `oidc`. */
+export interface SsoProvider {
+  id: SsoProviderId;
+  /** Who the provider is: "Microsoft", "GitHub", "Google", or the generic provider's own label. */
+  label: string;
+}
+
+/** How one domain answered a sign-in through a provider. */
+export interface SsoDomainOutcome {
+  domain: string;
+  name: string;
+  /** `signed_in`; `refused`, with the domain's reason; `unreachable` while it cannot be asked. */
+  status: 'signed_in' | 'refused' | 'unreachable';
+  /** The domain's reason: `no_account`, `provider_disabled`, `email_not_allowed`, … */
+  reason: string | null;
+  message: string | null;
+}
+
+/** `GET /api/auth/sso/outcomes/:id`: what a sign-in through a provider did, in every domain. */
+export interface SsoOutcome {
+  provider: SsoProviderId;
+  label: string;
+  /** Why the sign-in went nowhere before any domain was asked: refused at the provider, expired. */
+  error: string | null;
+  domains: SsoDomainOutcome[];
 }
 
 export interface CpSessionRecord {
@@ -1976,12 +2112,18 @@ export interface CpDatasetRef {
 }
 
 /** One of the caller's access tokens. Its secret is never shown again after it is made. */
+/**
+ * An access token made in a domain (handbook 20). It is good in every domain where its owner has
+ * an account; this is how the domain that made it lists it.
+ */
 export interface CpAccessToken {
   token_id: string;
   name: string;
   permissions: string[];
-  /** The datasets it is limited to; empty, every dataset its owner may read. */
-  datasets: CpDatasetRef[];
+  /** The datasets it is limited to, as `<domain>.<dataset>`; empty, every dataset its owner may read, in every domain. */
+  datasets: Array<{ name: string }>;
+  /** The domain that made it. */
+  issuer: string;
   created_at: string;
   expires_at: string | null;
   revoked_at: string | null;
@@ -1990,12 +2132,14 @@ export interface CpAccessToken {
 }
 
 export interface CpAccessTokenList {
+  /** The domain asked: the one these tokens were made in. */
+  domain: string;
   tokens: CpAccessToken[];
   /** Most tokens one person may hold. */
   limit: number;
   /** Each permission a token can carry, and whether the caller has it to give, on any dataset. */
   permissions: Array<{ key: string; label: string; granted: boolean }>;
-  /** The datasets a token could be limited to: those the caller reads through the catalog. */
+  /** The datasets a token could be limited to there, as `<domain>.<dataset>`: those the caller reads through the catalog. */
   datasets: Array<CpDatasetRef & { permissions: string[] }>;
   /** Most datasets one token may be limited to. */
   max_datasets: number;
@@ -2009,8 +2153,26 @@ export interface CpAccessTokenCreated extends CpIdentityAccepted {
   token_id: string;
   name: string;
   permissions: string[];
-  datasets: CpDatasetRef[];
+  datasets: Array<{ name: string }>;
+  issuer: string;
   expires_at: string;
+}
+
+/** That a token was revoked, signed with the federation key so any domain records it (handbook 20). */
+export interface CpTokenRevocation {
+  jti: string;
+  exp: number;
+  signature: string;
+  revoked_at?: string;
+  source?: string;
+}
+
+/** A token revoked: in the domain that made it, and as far as the revocation reached the others. */
+export interface AccessTokenRevoked {
+  request_id: string;
+  status: 'applied' | 'pending';
+  /** Each other domain, and whether it recorded the revocation now; one that did not is told again within five minutes. */
+  domains: Record<string, 'applied' | 'failed'>;
 }
 
 export interface CpIdentityOutcome {
