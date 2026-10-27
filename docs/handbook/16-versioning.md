@@ -330,3 +330,14 @@ with no migration: install it on a clean slate (console 13 §13.9, item 16).
 Upgrading from 1.0.0-rc.2 is a clean install: delete its materializations first, so their runtimes,
 topics and tables go too, then uninstall it, delete the release's own topics and consumer groups, and
 install each domain and the console anew (`docs/install.md`; 13 §13.8j did it on the lab).
+
+## 16.15 What 1.0.0-rc.4 changed: Kafka over TLS
+
+1.0.0-rc.4 connects every app and runtime to Kafka over TLS when the chart asks for it. It is a
+release candidate of 1.0.0 and changes no event, API or table format, so 1.0.0-rc.3 upgrades to it
+in place, with `helm upgrade`.
+
+| Change | Who must care |
+|---|---|
+| `kaspr.tls`, when set, is the `tls` of the control plane, maintenance and tail apps and of every runtime, as the KasprApp CRD spells it: `{}` turns TLS on, with `SASL_SSL`, or with `SSL` when `kaspr.authentication` is `{type: plain}` alone (02 §2.3). Unset, the chart renders as before | deployers whose Kafka listener requires TLS. The brokers' certificates must chain to a certificate authority the Kaspr image trusts: a private one, such as Strimzi's cluster CA, is not supported yet, nor are client certificates |
+| Midstream's own Kafka clients — the topic list and analysis, the lag refresh, schema discovery, topic cleanup and the live tail — take the TLS context Kaspr gives its clients (`kafka/tls.py`). Before, they could not connect over TLS | none |
