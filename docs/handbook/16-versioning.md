@@ -308,3 +308,25 @@ with no contract change, so a patch release; the console stays 4.4.0.
 | A job the drop has waited five minutes for is forgotten on the record (07 §7.10). Before, each pass recorded the drop's progress afresh, so a job still recorded was waited for in full before every pass: on the lab (2026-10-25) a 17 GB table's drop paused five minutes between passes, for a compaction the maintenance app had stopped when the delete began | none |
 
 There is no migration. A drop already waiting goes on at its next check under 4.4.1.
+
+## 16.14 What 1.0.0-rc.3 changed: domains
+
+1.0.0-rc.3 lets one console serve any number of Midstream deployments — **domains** — with sign-in
+through a provider, access tokens every domain honours, SQL across domains and one Iceberg REST
+catalog over all of them (20). It is a release candidate of 1.0.0 and, like the two before it, comes
+with no migration: install it on a clean slate (console 13 §13.9, item 16).
+
+| Change | Who must care |
+|---|---|
+| Each release is a domain: `domain.id` and `domain.name` (default: the release name), reported with the federation key's id by `GET /system/version` (04) | deployers: name each domain; its id is its URL segment and its catalog in SQL |
+| The console serves every domain from its registry, `console.domains[]` — each domain's URLs and the Secret with its service token — instead of `CONTROL_PLANE_URL`, `CONSOLE_SERVICE_TOKEN` and `CONSOLE_TAIL_URL`; its pages under `/d/<domain>`, its API under `/api/d/<domain>/`, a session cookie per domain (`midstream_session_<domain>`) | deployers; scripts calling the console's API |
+| The chart: `controlPlane.enabled` (off: the console alone), `console.url`, `console.domains`, `console.sso.*`, `auth.sso.*`, `auth.passwordSignIn`; `route.hostnames` is now a domain's API and `route.consoleHostnames` the console's; `route.redirectFrom` sends old hostnames to `/d/<domain>/` | deployers: move the console's hostname to `route.consoleHostnames` |
+| Sign-in through Microsoft Entra ID, GitHub, Google or any OpenID Connect provider, into every domain at once, each domain checking the result itself (18 §18.17); a first-sign-in policy (`open` or `invited`), allowed email domains, and password sign-in that a domain can turn off for all but administrators — new settings, Settings › Sign-in (17) | deployers who want providers; administrators |
+| Access tokens are signed with a `federation-key`, the same in every domain's auth Secret, and every domain honours them; a revocation reaches every domain (20 §20.8). A token made before is refused | engine users: make new tokens; deployers: add the key |
+| SQL names a table with its domain, `<domain>.<dataset>.<table>`, and its native table `<domain>_iceberg.<dataset>.<table>`; a statement may join tables of several domains (20 §20.9) | anyone with saved statements or share links |
+| The console serves the federated Iceberg REST catalog at `/catalog` — namespaces `<domain>` and `<domain>.<dataset>` — and each domain's own at `/d/<domain>/catalog` (20 §20.10) | engine users |
+| Console: a domain switcher, every domain's fleet, datasets and search at once, two Settings pages (the console's and each domain's), *Sign out everywhere* (console 11) | none |
+
+Upgrading from 1.0.0-rc.2 is a clean install: delete its materializations first, so their runtimes,
+topics and tables go too, then uninstall it, delete the release's own topics and consumer groups, and
+install each domain and the console anew (`docs/install.md`; 13 §13.8j did it on the lab).

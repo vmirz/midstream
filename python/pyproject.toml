@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "midstream-platform"
-version = "1.0.0rc2"
+version = "1.0.0rc3"
 description = "Midstream: a streaming platform on Kaspr that materializes Kafka topics into Iceberg tables"
 readme = "README.md"
 license = {text = "MIT"}
