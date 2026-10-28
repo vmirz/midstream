@@ -109,7 +109,8 @@ class InvalidTableLocationError(RuntimeError):
 
 
 class TableMissingError(RuntimeError):
-    """A materialization without a table record: one created before 1.0, which has none."""
+    """A materialization with no table record and a table with no discovered schema: a create whose
+    discovery failed, or one created before 1.0, which has no table records at all."""
 
     phase_reason = "table_missing"
 
@@ -1329,8 +1330,11 @@ def _plan_apply_runtime(
     The runtime writes every table of the materialization, so it needs them all. A table whose
     creation did not finish (its schema was discovered, its record is missing) is created first:
     the step answers `create_table`, which queues the apply again once every table exists - so
-    `POST .../resume` finishes an interrupted create. A table never discovered fails the step with
-    `table_missing`.
+    `POST .../resume` finishes an interrupted create. A table never discovered, beside tables that
+    exist, is what a change of topics leaves when its discovery failed: the step answers
+    `discover_tables`, which creates it and applies, so a resume finishes that change too. A
+    materialization with no table at all and one never discovered - a create whose discovery
+    failed, or one from before 1.0 - fails the step with `table_missing`.
     """
     materialization = _require_materialization(table, work_event.materialization_id)
     _require_status(table, work_event.materialization_id)
@@ -1343,10 +1347,29 @@ def _plan_apply_runtime(
             for name in missing
             if resolve_materialization_schema(table, materialization.materialization_id, name) is None
         ]
-        if undiscovered:
+        if undiscovered and not table_records:
             raise TableMissingError(
                 f"Iceberg table(s) {', '.join(undiscovered)} of this materialization were never created "
                 "and have no discovered schema: delete it and create it again."
+            )
+        if undiscovered:
+            log_protocol_event(
+                LOGGER,
+                enabled=config.protocol_logging_enabled,
+                event="control_plane_apply_runtime_discovering_tables",
+                materialization_id=materialization.materialization_id,
+                work_id=work_event.work_id,
+                tables=undiscovered,
+                duration_ms=elapsed_ms(started_ms),
+            )
+            return MaterializationWorkEvent(
+                work_id=f"work-discover-tables-{materialization.materialization_id}-{work_event.work_id}",
+                materialization_id=materialization.materialization_id,
+                step="discover_tables",
+                requested_at=work_event.requested_at,
+                caused_by=work_event.caused_by,
+                dedupe_key=f"discover_tables:{materialization.materialization_id}:{work_event.work_id}",
+                target_runtime=work_event.target_runtime,
             )
         log_protocol_event(
             LOGGER,

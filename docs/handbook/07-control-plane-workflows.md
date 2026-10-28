@@ -140,9 +140,11 @@ Three failures carry a reason of their own instead of `<step>_failed`: `start_di
 source topic the cluster's metadata does not list (`SourceTopicMissingError`,
 `source_topic_missing`, §7.2), `create_table` finding another materialization's table at a table's
 location (`TableLocationInUseError`, `table_location_in_use`), and `apply_runtime` for a
-materialization one of whose tables has neither a record nor a discovered schema
+materialization with no table record at all, one of whose tables has no discovered schema either
 (`TableMissingError`, `table_missing`): delete it and create it again. A table with a discovered
-schema but no record — a create that did not finish — is created by the apply instead (§7.3).
+schema but no record — a create that did not finish — is created by the apply instead, and a table
+with neither beside tables that exist — a change of topics whose discovery failed — is discovered
+first (§7.3).
 
 **There is no automatic retry of a `failed` status.** The sweep will keep observing
 (desired/observed mismatch staleness), but nothing re-drives the failed step. Recovery is a
@@ -302,8 +304,13 @@ runtime writes all of them, so it is never rendered with some.
 A table without a record: when its schema was discovered (a create that did not finish), the step
 answers a `create_table` work event instead, which creates what is missing and queues the apply
 again (log `control_plane_apply_runtime_creating_tables`) — so `POST …/resume` finishes an
-interrupted create. A table with no discovered schema either → `TableMissingError`, `failed` /
-`table_missing`: delete the materialization and create it again (12 §12.13).
+interrupted create. A table with no discovered schema either, beside tables that exist, is what a
+change of topics leaves when its `discover_tables` failed: the step answers `discover_tables`
+(`work-discover-tables-<id>-<work id>`, log `control_plane_apply_runtime_discovering_tables`),
+which samples it, creates it and applies — so `POST …/resume` finishes that change too. With no
+table record at all — a create whose discovery failed, or a record from before 1.0 — →
+`TableMissingError`, `failed` / `table_missing`: delete the materialization and create it again
+(12 §12.13).
 
 No schema is part of the runtime's spec: the runtime reads each from its table. The template input
 carries the source topics, every table's name, topic and location, the namespace and the partition
@@ -817,7 +824,9 @@ PATCH /materializations/{id}  {"tables": [...], "removed_tables": {...}}
   → work step: discover_tables when topics were added (after tables_claimed); drop_table when only
                kept tables are dropped; apply_runtime otherwise
 discover_tables   sample only the added topics, save each new table's schema 0   (status message only);
-                  a topic gone since the API asked Kafka for it starts empty, with a warning logged
+                  a topic gone since the API asked Kafka for it starts empty, with a warning logged.
+                  Failed (Kafka unreachable, say): failed / discover_tables_failed, and the change is
+                  applied but its tables missing — POST …/resume discovers and creates them
 create_table      create each new table, a pass each; then apply_runtime
 apply_runtime     the binding's topics differ from the materialization's: drain
                   → render with replicas: 0, binding.drain_started_at + topics_before_drain

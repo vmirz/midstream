@@ -455,7 +455,8 @@ def _build_runtime_reapply_output_if_needed(
         return None
     table_records = list_materialization_tables(table, materialization.materialization_id)
     if not set(materialization.table_names) <= {record.name for record in table_records}:
-        # A table never made it: apply_runtime would refuse it anyway.
+        # A table never made it. Nothing retries a failed step on its own: a resume makes the table
+        # (apply_runtime discovers or creates it first), or says why it cannot.
         return None
     # Rendered as the apply renders it, at the count autoscaling gave it: otherwise every scale-up
     # would read as drift, and be undone.

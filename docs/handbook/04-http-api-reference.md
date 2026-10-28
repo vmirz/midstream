@@ -840,7 +840,8 @@ minute.
 Sets `desired_phase = "running"` and emits `action = "resume"`, also step `apply_runtime`: the
 runtime is rendered at the materialization's `replicas` again. Response shape is identical to stop
 with `desired_phase: "running"`. Resuming a materialization that is already meant to run re-applies
-its runtime, which is how a `failed` one is retried.
+its runtime, which is how a `failed` one is retried — including a change of topics whose discovery
+failed (`discover_tables_failed`): the apply discovers and creates its tables first (07 §7.3).
 
 On the lab cluster a 16-member runtime resumed in about four minutes: the operator scales the
 StatefulSet to its initial step and its HPA doubles it from there.

@@ -512,7 +512,10 @@ import json,sys; print(json.load(sys.stdin)['status']['phase_message'])"
 `failed` / `source_topic_missing` is a create whose topic Kafka no longer lists: it was deleted,
 or the Kafka user lost Describe on it, after the API asked about it. Nothing was created; delete it,
 and create it again once the topic can be read. `failed` / `table_missing` is a materialization
-created before 1.0: it has no table, and is deleted and created again (§12.13).
+with no table at all — created before 1.0, or a create whose discovery failed and was then
+resumed — and is deleted and created again (§12.13). `failed` / `discover_tables_failed` is a
+change of topics whose new tables could not be sampled: resuming the materialization samples and
+creates them, then applies the change.
 
 **Nothing retries a `failed` status automatically.** Recover with:
 
@@ -924,6 +927,7 @@ kafka-console-consumer --bootstrap-server $BROKERS --topic $RT-commits --max-mes
 | `503 unavailable` on create or on adding a topic, "Kafka cannot be asked about the topics right now" | Kafka did not answer the topic check within 10 s | Check the brokers; send the request again |
 | `failed` / `source_topic_missing` | The topic left Kafka, or the Kafka user lost Describe on it, between the request and discovery | Delete; create again once the topic can be read |
 | `failed` / `start_discovery_failed`, "connecting to Kafka … timed out" | Source topic unreachable / auth failure | Check `K_KAFKA_*` env and ACLs; delete and recreate once fixed |
+| `failed` / `discover_tables_failed` after a change of topics | The added topics could not be sampled: Kafka unreachable, or the user may describe a topic but not read it | Fix the cause, then resume: the apply samples and creates the new tables first |
 | `failed` / `apply_runtime_failed` or `delete_runtime_failed`, "Kubernetes … timed out after 90s" | The API server never answered a call: past its own 60 s request timeout, so a lost connection rather than a slow server | Check the API server and the network path to it; resume or re-issue the delete. A failed re-apply left the deployed runtime as it was |
 | `failed` / `cleanup_runtime_kafka_failed`, "Kafka admin … timed out after 120s" | A broker never answered an admin call | Check the brokers, then re-issue the delete |
 | `failed` / `cleanup_runtime_kafka_failed`, "TopicAuthorizationFailedError … failed to delete topic" or "GroupAuthorizationFailedError … failed to delete consumer group" | The Kafka user may not delete the runtime's topics or group | Grant F1 and F2 ([21 §21.3](./21-kafka-access.md)), then re-issue the delete |
@@ -941,7 +945,7 @@ kafka-console-consumer --bootstrap-server $BROKERS --topic $RT-commits --max-mes
 | `unmapped_values` growing | Values the schema cannot hold: past `max_schema_fields`, or a collapsed family's array element | 09 §9.8; raise the limit if the fields matter |
 | Unexpected `__v2` columns | a genuine type change: a fork (09 §9.5) | the console reads the family as one column; other engines coalesce, guided by `materializer.fork-map` |
 | A field became `__json` | its family passed `max_forks_per_field`, or a struct passed `max_struct_fields` | expected (09 §9.3); values are kept as JSON text |
-| `failed` / `table_missing` | created before 1.0 | delete and create it again (§12.13) |
+| `failed` / `table_missing` | no table at all: created before 1.0, or a create whose discovery failed, resumed | delete and create it again (§12.13) |
 | `failed` / `table_location_in_use` | another materialization's table at the location | §12.3 |
 | `degraded` / `commits_stalled`, members healthy, commits flowing | the reason lingers after disruptions until the next resource observation (08 §8.6) | nothing; it clears within ten minutes |
 | `degraded` / `commits_stalled` that never clears; `last_commit_at` stopped; the committer's log quiet | the committer ignores a member's announcements as stale: after that member restarted, on a runtime that predates session epochs (10 §10.5) | restart the committer member (§12.3) |
