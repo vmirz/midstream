@@ -274,6 +274,18 @@ class WorkflowApplyEventLoopTests(unittest.TestCase):
         self.assertIs(received["settings_table"], tables["settings_table"])
 
 
+def _init_callables(source: str) -> set[str]:
+    """What an init binds that is callable as far as its source says: names imported from a module,
+    and functions and classes it defines."""
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom):
+            names.update(alias.asname or alias.name for alias in node.names)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+    return names
+
+
 def _entrypoint(operation: dict) -> ast.AST:
     tree = ast.parse(operation["python"])
     return next(
@@ -491,16 +503,16 @@ class MaterializationRequestKafkaTests(unittest.TestCase):
     def test_the_views_await_the_check_on_the_shared_metadata_client(self) -> None:
         for name, (checked, unchecked, _) in self.VIEWS.items():
             with self.subTest(webview=name):
-                processors = self._view(name)["spec"]["processors"]
-                self.assertIn("metadata_client = get_metadata_client()", processors["init"]["python"])
-                entrypoint = _entrypoint(processors["operations"][0]["map"])
+                entrypoint = _entrypoint(self._view(name)["spec"]["processors"]["operations"][0]["map"])
                 self.assertIsInstance(entrypoint, ast.AsyncFunctionDef)
-                awaited = {
-                    _called_name(node.value)
+                awaited = [
+                    node.value
                     for node in ast.walk(entrypoint)
                     if isinstance(node, ast.Await) and isinstance(node.value, ast.Call)
-                }
-                self.assertIn(checked, awaited)
+                ]
+                (call,) = [node for node in awaited if _called_name(node) == checked]
+                client = next(keyword.value for keyword in call.keywords if keyword.arg == "metadata_client")
+                self.assertEqual("get_metadata_client", _called_name(client), "the process's one client")
                 calls = {_called_name(node) for node in ast.walk(entrypoint) if isinstance(node, ast.Call)}
                 self.assertNotIn(unchecked, calls, "the view without the check accepts any topic")
 
@@ -520,9 +532,10 @@ class MaterializationRequestKafkaTests(unittest.TestCase):
                         return {"tables": [{"source_topic": "orders", "dataset": "shop"}]}
 
                 metadata_client = object()
-                scope = {"metadata_client": metadata_client}
+                scope = {}
                 exec(compile(operation["python"], f"<{name}>", "exec"), scope)
                 scope["authorize"] = lambda request, directory_table, permission: types.SimpleNamespace(attribution="jane", user_id="usr-1")
+                scope["get_metadata_client"] = lambda: metadata_client
                 scope[checked] = check
                 tables = {"control_plane_table": object(), "settings_table": object(), "directory_table": object()}
 
@@ -530,6 +543,39 @@ class MaterializationRequestKafkaTests(unittest.TestCase):
 
                 self.assertEqual({"ok": True}, result["response"])
                 self.assertIs(metadata_client, received["metadata_client"])
+
+
+class InitScopeTests(unittest.TestCase):
+    """Kaspr runs a map or filter that names no entrypoint as the first callable in its scope, and
+    every operation's scope starts with what its processor's `init` binds. The create and update
+    views once made their metadata client in an init: their last operation, `return-response`,
+    then ran `get_metadata_client` on the response, and a create that had been accepted, its
+    request already sent, answered 500."""
+
+    def test_every_operation_behind_an_init_that_binds_a_callable_names_its_entrypoint(self) -> None:
+        try:
+            import yaml  # noqa: F401
+        except ImportError:
+            self.skipTest("pyyaml is required to read manifests")
+        checked = 0
+        for kind in ("KasprWebView", "KasprAgent", "KasprTask"):
+            for resource in documents(kind):
+                processors = resource["spec"].get("processors") or {}
+                bound = _init_callables((processors.get("init") or {}).get("python") or "")
+                if not bound:
+                    continue
+                for operation in processors.get("operations") or []:
+                    for step in ("map", "filter"):
+                        block = operation.get(step) or {}
+                        if not block.get("python"):
+                            continue
+                        checked += 1
+                        with self.subTest(kind=kind, resource=bare(resource["metadata"]["name"]), operation=operation["name"]):
+                            self.assertTrue(
+                                block.get("entrypoint"),
+                                f"names no entrypoint, so it would run one of {sorted(bound)} from the init",
+                            )
+        self.assertGreater(checked, 0)
 
 
 class ResourceObservationEventLoopTests(unittest.TestCase):
