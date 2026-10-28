@@ -135,7 +135,30 @@ records and table layout 1.0's do not match.
 `services/workflow.py` has no handler for it: dispatching it would fall through to the
 unknown-step path.
 
+### One Kafka user for the whole deployment
+
+Every app and every runtime authenticate as `kaspr.authentication` (02 §2.3), so a runtime holds
+the grants only the control plane needs: deleting any runtime's topics and group, and reading every
+materialized topic, not just its own (21 §21.1). *To narrow it*: chart values for a runtime user
+of its own. That user would need Create, Read and Write on `<release>-mat-` topics, Read on
+`<release>-mat-` groups and Write on its transactional ids; Write on the status and table-events
+topics, Create and Read on the runtime control topic; Read on the source topics; and no Delete.
+
 ## 14.2 Correctness hazards
+
+### A topic the Kafka user cannot see passes for an empty one
+
+Discovery reads partitions from a metadata request for every topic (09 §9.6), and a broker leaves
+out the topics the user may not describe. So a topic the deployment's Kafka user cannot see
+samples like an empty one: the materialization is created, its runtime is assigned none of the
+topic's partitions, and the table stays empty while the materialization reads `running`; only the
+lag's `topic does not exist` says otherwise (21 §21.5). A topic that does not exist yet reads the
+same. *To fix*: refuse the create, and an update that adds the topic, at the API when the topic is
+missing from the cluster's metadata, naming it; the metadata client the topic list uses reads every
+topic and names none, so asking creates nothing. Failing `start_discovery` too is a safe backstop.
+Failing `discover_tables` is not: an update's tables are written into the materialization at
+`tables_claimed`, before it runs, and `apply_runtime` then refuses the table that has no schema
+(`table_missing`).
 
 ### Exactly once covers what the topic still holds
 
@@ -294,6 +317,8 @@ assigned until something forces a rebalance — 0.5.0's settings topics, 0.6.0's
 1.0's `materialization-table-events`. The 1.0 rollout scales the control plane to zero anyway
 (12 §12.13); for any other release the procedure is in 17 §17.12. A runtime whose topics an edit
 changes meets the same thing, and the control plane drains it rather than rebalance it (§14.1).
+So does a runtime whose Kafka user could not read one of its topics when it started: granted Read
+later, it is not assigned the topic until it stops for longer than the session timeout (21 §21.7).
 
 *To fix (in Kaspr):* after a static rejoin, a member whose assignment lacks topics it subscribes to
 should rejoin. The broker rebalances a stable group when its leader rejoins under a known member

@@ -10,7 +10,7 @@ Where this document and the code disagree, the implementation is authoritative, 
 2. `python/src/midstream/`
 3. `python/tests/`
 
-> **Looking for more depth?** `docs/handbook/` is a 19-document reference manual: full field
+> **Looking for more depth?** `docs/handbook/` is a 21-document reference manual: full field
 > tables, decision tables, worked examples, an operations runbook, a test map and a known-gaps
 > register. Start at [`docs/handbook/README.md`](./handbook/README.md) and load only the
 > document you need; this file cites it as `handbook <n>`. The console has its own, `console/docs/`.
@@ -221,6 +221,12 @@ the materialization (handbook 06 §6.4).
 
 Topics added by a deploy keep the old consumer-group assignment until one forced rebalance
 (handbook 06, 14 §14.3).
+
+Every app and runtime connects as one Kafka user, `kaspr.authentication`. On a cluster that
+enforces ACLs it needs Create, Read and Write on topics prefixed `<release>-` (every app declares
+its topics at every start), Read on groups and Write on transactional ids prefixed so (Kaspr runs
+every app exactly once, transactionally), and Read on each source topic; Delete on `<release>-mat-`
+topics and groups only to delete materializations; nothing on the cluster (handbook 21).
 
 ## 10. Lifecycle
 

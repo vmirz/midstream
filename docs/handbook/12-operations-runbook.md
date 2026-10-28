@@ -161,7 +161,9 @@ confirm it: [17 — Settings](./17-settings.md) §17.12.
 | the Secret `kaspr.authentication.passwordSecret` names (`<release>-kafka`) | the Kafka user's password |
 | `<release>-auth` (`midstream-auth` in dev) | Session signing key, the console's service token, the first administrator. Optional to start, but without `signing-key` nobody can sign in |
 
-The Kaspr operator must be installed and the `kaspr.io` CRDs registered.
+The Kaspr operator must be installed and the `kaspr.io` CRDs registered. On a Kafka cluster that
+enforces ACLs, the Kafka user needs the grants of [21 §21.3](./21-kafka-access.md) first: without
+Create on the release's topics no app starts, even when the topics exist.
 
 Creating the auth Secret (values never echoed; keep a copy of the bootstrap password somewhere
 safe; a shared console in another release reads the `service-token` as
@@ -309,7 +311,9 @@ kubectl logs -n $NS $(cp_pod) | grep -E 'schema_discovery|start_discovery'
 `connecting to Kafka to sample topic … timed out after 60s` is a connection or authentication
 failure: check `K_KAFKA_*` and the ACLs. An empty topic is not a failure: schema 0 then holds the
 metadata columns only, and the runtime adds every field as data arrives (09 §9.7). The completion
-event's `sampled_records` says how many records schema 0 was built from.
+event's `sampled_records` says how many records schema 0 was built from. A missing ACL times
+nothing out: a topic the Kafka user may not see samples as an empty one, and one it may describe
+but not read fails the step with `TopicAuthorizationFailedError` ([21 §21.5](./21-kafka-access.md)).
 
 ### `discovered` / `schema_discovered` or `table_created` — stuck
 
@@ -553,6 +557,12 @@ five in a row end as `failed` / `drop_table_failed`, whose message carries the G
 ### `running` / `waiting_for_source_records`
 
 Healthy. The source topic simply has no new records. Not an error.
+
+Unless the topic does have records: on a cluster that enforces ACLs, a Kafka user that may not read
+the topic gives a runtime that runs without it, assigned none of its partitions, and the
+materialization's `consumer_lag.error` reads `<topic>: topic does not exist`. Granting Read is not
+enough on its own; stop the materialization past the session timeout and resume it
+([21 §21.7](./21-kafka-access.md)).
 
 ## 12.4 Data not appearing in the table
 
@@ -909,6 +919,10 @@ kafka-console-consumer --bootstrap-server $BROKERS --topic $RT-commits --max-mes
 | `failed` / `start_discovery_failed`, "connecting to Kafka … timed out" | Source topic unreachable / auth failure | Check `K_KAFKA_*` env and ACLs; delete and recreate once fixed |
 | `failed` / `apply_runtime_failed` or `delete_runtime_failed`, "Kubernetes … timed out after 90s" | The API server never answered a call: past its own 60 s request timeout, so a lost connection rather than a slow server | Check the API server and the network path to it; resume or re-issue the delete. A failed re-apply left the deployed runtime as it was |
 | `failed` / `cleanup_runtime_kafka_failed`, "Kafka admin … timed out after 120s" | A broker never answered an admin call | Check the brokers, then re-issue the delete |
+| `failed` / `cleanup_runtime_kafka_failed`, "TopicAuthorizationFailedError … failed to delete topic" or "GroupAuthorizationFailedError … failed to delete consumer group" | The Kafka user may not delete the runtime's topics or group | Grant F1 and F2 ([21 §21.3](./21-kafka-access.md)), then re-issue the delete |
+| An app's pods restart; its log: `Cannot create topic: … Authorization failed`, or `TransactionalIdAuthorizationFailed` | The Kafka user may not create the release's topics, which every start declares, or write its transactional ids | Grant R1 or R3 ([21 §21.3](./21-kafka-access.md)); the pods start on their next restart |
+| A KasprApp never ready, its log silent after `Subscribed to topic(s)` | The Kafka user may not read the app's consumer group | Grant R2 ([21 §21.3](./21-kafka-access.md)), then restart the app's pods |
+| `running`, a table that stays empty while its topic has records; `consumer_lag.error` "topic does not exist" | The Kafka user may not read the topic | Grant Read, then stop, wait past the session timeout and resume ([21 §21.7](./21-kafka-access.md)) |
 | Log: "Observing KasprApp … timed out; the next sweep observes it again" | The API server did not answer a read within 90 s | Nothing, if it recovers: the sweep observes again every two minutes |
 | Stuck `deploying` | Pod scheduling, image pull, RBAC | `kubectl describe kasprapp $RT` |
 | A runtime runs more members than its `replicas` | autoscaling: it is far behind (§12.7) | nothing; the detail's `autoscale.reason` says why. Turn it off for the materialization to stop it |

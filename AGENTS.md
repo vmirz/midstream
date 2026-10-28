@@ -73,7 +73,7 @@ python python/tests/console_fixture.py
 - `/charts/midstream/` — the Helm chart: one domain's control plane, maintenance and tail apps (`domain.*`, `controlPlane.enabled`), and the shared console with its registry of every domain (`console.domains[]`), every resource, topic and table named after the release; a release can hold a domain, the console, or both. `templates/` holds the Kaspr CRs (agents, tasks, tables, webviews), the console's Deployment and the routes (with the redirect from old per-domain hostnames), `ci/` the values files the tests render, `docs/install.md` the installation guide.
 - `/console/` — Midstream Console: a self-contained Node BFF plus React client, one for every domain. It depends on each control plane only through its public HTTP API and is intended to be extractable into its own repository. `server/domains/` is the registry and each domain's client, live store and status; `server/auth/sso.ts` the providers' flows; `server/routes/catalog.ts` the catalogs. See `console/README.md`, and `console/docs/README.md` for the full 17-document handbook.
 - `/docs/source-of-truth.md` — code-derived, end-to-end reference document for deep architecture and implementation context.
-- `/docs/handbook/` — 20-document deep reference manual. Load the specific document you need rather than the whole set:
+- `/docs/handbook/` — 21-document deep reference manual. Load the specific document you need rather than the whole set:
   - `01` system overview · `02` deployment and the chart · `03` configuration · `04` HTTP API · `05` data models
   - `06` event & topic contracts · `07` control-plane workflows · `08` observation & status derivation
   - `09` schema evolution & forks · `10` runtime internals · `11` Iceberg tables & storage
@@ -82,6 +82,7 @@ python python/tests/console_fixture.py
   - `18` identity & access (users, groups, roles, permissions and their scopes, datasets, grants and table-name claims, sessions, how every request is authorized)
   - `19` the live tail (the tail app, exactly once with the snapshot, ownership and forwarding, a table's states, the console's side)
   - `20` domains and the shared console (topologies, the registry, routes and redirects, sessions and single sign-on, federated access tokens, SQL across domains, the federated catalog, lake access)
+  - `21` Kafka access and ACLs (the one Kafka user every app shares, the names its grants cover, required vs feature-only ACLs, what breaks without each, `kafka-acls.sh` and Strimzi examples)
   - Start at `docs/handbook/README.md` for the selection table.
 
 ## Code Style & Patterns

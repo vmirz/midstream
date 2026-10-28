@@ -566,6 +566,13 @@ Observations:
 - The RoleBinding's subject is `<release>-control-plane-app`, the service account kaspr-operator gives the control plane's pods
   because `namePrefix` does not rewrite RBAC subject names automatically.
 
+**Kafka.** The Role is the deployment's only Kubernetes permission; in Kafka it has one user,
+every app's and runtime's `kaspr.authentication`. On a cluster that enforces ACLs, that user must
+create, read and write the release's topics, read its consumer groups, write its transactional ids
+(every app runs exactly once) and read the source topics; to delete materializations, it must also
+delete their runtimes' topics and groups. It needs nothing on the cluster resource. The grants,
+the names they cover and what breaks without each are in [21](./21-kafka-access.md).
+
 ## 2.8 Web views
 
 Every WebView attaches to the control plane through

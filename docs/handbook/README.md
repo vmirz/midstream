@@ -35,6 +35,7 @@ aspirational design prose.
 | 18 | [Identity and access](./18-identity-and-access.md) | How do people sign in? What may each of them do, on each dataset? Where are users, groups, roles, datasets, grants and sessions stored? How are table names kept unique? How is every request authorized? |
 | 19 | [The live tail](./19-live-tail.md) | How do a table's newest records reach the console within seconds? How is each shown exactly once with the committed snapshot? What does the tail app hold, which member serves a table, and who may read it? |
 | 20 | [Domains and the shared console](./20-domains-and-the-shared-console.md) | How do several deployments work as one? What does the console's registry say? How does single sign-on reach every domain? How does one access token work everywhere, a statement join domains, and the federated catalog route? |
+| 21 | [Kafka access and ACLs](./21-kafka-access.md) | What must the deployment's Kafka user be allowed to do, on which names? Which ACLs are required and which only for a feature? What breaks without each? How do I grant them with `kafka-acls.sh` or Strimzi? |
 
 ---
 
@@ -112,6 +113,8 @@ You rarely need the whole handbook. Load only what the task requires.
 | Changing the live tail | `19` → `10 §10.4` → `13 §13.3` |
 | A runtime with more members than its replicas, or changing autoscaling | `07 §7.12a` → `12 §12.7` → `17` |
 | A runtime shown Unhealthy whose members keep restarting | `12 §12.3` → `08 §8.3` → `12 §12.10` |
+| Creating the Kafka user and its ACLs on a cluster that enforces them | `21` → `02 §2.3` → `/docs/install.md` |
+| An app that will not start, or a table that stays empty, on a cluster with ACLs | `21 §21.5` → `21 §21.7` → `12 §12.9` |
 
 ---
 
@@ -178,9 +181,10 @@ There is **no standalone HTTP server process** in this repository. The API only 
 
 ## Handbook stats
 
-19 documents. Every factual claim is traced to a file in this repository or to a measurement on the
+21 documents. Every factual claim is traced to a file in this repository or to a measurement on the
 lab cluster; where the code is ambiguous or a source disagrees, the handbook says so rather than
-guessing.
+guessing. Document 21 also traces into Kaspr, Faust and kaspr-operator, and was checked against a
+broker enforcing its ACLs (§21.9).
 
 Verified for 1.0.0-rc.1 against: 1,251 passing tests (`python -m unittest discover -s python/tests -p 'test_*.py'`),
 `helm template` with every values file, the console's `npm run typecheck && npm test && npm run build`
