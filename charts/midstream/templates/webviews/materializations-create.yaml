@@ -17,6 +17,12 @@ spec:
       - prepare-request
       - send-request-event
       - return-response
+    init:
+      python: |
+        from midstream.kafka.metadata import get_metadata_client
+
+        # Shared with the topic views and the maintenance agent so broker connections stay warm.
+        metadata_client = get_metadata_client()
     operations:
       - name: prepare-request
         tables:
@@ -30,14 +36,16 @@ spec:
           entrypoint: prepare_request
           python: |
             from midstream.identity.authorization import authorize
-            from midstream.web.materializations import create_materialization
+            from midstream.web.materializations import create_materialization_async
 
+            # Kafka is asked for every topic, and awaited: this loop also serves every other request.
             async def prepare_request(request, control_plane_table, settings_table, directory_table):
                 principal = authorize(request, directory_table, "materializations.create")
                 body = await request.json()
-                acceptance = create_materialization(
+                acceptance = await create_materialization_async(
                     control_plane_table,
                     body,
+                    metadata_client=metadata_client,
                     submitted_by=principal.attribution,
                     submitted_by_id=principal.user_id,
                     principal=principal,

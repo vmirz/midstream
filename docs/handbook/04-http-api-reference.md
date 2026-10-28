@@ -357,6 +357,15 @@ generated from the id and length-bounded. Request intake records that name as th
     (`permission: dataset.write`); a `<dataset>.<name>` is taken → `409 conflict`
     (`reason: table_name_taken`, `materialization_id` of the holder). Each names its row in
     `details.field`, `index`, `dataset`, `table` and `source_topic`.
+13. Kafka is asked for every topic (`require_listed_topics`), awaited, for at most 10 s: one read of
+    every topic in the cluster, naming none, so a missing topic is not created by asking. A topic
+    it does not list — it does not exist, or the deployment's Kafka user may not describe it (21
+    §21.5) — → `400 invalid_request`, `reason: source_topic_missing`, `field:
+    tables.<index>.source_topic` of the first such topic and `source_topics` naming all of them:
+    `Kafka has no topic ghost, or the deployment's Kafka user may not describe it.` Kafka not
+    answering → `503 unavailable`, its error as `reason`: nothing is accepted unchecked. Accepted, such
+    a topic would pass discovery for an empty one, and its runtime would be assigned none of its
+    partitions: a table that stays empty while the materialization reads `running`.
 
 A duplicate check runs *before* normalization: if `materialization:<id>` already exists,
 `already_exists` (409) is raised. In practice this can only fire when `materialization_id` is
@@ -875,7 +884,11 @@ removed topic's table with no decision, a table that does not exist, a table sti
 `removed_tables`, an action other than `keep`/`drop`, or dropping a kept table while adding its topic
 back (`removed_tables`). A change of topics needs `dataset.write` on the dataset of every table it
 adds, writes again, removes or drops (`403`, naming the dataset), and a new table's name must be free
-there (`409 table_name_taken`, as for a create).
+there (`409 table_name_taken`, as for a create). Last, Kafka is asked for the topics the change
+starts reading — those it adds, and those of kept tables it writes again — as for a create (§4.5,
+step 13): `400 source_topic_missing` on the first one's row, or `503` when Kafka does not answer.
+Topics it reads already are not asked about, and a change that starts reading none asks Kafka
+nothing.
 
 **Claimed first.** A change that adds tables is kept on the materialization as its
 `pending_topic_change` and claims the new names — releasing the names of tables it drops in the same
@@ -1314,7 +1327,7 @@ class WebError(Exception):
 
 | Constructor | `code` | `status_code` | `details` |
 |-------------|--------|---------------|-----------|
-| `invalid_request(msg, field_name=...)` | `invalid_request` | `400` | `{"field": <name>}` or `{}` |
+| `invalid_request(msg, field_name=...)` | `invalid_request` | `400` | `{"field": <name>}` or `{}`; a topic Kafka does not list adds `reason: source_topic_missing` and `source_topics` (§4.5) |
 | `not_found(msg, resource=..., identifier=...)` | `not_found` | `404` | `{"resource": ..., "id": ...}` |
 | `already_exists(msg, resource=..., identifier=..., field_name=...)` | `already_exists` | `409` | `{"resource": ..., "id": ...}`, plus `"field"` when given |
 | `conflict(msg, reason=...)` | `conflict` | `409` | `{"reason": ...}` — the materialization's state does not allow the request, or (`settings_changed`) the settings changed since the client read them |

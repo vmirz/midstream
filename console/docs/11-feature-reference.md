@@ -176,7 +176,7 @@ the next; choosing a chosen one removes it.
 | The limit | At `max_materialization_topics`, unchosen topics are disabled and the hint says so |
 | Long names | Truncated in the middle, so the end, where versions and suffixes differ, stays visible |
 | Keyboard | Typing on the closed field opens the search with that character. `↑` `↓` `PageUp` `PageDown` move, `Enter` chooses, `Esc` closes the list without closing the dialog |
-| Unlisted names | A typed name that is not listed can be used through **Use "name"**. The field then warns that the name is not in the cluster's topic list |
+| Unlisted names | A typed name that is not listed can be used through **Use "name"**. The field then warns that the name is not in the cluster's topic list. On **Create** the control plane asks Kafka again, and refuses a topic it still does not list (below) |
 | Freshness | **Updated N ago** in the footer; the reload button asks Kafka again. A stale list says Kafka is unreachable |
 | No topic list | If the list cannot load, the picker says why and still accepts a typed name, marked as unchecked |
 
@@ -199,6 +199,10 @@ destination is available (given, or the default). Labels are parsed client-side;
 a malformed pair raises an "Invalid labels" toast naming the offending pair and does not submit.
 Submitting waits until the tables' names are claimed (08 §8.6), so a name someone else claimed first
 is said on its row — *sales.orders is taken* — and the dialog stays open, the dataset list refreshed.
+A topic Kafka does not list — missing, or hidden from the deployment's Kafka user — is refused the
+same way, on its row: *Kafka has no topic ghost, or the deployment's Kafka user may not describe it.*
+(handbook 04 §4.5). That row keeps **Create** enabled: nothing on the row can fix it, and once the
+topic exists, or the user may read it, sending again succeeds.
 On success: a toast (*…is being discovered and deployed*, or that its names are still being claimed
 when the directory had not answered in 10 seconds), the form resets, the dialog closes, and the app
 navigates to the new detail page. Any other failure: an error toast, and `ApiError.details.field`
@@ -252,7 +256,8 @@ topic shows the table it writes: its own, `sales.orders`, fixed, for a topic alr
 table, *kept table, written again*, for a kept table's topic; and for any other a new row, a dataset
 and a name, as on create, the name apart from every name the materialization has — kept tables' and
 dropped ones' included. Topics already read keep their order, so reordering alone restarts nothing
-(`keepOrder`). While an earlier change's new tables are still being claimed, the dialog says so —
+(`keepOrder`). A topic the change starts reading that Kafka does not list is refused as on create:
+on its row, or under the topics for a kept table's topic, which has no row of its own. While an earlier change's new tables are still being claimed, the dialog says so —
 *Adding sales.order_refunds: their names are being claimed* — and the topics cannot change until it is
 done.
 

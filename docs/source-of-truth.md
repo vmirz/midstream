@@ -234,13 +234,16 @@ topics and groups only to delete materializations; nothing on the cluster (handb
 readable unquoted), the topics (at most `max_materialization_topics`); a request naming a
 destination, namespace, runtime name or storage is refused, and with no `gs://` destination
 configured no create is accepted (`409 destination_not_configured`, handbook 04 §4.5.2) —
-previews the claim of the tables' names against the directory, and answers 202. `request-intake`
+previews the claim of the tables' names against the directory, asks Kafka for every topic — one it
+does not list, missing or hidden from the Kafka user, is refused, `400 source_topic_missing`, and a
+Kafka that does not answer is a `503` — and answers 202. `request-intake`
 persists desired state and sends `claim_tables` to the directory; `identity-intake` claims every name
 or none and answers `tables_claimed` — and the workflow emits `start_discovery` — or
 `claim_rejected`, which marks the materialization deleted with the reason (handbook 07 §7.2a).
 
 1. `start_discovery` samples up to 200 records of each topic and infers each table's schema 0 — for
-   an empty topic, the metadata columns alone, the runtime adding fields as data arrives.
+   an empty topic, the metadata columns alone, the runtime adding fields as data arrives. A topic
+   gone from the metadata since the request fails the create as `source_topic_missing`.
 2. `create_table` writes each table's metadata v0 and catalog pointer, one table at a time: field ids 1–9 for the metadata columns
    (`_kafka_timestamp`, partition, offset, key, headers, `_materialized_at`, `_unmapped`), payload
    from 10; partitioned by the UTC day (or hour, or month, or none) of `_kafka_timestamp`; a location that cannot hold

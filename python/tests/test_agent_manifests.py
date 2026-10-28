@@ -469,6 +469,69 @@ class TopicsAnalyzeEventLoopTests(unittest.TestCase):
         self.assertIs(received["settings_table"], tables["settings_table"])
 
 
+class MaterializationRequestKafkaTests(unittest.TestCase):
+    """A create, or an update that starts reading a topic, asks Kafka for it before it is accepted.
+
+    A topic Kafka does not list once passed for an empty one: the runtime was assigned none of its
+    partitions, and its table stayed empty while the materialization read `running`.
+    """
+
+    VIEWS = {
+        "materializations-create": ("create_materialization_async", "create_materialization", ()),
+        "materializations-update": ("update_materialization_async", "update_materialization", ("mat-1",)),
+    }
+
+    def _view(self, name: str) -> dict:
+        try:
+            import yaml  # noqa: F401
+        except ImportError:
+            self.skipTest("pyyaml is required to read manifests")
+        return document("KasprWebView", name)
+
+    def test_the_views_await_the_check_on_the_shared_metadata_client(self) -> None:
+        for name, (checked, unchecked, _) in self.VIEWS.items():
+            with self.subTest(webview=name):
+                processors = self._view(name)["spec"]["processors"]
+                self.assertIn("metadata_client = get_metadata_client()", processors["init"]["python"])
+                entrypoint = _entrypoint(processors["operations"][0]["map"])
+                self.assertIsInstance(entrypoint, ast.AsyncFunctionDef)
+                awaited = {
+                    _called_name(node.value)
+                    for node in ast.walk(entrypoint)
+                    if isinstance(node, ast.Await) and isinstance(node.value, ast.Call)
+                }
+                self.assertIn(checked, awaited)
+                calls = {_called_name(node) for node in ast.walk(entrypoint) if isinstance(node, ast.Call)}
+                self.assertNotIn(unchecked, calls, "the view without the check accepts any topic")
+
+    def test_the_view_hands_its_metadata_client_on(self) -> None:
+        for name, (checked, _, arguments) in self.VIEWS.items():
+            with self.subTest(webview=name):
+                operation = self._view(name)["spec"]["processors"]["operations"][0]["map"]
+                received = {}
+
+                async def check(table, *args, **kwargs):
+                    received.update(kwargs)
+                    await asyncio.sleep(0)
+                    return types.SimpleNamespace(response={"ok": True}, request_event=types.SimpleNamespace(to_dict=dict))
+
+                class Request:
+                    async def json(self):
+                        return {"tables": [{"source_topic": "orders", "dataset": "shop"}]}
+
+                metadata_client = object()
+                scope = {"metadata_client": metadata_client}
+                exec(compile(operation["python"], f"<{name}>", "exec"), scope)
+                scope["authorize"] = lambda request, directory_table, permission: types.SimpleNamespace(attribution="jane", user_id="usr-1")
+                scope[checked] = check
+                tables = {"control_plane_table": object(), "settings_table": object(), "directory_table": object()}
+
+                result = asyncio.run(scope[operation["entrypoint"]](Request(), *arguments, **tables))
+
+                self.assertEqual({"ok": True}, result["response"])
+                self.assertIs(metadata_client, received["metadata_client"])
+
+
 class ResourceObservationEventLoopTests(unittest.TestCase):
     """The observation agent reads KasprApps from the Kubernetes API on the shared event loop.
 

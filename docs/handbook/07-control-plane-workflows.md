@@ -136,12 +136,13 @@ that (§7.5). A table drop retries every failed pass, timeouts included (§7.10)
 - `last_error = <error>`
 - operation record with `status: "failed"` and `error`
 
-Two failures carry a reason of their own instead of `<step>_failed`: `create_table` finding
-another materialization's table at a table's location (`TableLocationInUseError`,
-`table_location_in_use`), and `apply_runtime` for a materialization one of whose tables has neither
-a record nor a discovered schema (`TableMissingError`, `table_missing`): delete it and create it
-again. A table with a discovered schema but no record — a create that did not finish — is created by
-the apply instead (§7.3).
+Three failures carry a reason of their own instead of `<step>_failed`: `start_discovery` finding a
+source topic the cluster's metadata does not list (`SourceTopicMissingError`,
+`source_topic_missing`, §7.2), `create_table` finding another materialization's table at a table's
+location (`TableLocationInUseError`, `table_location_in_use`), and `apply_runtime` for a
+materialization one of whose tables has neither a record nor a discovered schema
+(`TableMissingError`, `table_missing`): delete it and create it again. A table with a discovered
+schema but no record — a create that did not finish — is created by the apply instead (§7.3).
 
 **There is no automatic retry of a `failed` status.** The sweep will keep observing
 (desired/observed mismatch staleness), but nothing re-drives the failed step. Recovery is a
@@ -189,6 +190,11 @@ status.observed_phase       == "requested"   else ValueError
    `deleted` — a delete arrived while discovery waited — record the operation `skipped` as the early
    drop does, log `control_plane_start_discovery_skipped`, and stop: the queued `delete_runtime`
    takes over. Any other change, such as a stop, is kept.
+   A source topic the cluster's metadata does not list — it does not exist, or the Kafka user may
+   not describe it (`DiscoverySample.missing`) — fails the step: `SourceTopicMissingError`, `failed` /
+   `source_topic_missing`, naming the topic. Its runtime would be assigned none of the topic's
+   partitions, so the table would stay empty while the materialization read `running`. The API
+   refuses such a topic before the create is accepted (04 §4.5); this catches one gone since.
 5. Persist each table's projection of schema 0 (`MaterializationSchema`, 05 §5.5).
 6. `replace(materialization, updated_at=discovered_at)`, on the re-read record.
 7. Status → `observed_phase=discovered`, `phase_reason=schema_discovered`,
@@ -215,6 +221,7 @@ No `observation_policy`, so it is published directly (`build_direct_work_output`
 
 | Symptom | Cause |
 |---------|-------|
+| `failed` / `source_topic_missing`, "Kafka has no topic … or the deployment's Kafka user may not describe it" | The topic was deleted, or the Kafka user lost Describe on it, between the request and discovery |
 | `failed` / `start_discovery_failed`, `last_error` "connecting to Kafka to sample topic … timed out after 60s" | The consumer could not connect or authenticate within `connect_timeout_seconds` |
 | `failed` / `start_discovery_failed`, "schema discovery from topic … timed out after 75s" | The whole read overran its deadline, e.g. a consumer that blocked its loop |
 | `observed_phase=failed`, `phase_reason=start_discovery_failed` | Discovery raised another non-`ValueError` |
@@ -222,7 +229,8 @@ No `observation_policy`, so it is published directly (`build_direct_work_output`
 
 An empty source topic is not a failure: discovery returns no records, and schema 0 holds the
 metadata columns only; the runtime adds every field as data arrives (09 §9.7). Only that poll's timeout means "empty"; a connection that never
-completes raises, where it once could pass for an empty topic. Stopping the consumer is bounded
+completes raises, where it once could pass for an empty topic, and so does a topic missing from the
+metadata, which an empty topic is not: it has partitions. Stopping the consumer is bounded
 cleanup (5 s) and never replaces what was read or the error being raised.
 
 ## 7.2a Steps: `tables_claimed` and `claim_rejected`
@@ -808,7 +816,8 @@ PATCH /materializations/{id}  {"tables": [...], "removed_tables": {...}}
                     spec_version + 1 (one per request, replicas included)
   → work step: discover_tables when topics were added (after tables_claimed); drop_table when only
                kept tables are dropped; apply_runtime otherwise
-discover_tables   sample only the added topics, save each new table's schema 0   (status message only)
+discover_tables   sample only the added topics, save each new table's schema 0   (status message only);
+                  a topic gone since the API asked Kafka for it starts empty, with a warning logged
 create_table      create each new table, a pass each; then apply_runtime
 apply_runtime     the binding's topics differ from the materialization's: drain
                   → render with replicas: 0, binding.drain_started_at + topics_before_drain

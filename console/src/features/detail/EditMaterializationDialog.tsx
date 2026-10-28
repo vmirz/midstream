@@ -13,7 +13,16 @@ import { displayName } from '@/lib/format';
 import { useApi } from '@/lib/domains';
 import { labelProblem, normalizeLabel } from '@shared/tableNames';
 import { FixedTableRow, TableDraftRow } from '../datasets/TableDraftRow';
-import { claimRow, defaultDataset, draftProblems, draftTables, type DraftProblem, type TableDraft } from '../datasets/tableDrafts';
+import {
+  blocksSubmit,
+  claimRow,
+  defaultDataset,
+  draftProblems,
+  draftTables,
+  rowProblem,
+  type DraftProblem,
+  type TableDraft,
+} from '../datasets/tableDrafts';
 import { useDatasets, useRefreshDatasets } from '../datasets/useDatasets';
 import { TopicPicker, assignableMembers } from '../materializations/TopicPicker';
 import { keepOrder, planTopicChange } from './topicChange';
@@ -131,7 +140,7 @@ export function EditMaterializationDialog({
     [drafts, tableRules, datasets.data, existingNames],
   );
   const problemOf = (draft: TableDraft, position: number): DraftProblem | null => rowErrors.get(draft.topic) ?? problems[position] ?? null;
-  const draftsBlocked = drafts.some((draft, position) => problemOf(draft, position) !== null);
+  const draftsBlocked = drafts.some((draft, position) => blocksSubmit(problemOf(draft, position)));
   const labelError = labelProblem(label, labelMaxLength);
   const labelChanged = normalizeLabel(label) !== normalizeLabel(materialization.name) && !(normalizeLabel(label) === '' && materialization.name === materialization.materialization_id);
   const others = useMemo(
@@ -190,9 +199,12 @@ export function EditMaterializationDialog({
       const row = failure instanceof ApiError ? claimRow(failure.details) : null;
       const topic = row ? body.tables?.[row.index]?.source_topic : undefined;
       if (row && topic && drafts.some((draft) => draft.topic === topic)) {
-        setRowErrors(new Map([[topic, { field: row.field === 'dataset' ? 'dataset' : 'name', message }]]));
+        setRowErrors(new Map([[topic, rowProblem(row.field, message)]]));
         setError(null);
         void refreshDatasets();
+      } else if (row?.field === 'source_topic') {
+        // A kept table's topic, read again, has no row of its own: said under the topics.
+        setError({ field: 'tables', message });
       } else {
         const field = failure instanceof ApiError && typeof failure.details.field === 'string' ? failure.details.field : null;
         setError({ field, message });

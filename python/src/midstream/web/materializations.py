@@ -4,16 +4,18 @@ A materialization's tables are each in a dataset, named when their topics are pi
 `tables: [{source_topic, dataset, name?}]`. Creating a materialization, and an update that adds
 topics, claim the new tables' names in the directory; the view previews the claim with the
 directory agent's own checks, so a conflict it can see - a dataset that does not exist, one the
-caller cannot add tables to, a name another table has - is refused at once (404, 403, 409). Adding,
-removing or dropping a table, and deleting a materialization, need `dataset.write` on each dataset
-it touches; its schemas, `dataset.view_schema` on its dataset.
+caller cannot add tables to, a name another table has - is refused at once (404, 403, 409). So is
+a topic Kafka does not list (400): the create and update views ask Kafka for every topic the request
+starts reading (`require_listed_topics`). Adding, removing or dropping a table, and deleting a
+materialization, need `dataset.write` on each dataset it touches; its schemas,
+`dataset.view_schema` on its dataset.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from typing import Any
 from uuid import uuid4
 
@@ -24,6 +26,7 @@ from midstream.config import (
     is_gcs_destination_uri,
 )
 from midstream.identity.principals import Principal
+from midstream.kafka.metadata import KafkaMetadataClient
 from midstream.models import (
     Dataset,
     Materialization,
@@ -42,6 +45,7 @@ from midstream.scale import InvalidScaleError, normalize_replicas
 from midstream.services.identity import IdentityRejection, new_request_id, preview_identity_request
 from midstream.services.table_claims import claim_request
 from midstream.services.table_maintenance import maintenance_request_messages
+from midstream.services.topic_analysis import missing_topics_async, missing_topics_message
 from midstream.services.topic_changes import TopicChangeError, plan_topic_change
 from midstream.settings import effective_runtime_config, resolve_config
 from midstream.storage import (
@@ -68,7 +72,7 @@ from midstream.table_names import (
     table_name_for_topic,
     TABLE_NAME_MAX_LENGTH,
 )
-from midstream.web.errors import WebError, already_exists, conflict, forbidden, invalid_request, not_found
+from midstream.web.errors import WebError, already_exists, conflict, forbidden, invalid_request, not_found, unavailable
 from midstream.web.responses import (
     MutationAcceptance,
     build_accepted_response,
@@ -568,6 +572,23 @@ def create_materialization(
     return acceptance
 
 
+async def create_materialization_async(
+    table: TableProtocol,
+    body: dict[str, Any],
+    *,
+    metadata_client: KafkaMetadataClient,
+    **options: Any,
+) -> MutationAcceptance:
+    """`create_materialization`, then every topic asked of Kafka (`require_listed_topics`).
+
+    The create view's entrypoint: Kafka is awaited, so the loop serves other requests meanwhile, and
+    only once the request is otherwise valid. `options` are `create_materialization`'s.
+    """
+    acceptance = create_materialization(table, body, **options)
+    await require_listed_topics(acceptance.materialization.source_topics, body, metadata_client=metadata_client)
+    return acceptance
+
+
 def stop_materialization(
     table: TableProtocol,
     materialization_id: str,
@@ -773,6 +794,67 @@ def update_materialization(
         acceptance.response["claim_request_id"] = resolved_claim_id
         acceptance.response["claim_status_url"] = f"/identity/requests/{resolved_claim_id}"
     return acceptance
+
+
+async def update_materialization_async(
+    table: TableProtocol,
+    materialization_id: str,
+    body: Any,
+    *,
+    metadata_client: KafkaMetadataClient,
+    **options: Any,
+) -> MutationAcceptance:
+    """`update_materialization`, then the topics the change starts reading asked of Kafka.
+
+    Those are the topics added and the topics of kept tables written again; a change that starts
+    reading none asks Kafka nothing. The update view's entrypoint. `options` are
+    `update_materialization`'s.
+    """
+    before = get_materialization(table, materialization_id)
+    acceptance = update_materialization(table, materialization_id, body, **options)
+    reading = set() if before is None else set(before.source_topics)
+    await require_listed_topics(
+        [topic for topic in acceptance.materialization.source_topics if topic not in reading],
+        body,
+        metadata_client=metadata_client,
+    )
+    return acceptance
+
+
+async def require_listed_topics(topics: Iterable[str], body: Any, *, metadata_client: KafkaMetadataClient) -> None:
+    """Refuse topics the Kafka cluster does not list: missing, or hidden from the deployment's Kafka user.
+
+    Discovery would sample such a topic as an empty one and its runtime be assigned none of its
+    partitions, so its table would stay empty however long it ran; on a broker that creates topics
+    on demand, the runtime would create the topic, empty. A `400 invalid_request` names the first
+    one's row (`tables.<index>.source_topic`), with every one in `source_topics`. A Kafka that does
+    not answer is a `503`: nothing is accepted unchecked.
+    """
+    topics = list(topics)
+    if not topics:
+        return
+    try:
+        missing = await missing_topics_async(topics, metadata_client=metadata_client)
+    except Exception as cause:
+        raise unavailable(
+            "Kafka cannot be asked about the topics right now; try again",
+            reason=str(cause) or type(cause).__name__,
+        ) from cause
+    if not missing:
+        return
+    error = invalid_request(f"{missing_topics_message(missing)}.", field_name=_topic_field(body, missing[0]))
+    error.details.update(reason="source_topic_missing", source_topics=missing)
+    raise error
+
+
+def _topic_field(body: Any, topic: str) -> str:
+    """The request's field for `topic`'s row, named as `requested_tables` names it."""
+    items = body.get("tables") if isinstance(body, dict) else None
+    for index, item in enumerate(items if isinstance(items, list) else []):
+        source = item.get("source_topic") if isinstance(item, dict) else None
+        if isinstance(source, str) and source.strip() == topic:
+            return f"tables.{index}.source_topic"
+    return "tables"
 
 
 def _absent(value: Any) -> bool:

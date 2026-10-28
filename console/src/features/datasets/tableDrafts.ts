@@ -5,7 +5,8 @@
  * the topic until someone types one. The rows are checked as they change, against what the console
  * knows: the name rules, names unique in the materialization, and the names each dataset already
  * holds. The control plane checks again when the names are claimed; a refusal it sends names the row
- * (`tables.<index>.<field>`), and `claimRow` finds it.
+ * (`tables.<index>.<field>`), and `claimRow` finds it. It also refuses a topic Kafka does not list, on
+ * the topic's row: a problem with the topic itself, which no change to the row can fix.
  */
 
 // Relative and type-only where it can be, so `node --test` loads this without the bundler's aliases.
@@ -22,9 +23,9 @@ export interface TableDraft {
   edited: boolean;
 }
 
-/** What is wrong with a row, and which of its fields. */
+/** What is wrong with a row, and which of its fields; `topic` for the topic itself. */
 export interface DraftProblem {
-  field: 'dataset' | 'name';
+  field: 'dataset' | 'name' | 'topic';
   message: string;
 }
 
@@ -104,6 +105,20 @@ export function claimRow(details: Record<string, unknown>): { index: number; fie
     }
   }
   return null;
+}
+
+/** The problem a refusal names on a row: its dataset, the topic itself, or else its name. */
+export function rowProblem(field: 'dataset' | 'name' | 'source_topic' | null, message: string): DraftProblem {
+  return { field: field === 'dataset' ? 'dataset' : field === 'source_topic' ? 'topic' : 'name', message };
+}
+
+/**
+ * Whether a row's problem keeps the form from being sent. One with the topic does not: Kafka not
+ * listing it is a fact about the cluster, which can change - the topic created, or the deployment's
+ * Kafka user allowed to see it - while the row stays as it is. The control plane asks again.
+ */
+export function blocksSubmit(problem: DraftProblem | null): boolean {
+  return problem !== null && problem.field !== 'topic';
 }
 
 /** The dataset to start a new row with: the last one chosen, else the only one the person may add tables to. */

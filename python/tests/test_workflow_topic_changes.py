@@ -250,6 +250,18 @@ class AddingTopicsTests(TopicChangeTestCase):
         self.assertEqual("orders,payments,refunds", self.writer_topics())
         self.assertEqual(["orders", "payments", "refunds"], get_runtime_binding(self.table, MATERIALIZATION_ID).source_topics)
 
+    def test_an_added_topic_gone_by_its_discovery_still_gets_its_table_and_a_warning(self) -> None:
+        event = self.change(["orders", "payments", "refunds"])
+        self.discovery.missing = {"refunds"}
+
+        with self.assertLogs("midstream.services.workflow", level="WARNING") as logs:
+            create = self.process(event)
+
+        self.assertEqual("create_table", create.step)
+        self.assertIn("Kafka has no topic refunds", logs.output[0])
+        refunds = get_materialization_schema(self.table, MATERIALIZATION_ID, "refunds")
+        self.assertEqual({"metadata"}, {field["kind"] for field in refunds.fields})
+
     def test_the_awaited_drain_matches_the_blocking_one(self) -> None:
         import asyncio
 

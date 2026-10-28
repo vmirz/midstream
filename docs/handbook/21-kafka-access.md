@@ -124,6 +124,7 @@ use the same user:
 | Call | Kafka requests | Needs | Where |
 |---|---|---|---|
 | The topic list, topic analysis | Metadata for every topic, ListOffsets | Describe on each topic shown (R4, F3) | `GET /topics`, `POST /topics/analyze` (04 §4.9.1, §4.9.1a) |
+| The topic check of a create or a change of topics | Metadata for every topic | Describe on each topic it starts reading (R4) | `POST /materializations`, `PATCH /materializations/{id}` (04 §4.5) |
 | Discovery | A consumer of no group: Metadata for every topic, ListOffsets, Fetch | Read on the source topics (R4) | `start_discovery`, `discover_tables` (07 §7.2) |
 | The lag refresh, every minute | Metadata, ListOffsets; OffsetFetch for each runtime's group | Describe on the source topics (R4) and on `<rt>-app` (R2) | `consumer_lag`, which autoscaling reads (07 §7.12a) |
 | The drain, when a change of topics adds one | DescribeGroups; OffsetCommit for the emptied `<rt>-app`, at generation −1 | Read on the group (R2) and on each added topic (R4) | `await_runtime_drained` (07 §7.9a) |
@@ -160,10 +161,11 @@ What each missing grant did on a broker that enforced the rest (§21.9):
 | Read or Write on `<release>-` topics | Without Read the app crashes at its next fetch: taking Read away for a second crashed the running control plane and tail app. Without Write its sends are refused | `Fetcher]: Crashed reason=TopicAuthorizationFailedError('<topic>')` |
 | Write on the transactional ids | Every app crashes as soon as it is assigned partitions | `Crashed reason=TransactionalIdAuthorizationFailed('<app id>-0-0')` |
 | Read on the groups | The app subscribes, then waits without end and logs nothing. It did not recover when the grant came back; a restart did | The KasprApp is never ready; the broker's authorizer log: `Denied operation = DESCRIBE … Group:LITERAL:<app id> for request = FindCoordinator` |
-| Read on a source topic | Discovery cannot see the topic and samples nothing, which passes for an empty topic, so the materialization is created and runs. Its runtime is assigned no partition of the topic, and the table stays empty | `running`, with an empty table; the runtime logs `Topic <topic> is not authorized for this client` once; the materialization's `consumer_lag.error` reads `<topic>: topic does not exist` |
+| Read on a source topic | Kafka does not list the topic to the user, so the create, or the change that adds the topic, is refused before anything is made (04 §4.5) | `400 invalid_request`, `reason: source_topic_missing`: `Kafka has no topic <topic>, or the deployment's Kafka user may not describe it.` |
 | Read on a source topic the user may describe | Discovery fails | `failed` / `start_discovery_failed`, `TopicAuthorizationFailedError` |
+| Read on a source topic, lost while its materialization runs | Its runtime is assigned no partition of the topic, and the table stops growing (14 §14.2) | `running`; the runtime logs `Topic <topic> is not authorized for this client` once; the materialization's `consumer_lag.error` reads `<topic>: topic does not exist` |
 | Delete on `<release>-mat-` topics or groups | `DELETE /materializations/{id}` stops after removing the runtime from Kubernetes: its topics and group stay, its tables are not dropped and its records not purged | `failed` / `cleanup_runtime_kafka_failed`, `failed to delete topic …` or `failed to delete consumer group …`; grant F1 and F2, then delete again |
-| Describe on a topic | `GET /topics` does not list it; analysis and the lag call it missing | `topic does not exist` |
+| Describe on a topic | `GET /topics` does not list it; analysis and the lag call it missing; a create or change that would read it is refused | `topic does not exist`; `source_topic_missing` |
 
 ## 21.6 Granting them
 
@@ -240,13 +242,15 @@ nothing is lost (10 §10.7), but every member pays a restart.
 
 ## 21.7 Source topics
 
-- **Grant Read before the topic is materialized.** `POST /materializations` does not ask Kafka:
-  discovery reads what it can, and a topic it cannot see passes for an empty one (§21.5).
+- **Grant Read before the topic is materialized.** A create, or a change that starts reading a
+  topic, asks Kafka for it first, and is refused with `source_topic_missing` when the user may not
+  describe the topic: grant Read and send it again. A topic the user may describe but not read
+  passes that check and fails discovery instead (§21.5); nothing runs without it either way.
 - **Per topic or per family.** A literal grant for each topic keeps the user to what has been
   materialized; a prefixed one (`sales.`) lets people materialize a family of topics without
   asking each time.
-- **Granted late.** A runtime that started without Read on a topic keeps running without it once
-  the grant comes. Static membership hands a restarted member its stored assignment back, and the
+- **Granted late.** A runtime that lost Read on a topic, or started without it before the create
+  was checked, keeps running without it once the grant comes. Static membership hands a restarted member its stored assignment back, and the
   topic was never in it (14 §14.3). On the test broker neither ten minutes nor a restart brought it
   in; stopping the runtime for longer than the session timeout (`K_BROKER_SESSION_TIMEOUT`, 120 s)
   did. Stop the materialization, wait until

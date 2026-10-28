@@ -17,6 +17,12 @@ spec:
       - prepare-update
       - send-request-event
       - return-response
+    init:
+      python: |
+        from midstream.kafka.metadata import get_metadata_client
+
+        # Shared with the topic views and the maintenance agent so broker connections stay warm.
+        metadata_client = get_metadata_client()
     operations:
       - name: prepare-update
         tables:
@@ -30,15 +36,18 @@ spec:
           entrypoint: prepare_update
           python: |
             from midstream.identity.authorization import authorize
-            from midstream.web.materializations import update_materialization
+            from midstream.web.materializations import update_materialization_async
 
+            # Kafka is asked for the topics the change starts reading, and awaited: this loop also
+            # serves every other request.
             async def prepare_update(request, materialization_id, control_plane_table, settings_table, directory_table):
                 principal = authorize(request, directory_table, "materializations.edit")
                 body = await request.json()
-                acceptance = update_materialization(
+                acceptance = await update_materialization_async(
                     control_plane_table,
                     materialization_id,
                     body,
+                    metadata_client=metadata_client,
                     submitted_by=principal.attribution,
                     submitted_by_id=principal.user_id,
                     principal=principal,

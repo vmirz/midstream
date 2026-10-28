@@ -247,8 +247,8 @@ catalog is `identity/permissions.py`. A permission may imply others, within its 
 or — for what concerns a dataset's tables, such as `data.query` — one dataset at a time.
 
 **Phase reason** — A machine-readable sub-state within a phase, e.g. `waiting_for_table`,
-`commits_stalled`, `table_missing`. A `phase_reason` that is literally a phase name means no real
-status exists yet.
+`commits_stalled`, `table_missing`, `source_topic_missing`. A `phase_reason` that is literally a
+phase name means no real status exists yet.
 
 **Principal** — Who made a request: a signed-in `user`, a `guest`, the console's `service`
 credential, or an access `token`. Every WebView resolves it first, with `authorize(...)`.
@@ -513,8 +513,8 @@ curl -s localhost:6065/materializations/$MAT -H "authorization: Bearer $TOKEN" |
 `observed_phase` and `phase_reason` name what fired; look them up in [12 §12.3](./12-operations-runbook.md).
 
 **Nothing self-heals a `failed` status?**
-Correct. `POST …/resume` is the recovery; `table_missing` and `invalid_destination` need a delete
-and a new create.
+Correct. `POST …/resume` is the recovery; `table_missing`, `source_topic_missing` and
+`invalid_destination` need a delete and a new create.
 
 **Why does it say `commits_stalled` while commits flow?**
 The reason lingers after disruptions until the next resource observation, up to ten minutes

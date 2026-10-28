@@ -146,19 +146,15 @@ topics, Create and Read on the runtime control topic; Read on the source topics;
 
 ## 14.2 Correctness hazards
 
-### A topic the Kafka user cannot see passes for an empty one
+### A source topic lost under a running materialization goes unnoticed
 
-Discovery reads partitions from a metadata request for every topic (09 §9.6), and a broker leaves
-out the topics the user may not describe. So a topic the deployment's Kafka user cannot see
-samples like an empty one: the materialization is created, its runtime is assigned none of the
-topic's partitions, and the table stays empty while the materialization reads `running`; only the
-lag's `topic does not exist` says otherwise (21 §21.5). A topic that does not exist yet reads the
-same. *To fix*: refuse the create, and an update that adds the topic, at the API when the topic is
-missing from the cluster's metadata, naming it; the metadata client the topic list uses reads every
-topic and names none, so asking creates nothing. Failing `start_discovery` too is a safe backstop.
-Failing `discover_tables` is not: an update's tables are written into the materialization at
-`tables_claimed`, before it runs, and `apply_runtime` then refuses the table that has no schema
-(`table_missing`).
+A topic Kafka does not list is refused when a materialization is created or starts reading it
+(04 §4.5, 07 §7.2), but nothing watches it afterwards. A topic deleted while its materialization
+runs, or one whose Read the Kafka user loses, leaves the runtime assigned none of its partitions;
+the materialization still reads `running`, and only the lag's `topic does not exist` says
+otherwise (21 §21.5). A topic created again under the same name is not assigned either until the
+group rebalances (21 §21.7). *To fix*: have the lag refresh, which already sees the topic missing,
+degrade the materialization with a table error on the topic's table (08 §8.5).
 
 ### Exactly once covers what the topic still holds
 

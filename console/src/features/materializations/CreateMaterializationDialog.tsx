@@ -14,7 +14,17 @@ import { labelProblem } from '@shared/tableNames';
 import type { MaterializationSummary, PartitionGranularity } from '@shared/types';
 
 import { TableDraftRow } from '../datasets/TableDraftRow';
-import { claimRow, defaultDataset, draftProblems, draftTables, tableRequests, type DraftProblem, type TableDraft } from '../datasets/tableDrafts';
+import {
+  blocksSubmit,
+  claimRow,
+  defaultDataset,
+  draftProblems,
+  draftTables,
+  rowProblem,
+  tableRequests,
+  type DraftProblem,
+  type TableDraft,
+} from '../datasets/tableDrafts';
 import { useDatasets, useRefreshDatasets } from '../datasets/useDatasets';
 import { TopicPicker } from './TopicPicker';
 
@@ -138,7 +148,7 @@ export function CreateMaterializationDialog({
     [form.tables, tableRules, datasets.data],
   );
   const problemOf = (draft: TableDraft, position: number): DraftProblem | null => rowErrors.get(draft.topic) ?? problems[position] ?? null;
-  const tablesBlocked = form.tables.some((draft, position) => problemOf(draft, position) !== null);
+  const tablesBlocked = form.tables.some((draft, position) => blocksSubmit(problemOf(draft, position)));
   // Every materialization's tables go under the deployment's destination: none, and none can be made.
   const destinationMissing = defaults !== null && !defaults.destinationUri;
 
@@ -164,8 +174,9 @@ export function CreateMaterializationDialog({
       const row = error instanceof ApiError ? claimRow(error.details) : null;
       const topic = row ? input.tables[row.index]?.source_topic : undefined;
       if (row && topic) {
-        // On the row it is about: a name another request took first, a dataset gone, access taken away.
-        setRowErrors(new Map([[topic, { field: row.field === 'dataset' ? 'dataset' : 'name', message }]]));
+        // On the row it is about: a name another request took first, a dataset gone, access taken
+        // away, a topic Kafka does not list.
+        setRowErrors(new Map([[topic, rowProblem(row.field, message)]]));
         setFieldError(null);
         void refreshDatasets();
       } else {

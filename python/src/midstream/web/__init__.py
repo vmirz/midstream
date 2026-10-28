@@ -3,6 +3,7 @@
 from midstream.web.errors import WebError, error_response
 from midstream.web.materializations import (
 	create_materialization,
+	create_materialization_async,
 	delete_materialization,
 	get_materialization_detail,
 	get_materialization_schema_version_view,
@@ -14,6 +15,7 @@ from midstream.web.materializations import (
 	resume_materialization,
 	stop_materialization,
 	update_materialization,
+	update_materialization_async,
 )
 from midstream.web.responses import MutationAcceptance
 from midstream.web.settings import (
@@ -31,6 +33,7 @@ __all__ = [
 	"WebError",
 	"analyze_topics_view",
 	"create_materialization",
+	"create_materialization_async",
 	"delete_materialization",
 	"error_response",
 	"get_materialization_detail",
@@ -47,6 +50,7 @@ __all__ = [
 	"settings_view",
 	"stop_materialization",
 	"update_materialization",
+	"update_materialization_async",
 	"update_settings",
 	"version_view",
 ]
