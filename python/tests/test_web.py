@@ -40,6 +40,7 @@ from midstream.web import (
     WebError,
     analyze_topics_view,
     create_materialization,
+    create_materialization_async,
     delete_materialization,
     get_materialization_detail,
     get_materialization_schema_version_view,
@@ -53,6 +54,7 @@ from midstream.web import (
     settings_view,
     stop_materialization,
     update_materialization,
+    update_materialization_async,
 )
 from midstream.web.errors import error_response
 from midstream.identity.principals import Principal, grants_for_user
@@ -257,6 +259,81 @@ class WebCreateTests(unittest.TestCase):
         self.assertIsNone(get_materialization(self.table, "mat-1"))
         self.assertIsNone(get_materialization_status(self.table, "mat-1"))
         self.assertEqual({}, {key: value for key, value in self.directory.values.items() if key.startswith("dataset-table:")})
+
+    def _create_async(self, body: dict, kafka: "FakeMetadataClient"):
+        return asyncio.run(
+            create_materialization_async(
+                self.table,
+                body,
+                metadata_client=kafka,
+                submitted_by="jane@example.com",
+                submitted_by_id=JANE,
+                principal=principal_of(self.directory),
+                directory_table=self.directory,
+                materialization_id="mat-1",
+                request_id="req-1",
+                claim_request_id="idr-claim000001",
+                accepted_at=NOW,
+                config=self.config,
+            )
+        )
+
+    def test_a_topic_kafka_does_not_list_is_refused_on_its_row(self) -> None:
+        kafka = FakeMetadataClient({}, listings=listings("orders"))
+
+        with self.assertRaises(WebError) as error_info:
+            self._create_async({"tables": tables("orders", "ghost")}, kafka)
+
+        self.assertEqual(400, error_info.exception.status_code)
+        self.assertEqual(
+            {
+                "error": {
+                    "code": "invalid_request",
+                    "message": "Kafka has no topic ghost, or the deployment's Kafka user may not describe it.",
+                    "details": {"field": "tables.1.source_topic", "reason": "source_topic_missing", "source_topics": ["ghost"]},
+                }
+            },
+            error_response(error_info.exception),
+        )
+
+    def test_every_topic_kafka_does_not_list_is_named(self) -> None:
+        with self.assertRaises(WebError) as error_info:
+            self._create_async({"tables": tables("orders", "ghost", "phantom")}, FakeMetadataClient({}, listings=listings("orders")))
+
+        self.assertEqual(
+            "Kafka has no topics ghost, phantom, or the deployment's Kafka user may not describe them.",
+            error_info.exception.message,
+        )
+        self.assertEqual(("tables.1.source_topic", ["ghost", "phantom"]), (error_info.exception.details["field"], error_info.exception.details["source_topics"]))
+
+    def test_listed_topics_are_accepted_after_one_read_of_kafka(self) -> None:
+        kafka = FakeMetadataClient({}, listings=listings("orders", "payments"))
+
+        acceptance = self._create_async({"tables": tables("orders", "payments")}, kafka)
+
+        self.assertEqual(("orders", "payments"), acceptance.materialization.source_topics)
+        self.assertEqual("create", acceptance.request_event.action)
+        self.assertEqual(1, kafka.list_calls)
+
+    def test_a_request_refused_on_its_own_never_asks_kafka(self) -> None:
+        kafka = FakeMetadataClient({}, listings=[])
+
+        with self.assertRaises(WebError) as error_info:
+            self._create_async({"name": "Orders"}, kafka)
+
+        self.assertEqual({"field": "tables"}, error_info.exception.details)
+        self.assertEqual(0, kafka.list_calls)
+
+    def test_a_kafka_that_does_not_answer_refuses_the_create_with_a_503(self) -> None:
+        kafka = FakeMetadataClient({}, list_error=TimeoutError("Kafka did not answer within 10s"))
+
+        with self.assertRaises(WebError) as error_info:
+            self._create_async({"tables": tables("orders")}, kafka)
+
+        self.assertEqual(
+            (503, "unavailable", {"reason": "Kafka did not answer within 10s"}),
+            (error_info.exception.status_code, error_info.exception.code, error_info.exception.details),
+        )
 
     def test_create_materialization_requires_its_tables(self) -> None:
         error = self._refused({"name": "Orders"})
@@ -637,6 +714,11 @@ class FakeMetadataClient:
         if self.list_error is not None:
             raise self.list_error
         return list(self.listings)
+
+
+def listings(*topics: str) -> list[TopicListing]:
+    """The cluster's topic list, as `list_topics_async` reads it: these topics, three partitions each."""
+    return [TopicListing(name=topic, partitions=3, replication_factor=1) for topic in topics]
 
 
 class Clock:
@@ -1283,6 +1365,24 @@ class WebMutationTests(unittest.TestCase):
             self._update(body, **kwargs)
         return error_info.exception
 
+    def _update_async(self, body: object, kafka: "FakeMetadataClient"):
+        return asyncio.run(
+            update_materialization_async(
+                self.table,
+                "mat-1",
+                body,
+                metadata_client=kafka,
+                submitted_by="jane@example.com",
+                submitted_by_id=JANE,
+                principal=principal_of(self.directory),
+                directory_table=self.directory,
+                request_id="req-update",
+                claim_request_id="idr-claim000002",
+                accepted_at="2026-07-12T00:06:00Z",
+                config=self.config,
+            )
+        )
+
     def _delete(self):
         return delete_materialization(
             self.table,
@@ -1477,6 +1577,39 @@ class WebMutationTests(unittest.TestCase):
         self.assertEqual(("idr-claim000002", "idr-claim000002"), (acceptance.request_event.claim_request_id, acceptance.response["claim_request_id"]))
         # Accepted, not applied: request intake applies it, planning it again.
         self.assertEqual(get_materialization(self.table, "mat-1").table_names, ("orders", "payments"))
+
+    def test_an_added_topic_kafka_does_not_list_is_refused_on_its_row(self) -> None:
+        kafka = FakeMetadataClient({}, listings=listings("orders", "payments"))
+
+        with self.assertRaises(WebError) as error_info:
+            self._update_async({"tables": [*tables("orders", "payments"), *tables("refunds", dataset="finance")]}, kafka)
+
+        self.assertEqual(
+            (400, "tables.2.source_topic", "source_topic_missing"),
+            (error_info.exception.status_code, error_info.exception.details["field"], error_info.exception.details["reason"]),
+        )
+        self.assertEqual(("orders", "payments"), get_materialization(self.table, "mat-1").table_names)
+
+    def test_only_the_topics_a_change_starts_reading_are_asked_of_kafka(self) -> None:
+        # The topics it reads already are not checked again: only refunds, which Kafka lists.
+        kafka = FakeMetadataClient({}, listings=listings("refunds"))
+
+        acceptance = self._update_async({"tables": [*tables("orders", "payments"), *tables("refunds", dataset="finance")]}, kafka)
+        self.assertEqual(("orders", "payments", "refunds"), acceptance.materialization.source_topics)
+        self.assertEqual(1, kafka.list_calls)
+
+        for body in ({"replicas": 2}, {"name": "Shop"}, {"tables": tables("orders"), "removed_tables": {"payments": "keep"}}):
+            with self.subTest(body=body):
+                self._update_async(body, kafka)
+                self.assertEqual(1, kafka.list_calls, "a change that starts reading no topic asks Kafka nothing")
+
+    def test_a_kept_tables_topic_read_again_is_asked_of_kafka(self) -> None:
+        self._keep("payments")
+
+        with self.assertRaises(WebError) as error_info:
+            self._update_async({"tables": tables("orders", "payments")}, FakeMetadataClient({}, listings=listings("orders")))
+
+        self.assertEqual(("tables.1.source_topic", ["payments"]), (error_info.exception.details["field"], error_info.exception.details["source_topics"]))
 
     def test_a_new_topics_table_name_defaults_to_one_derived_from_it(self) -> None:
         acceptance = self._update({"tables": [*tables("orders", "payments"), *tables("mtm.shipments.v1", dataset="finance")]})

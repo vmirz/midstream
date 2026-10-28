@@ -382,7 +382,7 @@ kind is used.
 | `apply_runtime` | usually → `deploying` | yes | no | no | no | no |
 | `delete_runtime` | → `deleting` | yes | no | no | no | no |
 | `cleanup_runtime_kafka` | → `deleted` | yes | → `unknown` | no | no | no |
-| Workflow failure | → `failed` | `<step>_failed`, `table_location_in_use`, `table_missing` | → `degraded` | no | no | no |
+| Workflow failure | → `failed` | `<step>_failed`, `source_topic_missing`, `table_location_in_use`, `table_missing` | → `degraded` | no | no | no |
 | Table error (`table-events`) | → `degraded` | the error's reason | → `degraded` | no | no | no |
 | A commit after a table error | → `running` | `runtime_ready` | → `healthy` | no | no | no |
 

@@ -10,7 +10,7 @@ Where this document and the code disagree, the implementation is authoritative, 
 2. `python/src/midstream/`
 3. `python/tests/`
 
-> **Looking for more depth?** `docs/handbook/` is a 19-document reference manual: full field
+> **Looking for more depth?** `docs/handbook/` is a 21-document reference manual: full field
 > tables, decision tables, worked examples, an operations runbook, a test map and a known-gaps
 > register. Start at [`docs/handbook/README.md`](./handbook/README.md) and load only the
 > document you need; this file cites it as `handbook <n>`. The console has its own, `console/docs/`.
@@ -222,19 +222,28 @@ the materialization (handbook 06 §6.4).
 Topics added by a deploy keep the old consumer-group assignment until one forced rebalance
 (handbook 06, 14 §14.3).
 
+Every app and runtime connects as one Kafka user, `kaspr.authentication`. On a cluster that
+enforces ACLs it needs Create, Read and Write on topics prefixed `<release>-` (every app declares
+its topics at every start), Read on groups and Write on transactional ids prefixed so (Kaspr runs
+every app exactly once, transactionally), and Read on each source topic; Delete on `<release>-mat-`
+topics and groups only to delete materializations; nothing on the cluster (handbook 21).
+
 ## 10. Lifecycle
 
 **Create** (handbook 07): the WebView validates — each topic's dataset and table name (lowercase,
 readable unquoted), the topics (at most `max_materialization_topics`); a request naming a
 destination, namespace, runtime name or storage is refused, and with no `gs://` destination
 configured no create is accepted (`409 destination_not_configured`, handbook 04 §4.5.2) —
-previews the claim of the tables' names against the directory, and answers 202. `request-intake`
+previews the claim of the tables' names against the directory, asks Kafka for every topic — one it
+does not list, missing or hidden from the Kafka user, is refused, `400 source_topic_missing`, and a
+Kafka that does not answer is a `503` — and answers 202. `request-intake`
 persists desired state and sends `claim_tables` to the directory; `identity-intake` claims every name
 or none and answers `tables_claimed` — and the workflow emits `start_discovery` — or
 `claim_rejected`, which marks the materialization deleted with the reason (handbook 07 §7.2a).
 
 1. `start_discovery` samples up to 200 records of each topic and infers each table's schema 0 — for
-   an empty topic, the metadata columns alone, the runtime adding fields as data arrives.
+   an empty topic, the metadata columns alone, the runtime adding fields as data arrives. A topic
+   gone from the metadata since the request fails the create as `source_topic_missing`.
 2. `create_table` writes each table's metadata v0 and catalog pointer, one table at a time: field ids 1–9 for the metadata columns
    (`_kafka_timestamp`, partition, offset, key, headers, `_materialized_at`, `_unmapped`), payload
    from 10; partitioned by the UTC day (or hour, or month, or none) of `_kafka_timestamp`; a location that cannot hold

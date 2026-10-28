@@ -197,14 +197,18 @@ class DiscoverySampleTests(unittest.TestCase):
 
         self.assertEqual([], result.records("orders"))
         self.assertEqual(2, result.samples["orders"].empty_partitions)
+        self.assertFalse(result.samples["orders"].missing, "an empty topic has partitions; it is not missing")
+        self.assertEqual([], result.missing_topics())
         self.assertTrue(consumer.stopped)
 
-    def test_a_topic_kafka_does_not_know_yields_no_records(self) -> None:
+    def test_a_topic_kafka_does_not_know_yields_no_records_and_is_missing(self) -> None:
         consumer = FakeConsumer({})
 
         result = self.service(consumer).discover(build_materialization())
 
         self.assertEqual([], result.records("orders"))
+        self.assertTrue(result.samples["orders"].missing)
+        self.assertEqual(["orders"], result.missing_topics())
 
     def test_sampling_stops_at_its_time_budget_with_what_it_read(self) -> None:
         class Trickle(FakeConsumer):
@@ -266,6 +270,7 @@ class MultiTopicDiscoveryTests(unittest.TestCase):
         self.assertEqual([], result.records("orders"))
         self.assertEqual(0, result.samples["orders"].partitions)
         self.assertEqual([{"payment_id": 1}], result.records("payments"))
+        self.assertEqual(["orders"], result.missing_topics())
 
     def test_each_topic_is_sampled_from_both_ends_of_its_own_partitions(self) -> None:
         consumer = FakeConsumer(

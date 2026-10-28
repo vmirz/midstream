@@ -54,6 +54,7 @@ from midstream.runtime import (
 from midstream.runtime_app.config import RuntimeAppConfig
 from midstream.services.autoscaling import scaled_materialization
 from midstream.services.schema_projection import build_schema_projection
+from midstream.services.topic_analysis import missing_topics_message
 from midstream.services.topic_changes import apply_topic_change, describe_topic_change
 from midstream.storage import (
     get_materialization,
@@ -108,9 +109,17 @@ class InvalidTableLocationError(RuntimeError):
 
 
 class TableMissingError(RuntimeError):
-    """A materialization without a table record: one created before 1.0, which has none."""
+    """A materialization with no table record and a table with no discovered schema: a create whose
+    discovery failed, or one created before 1.0, which has no table records at all."""
 
     phase_reason = "table_missing"
+
+
+class SourceTopicMissingError(RuntimeError):
+    """A new materialization's source topic that the cluster's metadata does not list: missing, or
+    hidden from the Kafka user. Its runtime would never be assigned the topic."""
+
+    phase_reason = "source_topic_missing"
 
 
 # One thread: table creation is a handful of small GCS requests, and the workflow agent handles one
@@ -136,6 +145,10 @@ class DiscoveryResult:
 
     def records(self, topic: str) -> list:
         return list(self.records_by_topic.get(topic) or [])
+
+    def missing_topics(self) -> list[str]:
+        """The topics the cluster's metadata did not list, in the order sampled."""
+        return [topic for topic, sample in self.samples.items() if getattr(sample, "missing", False)]
 
 
 class DiscoveryService(Protocol):
@@ -684,15 +697,11 @@ def _record_start_discovery(
     The samples go through the very policy the runtime's committer applies later, so a topic with
     several historical shapes starts with its forks in place. Discovery waits on Kafka while other
     agents write; a delete in that window drops the discovery, anything else (a stop) is kept.
+
+    A topic the cluster's metadata does not list fails the step (`SourceTopicMissingError`) rather
+    than passing for an empty one: its runtime would be assigned none of its partitions, and its
+    table would stay empty. The API refuses such a topic first; this catches one gone since.
     """
-    evolutions = _evolve_schema_zero(
-        work_event,
-        discovery_result,
-        tables,
-        runtime_config=runtime_config,
-        config=config,
-        started_ms=started_ms,
-    )
     state = _state_after_wait(table, work_event, config=config, started_ms=started_ms)
     if state is None:
         return None
@@ -706,6 +715,20 @@ def _record_start_discovery(
             started_ms=started_ms,
         )
         return None
+    missing = discovery_result.missing_topics()
+    if missing:
+        raise SourceTopicMissingError(
+            f"{missing_topics_message(missing)}; once {'it' if len(missing) == 1 else 'they'} can be read, "
+            "delete the materialization and create it again"
+        )
+    evolutions = _evolve_schema_zero(
+        work_event,
+        discovery_result,
+        tables,
+        runtime_config=runtime_config,
+        config=config,
+        started_ms=started_ms,
+    )
     for spec in materialization.tables:
         _save_schema_zero(table, materialization.materialization_id, spec, evolutions[spec.name][0], discovery_result, config=config)
 
@@ -903,7 +926,12 @@ def _record_discover_tables(
     runtime_config: RuntimeAppConfig,
     started_ms: int,
 ) -> FollowUp:
-    """Persist the sampled tables' schema 0, unless the update was undone meanwhile, and queue their creation."""
+    """Persist the sampled tables' schema 0, unless the update was undone meanwhile, and queue their creation.
+
+    A topic the cluster's metadata does not list is sampled as an empty one, and only logged: the
+    API asked Kafka for it when the change was requested (`require_listed_topics`), and failing here
+    would leave the running materialization with a table it cannot create while the topic is gone.
+    """
     evolutions = _evolve_schema_zero(
         work_event, discovery_result, specs, runtime_config=runtime_config, config=config, started_ms=started_ms
     )
@@ -914,6 +942,13 @@ def _record_discover_tables(
     if _should_drop_start_discovery(materialization, status):
         _log_step_skipped(work_event, reason="materialization_deleting", config=config, started_ms=started_ms)
         return None
+    missing = discovery_result.missing_topics()
+    if missing:
+        LOGGER.warning(
+            "materialization %s: %s; its table starts empty",
+            work_event.materialization_id,
+            missing_topics_message(missing),
+        )
     for spec in materialization.tables:
         if spec.name in evolutions and resolve_materialization_schema(table, materialization.materialization_id, spec.name) is None:
             _save_schema_zero(table, materialization.materialization_id, spec, evolutions[spec.name][0], discovery_result, config=config)
@@ -1295,8 +1330,11 @@ def _plan_apply_runtime(
     The runtime writes every table of the materialization, so it needs them all. A table whose
     creation did not finish (its schema was discovered, its record is missing) is created first:
     the step answers `create_table`, which queues the apply again once every table exists - so
-    `POST .../resume` finishes an interrupted create. A table never discovered fails the step with
-    `table_missing`.
+    `POST .../resume` finishes an interrupted create. A table never discovered, beside tables that
+    exist, is what a change of topics leaves when its discovery failed: the step answers
+    `discover_tables`, which creates it and applies, so a resume finishes that change too. A
+    materialization with no table at all and one never discovered - a create whose discovery
+    failed, or one from before 1.0 - fails the step with `table_missing`.
     """
     materialization = _require_materialization(table, work_event.materialization_id)
     _require_status(table, work_event.materialization_id)
@@ -1309,10 +1347,29 @@ def _plan_apply_runtime(
             for name in missing
             if resolve_materialization_schema(table, materialization.materialization_id, name) is None
         ]
-        if undiscovered:
+        if undiscovered and not table_records:
             raise TableMissingError(
                 f"Iceberg table(s) {', '.join(undiscovered)} of this materialization were never created "
                 "and have no discovered schema: delete it and create it again."
+            )
+        if undiscovered:
+            log_protocol_event(
+                LOGGER,
+                enabled=config.protocol_logging_enabled,
+                event="control_plane_apply_runtime_discovering_tables",
+                materialization_id=materialization.materialization_id,
+                work_id=work_event.work_id,
+                tables=undiscovered,
+                duration_ms=elapsed_ms(started_ms),
+            )
+            return MaterializationWorkEvent(
+                work_id=f"work-discover-tables-{materialization.materialization_id}-{work_event.work_id}",
+                materialization_id=materialization.materialization_id,
+                step="discover_tables",
+                requested_at=work_event.requested_at,
+                caused_by=work_event.caused_by,
+                dedupe_key=f"discover_tables:{materialization.materialization_id}:{work_event.work_id}",
+                target_runtime=work_event.target_runtime,
             )
         log_protocol_event(
             LOGGER,

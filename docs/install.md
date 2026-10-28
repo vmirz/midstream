@@ -26,7 +26,7 @@ export DOMAIN=domain_a             # this domain's id: its URL segment /d/<id> a
 |---|---|---|
 | Kubernetes 1.29 or later; 1.33 with the Vertical Pod Autoscaler add-on to resize pods in place | everything runs as Kaspr apps; the CPU requests follow use | `kubectl version` |
 | [kaspr-operator](https://kaspr.dev) 0.19.7 or later, with its CRDs | Midstream is Kaspr applications: `KasprApp`, `KasprAgent`, `KasprTask`, `KasprTable`, `KasprWebView` | `kubectl get crd kasprapps.kaspr.io` |
-| A Kafka cluster reachable from the namespace, with a SCRAM-SHA-512, SCRAM-SHA-256 or plain user that may create topics | the control plane, the apps and every runtime declare their own topics | `kubectl -n kafka get kafka` for Strimzi, or your cluster's tooling |
+| A Kafka cluster reachable from the namespace, with a SCRAM-SHA-512, SCRAM-SHA-256 or plain user. If the cluster enforces ACLs, the user needs the grants of handbook 21 §21.3: create, read and write the topics named `$RELEASE-…`, read the groups and write the transactional ids named so, read every topic you will materialize, and, to delete materializations, delete the topics and groups named `$RELEASE-mat-…` | the control plane, the apps and every runtime declare their own topics at every start and write them in transactions | `kubectl -n kafka get kafka` for Strimzi, or your cluster's tooling |
 | A Google Cloud Storage bucket and a service account that may read, write and delete objects in it | the Iceberg tables, their metadata and the catalog pointers live there | `gcloud storage ls $BUCKET` |
 | `helm` 3.12 or later and `kubectl` on your machine | | `helm version` |
 
@@ -228,4 +228,5 @@ that removes its runtime, its Kafka topics and its tables. The Secrets and the b
 - `docs/handbook/12-operations-runbook.md`: diagnosis by phase, sizing, disaster recovery.
 - `docs/handbook/18-identity-and-access.md`: people, groups, roles, datasets, access tokens and single sign-on.
 - `docs/handbook/20-domains-and-the-shared-console.md`: domains, the shared console and everything across them.
+- `docs/handbook/21-kafka-access.md`: the Kafka user's ACLs on a cluster that enforces them, and what breaks without each.
 - `console/docs/13-operations-runbook.md`: running and sizing the console.

@@ -7,7 +7,9 @@ the latest (spec §8.8). Every topic is read at once, by one consumer, so the ti
 grow with the number of topics; its fetches are kept small (`FETCH_MAX_BYTES`), so neither does the
 memory. The samples go through the same evolution policy the committer uses, so a topic with several
 historical shapes starts with its forks already in place, and the first minutes of running bring no
-churn. An empty topic yields the metadata columns only.
+churn. An empty topic yields the metadata columns only. A topic the cluster's metadata does not list
+- one that does not exist, or that the Kafka user may not describe - yields nothing either, and its
+sample says it is `missing`: the workflow decides what that means for each step.
 
 The consumer runs on the service's own event loop, on a thread of its own: connecting may take
 `connect_timeout_seconds`, sampling the budget given; `discover` waits for both plus a margin, then
@@ -18,7 +20,7 @@ another event loop.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from importlib import import_module
 import json
@@ -73,6 +75,9 @@ class DiscoverySample:
     tombstones: int = 0
     undecodable: int = 0
     timed_out: bool = False
+    #: The cluster's metadata does not list the topic: it does not exist, or the Kafka user may not
+    #: describe it. Unlike an empty topic, it has no partition at all.
+    missing: bool = False
 
 
 class KafkaTopicDiscoveryService:
@@ -174,22 +179,34 @@ class KafkaTopicDiscoveryService:
 
 class StubDiscoveryService:
     """Discovery from fixed records, for tests and tools: the same records for every topic, or each
-    topic's own from `records_by_topic`."""
+    topic's own from `records_by_topic`; the topics in `missing` are ones the cluster does not list."""
 
-    def __init__(self, records: list[Any] | None = None, *, records_by_topic: dict[str, list[Any]] | None = None) -> None:
+    def __init__(
+        self,
+        records: list[Any] | None = None,
+        *,
+        records_by_topic: dict[str, list[Any]] | None = None,
+        missing: Iterable[str] = (),
+    ) -> None:
         self.records = [] if records is None else list(records)
         self.records_by_topic = {} if records_by_topic is None else {topic: list(items) for topic, items in records_by_topic.items()}
+        self.missing = set(missing)
         self.calls: list[dict[str, Any]] = []
 
     def discover(self, materialization: Materialization, **budget: Any):
         from midstream.services.workflow import DiscoveryResult
 
         self.calls.append({"materialization_id": materialization.materialization_id, **budget})
-        records = {topic: list(self.records_by_topic.get(topic, self.records)) for topic in materialization.source_topics}
+        records = {
+            topic: [] if topic in self.missing else list(self.records_by_topic.get(topic, self.records))
+            for topic in materialization.source_topics
+        }
         return DiscoveryResult(
             records_by_topic=records,
             discovered_at=materialization.updated_at,
-            samples={topic: DiscoverySample(records=list(items)) for topic, items in records.items()},
+            samples={
+                topic: DiscoverySample(records=list(items), missing=topic in self.missing) for topic, items in records.items()
+            },
         )
 
 
@@ -304,7 +321,7 @@ async def _sample(
     sample_seconds: float,
     clock,
 ) -> dict[str, DiscoverySample]:
-    samples = {topic: DiscoverySample() for topic in partitions}
+    samples = {topic: DiscoverySample(missing=not topic_partitions) for topic, topic_partitions in partitions.items()}
     tps_by_topic = {
         topic: [_topic_partition(topic, partition) for partition in topic_partitions]
         for topic, topic_partitions in partitions.items()

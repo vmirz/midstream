@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import { DEFAULT_TABLE_NAME_RULES } from '../../../shared/tableNames.ts';
 import type { CpDataset } from '../../../shared/types.ts';
-import { claimRow, defaultDataset, draftProblems, draftTables, tableRequests, type TableDraft } from './tableDrafts.ts';
+import { blocksSubmit, claimRow, defaultDataset, draftProblems, draftTables, rowProblem, tableRequests, type TableDraft } from './tableDrafts.ts';
 
 const rules = DEFAULT_TABLE_NAME_RULES;
 
@@ -105,5 +105,29 @@ describe('a refused claim', () => {
     assert.deepEqual(claimRow({ field: 'tables.3' }), { index: 3, field: null });
     assert.equal(claimRow({ field: 'replicas' }), null);
     assert.equal(claimRow({}), null);
+  });
+});
+
+describe('a topic Kafka does not list', () => {
+  const details = {
+    field: 'tables.1.source_topic',
+    reason: 'source_topic_missing',
+    source_topics: ['ghost'],
+  };
+  const message = "Kafka has no topic ghost, or the deployment's Kafka user may not describe it.";
+
+  it('is said on the topic\'s row, on neither of its fields', () => {
+    const row = claimRow(details);
+    assert.deepEqual(row, { index: 1, field: 'source_topic' });
+    assert.deepEqual(rowProblem(row?.field ?? null, message), { field: 'topic', message });
+    assert.deepEqual(rowProblem('dataset', 'There is no dataset x.'), { field: 'dataset', message: 'There is no dataset x.' });
+    assert.deepEqual(rowProblem(null, 'Taken'), { field: 'name', message: 'Taken' });
+  });
+
+  it('does not keep the form from being sent again', () => {
+    assert.equal(blocksSubmit({ field: 'topic', message }), false);
+    assert.equal(blocksSubmit({ field: 'name', message: 'Taken' }), true);
+    assert.equal(blocksSubmit({ field: 'dataset', message: 'Choose the dataset its table goes in' }), true);
+    assert.equal(blocksSubmit(null), false);
   });
 });

@@ -58,6 +58,35 @@ async def analyze_topics_async(
     return _analysis(requested, described, rules=rules)
 
 
+async def missing_topics_async(topics: list[str], *, metadata_client: KafkaMetadataClient) -> list[str]:
+    """The topics, in the order given, that the cluster's metadata does not list.
+
+    A topic is missing when it does not exist, and equally when the Kafka user may not describe it:
+    the broker leaves such a topic out of a read of every topic, and naming it instead could create
+    it (`kafka/metadata.py`). Kafka is awaited for at most `ANALYZE_TIMEOUT_SECONDS`; past that
+    `TimeoutError`.
+    """
+    wanted = list(dict.fromkeys(topics))
+    if not wanted:
+        return []
+    try:
+        async with asyncio.timeout(ANALYZE_TIMEOUT_SECONDS) as deadline:
+            listings = await metadata_client.list_topics_async()
+    except TimeoutError:
+        if not deadline.expired():
+            raise  # the metadata client's own deadline, which says so itself
+        raise TimeoutError(f"Kafka did not answer within {ANALYZE_TIMEOUT_SECONDS}s") from None
+    listed = {listing.name for listing in listings}
+    return [topic for topic in wanted if topic not in listed]
+
+
+def missing_topics_message(topics: list[str]) -> str:
+    """What it means that Kafka does not list these topics, naming them."""
+    if len(topics) == 1:
+        return f"Kafka has no topic {topics[0]}, or the deployment's Kafka user may not describe it"
+    return f"Kafka has no topics {', '.join(topics)}, or the deployment's Kafka user may not describe them"
+
+
 def normalize_topic_list(topics: Any, *, maximum: int) -> list[str]:
     """Validate and de-duplicate the requested topic list."""
     if isinstance(topics, str):

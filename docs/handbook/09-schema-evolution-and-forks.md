@@ -160,7 +160,12 @@ first minutes of running bring no churn (spec §8.8):
 - the samples go through `evolve(build_schema(), ForkMap(), …, schema_id=0)` — the very policy the
   committer applies later;
 - connecting is bounded by 60 s (`CONNECT_TIMEOUT_SECONDS`): a cluster that never answers fails the
-  step rather than passing for an empty topic.
+  step rather than passing for an empty topic;
+- a topic the metadata does not list — it does not exist, or the Kafka user may not describe it —
+  is sampled as nothing and marked `missing`. An empty topic has partitions; a missing one has
+  none, and its runtime would never be assigned it. `start_discovery` fails on it
+  (`source_topic_missing`, 07 §7.2); `discover_tables` lets it start empty, with a warning, since
+  the API asked Kafka for the topic moments before (04 §4.8.1).
 
 Each table's schema 0 is evolved from its own topic's samples. An empty topic yields schema 0 with
 the metadata columns only, which is fine: the runtime adds every field as data arrives (§9.7); the
@@ -295,7 +300,8 @@ instead."); both degrade the materialization's status until the next commit (08 
 
 | Symptom | Cause | What happens |
 |---|---|---|
-| Discovery samples nothing on a topic with data | the cluster's metadata does not list the topic (a typo the console's picker would not allow), or the connection failed | schema 0 holds metadata only; the runtime adds every field from the first records — nothing is lost, the first minutes just commit more schema changes |
+| A create fails as `source_topic_missing` | the cluster's metadata does not list the topic: deleted, or the Kafka user lost Describe on it, after the API checked it (04 §4.5) | nothing is created; delete the materialization and create it again once the topic can be read |
+| A table added by a change of topics starts with metadata columns only, and a warning "Kafka has no topic …" is logged | the topic left the metadata between the API's check and `discover_tables` | its runtime is not assigned the topic until it reappears and the group rebalances (21 §21.7); remove the topic, or recreate it and stop the materialization past the session timeout, then resume |
 | A schema commit keeps losing races | another writer commits to the table (an external engine with `catalog.write`) | five attempts with 1 s spacing, then `runtime_schema_commit_failed` and the `schema_evolution_failed` table error; seals stop waiting after `seal_schema_wait_seconds` and the values go to `_unmapped` until a later window succeeds |
 | `_unmapped` fills up | the schema is at `max_schema_fields`, or a family is collapsed to JSON and an array element cannot hold a value | raise `max_schema_fields` (runtime setting, 17); collapsed families keep their values as JSON text |
 | A key appears as `key__k2` | two keys of one object differ only by case | both are kept; the fork map remembers the original keys |

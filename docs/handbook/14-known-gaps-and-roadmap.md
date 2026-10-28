@@ -135,7 +135,26 @@ records and table layout 1.0's do not match.
 `services/workflow.py` has no handler for it: dispatching it would fall through to the
 unknown-step path.
 
+### One Kafka user for the whole deployment
+
+Every app and every runtime authenticate as `kaspr.authentication` (02 §2.3), so a runtime holds
+the grants only the control plane needs: deleting any runtime's topics and group, and reading every
+materialized topic, not just its own (21 §21.1). *To narrow it*: chart values for a runtime user
+of its own. That user would need Create, Read and Write on `<release>-mat-` topics, Read on
+`<release>-mat-` groups and Write on its transactional ids; Write on the status and table-events
+topics, Create and Read on the runtime control topic; Read on the source topics; and no Delete.
+
 ## 14.2 Correctness hazards
+
+### A source topic lost under a running materialization goes unnoticed
+
+A topic Kafka does not list is refused when a materialization is created or starts reading it
+(04 §4.5, 07 §7.2), but nothing watches it afterwards. A topic deleted while its materialization
+runs, or one whose Read the Kafka user loses, leaves the runtime assigned none of its partitions;
+the materialization still reads `running`, and only the lag's `topic does not exist` says
+otherwise (21 §21.5). A topic created again under the same name is not assigned either until the
+group rebalances (21 §21.7). *To fix*: have the lag refresh, which already sees the topic missing,
+degrade the materialization with a table error on the topic's table (08 §8.5).
 
 ### Exactly once covers what the topic still holds
 
@@ -294,6 +313,8 @@ assigned until something forces a rebalance — 0.5.0's settings topics, 0.6.0's
 1.0's `materialization-table-events`. The 1.0 rollout scales the control plane to zero anyway
 (12 §12.13); for any other release the procedure is in 17 §17.12. A runtime whose topics an edit
 changes meets the same thing, and the control plane drains it rather than rebalance it (§14.1).
+So does a runtime whose Kafka user could not read one of its topics when it started: granted Read
+later, it is not assigned the topic until it stops for longer than the session timeout (21 §21.7).
 
 *To fix (in Kaspr):* after a static rejoin, a member whose assignment lacks topics it subscribes to
 should rejoin. The broker rebalances a stable group when its leader rejoins under a known member

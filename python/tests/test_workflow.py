@@ -342,6 +342,35 @@ class DiscoveryTests(WorkflowTestCase):
         fields = {field["name"]: field for field in get_materialization_schema(self.table, MATERIALIZATION_ID, "orders").fields}
         self.assertEqual("json", fields["attributes"]["kind"])
 
+    def test_a_topic_kafka_does_not_list_fails_the_create_instead_of_passing_for_an_empty_one(self) -> None:
+        self.two_topics()
+        self.discovery = StubDiscoveryService(records_by_topic={"orders": SAMPLE}, missing=["payments"])
+
+        self.assertIsNone(self.process(work("start_discovery")))
+
+        status = self.status()
+        self.assertEqual(("failed", "source_topic_missing"), (status.observed_phase, status.phase_reason))
+        self.assertEqual(
+            "Workflow step start_discovery failed: Kafka has no topic payments, or the deployment's Kafka user may not "
+            "describe it; once it can be read, delete the materialization and create it again",
+            status.phase_message,
+        )
+        for name in ("orders", "payments"):
+            self.assertIsNone(get_materialization_schema(self.table, MATERIALIZATION_ID, name), "no table is made")
+
+    def test_a_materialization_deleted_while_its_topics_were_sampled_is_not_failed_for_a_missing_one(self) -> None:
+        table = self.table
+
+        class DeletedMeanwhile(StubDiscoveryService):
+            def discover(self, materialization, **budget):
+                save_materialization(table, replace(materialization, desired_phase="deleting"))
+                return super().discover(materialization, **budget)
+
+        self.discovery = DeletedMeanwhile(missing=["orders"])
+
+        self.assertIsNone(self.process(work("start_discovery")))
+        self.assertEqual("discovering", self.status().observed_phase)
+
     def test_a_materialization_deleted_meanwhile_skips_discovery(self) -> None:
         save_materialization(self.table, build_materialization(desired_phase="deleting"))
 

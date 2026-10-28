@@ -250,6 +250,44 @@ class AddingTopicsTests(TopicChangeTestCase):
         self.assertEqual("orders,payments,refunds", self.writer_topics())
         self.assertEqual(["orders", "payments", "refunds"], get_runtime_binding(self.table, MATERIALIZATION_ID).source_topics)
 
+    def test_a_resume_finishes_a_change_whose_discovery_failed(self) -> None:
+        event = self.change(["orders", "payments", "refunds"])
+
+        def unreachable(materialization, **budget):
+            raise TimeoutError("connecting to Kafka to sample topic refunds timed out after 60s")
+
+        self.discovery.discover = unreachable
+        self.assertIsNone(self.process(event))
+        self.assertEqual(("failed", "discover_tables_failed"), (self.status().observed_phase, self.status().phase_reason))
+        self.assertIsNone(get_materialization_schema(self.table, MATERIALIZATION_ID, "refunds"))
+        del self.discovery.discover
+
+        # Once refused as table_missing, which left only a delete; now the apply discovers it first.
+        discover = self.process(work("apply_runtime", work_id="work-req-resume"))
+
+        self.assertEqual(
+            ("discover_tables", "work-discover-tables-mat-a1b2c3d4e5f6-work-req-resume"),
+            (discover.step, discover.work_id),
+        )
+        self.assertEqual([], self.kaspr.applied, "nothing is applied before the table exists")
+        apply = self.until(self.process(discover), "apply_runtime")
+        self.assertIn("refund_id", {field["name"] for field in get_materialization_schema(self.table, MATERIALIZATION_ID, "refunds").fields})
+        self.assertEqual(REFUNDS_LOCATION, get_materialization_table(self.table, MATERIALIZATION_ID, "refunds").location)
+        self.assertEqual("await_runtime_drained", self.process(apply).step)
+        self.assertEqual("orders,payments,refunds", self.writer_topics())
+
+    def test_an_added_topic_gone_by_its_discovery_still_gets_its_table_and_a_warning(self) -> None:
+        event = self.change(["orders", "payments", "refunds"])
+        self.discovery.missing = {"refunds"}
+
+        with self.assertLogs("midstream.services.workflow", level="WARNING") as logs:
+            create = self.process(event)
+
+        self.assertEqual("create_table", create.step)
+        self.assertIn("Kafka has no topic refunds", logs.output[0])
+        refunds = get_materialization_schema(self.table, MATERIALIZATION_ID, "refunds")
+        self.assertEqual({"metadata"}, {field["kind"] for field in refunds.fields})
+
     def test_the_awaited_drain_matches_the_blocking_one(self) -> None:
         import asyncio
 
