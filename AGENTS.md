@@ -111,7 +111,7 @@ return process_request_event(table, request_event, config=cfg, work_id=work_id)
 ## Guardrails & Boundaries
 - Never commit secrets, kube credentials, GCP credentials, SSH keys, or `.env`-style files.
 - Never move core business logic into inline manifest Python; CRD YAML should stay as a thin harness over package code.
-- Never invent a new linter/test runner/build system; this repo currently uses `pip`, `unittest`, and `helm lint`/`helm template` for the Python and chart side, and npm + `tsc` + Vite inside `/console`. CI (`.github/workflows/ci.yml`) runs exactly these; a `v*` tag releases through `release.yml`.
+- Never invent a new linter/test runner/build system; this repo currently uses `pip`, `unittest`, and `helm lint`/`helm template` for the Python and chart side, and npm + `tsc` + Vite inside `/console`. CI (`.github/workflows/ci.yml`) runs exactly these; a `v*` tag releases through `release.yml`; every branch push publishes its console image through `dev-images.yml` (handbook 16 §16.3).
 - Never change topic names, table names or Kaspr resource names without updating both the chart templates and the affected tests; every deployed name derives from the Helm release name.
 - Never write a materialization's Iceberg tables except through its committer, the maintenance app's compaction and expiry (`maintenance_app/`), or the REST catalog with `catalog.write`: every commit goes through the catalog pointer's compare-and-swap, the committer's exactly-once accounting relies on the snapshot summaries it writes, and a maintenance commit carries those offsets forward unchanged.
 - Never replace runtime package pinning with floating or implicit refs; runtime template/package revision behavior is intentional and covered by tests.
