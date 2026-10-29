@@ -500,15 +500,15 @@ refused elsewhere and vice versa. Put the same key in its auth Secret and restar
 |---|---|
 | Control plane (`unittest`) | `test_chart_domains.py` (the registry rules, routes and redirects, the three topologies); `test_sso.py` (each provider's check against a stub key set or GitHub API, account resolution, both policies, allowed domains, password sign-in off with the administrator exemption, provisioning and its wait); `test_federated_tokens.py` (sign, check, rotation, expiry, owners across domains, dataset limits per domain, revocation and its signature, forged revocations); `test_settings.py` (the Sign-in settings) |
 | Console (`node --test`) | `domains/*.test.ts` (the registry), `auth/auth.test.ts` (one cookie per domain, the session map), `routes/sso.test.ts` (the flow: PKCE, state bound to the browser, a callback once, the fan-out, GitHub's revocation), `auth/revocations.test.ts` (handing revocations on, the five-minute pass), `routes/sql.test.ts` (a join across two domains, full names, refusals per domain, tails from each domain's tail app), `routes/catalog.test.ts` (the federated catalog's listing, rewriting and pass-through), `src/lib/*.test.ts` (paths, the merged fleet, key agreement) |
-| The lab | §20.15 |
+| A test cluster | §20.15 |
 
-## 20.15 Validated on the lab
+## 20.15 Validated on a test cluster
 
-On 2026-10-26 the lab ran two domains from this chart, on a clean slate: **Domain A**, the release
+On 2026-10-26 the test cluster ran two domains from this chart, on a clean slate: **Domain A**, the release
 `midstream` with the shared console (the settings home), and **Domain B**, the release `midstream-b`
 in its own namespace with no console, reached by the console only through its API route
-`domain-b-api.local.epilix.com` — as a domain in another cluster would be. Builds under test came from
-a temporary package index and registry on the lab; the last, `1.0.0rc3.dev6`, was rolled onto both
+`domain-b-api.example.com` — as a domain in another cluster would be. Builds under test came from
+a temporary package index and registry on the cluster; the last, `1.0.0rc3.dev6`, was rolled onto both
 domains as an upgrade (every app `Ready` and every runtime re-pinned in under two minutes). Dex stood
 in for the sign-in provider (`oidc`). Checks ran through the console's API and in a browser
 (Playwright, Chromium); the record is console 14 §14.4.
@@ -516,7 +516,7 @@ in for the sign-in provider (`oidc`). Checks ran through the console's API and i
 | Area | Verified |
 |---|---|
 | Install | Both releases `Ready` two minutes after `helm install`; the administrator's first sign-in in each domain asked for a new password; the console reported both domains `ok` with one federation key |
-| Routing | A cookie per domain (`midstream_session_domain_a`, `…_domain_b`, HttpOnly, Secure, SameSite=Lax); the merged fleet and search across both; `404 unknown_domain`; `domain-a.local.epilix.com/<path>?<query>` → `301` to `/d/domain_a/<path>?<query>`; a change from another site `403`; a person only in Domain B a guest in Domain A |
+| Routing | A cookie per domain (`midstream_session_domain_a`, `…_domain_b`, HttpOnly, Secure, SameSite=Lax); the merged fleet and search across both; `404 unknown_domain`; `domain-a.example.com/<path>?<query>` → `301` to `/d/domain_a/<path>?<query>`; a change from another site `403`; a person only in Domain B a guest in Domain A |
 | Sign-in through Dex | Someone neither domain knew: an account in both (`open`), signed in to both at once; Domain B `invited`: signed in to A, refused by B (`no_account`), said so; Domain A limited to `example.com`: refused by both, back on the sign-in page with each reason; password sign-in off in Domain B: a person's right password `403 password_sign_in_disabled`, a wrong one still `invalid_credentials`, the administrator still in, Domain A untouched |
 | Access tokens | Made in Domain A: honoured by Domain A, Domain B, the federated catalog and Domain B's API directly; limited to `domain_b.finance`, it lists only Domain B and loads nothing of A; revoked in A, refused by every domain at once; made, limited and revoked from the Account page |
 | SQL | `domain_a.shop.orders JOIN domain_b.finance.payments`: 25 rows before either table's first commit (each domain's live tail) and after; `domain_b_iceberg.…`; a name without its domain refused with the name to write; without a session in Domain B, `401` naming `domain_b.finance` |
@@ -542,7 +542,7 @@ answered once never showed unreachable (`84c4a62`); the merged fleet stream held
 its 100 ms merge window (`678ad09`); the console Settings page asked for the console's settings before
 it knew the settings home (`c8ba672`); five audit actions showed as codes (`7d38627`).
 
-**Performance against 1.0.0-rc.2** — the same lab, the same 111,031,820-offset load-test topic, the same
+**Performance against 1.0.0-rc.2** — the same test cluster, the same 111,031,820-offset load-test topic, the same
 materialization (one replica, autoscaling to 16 members), the console measured the same way:
 
 | Backfill | rc.2 | Domains |

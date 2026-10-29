@@ -600,7 +600,7 @@ not matter.
 }
 ```
 
-On the lab (2026-10-23), a day table of `history.orders` whose records' timestamps run from
+On a test cluster (2026-10-23), a day table of `history.orders` whose records' timestamps run from
 2025-01-01: `customer` (13) and `customer.email` (14) from the first day, the email's last value on
 2026-02-09, and `device` (25) from 2025-04-15 — the days the producer changed its records' shape.
 

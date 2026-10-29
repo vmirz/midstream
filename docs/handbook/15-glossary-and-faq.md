@@ -457,7 +457,7 @@ The batch's soft age (120 s) once it holds enough rows, then the seal and upload
 **Then how does the console show a record a second after it was produced?**
 From the live tail: a run reads the table's snapshot and, beside it, the records past the snapshot's
 offsets, which the tail app reads from Kafka. Each record is in one or the other, never both, and
-its row is built by the seal's own code, so it is the row the commit will hold. On the lab the Data
+its row is built by the seal's own code, so it is the row the commit will hold. On a test cluster the Data
 tab's Live mode showed new records at a p95 of 1.6 s ([19](./19-live-tail.md)).
 
 **Does an engine on the REST catalog see the live tail?**

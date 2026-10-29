@@ -737,7 +737,7 @@ Kubernetes client with another thread. Other read errors still escape, as before
 | 10 | the committer | first commits; `table_committed` → `table-events` | each table record has a snapshot |
 
 Typical wall-clock from POST to `running`: 60–180 s, dominated by pod scheduling and package
-installation. On the lab the load-test materialization's discovery took 375 ms and its table's
+installation. On a test cluster the load-test materialization's discovery took 375 ms and its table's
 creation about a second.
 
 ## 7.9 End-to-end: stop, resume and update
@@ -761,7 +761,7 @@ heartbeat. `update` (`PATCH`) re-applies with the new `replicas` and leaves the 
 was — a stopped materialization stays stopped and resumes at the new count. An update that changes
 the topics is §7.9a.
 
-Measured on the lab cluster (`materializer-loadtest-orders`, 16 replicas): stop converged in about
+Measured on a test cluster (`materializer-loadtest-orders`, 16 replicas): stop converged in about
 a minute, resume in about four (pods 1 → 5 → 10 → 16 as the HPA doubles them).
 
 Stopping leaves the KasprApp, its state table, its Kafka topics and consumer group, its persistent
@@ -875,7 +875,7 @@ what the dropped table left under that name — committed offsets above all, whi
 table skip its records as already in it. Each runtime knows the UUID of each table it writes (from
 its template) and ignores state of another incarnation (10 §10.8).
 
-Measured on the lab (2 runtime members, `shop`): adding a topic — sampling 0.2 s, held at zero from
+Measured on a test cluster (2 runtime members, `shop`): adding a topic — sampling 0.2 s, held at zero from
 3 s, group empty at 129 s (the 120 s session timeout after the members stopped), running at 314 s;
 the new table then held all 3,005 records. Re-adding a kept table's topic resumed it exactly where it
 stopped (80,005 + the 1,000 records produced meanwhile), and a dropped table's files were gone 1.5 s
@@ -903,7 +903,7 @@ A change that adds no table — removing topics, dropping kept tables — needs 
 applies it at once and releases the dropped tables' names (`release_tables`), as a delete releases
 every name.
 
-Measured on the lab: the claim, its answer and the next step together took a few milliseconds; the
+Measured on a test cluster: the claim, its answer and the next step together took a few milliseconds; the
 console's Edit dialog closed about 0.1 s after Save.
 
 ## 7.10 End-to-end: delete

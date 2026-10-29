@@ -413,7 +413,7 @@ From handbook 14, the ones most likely to matter:
   read committed snapshots only.
 - **A tail app member's restart is a 30–60 s outage for its tables** (they have no standby), and
   scaling the tail app restarts every member (handbook 14 §14.16).
-- **Commit time grows with files per commit** — about 2 s plus 16 ms per file on the lab — so a
+- **Commit time grows with files per commit** — about 2 s plus 16 ms per file on a test cluster — so a
   backfill's commits take seconds.
 - **Observation lags**: a degraded phase lingers until the next resource observation, up to 600 s;
   members that kept restarting keep it `degraded` for 30 minutes after the last restart.

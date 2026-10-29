@@ -317,7 +317,7 @@ members stage, seal, upload; the committer commits; table events keep the table 
    (11 §11.2).
 6. **Exactly once into the table.** A partition's committed Kafka offset never passes a record
    whose row is not in the table, and the committer refuses a file the table already covers
-   (10 §10.7). The E13 load test checked it on the lab with the committer deleted mid-commit and
+   (10 §10.7). The E13 load test checked it on a test cluster with the committer deleted mid-commit and
    mid-compaction and the runtime rescaled with files pending; its first run, which also `SIGKILL`ed
    a member and the committer, found the defect fixed in 223ae74 (13 §13.8).
 7. **Every WebView authorizes before it acts.** Its first line is

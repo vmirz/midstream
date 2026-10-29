@@ -1,8 +1,8 @@
 # Few-second freshness: the live tail
 
-**Status:** implemented in 4.1.0 on `feature/live-tail` and validated on the lab, 2026-10-24. What
+**Status:** implemented in 4.1.0 on `feature/live-tail` and validated on a test cluster, 2026-10-24. What
 was built is described in handbook 19, which supersedes this plan where they differ (its §19.18 lists
-where and why); the lab results are in handbook 13 §13.8e and console 14 §14.4. The plan is kept as the
+where and why); the results from the test cluster are in handbook 13 §13.8e and console 14 §14.4. The plan is kept as the
 record of the reasoning.
 
 Written 2026-10-23 against `develop` at 5b45cda (control
@@ -71,9 +71,9 @@ examined (§3).
 
 | # | Requirement | How this plan meets it | Verified by |
 |---|---|---|---|
-| R1 | A record produced to a steady topic shows in the console's Data tab and in SQL runs within 5 s at p95 | The tail is read from Kafka, not from files; budget in §9 sums to 2.7 s p95 | §13.4 lab probe, 300 samples |
+| R1 | A record produced to a steady topic shows in the console's Data tab and in SQL runs within 5 s at p95 | The tail is read from Kafka, not from files; budget in §9 sums to 2.7 s p95 | §13.4 probe, 300 samples |
 | R2 | No row duplicated or missing while records move into the table, across commits, compaction and runtime restarts | Snapshot and tail are disjoint by offset and contiguous per partition; the tail is pinned to the run's snapshot; compaction and restarts never move offsets backwards | §7; §13.4 disruption matrix |
-| R3 | A freshly read row looks exactly as it will once committed, forks, JSON collapses and `_unmapped` included | One row-building function shared by the seal and the tail; the tail conforms with the table's current schema, as the seal does; one documented deviation, `_materialized_at` (§8) | `test_tail_parity.py`; lab diff of tail rows against committed rows |
+| R3 | A freshly read row looks exactly as it will once committed, forks, JSON collapses and `_unmapped` included | One row-building function shared by the seal and the tail; the tail conforms with the table's current schema, as the seal does; one documented deviation, `_materialized_at` (§8) | `test_tail_parity.py`; a diff of tail rows against committed rows on a test cluster |
 | R4 | Opt-in per materialization, behind the console's existing data access and per-dataset permissions, bounded reads | `live_tail` on the materialization (default on, switchable); `data.query` on the table's dataset checked by the console route and again by the tail app with the person's session; per-table row/byte bounds, a per-member budget and a per-request cap | `test_web.py`, `test_tail_app.py`, `console/server/runs/tail.test.ts` |
 | R5 | No change to the table format or the exactly-once protocol unless argued and flagged | None proposed. The one refactor (§5.3) moves code, not behaviour; the seal's output is byte-identical | `test_runtime_seal.py`, fixture regeneration unchanged |
 
@@ -256,7 +256,7 @@ control plane does and the operator creates `<app>-app-api` on `webPort` for any
 
 #### One app, many members
 
-There is **one tail app per deployment** — `midstream-tail` on the lab — serving every
+There is **one tail app per deployment** — `midstream-tail` on a test cluster — serving every
 materialization's tables in that environment, exactly as the one maintenance app maintains them.
 It is not one app per materialization and it is not part of the runtimes: runtimes are one app per
 materialization because they *write* and scale by their topic's partitions; the tail only reads and
@@ -332,7 +332,7 @@ or forwards it to the owner:
    (`faust/transport/drivers/aiokafka.py:310`). **Self-check:** when a tick arrives, the agent
    compares the computed partition with the event's actual partition (`context["event"].message.partition`,
    as the writer reads it) and logs `tail_routing_mismatch` as an error if they differ, so a
-   partitioner disagreement is caught in the first minute on the lab rather than as misrouted requests.
+   partitioner disagreement is caught in the first minute on a test cluster rather than as misrouted requests.
 2. **Partition → member URL.** Each member keeps a map refreshed every 15 s, and at once (1 s floor)
    when a request names a table it does not own: `describe_consumer_groups([<this app's group id>])`
    through the admin client (`kafka/admin.py` gains `describe_consumer_group`); for each member,
@@ -701,7 +701,7 @@ The console depends on the tail through one HTTP endpoint (§6.2) and stays extr
 - **Configuration.** Fixed: `CONSOLE_TAIL_URL`, the tail app's base URL; empty, the feature is off in
   this console. In every deployment the console runs in-cluster and the URL is the Service,
   `http://<release>-tail-app-api:6065`. During development and
-  testing the console runs on a laptop: the lab's HTTPRoute routes `/tail/*` on the control plane's
+  testing the console runs on a laptop: the test cluster's HTTPRoute routes `/tail/*` on the control plane's
   host to the tail Service, and `CONSOLE_TAIL_URL` is that host — the endpoint is still the console's
   alone there (§6.2). Tunable (section `live-tail`, §6.5):
   `liveTailEnabled`, `liveTailRefreshMs` (1,500), `liveTailMaxRows` (100,000: the most tail rows one
@@ -873,7 +873,7 @@ Kaspr change is in scope for this alone** (§17 D22): an error content type per 
 errors are `application/json`. Until that change is deployed, the view's `bodySelector.onError`
 JSON-encodes the error as bytes and the console parses a non-2xx body as JSON whatever its content
 type — and keeps doing so after, so either Kaspr works. **Process:** when the implementer makes the
-Kaspr change, they pause and ask the owner to deploy it to the kaspr-operator and the lab, so every
+Kaspr change, they pause and ask the owner to deploy it to the kaspr-operator and the test cluster, so every
 later test runs on a Kaspr that has it.
 
 | Status | `code` / `details.reason` | When |
@@ -1068,7 +1068,7 @@ same `arrow_schema(schema)`, zstd Parquet from the same writer.
 ## 9. Latency budget
 
 Produce → visible in the Data tab, Live mode, steady topic, console in the cluster or on a laptop
-against the lab (the lab figures in 13 §13.8 and console 06 §6.2 are from a laptop):
+against a test cluster (the figures in 13 §13.8 and console 06 §6.2 are from a laptop):
 
 | Step | Typical | p95 | Source |
 |---|---|---|---|
@@ -1113,7 +1113,7 @@ the table, which is still hours behind.
 | A member's pod restarts | static membership keeps its partitions; its tables re-seed on return (~2–5 s + catching up) | the notice for those tables | automatic |
 | A member is lost for longer than the session timeout, or members are added or removed | Kaspr rebalances the tick topic; moved tables re-seed on their new owner; maps refresh within 15 s | `tail_rebalancing` / `not_ready` notices for the moved tables, seconds | automatic |
 | Member map stale (a request reaches a non-owner) | one immediate map refresh, then forward; still wrong → `409 tail_rebalancing` | the notice until the next refresh | ≤ 15 s |
-| Partitioner disagreement (ticks land where the owner computation does not expect) | `tail_routing_mismatch` errors on every tick; forwards fail with `409` | the notice | fix the key bytes or partitioner — caught in the first minute on the lab (§13.4 step 0) |
+| Partitioner disagreement (ticks land where the owner computation does not expect) | `tail_routing_mismatch` errors on every tick; forwards fail with `409` | the notice | fix the key bytes or partitioner — caught in the first minute on a test cluster (§13.4 step 0) |
 | Table just opted in / just seeded / just moved | `503 tail_not_ready` | same notice | ready in ~2–5 s |
 | Kafka unreachable from a member | ingest stalls; `X-Tail-Lag-Ms` grows; buffered rows still served | *Live tail is k s behind* | aiokafka reconnects |
 | Source topic deleted while tailed | fetch errors name the topic; the table is `unavailable` with the reason; nothing else on the member is affected | *Live tail unavailable — the topic is gone* | the runtime is failing too; the table recovers if the topic returns, or leaves with its materialization |
@@ -1155,7 +1155,7 @@ rows_window ≈ min(rate × 630 s, max(10,000, rate × 150 s))
 ```
 
 — 6,300 rows for a 10 records/s topic (ten minutes of them), 15,000 at 100/s, 150,000 at 1,000/s.
-At the lab's 1.4 KB records that is 9 MB, 21 MB and 210 MB raw. A table is "busy" for the tail when
+At the test cluster's 1.4 KB records that is 9 MB, 21 MB and 210 MB raw. A table is "busy" for the tail when
 that window outgrows `live_tail_max_bytes_per_table`; the 256 MiB default fits a 1,000/s topic.
 
 **Per table, resident memory** ≈ 1–1.3 × the raw window (Arrow batches ≈ 0.6–0.8 ×, zstd raw lines
@@ -1280,7 +1280,7 @@ carries the field. Runtimes are untouched. Additive everywhere: a **minor** rele
   in `X-Console-Token` besides the person's bearer, so a script holding a valid token cannot
   use it (`403 console_only`); it is not a public API and is documented as console-internal
   (handbook 19), free to change between releases. In every deployment the console runs in-cluster
-  and the Service is cluster-internal; the lab's HTTPRoute exposes `/tail/*` for development and
+  and the Service is cluster-internal; the test cluster's HTTPRoute exposes `/tail/*` for development and
   testing from a laptop, where the credential requirement still holds.
 
 ---
@@ -1292,7 +1292,7 @@ Three rules, then the tests. (1) **Every failure mode in §10 has a named test**
 (2) **Exactly once is proved by a model, not by examples**: `test_tail_exactly_once.py` drives the
 buffer and a simulated runtime, console and Kaspr through random commits, compactions, bursts,
 parks, moves and schema changes and asserts the invariants of §7 after every step. (3) **What a
-unit test cannot reach is reached on the lab**: real Kafka, brokers restarting, members killed, the
+unit test cannot reach is reached on a test cluster**: real Kafka, brokers restarting, members killed, the
 control plane and the console restarting, an hour of soak — §13.4 steps 14–19. Fakes, not mocks, as
 the suite does today (13 §13.3); no test is skipped, and every phase ends with the whole repo's
 suites green (§13.7).
@@ -1334,7 +1334,7 @@ suites green (§13.7).
 | `console/server/runs/tail.test.ts` (failure cases) | a refresh while another refresh of the same run is in flight is serialized, not doubled; a refresh of an expired run → `404` and the client starts a new run; of a cancelled or failed run → a new run; a tail that becomes `off` mid-live (the materialization's `live_tail` turned off) → `tail.status` `off`, no further fetches; the person losing `data.query` on the dataset between refreshes → `ownRun` refuses and the stream closes with the auth reason; the first fetch of a run timing out → the run completes committed-only within the timeout and says `unavailable`; a tail segment file missing from disk → that tail `unavailable`, the committed rows still page |
 | Fixture | `python/tests/console_fixture.py` also writes `console/testdata/iceberg/orders/tail-after-{offsets}.parquet` and a second file for an incremental fetch, with the expected rows (records past the fixture's committed offsets, built with `build_row`), so `iceberg.test.ts` can compare the TypeScript side's reading with Python's, as E5 does for the table |
 
-### 13.3 Browser (Playwright, per the lab recipes)
+### 13.3 Browser (Playwright)
 
 Live toggle on a tail-enabled materialization: rows appear without pressing Run; the status line's
 states (*Live*, unavailable, truncated, settling, behind) each driven by stubbing the tail response
@@ -1348,9 +1348,9 @@ render and recover; the Live toggle is absent in SQL, whose *Auto re-run* re-run
 completion and stops when turned off; "Last 15 minutes" under Live keeps showing records produced
 after Run was pressed; light and dark themes.
 
-### 13.4 Lab validation
+### 13.4 Validation on a test cluster
 
-Deploy per the lab procedure (overlay → kustomize → chart → helm; the tail app added to the overlay
+Deploy the branch to a test cluster (overlay → kustomize → chart → helm; the tail app added to the overlay
 as the maintenance app was, with its `kaspr.io/app` label patches by selector, its topic names, env
 and package ref; an HTTPRoute rule for `/tail/*` to `midstream-tail-app-api`). Start with
 **2 members**. Then:
@@ -1361,7 +1361,7 @@ and package ref; an HTTPRoute rule for `/tail/*` to `midstream-tail-app-api`). S
    whichever member the Service picked (repeat ten times).
 1. **Steady freshness (R1).** Create a 3-partition topic `fresh.orders` (Strimzi KafkaTopic), a
    materialization (live tail defaults on) after seeding a few records first (the seed-before-bulk
-   rule). Run a probe (`lab/freshness_probe.py` in the session scratchpad; aiokafka through the
+   rule). Run a probe (aiokafka through the
    external listener): produce one record a second for 5 minutes with `probe_id` and `produced_at`;
    in parallel poll (a) the console's Data tab in Live mode through Playwright, reading the first
    row's `probe_id`, and (b) `POST /api/materializations/{id}/runs` with
@@ -1448,7 +1448,7 @@ Record the results in 13 §13.8e and console 14 §14.4, as earlier releases did.
 
 Every row of §10, and where it is tested. The implementer keeps this table true as the code lands.
 
-| §10 situation | Python | Console | Lab step |
+| §10 situation | Python | Console | Test-cluster step |
 |---|---|---|---|
 | Tail app down, unreachable, URL wrong | — | `runs/tail.test.ts` (first fetch times out → committed-only, `unavailable`) | 5, 17 |
 | A member's pod restarts | `test_tail_app` (restart re-seeds, same prefix) | — | 5 |
@@ -1458,7 +1458,7 @@ Every row of §10, and where it is tested. The implementer keeps this table true
 | Just opted in / seeded / moved | `test_tail_app` (`not_ready`), `test_tail_failures` (`wait_ms` deadline) | `data/tail.test.ts` | 13 |
 | Kafka unreachable from a member | `test_tail_failures` | — | 14 |
 | Control plane unreachable from the tail app | `test_tail_failures` | — | 15 |
-| Source topic deleted while tailed | `test_tail_failures` | — | not run on the lab (destructive) |
+| Source topic deleted while tailed | `test_tail_failures` | — | not run on a test cluster (destructive) |
 | A burst outgrows the bound | `test_tail_buffer`, `test_tail_app`, `test_tail_exactly_once` | `data/tail.test.ts` (`truncated`) | 7, 12 |
 | A backlog | `test_tail_app`, `test_tail_exactly_once` | `data/tail.test.ts` (`backlogged`) | 11, 12 |
 | One table above the ceiling | `test_tail_app` | — | 12 |
@@ -1483,7 +1483,7 @@ Every row of §10, and where it is tested. The implementer keeps this table true
 
 ### 13.6 Measurements with pass thresholds (phase 2 exit)
 
-On the lab's record shapes (`materializer-loadtest-orders`, ~1.4 KB staged), measured and recorded
+On the test cluster's record shapes (`materializer-loadtest-orders`, ~1.4 KB staged), measured and recorded
 in handbook 19 before phase 3 starts; a miss re-opens §9 and §11.1:
 
 | Measurement | Threshold |
@@ -1505,11 +1505,11 @@ in handbook 19 before phase 3 starts; a miss re-opens §9 and §11.1:
 - **Phase 1:** the §13.1 rows for the control plane green; `helm template` of every overlay;
   `ShardRoutingTests`; the full Python suite green.
 - **Phase 2:** every Python row of §13.5 green, `test_tail_exactly_once.py` included; the §13.6
-  thresholds met on the lab; lab steps 0–19 run and recorded; the Kaspr confirmations (§15 phase 2,
+  thresholds met on a test cluster; its steps 0–19 run and recorded; the Kaspr confirmations (§15 phase 2,
   items a–c) answered in handbook 19.
 - **Phase 3:** the console rows of §13.5 green; `npm run typecheck && npm test && npm run build`;
   the Playwright pass of §13.3, failure states included; the fixture parity test.
-- **Phase 4:** 13 §13.8e and console 14 §14.4 written from the lab results; handbook 19 and the touched
+- **Phase 4:** 13 §13.8e and console 14 §14.4 written from the test cluster's results; handbook 19 and the touched
   documents updated; versions bumped; nothing in this plan's §17 left undecided.
 
 ---
@@ -1517,7 +1517,7 @@ in handbook 19 before phase 3 starts; a miss re-opens §9 and §11.1:
 ## 14. Rollout order
 
 1. **Phase 0** (row builder) ships first as a patch of the current release: no behaviour change,
-   proven by golden-file equality. Deploy; nothing to validate on the lab beyond a commit.
+   proven by golden-file equality. Deploy; nothing to validate on a test cluster beyond a commit.
 2. **Phase 2** (the tail app) deployed with no table ticked: it starts, follows table events, serves
    health and members. Check its Kafka user can read the source topics and
    `materialization-table-events`, and that it reaches the control plane's schema and session views.
@@ -1526,7 +1526,7 @@ in handbook 19 before phase 3 starts; a miss re-opens §9 and §11.1:
    to the new topic, so no forced consumer-group rebalance is needed.
 4. **Phase 3** (console) with `CONSOLE_TAIL_URL` set (or the ingress rule); the feature is invisible
    until then even though tables are tailed.
-5. Run §13.4 on the lab; fix; then document for users.
+5. Run §13.4 on a test cluster; fix; then document for users.
 6. **Phase 4** docs and the release (§15).
 
 Rolling back any phase is independent: the console works without the tail app (it degrades to
@@ -1573,8 +1573,8 @@ Each phase ends with the repo's checks: `python -m unittest discover -s python/t
 | Manifests | `charts/midstream/templates/tail/app.yaml` (replicas 2, resources, env incl. `TAIL_SERVICE_TOKEN` from the `<release>-auth` Secret), `tail-worker.yaml` (agent on `<release>-tail-requests`, `partitions: 64`, `declare: true`), `tail-step.yaml` (task every 5 s: forget stale tables, trim, refresh the member map, refresh end offsets and re-evaluate the `backlogged`/`catching_up`/`paused` states), `charts/midstream/templates/webviews/tail-rows.yaml`, `tail-health.yaml`, `tail-members.yaml`, `tail-head.yaml` (labelled `kaspr.io/app: materializer-tail`); `charts/midstream/templates/kustomization.yaml`; `charts/midstream/values.yaml` (labels by selector, topic names, `TAIL_*` env, the Secret name, package ref) |
 | Tests | `python/tests/tail_support.py`, `test_tail_buffer.py`, `test_tail_routing.py`, `test_tail_app.py`, `test_tail_parity.py` (new), `test_kafka_admin.py`, `test_agent_manifests.py`, `test_package_layout.py` (the new subpackage imports) |
 | Docs | handbook 02 (§2.10b the tail app), 03 (§3.4 constants), 04 (§4.1: the `/tail/v1` endpoints are the console's alone, documented in 19, not part of the public API), 10 (a section pointing to the new doc), new `docs/handbook/19-live-tail.md` (the model, the contracts, ownership and routing, exactly once, capacity and sizing, operating it), 12 (runbook entries: health and members views, pauses, re-seeds, moves, sizing in §12.10), 14 (limits), README table; `AGENTS.md` project map (`tail_app/`) |
-| **Verification items, first thing** | (a) Kaspr's key serializer for the control plane's `topicSend` keys is `raw` and the producer's partitioner is aiokafka's default: produce one tick and compare its partition with the owner computation (the self-check does this continuously). (b) `describe_consumer_groups` in the installed aiokafka returns member metadata and assignments in a form the decoder handles, and the Faust `ClientMetadata` decompresses with `PartitionAssignor._decompress`; if not, use the FQDN fallback (the pod name from the static member's instance id and this member's own `K_WEB_HOST` suffix). (c) How Kaspr deserializes a `json` agent input and what it does with a value that is not UTF-8 JSON: nothing in `runtime_app/` produces `RuntimeMalformedRecord` today (only `state.py` consumes it), so the writer never sees such a value — mirror that outcome (no row; position advances). (d) Measure the row builder's cost per record and the resident-bytes-per-raw factor on the lab's record shapes, and the re-assign hiccup, to replace §9's and §11.1's estimates |
-| **Kaspr change, in scope and gated** | an error content type per WebView in `kaspr/types/models/webview/response.py` (`build_error` taking an error content type, the view's by default), so the tail's errors are `application/json`. When made: **pause and ask the owner to deploy it to the kaspr-operator and the lab** before any further testing, so everything runs on a Kaspr that has it; until then the JSON-in-octet-stream fallback stands and the console parses both. No other Kaspr change is in scope: if confirmation (b) fails, the FQDN fallback is the answer |
+| **Verification items, first thing** | (a) Kaspr's key serializer for the control plane's `topicSend` keys is `raw` and the producer's partitioner is aiokafka's default: produce one tick and compare its partition with the owner computation (the self-check does this continuously). (b) `describe_consumer_groups` in the installed aiokafka returns member metadata and assignments in a form the decoder handles, and the Faust `ClientMetadata` decompresses with `PartitionAssignor._decompress`; if not, use the FQDN fallback (the pod name from the static member's instance id and this member's own `K_WEB_HOST` suffix). (c) How Kaspr deserializes a `json` agent input and what it does with a value that is not UTF-8 JSON: nothing in `runtime_app/` produces `RuntimeMalformedRecord` today (only `state.py` consumes it), so the writer never sees such a value — mirror that outcome (no row; position advances). (d) Measure the row builder's cost per record and the resident-bytes-per-raw factor on the test cluster's record shapes, and the re-assign hiccup, to replace §9's and §11.1's estimates |
+| **Kaspr change, in scope and gated** | an error content type per WebView in `kaspr/types/models/webview/response.py` (`build_error` taking an error content type, the view's by default), so the tail's errors are `application/json`. When made: **pause and ask the owner to deploy it to the kaspr-operator and the test cluster** before any further testing, so everything runs on a Kaspr that has it; until then the JSON-in-octet-stream fallback stands and the console parses both. No other Kaspr change is in scope: if confirmation (b) fails, the FQDN fallback is the answer |
 
 ### Phase 3 — the console
 
@@ -1589,7 +1589,7 @@ Each phase ends with the repo's checks: `python -m unittest discover -s python/t
 | Tests | `console/server/data/tail.test.ts`, `console/server/runs/tail.test.ts` (new), `routes/materializations.test.ts`, `settings/catalog.test.ts`, `routes/system.test.ts`, `src/features/data/hooks.test.ts`; fixture additions in `python/tests/console_fixture.py` and `console/server/iceberg/iceberg.test.ts` |
 | Docs | console 01, 03 (§3.10), 06, 07 (a section on tail objects and incremental refresh), 08 (§8.4, §8.16, new §8.17a), 11 (§11.3 create dialog, §11.4 edit, §11.8 Live), 12 (§12.2 the tail call), 14, 16, 17; handbook 18 §18.9 (the tail call carries the person's session) |
 
-### Phase 4 — lab validation, docs, release
+### Phase 4 — validation on a test cluster, docs, release
 
 §13.4; 13 §13.8e and console 14 §14.4 entries; `pyproject.toml` and `console/package.json` bumped (§17 D11);
 `docs/handbook/README.md` reading paths ("Debugging a tail that is behind, moving or unavailable").
@@ -1686,8 +1686,8 @@ Decided by the owner on 2026-10-23:
 | D18 | **Nothing is persisted:** a member's state is in memory and rebuilt from the ticks, the control plane, the table events and Kafka; a restart costs seconds of `tail_not_ready` for the tables being watched |
 | D19 | **Live applies to the browse view.** A statement gets its tail once per run; the SQL panel's *Auto re-run* (off by default) starts a new run 5 s after the previous one finished |
 | D20 | **Relative ranges slide under Live:** the end stays open so appended tail rows are never pruned, the start is re-resolved on each new run; an absolute range with a past end polls nothing |
-| D21 | **The tail endpoint is the console's alone:** every request carries the console's service credential in `X-Console-Token` besides the person's bearer (`403 console_only` otherwise); not a public API, documented as console-internal. The console runs in-cluster in every deployment (`CONSOLE_TAIL_URL` is the Service); the lab's HTTPRoute `/tail/*` serves development and testing from a laptop |
-| D22 | **Kaspr changes:** in scope for one thing only, an error content type per WebView; when made, the implementer pauses and asks the owner to deploy it to the kaspr-operator and the lab before further testing. No other Kaspr change: the routing confirmations fall back to the FQDN scheme if needed |
+| D21 | **The tail endpoint is the console's alone:** every request carries the console's service credential in `X-Console-Token` besides the person's bearer (`403 console_only` otherwise); not a public API, documented as console-internal. The console runs in-cluster in every deployment (`CONSOLE_TAIL_URL` is the Service); the test cluster's HTTPRoute `/tail/*` serves development and testing from a laptop |
+| D22 | **Kaspr changes:** in scope for one thing only, an error content type per WebView; when made, the implementer pauses and asks the owner to deploy it to the kaspr-operator and the test cluster before further testing. No other Kaspr change: the routing confirmations fall back to the FQDN scheme if needed |
 | D23 | `live_tail_idle_seconds` stays deployment-wide; no per-materialization always-on mode in this release |
 | D24 | The fleet is up to 100 materializations and 500 topics **per control plane**; §11.1 is sized for that |
 

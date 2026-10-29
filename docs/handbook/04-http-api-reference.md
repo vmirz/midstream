@@ -818,7 +818,7 @@ The KasprApp, its agents, tasks and table, the Kafka topics, the consumer group 
 offsets, and the persistent volumes (`whenScaled: Retain`) all stay. Observation confirms the stop
 from the operator's member count: `observed_phase = "stopped"`,
 `phase_reason = "runtime_scaled_to_zero"` once `available_members` reads `0/0`
-([08](./08-observation-and-status.md)). On the lab cluster a 16-member runtime stopped in about a
+([08](./08-observation-and-status.md)). On a test cluster a 16-member runtime stopped in about a
 minute.
 
 > **Rows staged on the pods are read again, not lost.** Since 0.7.0 a runtime commits a record's
@@ -843,7 +843,7 @@ with `desired_phase: "running"`. Resuming a materialization that is already mean
 its runtime, which is how a `failed` one is retried — including a change of topics whose discovery
 failed (`discover_tables_failed`): the apply discovers and creates its tables first (07 §7.3).
 
-On the lab cluster a 16-member runtime resumed in about four minutes: the operator scales the
+On a test cluster a 16-member runtime resumed in about four minutes: the operator scales the
 StatefulSet to its initial step and its HPA doubles it from there.
 
 `404 not_found` for an unknown materialization; `409 conflict` (`materialization_deleting`) for one

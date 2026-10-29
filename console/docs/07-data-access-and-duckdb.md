@@ -251,7 +251,7 @@ Every query also holds one of Node's libuv worker threads for as long as it runs
 included; `server/workerPool.ts` sizes the pool at startup (`RUN_CONCURRENCY × RUN_SCAN_CONCURRENCY
 + 32`).
 
-Measured against the lab bucket from a laptop: binding a read of 200 files by field id takes 1 ms
+Measured against the test cluster's bucket from a laptop: binding a read of 200 files by field id takes 1 ms
 where `union_by_name` took 1,400 ms (E3). On the E13 table — 102.6 M rows in 2,840 files, 17.2 GB
 (handbook 13 §13.8) — a filter over its busiest day (564,837 rows in 5 files) counted in 0.63 s and
 a statement grouping that day in 0.39 s; over all time a filter counted in 14.4 s, its first page
@@ -399,7 +399,7 @@ own, reads it through the table's logical view on the shared DuckDB instance, ne
 the file, and answers rows and columns as a page does, with the peek's figures. It is never part of
 a run, an export or a profile.
 
-Measured on the lab (handbook 13 §13.8e): a record produced was on screen in the Data tab's Live
+Measured on a test cluster (handbook 13 §13.8e): a record produced was on screen in the Data tab's Live
 mode at a p50 of 0.93 s and a p95 of 1.6 s, and in a statement run at a p50 of 0.70 s and a p95 of
 1.1 s.
 

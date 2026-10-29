@@ -55,7 +55,7 @@ in `X-Tail-Gap`.
 `python/tests/test_tail_exactly_once.py` drives the real app — worker, buffer, fetch plan, answers —
 through random schedules of produce, commit, ticks, restarts, bursts, schema changes, parking and
 incremental fetches, and checks after every answer that the snapshot and its tails hold every record
-exactly once; 150 schedules run with the suite, and 10,000 passed once. On the lab it held at every
+exactly once; 150 schedules run with the suite, and 10,000 passed once. On a test cluster it held at every
 poll across commits, a compaction, runtime restarts and rebalances of the tail app (§19.17).
 
 ## 19.3 The tail app
@@ -182,7 +182,7 @@ topics on demand (Kafka's default) create it if it is missing. A member's other 
 one that looks up offsets for seeding and backlogs, the peek's — never leave a topic tracked after
 a lookup (`kafka/metadata.py::track_no_topics`), and a topic's partitions are read from a request
 for every topic (`ConsumerAdapter.partitions_for`). Otherwise aiokafka keeps every topic it once
-looked up and names them all in each refresh, every five minutes: on the lab, the topics of
+looked up and names them all in each refresh, every five minutes: on a test cluster, the topics of
 deleted materializations came back, empty, with one partition each. The source consumer names
 the topics it reads, as every consumer of them does, until the topic check lets a deleted one go.
 
@@ -374,7 +374,7 @@ reaches the tail app within a minute. **The console's** four (`liveTailEnabled`,
 ## 19.15 Capacity and cost
 
 Measured with the tail's own code on 100,000 records shaped as the load-test topic's (1.1 KB each,
-28 columns), one core, inside a tail app pod on the lab (the laptop's figures in brackets):
+28 columns), one core, inside a tail app pod on a test cluster (the laptop's figures in brackets):
 
 | Measurement | Result | Plan threshold |
 |---|---|---|
@@ -387,7 +387,7 @@ Measured with the tail's own code on 100,000 records shaped as the load-test top
 | Member map refresh (the members view: `DescribeGroups`, decode, HTTP), in the pod | 0.7 ms p50, 1.3 ms p95 | ≤ 50 ms |
 | Head peek of 200 rows over 3 partitions, in the pod | 6.5 ms p50, 59 ms p95; a million rows asked is 1,000 shown | ≤ 300 ms p95 |
 
-**Fifty tables on two members** (lab step 10: 50 topics of three partitions at 5 records a second,
+**Fifty tables on two members** (test step 10: 50 topics of three partitions at 5 records a second,
 in three materializations): 32 tables on one member, 18 on the other. The first member, at 160
 records a second, used 0.044 cores and 194 MiB (5.7 MB of it buffers), the second 0.032 cores and
 175 MiB: about 1.4 millicores a quiet table. With one of the tables at 1,000 records a second more,
@@ -414,12 +414,12 @@ in the map.
 **A tail that is unavailable.** The table's `last_error` in the health view says why: the topic, the
 control plane, the schema. A table that cannot seed is retried; one whose topic is gone every 30 s.
 
-**From a laptop.** The lab's HTTPRoute sends `/tail/` on the control plane's host to the tail app's
+**From a laptop.** The test cluster's HTTPRoute sends `/tail/` on the control plane's host to the tail app's
 Service, so a console run locally can give its domain that host as its `tailUrl` (`CONSOLE_DOMAINS`).
 
 ## 19.17 Verification
 
-Unit and model tests: handbook 13. Lab validation of 4.1 (steps of the design's §13.4): 13 §13.8e,
+Unit and model tests: handbook 13. Validation of 4.1 on a test cluster (steps of the design's §13.4): 13 §13.8e,
 with the console's browser checks in console 14 §14.4.
 
 ## 19.18 Decisions that differ from the design plan
@@ -440,4 +440,4 @@ with the console's browser checks in console 14 §14.4.
 | A refused tail is `unavailable` with reason `off` | `unavailable` with reason `not_tailed`, asked again on every refresh | A resumed table, or one not ticked yet, comes back by itself |
 | — | A stopped materialization is off for the console: no Live toggle, no tail requests (`stopped`) | The control plane tails a running materialization only |
 | — | A run whose tail a switch turned off is replaced once the switch is on again | Otherwise an open tab would follow nothing until someone pressed Run |
-| The source consumer's `fetch_min_bytes` 1 | 64 KiB, with `fetch_max_wait_ms` the fetch wait | With 1, a trickle across fifty tables woke the fetch loop for every record, and each pass went over every active table: 0.72 cores for 33 quiet tables on the lab, 0.044 after (with a segment's size read once). It adds up to the fetch wait, 200 ms, to a quiet table's records, which the budget's p95 already allowed |
+| The source consumer's `fetch_min_bytes` 1 | 64 KiB, with `fetch_max_wait_ms` the fetch wait | With 1, a trickle across fifty tables woke the fetch loop for every record, and each pass went over every active table: 0.72 cores for 33 quiet tables on a test cluster, 0.044 after (with a segment's size read once). It adds up to the fetch wait, 200 ms, to a quiet table's records, which the budget's p95 already allowed |

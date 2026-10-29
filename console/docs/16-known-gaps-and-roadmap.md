@@ -73,7 +73,7 @@ Until a day is compacted, a query over it reads its small files — correct, slo
 |-----|--------|
 | Live follows the first page only, newest first | New rows would shift every page being read; past page 1, with a row open, or hidden, Live waits and says so. Oldest first, new rows go at the end and every page keeps its rows |
 | A statement is refreshed by running it again | Its result is materialized: Auto re-run starts a new run five seconds after each one, rather than appending rows |
-| A tail member's restart pauses its tables' tails | Static membership keeps its tables with it while it is away, about the time its package takes to install (~25 s on the lab); the tab says the tail is unavailable meanwhile and shows committed rows. Scaling the tail app restarts every member |
+| A tail member's restart pauses its tables' tails | Static membership keeps its tables with it while it is away, about the time its package takes to install (~25 s on a test cluster); the tab says the tail is unavailable meanwhile and shows committed rows. Scaling the tail app restarts every member |
 | The bound is soft by one fetch | A table pauses at `live_tail_max_rows_per_table` after the fetch that crossed it, so it can hold up to one fetch more |
 | Engines see committed rows only | The tail is the console's: an engine on the REST catalog reads the snapshot, as before |
 | A snapshot older than the tail's retention has no tail | A run left on screen past a commit and `live_tail_retention_seconds` is replaced by Live on its next look; a run paged without Live keeps its committed rows |

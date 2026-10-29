@@ -181,11 +181,11 @@ There is **no standalone HTTP server process** in this repository. The API only 
 
 ## Handbook stats
 
-21 documents. Every factual claim is traced to a file in this repository or to a measurement on the
-lab cluster; where the code is ambiguous or a source disagrees, the handbook says so rather than
+21 documents. Every factual claim is traced to a file in this repository or to a measurement on a
+test cluster; where the code is ambiguous or a source disagrees, the handbook says so rather than
 guessing. Document 21 also traces into Kaspr, Faust and kaspr-operator, and was checked against a
 broker enforcing its ACLs (§21.9).
 
 Verified for 1.0.0-rc.1 against: 1,251 passing tests (`python -m unittest discover -s python/tests -p 'test_*.py'`),
 `helm template` with every values file, the console's `npm run typecheck && npm test && npm run build`
-(403 tests), and the lab cluster (13 §13.8–§13.8h).
+(403 tests), and a test cluster (13 §13.8–§13.8h).

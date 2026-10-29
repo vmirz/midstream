@@ -1,6 +1,6 @@
 # 13 — Testing and Development
 
-Everything needed to build, test, and extend the codebase locally, and what the lab showed.
+Everything needed to build, test, and extend the codebase locally, and what the test cluster showed.
 
 ## 13.1 Environment setup
 
@@ -318,7 +318,7 @@ the function.
 to `PendingFiles`, and call `plan_append` against the loaded table: every decision is a function of
 the seal's offsets and the table's committed ones (10 §10.6).
 
-**Read a lab table directly.** PyIceberg or DuckDB (11 §11.9); `iceberg_snapshots` and the snapshot
+**Read a test cluster's table directly.** PyIceberg or DuckDB (11 §11.9); `iceberg_snapshots` and the snapshot
 summaries' `materializer.offsets` show what each commit covered.
 
 **Check a spec hash drift.** Render twice with the same inputs and compare `spec_hash`.
@@ -337,9 +337,9 @@ the committer — the E13 method (§13.8):
 4. List the current snapshot's live data files and check each exists in the bucket. A dangling
    reference is data the table claims and cannot serve — what run 1 found.
 
-## 13.8 Verified on the lab: the E13 load test
+## 13.8 Verified on a test cluster: the E13 load test
 
-Experiment E13 loaded the lab's `materializer-loadtest-orders`
+Experiment E13 loaded the test cluster's `materializer-loadtest-orders`
 topic — 32 partitions, 102,582,940 records after compaction, 1.4 KB JSON orders over two years of
 Kafka timestamps in four schema shapes, with tombstones — from offset 0 into a fresh table, with 16
 members and the default settings, and disrupted it throughout. It ran twice.
@@ -425,9 +425,9 @@ Multi-partition compaction kept a backfill's file count bounded: the first job, 
 took 1,596 files (1.05 GB) across 47 days into 89, and the table never held more than 5,997 files,
 where run 1 had reached 14,816 at 55 M rows.
 
-## 13.8a Verified on the lab: several topics, one runtime (2.0)
+## 13.8a Verified on a test cluster: several topics, one runtime (2.0)
 
-On 2026-10-20 the lab ran control plane 2.0.0 (51ca6ab) after the three 1.0 materializations were
+On 2026-10-20 the test cluster ran control plane 2.0.0 (51ca6ab) after the three 1.0 materializations were
 deleted. `shop` read `mtm-orders` (4 partitions), `mtm-payments` (2) and `mtm.shipments.v1` (3) with
 2 replicas; `audit` read `mtm-orders` too, with its own runtime and consumer group. Five records per
 topic were produced first, the rest once both ran: 120,005, 80,005 and 60,005 records, the second
@@ -449,7 +449,7 @@ half of the payments with a new `currency` field.
 The tail of each partition, below `min_rows_per_file`, sealed at `max_open_file_age_ceiling_seconds`
 (600 s) as designed: about ten minutes after the last record, every table held all of its topic.
 
-## 13.8b Verified on the lab: changing topics, and the maintenance app (2.0)
+## 13.8b Verified on a test cluster: changing topics, and the maintenance app (2.0)
 
 On 2026-10-20, with the control plane and runtimes at 0d27b75 and the maintenance app at 59550ba,
 on `shop` (2 replicas): every change through the console's Edit dialog and the API, checked in the
@@ -474,9 +474,9 @@ Two defects were found and fixed on the way:
   committed offsets under that name, so every record looked written already and was released
   unwritten. State is now stamped
   with the table's uuid and another incarnation's ignored (0d27b75, `RecreatedTableTests`, which fail
-  without the fix); on the lab the table was dropped and added again, and held all 3,005.
+  without the fix); on a test cluster the table was dropped and added again, and held all 3,005.
 
-## 13.8c Verified on the lab: datasets and per-dataset access (3.0)
+## 13.8c Verified on a test cluster: datasets and per-dataset access (3.0)
 
 On 2026-10-22, with the control plane and runtimes at 4cdb65b, on a clean slate (the 2.0 `shop` and
 its tables removed, the `directory` table new): datasets `sales` and `finance`, made by an Editor who
@@ -503,7 +503,7 @@ record of — the 2.0 `shop`, still running — crashed the `runtime-status` age
 same event on every restart and applied no runtime's status. Such an event is now dropped and logged
 once (4cdb65b, `test_a_status_from_a_materialization_the_control_plane_does_not_hold_is_dropped`).
 
-## 13.8d Verified on the lab: month partitions, the deployment's place and scale, dates from the data (4.0)
+## 13.8d Verified on a test cluster: month partitions, the deployment's place and scale, dates from the data (4.0)
 
 On 2026-10-23, with the control plane and maintenance app at 396027a, and the three 3.x
 materializations (Ledger, Orders, *Returns, third*) re-applied by the upgrade. A topic made for it,
@@ -529,12 +529,12 @@ shapes in schema 0, and `promo_code` adding schema 1.
 No defect in the control plane or the maintenance app; the console's three are in console 14 §14.5
 (24–26).
 
-## 13.8e Verified on the lab: the live tail (4.1)
+## 13.8e Verified on a test cluster: the live tail (4.1)
 
 On 2026-10-23 and 24, with the control plane, runtimes, maintenance app and tail app at
 `feature/live-tail` (each deploy noted below), Kaspr 0.11.30 and kaspr-operator 0.19.7, the console
-server on a laptop through the lab's HTTPRoute (`/tail/` to the tail app), Playwright (Chromium) in
-light and dark. The lab materializer was installed afresh for it (12 §12.1). Topics made for it:
+server on a laptop through the test cluster's HTTPRoute (`/tail/` to the tail app), Playwright (Chromium) in
+light and dark. Midstream was installed afresh on the test cluster for it (12 §12.1). Topics made for it:
 `fresh.orders` (3 partitions; probe records numbered and timed by a producer through the external
 listener), `scale.t01`–`scale.t50` (3 partitions, 5 records a second each), `backlog.orders`.
 
@@ -548,26 +548,26 @@ listener), `scale.t01`–`scale.t50` (3 partitions, 5 records a second each), `b
 | 7. The bound | At 1,000 rows: a burst of 1,800 paused the table at 1,221 (one fetch past the bound, 14 §14.16) and it resumed; 3,000 more backlogged it, the peek was offered, and it was live again once the runtime caught up. Exactly once at 418 polls across 4 commits |
 | 8. Who may read (R4) | A user who may query only another dataset: `403` naming `data.query` on `fresh` through either member and for the peek, and no Data tab; her token limited to the other dataset `403`. DuckDB on the REST catalog: the console's count less the catalog's = 120, the tail's rows at that moment |
 | 9. Switches | `live_tail` off: the Live toggle gone in 2 s, the table dropped by the tail app at the next tick (27 s); on: toggle back in 1 s, table live in 4 s. `live_tail_enabled` off (set through the API, not the console): no ticks, toggles gone in 32 s; on: ticks within 25 s, toggles back in 32 s. Stop: toggle gone in 2 s, table dropped in 24 s; resume: toggle back in 1 s, table live in 4 s. The first run found an open tab neither losing the toggle nor picking the tail back up after the switch returned (44b64cb) |
-| 10. Fifty tables | 50 topics in three materializations (20, 20, 10 topics: three runtimes rather than fifty, for the lab's sake), every table tailed: 32 on one member, 18 on the other. Activation p50 0.84 s, p95 0.99 s; no added `lag_ms` on the member's other tables at 48 activations. 0.044 and 0.032 cores, 194 and 175 MiB — after the fix this step found: before it, 0.72 and 0.44 cores (d5372d5, 19 §19.18). With one topic at 1,000 records a second more: 0.068 cores, 225 MiB. A topic grown from 3 to 6 partitions: tailed 8 s after, its new records read 2 s after they were produced; the runtime committed them too |
+| 10. Fifty tables | 50 topics in three materializations (20, 20, 10 topics: three runtimes rather than fifty, for the test cluster's sake), every table tailed: 32 on one member, 18 on the other. Activation p50 0.84 s, p95 0.99 s; no added `lag_ms` on the member's other tables at 48 activations. 0.044 and 0.032 cores, 194 and 175 MiB — after the fix this step found: before it, 0.72 and 0.44 cores (d5372d5, 19 §19.18). With one topic at 1,000 records a second more: 0.068 cores, 225 MiB. A topic grown from 3 to 6 partitions: tailed 8 s after, its new records read 2 s after they were produced; the runtime committed them too |
 | 11. A backlog | A topic of 600,000 records, `backlog.orders`, materialized with live tail on — not the load-test topic, whose exact counts other checks rely on, and a backfill of minutes rather than hours. On the Data tab's first request the table was `backlogged`, 600,000 behind, and read and held nothing (no next offsets, `ingested` 0) while the console said *The runtime is 600,000 records behind; the live tail starts once it catches up*, counting down (438,842, 367,186 …) as the runtime committed, with **Peek** open. A probe produced at the head was in no statement's count (0, the tail backlogged). Within 75 % of the bound the table caught up by itself and was live 2 minutes after the first request, every one of the 600,001 records once at every poll. The run found the peek closing itself at the first commit after it opened (console 14 §14.5, 30); on the fix, a peek held open through four runs showed each of 88 probes produced meanwhile, p50 0.9 s after it was produced |
 | 12. Bursts | At the default bound, 50,000 records in 10 s: the table read at its ceiling of 5,000 a second, partitions paused, *the newest records are not shown yet*, then live holding all 50,000; the burst's records carried a field the table did not have yet, so the console also counted them *waiting for a schema change* until the runtime committed it. Then 1,000,000 records in 38 s: backlogged 20 s later, its buffer dropped, *The runtime is 517,755 records behind; the live tail starts once it catches up* with **Peek**; once the runtime was within 75 % of the bound, catching up, *Live tail is 241 s behind*, and live with 143,122 rows, 4 minutes after the burst. Exactly once at all 666 polls — each partition's rows contiguous from offset 0, none twice — up to 1,064,356 rows across 18 snapshots. No other table of that member was receiving records, so the isolation of one table's burst from the others rests on `test_tail_app` (a table above the ceiling read at it, the others keeping up) |
 | 13. Parking | Unwatched, the table parked at 600–611 s and its member's consumer let its 3 partitions go; the Data tab's first run brought it back, *Live · through now* with no *warming up*, 3–4 s after the page opened. With `live_tail_idle_seconds` 0 it was still live 803 s after its last request |
-| 14. Broker restart | With the owner's approval: broker 1, which leads `fresh.orders`' partition 0 (every topic has one replica on the lab), rolled by Strimzi while the probe ran, away 28 s. The tail's `lag_ms` rose to 13 s and returned to 0 by itself, no member restarted, no `tail_routing_mismatch`; exactly once at all 283 polls across 17 commits; the console showed the stalled probes as soon as the producer, which waits for each acknowledgement, could send them |
+| 14. Broker restart | Broker 1, which leads `fresh.orders`' partition 0 (every topic has one replica on a test cluster), rolled by Strimzi while the probe ran, away 28 s. The tail's `lag_ms` rose to 13 s and returned to 0 by itself, no member restarted, no `tail_routing_mismatch`; exactly once at all 283 polls across 17 commits; the console showed the stalled probes as soon as the producer, which waits for each acknowledgement, could send them |
 | 15. Control plane restart | Its pod deleted while the probe, a Live tab and the poller ran, away for about 35 s: the tail app kept serving on the sessions it had checked; a parked table asked for meanwhile seeded from GCS (`seed_source: gcs`) and was live in 2 s; ticks went on each minute; exactly once at every poll. The first run found every console user signed out: the restarted control plane answered from a directory it had not read back yet ("invalid session"), and the console cleared its cookie. Fixed in f382b0a (`503 starting` until the tables are read back, 18 §18.7); on the fix, the Live tab followed through the restart and resumed by itself |
 | 16. A member killed mid-burst | The owner deleted 20 s into the 50,000: back 19 s later, it seeded the table again from the committed offsets and read the window again — *catching up*, paused at the ceiling, then *live* 47 s after the kill; the console said *unavailable*, *moving between members*, *warming up*, *the newest 13,380 records are not shown yet*, then *Live*, in that order. No record twice across the kill (step 12's polls) |
 | 17. Console restart | Two Live tabs open, the console stopped for 4 s: each tab ran its view again and followed the tail 6 s after the stop; all 230 probes of the window once in both, the three produced while it was down within 7.5 s; nothing at warning level in the restarted console or the tail app |
 | 18. An hour's soak | The probe at one record a second with two Live tabs: 3,540 probes each, p50 1.13 s, p95 1.9 s, p99 2.7 s (5 of 7,080 over 5 s, at most 6.7 s); exactly once at all 2,827 polls across 102 commits; the 50 tables of step 10 watched in rotation — 180 visits, parked tables among them, every one *Live* p50 1.2 s and p95 2.0 s after the page opened. After the first ten minutes each member's RSS stayed within 5.7 % and 2.7 % of its value then (212–225 and 184–189 MiB), at 0.042 and 0.032 cores; `tail_served` 9,779 answers, p50 2 ms, p95 48 ms, p99 525 ms. No browser errors. It also found *Newer data available* on screen 57 % of the time Live followed a table (console 14 §14.5, 29) |
 | 19. Security probes | Through the HTTPRoute: no console header or a wrong one `403 console_only`; no bearer `401 sign_in_required`; an ended session `401 session_ended`; no `data.query` on the dataset, or a token limited to another, `403` naming the permission and dataset, through either member; a forged `X-Tail-Forwarded-By` `403` at the owner and `409 tail_rebalancing` at the other member; the service token `403` for rows and the peek; a peek of a million rows answered with 1,000 (`live_tail_peek_max_rows`), the console's own `400`; a bad `after` `400`; `..`, `%2E%2E`, `../..`, `;` and a NUL in a name refused, by the proxy or `400`. No row's content in the tail app's 2,177 log lines of six hours |
 | 13.6 measurements | In a tail pod: ingest 101 µs a record, 1.06 bytes per raw byte, serve 10,000 rows 28 ms and 100,000 rows 193 ms p95; the members view (`DescribeGroups` and decode) p95 1.3 ms; a peek of 200 rows p95 59 ms (19 §19.15) |
-| 20. The settings lineage | Deployed over the lab's settings, at revision 17 with no lineage (3926620, helm revision 3): at start `settings-bootstrap` sent its request, and the agent logged `Runtime settings begin lineage 20261024T110007Z-1b0bf109 at revision 17` and delivered revision 17 with that lineage to every runtime — the topic's newest message, after the reinstalled control plane's own deliveries without one. `GET /settings/runtime` reported the lineage, the revision and who last changed it as before. A second restart began no lineage and sent nothing. Then, at 633be69, a runtime following it (materialization `lineage_check` on a 3-partition topic, live tail off): created, it read the delivery topic's 137 messages — an earlier installation's revisions up to 14 and this one's up to 17, none with a lineage, then the lineage at 17 — and applied 3–14, 15–17 and the lineage's 17 (`runtime_settings_applied` with `settings_lineage`), its heartbeat reporting the lineage at 17 and the rollout `current`. A delivery for it alone with no lineage, revision 99 and `max_rows_per_file` 123 — what an earlier installation leaves — was consumed (its group at the topic's end) and ignored. A change through the API (revision 18) was applied the second it was published, after that revision 99; a restarted member reported the lineage at 18 from its state table, with no delivery; the reset (19) reached it too. A later lineage sent to it alone was taken, and the rollout said `pending` with no revision, the console's panel *Applying* (console 14 §14.4). Everything made for it deleted |
-| 21. Deleted topics stay deleted | The cleanup after step 19 found the 52 deleted test topics back, empty, with one partition each, all made within 60 ms at 06:03:01: the broker creates topics on demand (`auto.create.topics.enable=true`), and a client still named them in its metadata refresh. With aiokafka 0.14 against the lab's broker: a consumer that looked up a new topic's offsets tracked it, and after the topic's deletion its refresh made it again with one partition; with `track_no_topics` after the lookup, the refresh made nothing. aiokafka's describe of a missing topic by name made it; the control plane's describe answered "topic does not exist" and made nothing |
+| 20. The settings lineage | Deployed over the test cluster's settings, at revision 17 with no lineage (3926620, helm revision 3): at start `settings-bootstrap` sent its request, and the agent logged `Runtime settings begin lineage 20261024T110007Z-1b0bf109 at revision 17` and delivered revision 17 with that lineage to every runtime — the topic's newest message, after the reinstalled control plane's own deliveries without one. `GET /settings/runtime` reported the lineage, the revision and who last changed it as before. A second restart began no lineage and sent nothing. Then, at 633be69, a runtime following it (materialization `lineage_check` on a 3-partition topic, live tail off): created, it read the delivery topic's 137 messages — an earlier installation's revisions up to 14 and this one's up to 17, none with a lineage, then the lineage at 17 — and applied 3–14, 15–17 and the lineage's 17 (`runtime_settings_applied` with `settings_lineage`), its heartbeat reporting the lineage at 17 and the rollout `current`. A delivery for it alone with no lineage, revision 99 and `max_rows_per_file` 123 — what an earlier installation leaves — was consumed (its group at the topic's end) and ignored. A change through the API (revision 18) was applied the second it was published, after that revision 99; a restarted member reported the lineage at 18 from its state table, with no delivery; the reset (19) reached it too. A later lineage sent to it alone was taken, and the rollout said `pending` with no revision, the console's panel *Applying* (console 14 §14.4). Everything made for it deleted |
+| 21. Deleted topics stay deleted | The cleanup after step 19 found the 52 deleted test topics back, empty, with one partition each, all made within 60 ms at 06:03:01: the broker creates topics on demand (`auto.create.topics.enable=true`), and a client still named them in its metadata refresh. With aiokafka 0.14 against the test cluster's broker: a consumer that looked up a new topic's offsets tracked it, and after the topic's deletion its refresh made it again with one partition; with `track_no_topics` after the lookup, the refresh made nothing. aiokafka's describe of a missing topic by name made it; the control plane's describe answered "topic does not exist" and made nothing |
 
-## 13.8f Verified on the lab: vertical pod autoscaling (4.2)
+## 13.8f Verified on a test cluster: vertical pod autoscaling (4.2)
 
 On 2026-10-24, with the control plane, maintenance and tail apps and the runtimes at
 `feature/vertical-pod-autoscaling` (63bb576), kaspr-operator 0.19.7, VPA 1.8.0 (its updater run with
 `--in-place-skip-disruption-budget=true`) on k3s 1.34, and the console on a laptop with Playwright
-(Chromium) in light and dark. The lab's runtime spec, which had no resources, was given the shipped
+(Chromium) in light and dark. The test cluster's runtime spec, which had no resources, was given the shipped
 ones with the VPA. Made for it: the topic `vpa-check.orders` (3 partitions) and the materialization
 *VPA check* (two members, its table `test.vpa_check_orders`).
 
@@ -583,16 +583,16 @@ ones with the VPA. Made for it: the topic `vpa-check.orders` (3 partitions) and 
 | D1. A change to the VPA alone | Helm revision 7, the runtime spec's floor 100m → 400m: the control plane restarted and re-applied the runtime 40 s later (generation 2), the VPA's floor followed, and 10 s later both members were resized in place 100m → 400m. The runtime's StatefulSet and pods unchanged |
 | D2. And back | Helm revision 8, the floor back to 100m: re-applied (generation 3); the requests stayed at 400m, inside the new range, where the updater leaves them for 12 hours; no restarts |
 | Settings page | Deployment › Runtimes: *Resources per replica* `requests: cpu 0.5, memory 1Gi; limits: cpu 2, memory 1Gi`, then *Vertical autoscaling* with its bounds and update mode, in both themes |
-| Admission | The control plane's, maintenance app's and tail app's new pods started from their manifests' requests: the lab's VPA admission controller had looked their pods up while the KasprApp CRD had no scale subresource (2026-10-21 and 22) and keeps every lookup (02 §2.10c). A server dry run of such a pod came back unpatched, while the new runtime's pods were patched. The updater resized each in place within a minute of its start |
+| Admission | The control plane's, maintenance app's and tail app's new pods started from their manifests' requests: the test cluster's VPA admission controller had looked their pods up while the KasprApp CRD had no scale subresource (2026-10-21 and 22) and keeps every lookup (02 §2.10c). A server dry run of such a pod came back unpatched, while the new runtime's pods were patched. The updater resized each in place within a minute of its start |
 
 Not verified: the fallback to evicting a pod whose node cannot fit its resize; an updater without
 `--in-place-skip-disruption-budget`, which leaves single-replica apps to their next pod; the 12-hour
 rule for a request inside the range.
 
-## 13.8g Verified on the lab: a live tail for every materialization (4.3)
+## 13.8g Verified on a test cluster: a live tail for every materialization (4.3)
 
 On 2026-10-24, with the control plane, maintenance app and tail app at d1592b4 (helm revision 9), the
-console on a laptop through the lab's HTTPRoute, Playwright (Chromium) in light and dark.
+console on a laptop through the test cluster's HTTPRoute, Playwright (Chromium) in light and dark.
 
 | Check | Observed |
 |---|---|
@@ -600,15 +600,15 @@ console on a laptop through the lab's HTTPRoute, Playwright (Chromium) in light 
 | Tailed unasked | A materialization created without a word of live tail (`everytail.orders`, 3 partitions): its Data tab *Live · through now*, every record from the tail before the first commit (*0 files and the live tail*); a record produced while the tab watched showed in 6.1 s and 2.9 s, the console producer's start in a broker pod included |
 | The console | No *Live tail* option in the create dialog's advanced settings, no switch in the edit dialog — *Change its name, the topics it reads and its scale* — and no *Live tail* row on the Overview; no page errors, light and dark |
 
-The deployment-wide switch was left alone on the shared lab: its behaviour is unchanged, and the unit
+The deployment-wide switch was left alone on the shared test cluster: its behaviour is unchanged, and the unit
 suite covers it.
 
-## 13.8h Verified on the lab: restart health, the bounded seal, autoscaling (4.4)
+## 13.8h Verified on a test cluster: restart health, the bounded seal, autoscaling (4.4)
 
 On 2026-10-25, the control plane, maintenance and tail apps at `feature/runtime-autoscaling` (helm
 revision 2 of the release in namespace `default`), the runtimes at each commit as the control plane
-installed it, and the console on a laptop through the lab's HTTPRoute, Playwright (Chromium) in light
-and dark. The user's materialization of `materializer-loadtest-orders` (ten members, its table
+installed it, and the console on a laptop through the test cluster's HTTPRoute, Playwright (Chromium) in light
+and dark. A materialization of `materializer-loadtest-orders` (ten members, its table
 `test.materializer_loadtest_orders`) was 5.5 million records behind after a restart, its members
 killed for memory every few minutes while the status said `running` and healthy. Made for the test:
 the dataset `autoscale_test` and *Autoscale test* (`mat-f4c07620bc08`), one replica, reading the
@@ -616,7 +616,7 @@ whole load-test topic (111,031,820 records, 32 partitions, two years by month).
 
 | Step | Observed |
 |---|---|
-| Restart health (1fcfd46) | The next observation after the deploy: `degraded` / `runtime_members_restarting`, *8 of 10 members restarted in the last 30 minutes: out of memory.*; the console's header **Degraded** and **Unhealthy** with that tooltip, the fleet's attention list *Runtime members restarting*; the lab's other materialization still healthy. Once the seal fix had replaced the pods, the restart counts began again at zero and the status went back to `running` |
+| Restart health (1fcfd46) | The next observation after the deploy: `degraded` / `runtime_members_restarting`, *8 of 10 members restarted in the last 30 minutes: out of memory.*; the console's header **Degraded** and **Unhealthy** with that tooltip, the fleet's attention list *Runtime members restarting*; the test cluster's other materialization still healthy. Once the seal fix had replaced the pods, the restart counts began again at zero and the status went back to `running` |
 | The bounded seal (1a54cd1) | The same backfill on the fix: no member killed again, ten ready throughout, `kubectl top` at most 472 MiB a member (1 GiB limit), 5.07 million records drained in 12 minutes and the lag 0 at 15:39 |
 | Scaled up on a backlog | *Autoscale test* `running` at 15:52; at the 15:53 measurement, its third, *110,869,158 records behind, about 22 h 43 min to catch up with 1 member* → 16 members, the cap (its 32 partitions keep 32 busy). The StatefulSet asked for 5, 10, then 16; all ready at 15:57, the group `Stable` with 16 members, `running` at 15:58. The lag then fell by up to 3 million records a minute |
 | The Overview and dialogs | *Scaled up to 16 members 13 minutes ago: 110,869,158 records behind, about 22 h 43 min to catch up with 1 member. Back to 1 once caught up.*; Specification *Replicas 1 · 16 while catching up*, *Autoscaling On · up to 16*. The edit dialog's switch on, its hint *Running 16 members while it catches up; back to 1 once caught up.*, unchecked *…Turned off, it goes back to 1 at once.* and **Save** enabled; the create dialog's switch on under *Partitioning, replicas, autoscaling, labels, tombstones*. No page errors, light and dark |
@@ -625,16 +625,16 @@ whole load-test topic (111,031,820 records, 32 partitions, two years by month).
 | Memory, 16 members | Each member's anonymous memory sampled every second from 16:37 to 16:47, mid-backfill: peaks of 550–773 MiB, the most on the member whose worker was largest (its peak RSS 516 MiB); page cache from the spools and Parquet files took the rest up to the 1 GiB limit, where the kernel reclaimed it (`memory.events` `max` 45 to 1,922 times by 16:36), and `oom_kill` stayed 0 on every member |
 | Caught up, and back | At 16 members the lag fell by 1 to 1.6 million records a minute: under the floor at 17:31 (87,565), 0 at 17:32, and at 17:33, the third measurement under it, the runtime went back to its one member (`changed_at` 17:33, `replicas` null); `running` and healthy within a minute, and the Overview without its *Scaled up* line, *Replicas 1*. Its table: 102,033,103 rows — the 102,582,940 of the user's table of the same topic, which keeps tombstones as rows, less exactly the topic's 549,837 tombstones. Nothing lost or written twice through five changes of members, 1 → 16 → 1 → 2 → 16 → 1 |
 
-The deployment-wide switch was left alone on the shared lab; the unit suite covers it.
+The deployment-wide switch was left alone on the shared test cluster; the unit suite covers it.
 
-## 13.8i Verified on the lab: the first installation from the published artifacts (1.0.0-rc.1)
+## 13.8i Verified on a test cluster: the first installation from the published artifacts (1.0.0-rc.1)
 
-On 2026-10-26 the lab was installed from scratch by following `docs/install.md`: the chart
+On 2026-10-26 the test cluster was installed from scratch by following `docs/install.md`: the chart
 `oci://ghcr.io/vmirz/charts/midstream` 1.0.0-rc.1 with `package.source: index`, so every app and
 runtime installed `midstream-platform==1.0.0-rc.1` from PyPI, and the console image
 `ghcr.io/vmirz/midstream-console:1.0.0-rc.1`, as the Helm release `midstream` in a new namespace
 `midstream` (kaspr-operator 0.19.8, Kaspr 0.11.31, two brokers with single-replica topics, a
-credential-free listener). The lab's two brokers needed Kaspr's `topicReplicationFactor` at 1, which
+credential-free listener). The test cluster's two brokers needed Kaspr's `topicReplicationFactor` at 1, which
 rc.1 could set only through each app's and the runtime spec's `extraEnv` (`K_TOPIC_REPLICATION_FACTOR`);
 `kaspr.config` is the value for it since rc.2.
 
@@ -643,7 +643,7 @@ rc.1 could set only through each app's and the runtime spec's `extraEnv` (`K_TOP
 | Secrets and install | The three Secrets of §2, `helm install` from the OCI chart; the control plane, maintenance and tail apps `Ready` and the console available two minutes after the install (each pod's package install about 40 s); the 71 WebViews attached over about six minutes, one every 5 s. |
 | The topics | 23 topics under the release name, every one with replication factor 1; the state changelog with 3 partitions. |
 | §5 | `GET /system/version` → `1.0.0rc1`; `POST /auth/login` as the bootstrap administrator → `password_change_required: true`. |
-| §6 in the console | Through the chart's HTTPRoute and a port-forward (Playwright, Chromium): sign-in, *Choose a new password*, the dataset `sales`, the materialization *Shop* on the lab's `orders` topic (console 14 §14.4). |
+| §6 in the console | Through the chart's HTTPRoute and a port-forward (Playwright, Chromium): sign-in, *Choose a new password*, the dataset `sales`, the materialization *Shop* on the test cluster's `orders` topic (console 14 §14.4). |
 | An empty source topic | `orders` held no records any more (its beginning offsets equal its end offsets): *Shop* reached `running` / `waiting_for_source_records` with a table of the seven Kafka columns and no rows, which is what an empty topic yields. |
 | §6 by the API | `POST /materializations` with `{"name":"Smoke","tables":[{"source_topic":"midstream-smoke-orders","dataset":"sales"}]}` on a scratch topic of six JSON orders: `schema_discovered` within a second, the runtime `midstream-mat-ab6b417c59ab` (one member, its VerticalPodAutoscaler provided) `running` after two minutes, schema 0 with nine inferred fields (`items[].sku` and `items[].qty` among them). |
 | The live tail | The Data tab showed the six records, newest first, about two minutes after the create and before any commit; the tail app forwarded the console's requests from the member that answered to the table's owner (`tail_forwarded`, `tail_served`). |
@@ -656,9 +656,9 @@ restarted it at once, but that request (*Shop*'s first delayed observation) was 
 `schedule-requests` held four requests and `schedule-actions` three actions. The sweeps brought the
 materialization to `running` instead, and every later request dispatched (14 §14.3).
 
-## 13.8j Verified on the lab: domains and the shared console
+## 13.8j Verified on a test cluster: domains and the shared console
 
-On 2026-10-26 two domains ran on the lab from this chart — Domain A with the shared console, Domain B
+On 2026-10-26 two domains ran on a test cluster from this chart — Domain A with the shared console, Domain B
 reached only through its API route — after a clean uninstall of 1.0.0-rc.2, whose materializations,
 topics, consumer groups and bucket prefix were deleted first. What was checked, every fault injected,
 the five defects found and fixed, and the performance against rc.2 on the 111-million-record load-test
