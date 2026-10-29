@@ -1232,7 +1232,7 @@ class KasprConfigTests(unittest.TestCase):
     """`kaspr.config` reaches every app and every runtime; the keys the chart relies on stay the chart's.
 
     On a cluster with fewer than three brokers Kaspr's default `topicReplicationFactor` (3) makes
-    every topic declaration fail, and the first lab installation had no value to set it with.
+    every topic declaration fail, and the first installation on a test cluster had no value to set it with.
     """
 
     def test_shared_settings_reach_every_app_and_the_runtimes(self) -> None:

@@ -2,10 +2,10 @@
 
 Verification has two layers since 1.0: a unit suite run by `node --test` (§14.6), which runs the
 Iceberg reader and the run engine against a real table the control plane's own library wrote
-(§14.2) and against Parquet the tests write; and verification on the lab, through the API and in a
+(§14.2) and against Parquet the tests write; and verification on a test cluster, through the API and in a
 browser, against real tables (§14.4). Releases before 1.0 also had an end-to-end harness with a
 stand-in control plane and a fake object store (§14.3); a fake listing cannot stand in for an
-Iceberg table, so the fixture table and the lab replaced it. This document is the reproducible
+Iceberg table, so the fixture table and the test cluster replaced it. This document is the reproducible
 procedure.
 
 ## 14.1 Static checks
@@ -63,9 +63,9 @@ still hold for any harness:
 
 ## 14.4 Browser verification
 
-### Domains on the lab: one console, two domains
+### Domains on a test cluster: one console, two domains
 
-Verified on 2026-10-26 against two domains on the lab — Domain A (the settings home, the console
+Verified on 2026-10-26 against two domains on a test cluster — Domain A (the settings home, the console
 beside it) and Domain B (another release, reached through its API route) — on builds
 `1.0.0-rc.3.dev2`–`dev6` of the console, the last on both control planes too, with Dex as the sign-in
 provider; Playwright (Chromium), light theme. The API checks, the faults and the performance against
@@ -89,7 +89,7 @@ rc.2 are in the main handbook, 20 §20.15.
 | A domain unreachable | Its last data, marked, with the reason in the status line and an amber dot in the switcher |
 | Sign out everywhere | Both sessions ended, both cookies cleared |
 
-### 1.0.0-rc.1 on the lab: the console from its image
+### 1.0.0-rc.1 on a test cluster: the console from its image
 
 Verified on 2026-10-26 with Midstream 1.0.0-rc.1 installed from the published chart and the console
 from `ghcr.io/vmirz/midstream-console:1.0.0-rc.1` in the cluster (the chart's Deployment, with the
@@ -107,9 +107,9 @@ Playwright (Chromium), light theme (handbook 13 §13.8i).
 | The live tail | On a materialization of six JSON orders: the Data tab *6 rows*, the inferred fields (`order_id` … `status`, `items[].sku`, `items[].qty`) with the Kafka metadata collapsed to the timestamp, before the first commit |
 | After the first commit | The Overview *ROWS COMMITTED 6*, *complete through* the records' time, *TABLE SIZE 7.5 KB · 1 data file · 1 snapshots kept*; the Table tab's snapshot row *append +6 +1 6 p0 5*, took 1.2 s, *Orphan cleanup succeeded · 0 files deleted · 3 listed*, the properties naming `sales.midstream_smoke_orders` and its location; the Data tab unchanged, the same six rows now from the snapshot |
 
-### 4.4.0 on the lab: autoscaling and restart health
+### 4.4.0 on a test cluster: autoscaling and restart health
 
-Verified on 2026-10-25 with the control plane at `feature/runtime-autoscaling` on the lab, the console
+Verified on 2026-10-25 with the control plane at `feature/runtime-autoscaling` on a test cluster, the console
 server on a laptop through the HTTPRoute, Playwright (Chromium) in light and dark — every check passed
 in both themes, with no page errors (handbook 13 §13.8h).
 
@@ -122,9 +122,9 @@ in both themes, with no page errors (handbook 13 §13.8h).
 | The create dialog | *Advanced settings* summarised *Partitioning, replicas, autoscaling, labels, tombstones*; **Autoscale** checked, *Adds members while it is far behind its topics, up to 16, and goes back to its replicas once caught up. Can be changed later.* |
 | A runtime whose members keep restarting | The header's health **Unhealthy**, its tooltip *8 of 10 members restarted in the last 30 minutes: out of memory.*; the fleet's attention list *Runtime members restarting* |
 
-### 4.3.0 on the lab: a live tail for every materialization
+### 4.3.0 on a test cluster: a live tail for every materialization
 
-Verified on 2026-10-24 with the control plane, maintenance app and tail app at d1592b4 on the lab, the
+Verified on 2026-10-24 with the control plane, maintenance app and tail app at d1592b4 on a test cluster, the
 console server on a laptop through the HTTPRoute, Playwright (Chromium) in light and dark — every check
 passed in both themes, with no page errors (handbook 13 §13.8g).
 
@@ -135,13 +135,13 @@ passed in both themes, with no page errors (handbook 13 §13.8g).
 | The Overview | No *Live tail* row |
 | The Data tab | Live on by default for a materialization created without a word of live tail, *Live · through now*, its rows from the tail before the first commit; a record produced while the tab watched shown in 6.1 s and 2.9 s, the producer's own start included |
 
-### 4.1.0 on the lab: the live tail
+### 4.1.0 on a test cluster: the live tail
 
-Verified on 2026-10-23 and 24 on the lab with the control plane, runtimes and tail app at
+Verified on 2026-10-23 and 24 on a test cluster with the control plane, runtimes and tail app at
 `feature/live-tail`, the console server on a laptop at the branch's head reaching the tail app
-through the lab's HTTPRoute, Playwright (Chromium) in light and dark. A producer numbered and timed
-probe records on `fresh.orders`; the lab steps themselves are in handbook 13 §13.8e. For the states
-the lab cannot be put in on demand, a second console server read the tail through a small stub
+through the test cluster's HTTPRoute, Playwright (Chromium) in light and dark. A producer numbered and timed
+probe records on `fresh.orders`; the steps themselves are in handbook 13 §13.8e. For the states
+a test cluster cannot be put in on demand, a second console server read the tail through a small stub
 server, a test aid not kept in the repository, that passed the real tail app's answers through or
 answered as a table in another state would: refusals for warming up, moving, unavailable, off and
 backlogged, and headers rewritten for truncated, settling and behind.
@@ -167,22 +167,22 @@ the control plane those listed in handbook 13 §13.8e — among them a restarted
 everyone out of the console.
 
 **Delivery to runtimes (32).** At 633be69, the Settings page's Runtimes section on a laptop console, in light
-and dark: *Runtimes pick up revision 19 …* and *1 of 1 running current* while the lab's one runtime ran
+and dark: *Runtimes pick up revision 19 …* and *1 of 1 running current* while the test cluster's one runtime ran
 the current lineage; once it ran another — a later lineage sent to it alone — *0 of 1 running current*
 and the materialization listed as **Applying** with no revision, its hint naming settings from before
 this installation. The page follows a rollout only while one is applying when it loads, so it showed
 the change on the next load (handbook 13 §13.8e, step 20).
 
-**GCS reads (31).** The console's reader at 13d58f7 against the lab's bucket with a laptop's
+**GCS reads (31).** The console's reader at 13d58f7 against the test cluster's bucket with a laptop's
 credentials: a table's pointer and a metadata file read 30 times each, 15 one after another and 15
 at once, every read the object's bytes (size and MD5 as GCS reports them) and its CRC32C checked; a
 data file mirrored into a scratch cache whole, with no part file left; a missing object
 `GcsReadError 404`; and not one `MaxListenersExceededWarning`, where the client library's `download()`
 printed two for each read.
 
-### 4.0.0 on the lab: month partitions, the deployment's place and scale, dates from the data
+### 4.0.0 on a test cluster: month partitions, the deployment's place and scale, dates from the data
 
-Verified on 2026-10-23 on the lab with control plane and maintenance app 4.0.0
+Verified on 2026-10-23 on a test cluster with control plane and maintenance app 4.0.0
 (`feature/partitions-create-schema-history`, 396027a), the console server on a laptop at the
 branch's head, Playwright (Chromium) in light and dark. One topic was made for it, `history.orders`:
 three partitions of 2,000 records each, produced with Kafka timestamps spread from 2025-01-01 to
@@ -205,11 +205,11 @@ it into the dataset `history`: *History by day* (`orders_by_day`) and *History b
 It found three defects in the console, fixed before release (§14.5, 24–26): two in the new dates,
 and an older one that month partitions make visible. It found none in the control plane.
 
-### 3.0.0 on the lab: datasets and per-dataset access
+### 3.0.0 on a test cluster: datasets and per-dataset access
 
-Verified on 2026-10-22 on the lab cluster with control plane 3.0.0 (`feature/datasets`,
+Verified on 2026-10-22 on a test cluster with control plane 3.0.0 (`feature/datasets`,
 4cdb65b), on a clean slate: every 2.0 materialization, its topics, consumer group and files deleted,
-and the directory started empty. The console server ran on a laptop against the lab's control plane
+and the directory started empty. The console server ran on a laptop against the test cluster's control plane
 and bucket, with the dev client and Playwright (Chromium) signed in as four people: Olive, who owns
 the datasets `sales` and `finance`; Walt, a Writer on `sales`; Rita, a Reader on `finance`; and Otto,
 with no dataset role. `finance` had All Users' Reader grant removed, so it was locked to Otto. Three
@@ -231,11 +231,11 @@ It found one defect, in the control plane: the runtime-status agent crash-looped
 a materialization it no longer held — the deleted 2.0 `shop`'s runtime, still reporting while it
 stopped. Status for an unknown materialization is now dropped and logged once (4cdb65b).
 
-### 2.0.0 on the lab: several topics, one runtime
+### 2.0.0 on a test cluster: several topics, one runtime
 
-Verified on 2026-10-20 on the lab cluster with control plane 2.0.0 (51ca6ab): the console
-server on a laptop against the lab's control plane and bucket, the dev client, and Playwright
-(Chromium, 1512×950) signed in as the lab's administrator, once in each theme. `shop` read
+Verified on 2026-10-20 on a test cluster with control plane 2.0.0 (51ca6ab): the console
+server on a laptop against the test cluster's control plane and bucket, the dev client, and Playwright
+(Chromium, 1512×950) signed in as the test cluster's administrator, once in each theme. `shop` read
 `mtm-orders` (4 partitions), `mtm-payments` (2) and `mtm.shipments.v1` (3) with 2 replicas; `audit`
 read `mtm-orders` too, with a runtime of its own. 120,005, 80,005 and 60,005 records, the payments'
 second half with a new `currency` field.
@@ -251,9 +251,9 @@ second half with a new `currency` field.
 
 No browser error was logged beyond the two `400`s the refused statement answers on purpose.
 
-### 2.0.0 on the lab: editing the topics, the maintenance app
+### 2.0.0 on a test cluster: editing the topics, the maintenance app
 
-Verified on 2026-10-20 on the lab with control plane 0d27b75 and the maintenance app, the console
+Verified on 2026-10-20 on a test cluster with control plane 0d27b75 and the maintenance app, the console
 server and dev client on a laptop, Playwright signed in as the administrator, on `shop`
 (`mtm-orders`, `mtm-payments`, `mtm-refunds`). Each change was also checked through the API and in
 SQL (handbook 13 §13.8b).
@@ -271,11 +271,11 @@ SQL (handbook 13 §13.8b).
 
 No browser error was logged.
 
-### 1.0.0 on the lab
+### 1.0.0 on a test cluster
 
-Verified on the lab cluster with the control plane and runtimes deployed from the
-feature branch: the console server on a laptop against the lab's control plane and bucket, the
-dev client, and Playwright (Chromium) driving it signed in as the lab's administrator, once in the
+Verified on a test cluster with the control plane and runtimes deployed from the
+feature branch: the console server on a laptop against the test cluster's control plane and bucket, the
+dev client, and Playwright (Chromium) driving it signed in as the test cluster's administrator, once in the
 light theme and once in the dark. The materialization was a smoke table: 39 rows, three schemas
 with forks, a renamed key and a header map, hour partitions, a compaction.
 
@@ -286,7 +286,7 @@ with forks, a renamed key and a header map, hour partitions, a compaction.
 | Data | The exact count from manifests with nothing read; the status line's completeness; a map labelled a map; folded and nested columns; an exact count under a struct filter; statements over the logical table and over `iceberg.<name>`; a statement naming `/etc/hosts` refused with DuckDB's permission error |
 | As of | The first snapshot: fewer rows, marked pinned, the snapshot in the address bar, back to latest |
 | Export | A CSV holding every row, columns in order |
-| Table tab | Snapshots with the compaction, an hour partition named as the runtime names it, the maintenance history and **Run now**, properties, the Connect panel with the lab's catalog URI, the snippet switching engines |
+| Table tab | Snapshots with the compaction, an hour partition named as the runtime names it, the maintenance history and **Run now**, properties, the Connect panel with the test cluster's catalog URI, the snippet switching engines |
 | Settings | Commits, Maintenance, Catalog, Runtimes and Schema sections, the runtime ones following the rollout |
 | Access tokens | Shown once as `tok_…`, listed, revoked |
 
@@ -359,7 +359,7 @@ driven by Playwright (Chromium, 1512×950) and by direct API reads.
 
 ### Table names, default destination, Stop and Edit (0.12.0, control plane 0.4.0)
 
-Verified on the lab cluster with the control plane deployed from the feature branch, the
+Verified on a test cluster with the control plane deployed from the feature branch, the
 dev console (Vite + `node --watch`) driven by Playwright (Chromium, 1512×950), and direct API reads.
 
 | Check | Observed |
@@ -439,7 +439,7 @@ npm run typecheck # both TypeScript projects
 | `server/routes/system.test.ts` | Control-plane compatibility: 4.0 or later, unknown for an unknown version; the console's live tail configuration, and why a run reads no tail — no tail app, this console, the control plane, a materialization not running, and, on a control plane before 4.3, the switch for one; a create taking no live-tail default; the control plane's autoscaling — whether, how far and for what catch-up time — and none known before 4.4 or while it cannot be reached |
 | `server/runs/runs.test.ts` | The run engine against real Parquet: counts from the manifest, time pruning and the 999 ms upper bound, filters (including list columns), streaming first pages, the page cache, cancellation, statements bounded by range, truncation with an exact total, error positions, a column some objects lack, statements reading a table by its name in any case, a name that is none of the tables answered with the list of those that are (DuckDB's own guess kept when it is one of them), CSV export, nested and flat JSON exports, profiles, logical columns over forks, names without the `payload.` root (and where a metadata name keeps it), `payload.`-rooted names from older links, the hint for a statement that still uses one, which fields hold JSON text; tables read by their canonical names, `<dataset>.<table>` — `shop.orders` and `iceberg.shop.orders` — and a bare name pointed at its canonical one |
 | `server/live/rates.test.ts` | Rates from heartbeats against a simulated runtime — eight members on staggered 30 s heartbeats, second-precision timestamps, polled every 1.5 s — within 4% of the true rate on every poll; no total until every member has reported twice; restarts; members leaving; a control plane without per-member progress; bytes sealed in irregular waves read within 15%; series spacing and lag-history thinning |
-| `server/live/store.test.ts` | What the materializations list and the fleet Overview count: the rows, bytes and files of each table's current snapshot as its committer reported them, summed — never the runtime's written counters, which a crash-looping runtime inflated to three times the table on the lab; unknown before any table is reported |
+| `server/live/store.test.ts` | What the materializations list and the fleet Overview count: the rows, bytes and files of each table's current snapshot as its committer reported them, summed — never the runtime's written counters, which a crash-looping runtime inflated to three times the table on a test cluster; unknown before any table is reported |
 | `shared/fieldPaths.test.ts` | Field names without the `payload.` root, renaming paths in runtime messages, and nested JSON: objects, lists lining up across columns, lists inside lists, nulls, fields that changed shape, overlapping columns merging, conflicts kept under a flat name, JSON text decoded, `__proto__` |
 | `src/features/data/fieldSearch.test.ts` | The filter builder's field search: ranking, every term required, emphasis ranges |
 | `src/features/detail/lagTrend.test.ts` | Lag trend: drain rate and time left from real measurements, growing, steady, caught up, too few measurements, weighting the last ten minutes |
@@ -500,8 +500,8 @@ reset, a guard clause in a plain helper leaks into the component below it and fl
 the file. Both properties are asserted directly, because a guard that can be defanged by a
 plausible-looking "fix" is worse than none.
 
-Anything touching `LiveStore` as a whole, or how GCS itself behaves, is still better served by the
-lab (§14.4) than by mocks — mocking those is where the real bugs hide; `gcs.test.ts` covers only
+Anything touching `LiveStore` as a whole, or how GCS itself behaves, is still better served by a
+test cluster (§14.4) than by mocks — mocking those is where the real bugs hide; `gcs.test.ts` covers only
 what the console does with GCS's answers. DuckDB and the Iceberg reader are the
 exceptions: they run in-process against local files — the fixture table among them — so they are
 cheap to test against directly, and the tests above do.
@@ -523,7 +523,7 @@ the real path rather than against a mock of the console's own API.
 The stand-in also simulates runtimes. Five materializations report `settings_revision` on each
 heartbeat: two whose members catch up with a new revision after 2–3 s and 2–25 s, one too old to
 report it, one that stopped reporting ten minutes ago, and one stopped. It also has switches for
-an apply delay, a publish failure (`500`, as the lab returned before its rebalance), and an
+an apply delay, a publish failure (`500`, as the test cluster returned before its rebalance), and an
 unreachable mode that drops every connection unanswered. The deployment sets
 `CONTROL_PLANE_MAX_RUNTIME_REPLICAS=16`, a default destination and a runtime spec
 with two env values, so all three sources (default, deployment, override) appear.
@@ -558,13 +558,13 @@ No console errors were logged across the run. The only failed requests were the 
 refusals: two `409`s and one `500`. The flows found defects 16–19 in §14.5, which were fixed and
 the flows re-run.
 
-### On the lab
+### On a test cluster
 
-Against the lab control plane, running 0.5.0 on the lab, reads and validation answered
+Against a test cluster's control plane, running 0.5.0, reads and validation answered
 as above and every section rendered in both themes. Every save answered `500` there: the
 control plane's consumer group had kept an assignment from before the settings topics existed
 (main handbook [17 §17.12](../../docs/handbook/17-settings.md)). The save flows above were
-therefore verified against the stand-in. They are to be repeated on the lab once its group has
+therefore verified against the stand-in. They are to be repeated on a test cluster once its group has
 been rebalanced.
 
 ## 14.8 Sign-in and access (0.14.0)

@@ -533,7 +533,7 @@ class OrphanShardTable(FakeTable):
 class UnreadableRecordTests(unittest.TestCase):
     """A record an earlier, incompatible release left behind must not fail what scans past it.
 
-    Deleting every 1.0 materialization before the upgrade still left one behind on the lab: a copy
+    Deleting every 1.0 materialization before the upgrade still left one behind on a test cluster: a copy
     in another shard of the state table, in the 1.0 shape (one `source_topic`), which 2.0 cannot
     read. The fleet list, the sweep, the lag refresh, the name check and the catalog all scan it.
     """

@@ -80,7 +80,7 @@ and starts a new run when it names a new snapshot; the summary, which the Data t
 
 Everything behind the pointer is immutable — metadata files, manifests and data files are never
 rewritten — so nothing else needs a freshness rule, and DuckDB may cache any of it for the life of
-the process (07). Measured from a laptop against the lab's E13 table (handbook 13 §13.8), mid-load
+the process (07). Measured from a laptop against the test cluster's E13 table (handbook 13 §13.8), mid-load
 at 3,563 files: pointer, metadata and every manifest on a cold BFF in 1,758 ms; warm, 41 ms; after a
 new commit, 198 ms, reading only the snapshot's new manifests. On the finished table — 102.6 M rows
 in 2,840 files — the Data tab showed its exact count 1.9 s after a cold console opened it and its
@@ -139,7 +139,7 @@ in from their fields, walking the current schema, which holds every field the ta
 
 The answer is as precise as the files: a UTC day in a day-partitioned table, an hour in an hour's,
 up to a month in a month's. Each manifest's aggregate is kept in a `WeakMap` keyed by its cached
-entries, so it is computed once per manifest and goes when the manifest leaves the cache. On the lab
+entries, so it is computed once per manifest and goes when the manifest leaves the cache. On a test cluster
 (2026-10-23, from a laptop) a table the console had not read yet answered in 260–390 ms, and in
 1–2 ms once its manifests were cached.
 

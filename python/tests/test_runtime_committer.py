@@ -327,7 +327,7 @@ class RecreatedTableTests(unittest.TestCase):
 
     The runtime's state table still holds what the dropped table left under that name. Taken for the
     new table's, its committed offsets skipped every record as already in the table, and released
-    them unwritten (found on the lab: a re-added topic's 3,005 records, none in the new table).
+    them unwritten (found on a test cluster: a re-added topic's 3,005 records, none in the new table).
     """
 
     def setUp(self) -> None:

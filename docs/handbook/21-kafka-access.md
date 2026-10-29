@@ -289,7 +289,7 @@ nothing is lost (10 §10.7), but every member pays a restart.
   `faust/topics.py`, `faust/tables/base.py`, `faust/assignor/leader_assignor.py`); and
   kaspr-operator's names and environment (`kaspr/types/models/kasprapp_resources.py`,
   `kaspr/resources/kasprapp.py`).
-- **The lab** (2026-10-28): the topics, groups and transactional ids of §21.2, as
+- **A test cluster** (2026-10-28): the topics, groups and transactional ids of §21.2, as
   `kafka-topics.sh --list`, `kafka-consumer-groups.sh --list` and `kafka-transactions.sh list` show
   them for its two releases. Its brokers enforce no ACLs, so it could not check the grants.
 - **A broker enforcing them** (2026-10-28): Kafka 4.1.1 in KRaft mode with the StandardAuthorizer

@@ -174,7 +174,7 @@ status message names the topics that had no records yet. The step logs one
 `sampled_records`, `schema_fields` and `forks`, and persists each projection of schema 0 before
 `create_table` creates the tables with them (07 §7.3).
 
-On the lab, sampling `materializer-loadtest-orders` (32 partitions) took 375 ms and produced 139
+On a test cluster, sampling `materializer-loadtest-orders` (32 partitions) took 375 ms and produced 139
 payload fields with the dataset's two forks (`customer.phone` string → struct, `items[].category`
 list → struct).
 
@@ -212,7 +212,7 @@ schema under `schema:<table>`.
    then seals anyway. The conform step places every value in the field that takes it; whatever still
    has no field goes to `_unmapped` (§9.8).
 
-End to end, a new key is a column in a few seconds: on the lab, a shape change produced in the smoke
+End to end, a new key is a column in a few seconds: on a test cluster, a shape change produced in the smoke
 topic became schema 2 (two forks, two additions) within one commit cycle.
 
 ### The cap on schema size

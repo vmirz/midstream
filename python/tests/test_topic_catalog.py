@@ -406,7 +406,7 @@ class MetadataClientDeadlineTests(unittest.TestCase):
 
     def test_no_request_names_a_topic_so_a_broker_makes_none(self) -> None:
         # A metadata request that names a topic makes a broker that creates topics on demand create
-        # it: describing a misspelt topic made it, and on the lab 52 deleted topics came back at
+        # it: describing a misspelt topic made it, and on a test cluster 52 deleted topics came back at
         # once, from the topics the offset lookups had left tracked.
         client = self.client()
 

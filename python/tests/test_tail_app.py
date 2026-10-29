@@ -81,7 +81,7 @@ class TrackingConsumer:
 
 class TopicTrackingTests(unittest.IsolatedAsyncioTestCase):
     """A metadata request that names a topic makes a broker that creates topics on demand create it.
-    On the lab, 52 topics deleted after their materializations came back at once: long-lived
+    On a test cluster, 52 topics deleted after their materializations came back at once: long-lived
     consumers that had looked up their offsets kept naming them in every refresh."""
 
     async def test_a_consumer_that_only_looks_up_offsets_tracks_no_topic(self) -> None:
@@ -451,7 +451,7 @@ class OneConsumerTests(TailCase):
 
     def test_the_source_waits_for_a_batch_of_records_and_the_others_answer_at_once(self) -> None:
         # The fetch loop goes over every active table after each fetch: answered for every record,
-        # a member following fifty quiet tables on the lab spent most of a core doing it.
+        # a member following fifty quiet tables on a test cluster spent most of a core doing it.
         built: dict[str, dict] = {}
 
         class Consumer:

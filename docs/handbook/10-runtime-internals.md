@@ -370,13 +370,13 @@ thing on it: `storage_size`, `64Mi` by default since 4.0 (`1Gi` before), is that
 keys are bounded per table whatever the topic's volume — a schema, offsets per partition, at most
 5,000 decisions — but they are rewritten on every commit, and RocksDB keeps every write in its
 write-ahead log until the memtable holding it is flushed. Kaspr flushes at a 64 MiB write buffer by
-default: at the few kilobytes a commit writes per table on the lab, a busy runtime's log would reach
+default: at the few kilobytes a commit writes per table on a test cluster, a busy runtime's log would reach
 that in days, and one of twenty tables in hours — more than a 64Mi volume holds. So every runtime
 gets `K_STORE_ROCKSDB_WRITE_BUFFER_SIZE` = 4 MiB and `K_STORE_ROCKSDB_MAX_WRITE_BUFFER_NUMBER` = 2
 (`runtime/templates.py::_default_runtime_spec`, Kaspr's RocksDB settings, which apply to every
 table of the app — the state table is its only one): the log never holds more than two buffers,
 8 MiB, and the store little more than its keys. They are set for the app because a KasprTable's own
-`options` do not reach Kaspr (14 §14.2). On the lab a runtime's store took 76–368 KiB (2026-10-23).
+`options` do not reach Kaspr (14 §14.2). On a test cluster a runtime's store took 76–368 KiB (2026-10-23).
 
 A fresh runtime's state table is empty until its committer has handled a first event, so a member
 that finds no schema of a table there loads it from the table itself, once, off the event loop
@@ -455,7 +455,7 @@ expiry with nothing to expire) runs once more after a restart.
   and expires it. Both commit through the pointer's compare-and-swap (11 §11.2), and whichever lost
   reloads and tries again: the committer every commit attempt (§10.6), the app up to
   `REPLACE_ATTEMPTS` (8) times, a second apart. An input an append or an expiry removed meanwhile
-  makes the replace `abandoned`, and its outputs are deleted. Measured on the lab: a compaction of 9
+  makes the replace `abandoned`, and its outputs are deleted. Measured on a test cluster: a compaction of 9
   files (120,125 rows) took 6.6 s while the runtime went on committing.
 - **Fault tolerance** (spec §7.9.1): the child only *adds* files, so a job that dies before the
   replace commit leaves orphans for orphan cleanup, and one that dies after it is done. A job is
@@ -571,7 +571,7 @@ members log one structured line per protocol event (`protocol_event {json}`):
 | `compaction_failed` | a partition failed compaction 5 times | the maintenance app's `maintenance_compaction_failed` lines; ask for compaction again to retry |
 | A table never compacts | the maintenance app is down, or not ticked | its pod and `maintenance-step` logs; the control plane's `schedule_table_maintenance` work (07 §7.13) |
 
-## 10.16 Verified on the lab cluster
+## 10.16 Verified on a test cluster
 
 See 13 §13.8 for the E13 load test: 16 members, 102,582,940 records from offset 0, twice. The first
 run — committer pods deleted mid-commit and mid-compaction, a rolling restart, a 16 → 12 → 16 scale

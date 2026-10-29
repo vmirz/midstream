@@ -749,8 +749,8 @@ Every topic removed needs a decision for its table: `keep` (read-only, still in 
 dataset given, named as given or after the topic, once its name is claimed (07 §7.9b); a kept table's
 topic, added back, writes that table again from where it stopped. Each needs write access to the
 datasets involved. The runtime is
-stopped for its consumer group's session timeout plus a pod start - about four to five minutes on the
-lab - and every table is written again exactly once from where it was (07 §7.9a). To drop a kept
+stopped for its consumer group's session timeout plus a pod start - about four to five minutes on a
+test cluster - and every table is written again exactly once from where it was (07 §7.9a). To drop a kept
 table later: `-d '{"removed_tables": {"payments": "drop"}}'`. The name, the destination and the
 partitioning cannot change.
 
@@ -790,7 +790,7 @@ curl -s -X POST localhost:6065/materializations/$MAT/maintenance -H "$AUTH" \
 It answers `202` with the tables it asked for; the app starts each at its next step, five seconds
 apart at most, and the result lands in the table record's `maintenance` history (the console's Table
 tab shows it, and the running job meanwhile). A requested compaction ignores the hot-partition delay,
-and one with nothing to do reports `skipped` with the reason. On the lab, a requested compaction of 9
+and one with nothing to do reports `skipped` with the reason. On a test cluster, a requested compaction of 9
 files took 6.6 s, and its result was in the record 3 s after that.
 
 ### Give an engine read access
@@ -989,7 +989,7 @@ kafka-console-consumer --bootstrap-server $BROKERS --topic $RT-commits --max-mes
 | The Settings page is read-only | The console cannot reach the control plane | Fix the control plane; control-plane settings reappear once it answers |
 | A runtime stays **Applying** on the Runtimes settings page | A member has not refreshed yet, or is not consuming | See [17 §17.10](./17-settings.md) |
 | Sign-in answers `503` "no session signing key" | The auth Secret is missing `signing-key`, or it is shorter than 32 characters | Fix the Secret; restart the control plane |
-| Every request answers `503` `starting` for some seconds after a restart | The control plane is reading its tables back from their changelogs; until it has, it answers nothing it could get wrong (18 §18.7) | Nothing: it ends once the tables are read, ~15 s on the lab; before 4.1 it answered from a half-read directory and signed console users out |
+| Every request answers `503` `starting` for some seconds after a restart | The control plane is reading its tables back from their changelogs; until it has, it answers nothing it could get wrong (18 §18.7) | Nothing: it ends once the tables are read, ~15 s on a test cluster; before 4.1 it answered from a half-read directory and signed console users out |
 | Sign-in and every user, group or role change answer `500`; the log shows `KeyError: '…<release>-identity-requests'` | The consumer group was not rebalanced after the 0.6.0 deploy | Force one rebalance (§12.1) |
 | Table records never advance after a deploy, though runtimes commit | `materialization-table-events` was not assigned: no rebalance after the deploy that added it | force one rebalance (§12.1) |
 | An engine's `ATTACH` or `load_table` answers `401` / `403` | no token, an expired or revoked one, or one without `catalog.read` | make a token (§12.7) |
@@ -1044,7 +1044,7 @@ So:
 - **With a one-CPU limit** the seal and the worker share a core; the seal runs at `nice` 10, so it
   takes many times as long, the upload backlog fills and pauses consumption until it catches up.
 - **1 GiB of memory per runtime pod** (request and limit, as shipped) is enough since 4.4, when a
-  seal came to hold one row group whatever its batch. On the lab (2026-10-25) a 10-member backfill
+  seal came to hold one row group whatever its batch. On a test cluster (2026-10-25) a 10-member backfill
   of 5.5 million load-test records, which had members killed for memory every few minutes the hour
   before, ran without a kill (`kubectl top` at most 472 MiB a member). A 16-member backfill of the
   whole two-year topic, sampled each second for ten minutes, peaked at 550–773 MiB of anonymous
@@ -1086,7 +1086,7 @@ it does for every one after its own restart.
 
 **The volume** (`storage_size` per member, `default_runtime_storage_size`, `64Mi` since 4.0) holds
 only the state table's RocksDB store (10 §10.8), whose 4 MiB write buffer keeps its write-ahead log
-under 8 MiB, so it does not grow with the topic: on the lab a runtime that had committed 6,000
+under 8 MiB, so it does not grow with the topic: on a test cluster a runtime that had committed 6,000
 records used 72 KiB of it (2026-10-23). The control plane's own volume and the maintenance app's are
 their KasprApps' `storage` (1Gi), unchanged. Batches are staged in the
 container's filesystem, on the node's disk, which bounds them instead. The size is the deployment's,
@@ -1190,7 +1190,7 @@ keeps the directory and the settings while the materializations start over.*
 1.0 converts nothing (decision D8): every 0.x materialization is deleted and created again, and the
 materialization plane starts empty. The identity and settings stores are kept, so every account,
 group, role, session, audit entry and settings override survives, and the administrator signs in
-with the same email and password. This is the procedure the lab ran on 2026-10-18.
+with the same email and password. This is the procedure followed on a test cluster on 2026-10-18.
 
 1. **On 0.7.0, delete every materialization** through the API and wait for each to leave the list:
    the old delete chain removes its runtime, Kafka topics and bucket objects. Delete by hand anything
@@ -1212,7 +1212,7 @@ with the same email and password. This is the procedure the lab ran on 2026-10-1
      `<table>-backups`, holding the deleted changelog's offsets; left there, the control plane
      crash-loops at start with Faust's `ConsistencyError: persisted offset … higher than the last
      offset`. With the control plane at zero, mount its PVC in a short-lived pod on the same node and
-     remove only those stores (on the lab: the state table's and the scheduler's `cron-due-index`,
+     remove only those stores (on a test cluster: the state table's and the scheduler's `cron-due-index`,
      `cron-registry`, `timetable`, `timetable-index`):
 
      ```bash
@@ -1269,4 +1269,4 @@ KasprApp (`kubectl delete kasprapp <runtime> -n midstream`), then its Kafka topi
 (`<runtime>-app-assignor-leader`, `<runtime>-app-<runtime>-state-changelog`, `<runtime>-commits`),
 its consumer group `<runtime>-app` once Empty (after the session timeout), and its tables' objects
 under `<destination>/<old namespace>/<name>-<hex12>/`. Its records stay in the `state` table,
-unread. On the lab (2026-10-22) this took `shop` down in about three minutes.
+unread. On a test cluster (2026-10-22) this took `shop` down in about three minutes.

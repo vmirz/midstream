@@ -199,9 +199,9 @@ template:
                 self.assertIsNone(get_config().default_destination_uri)
 
     def test_get_config_reads_the_default_destination_without_trailing_slashes(self) -> None:
-        os.environ["CONTROL_PLANE_DEFAULT_DESTINATION_URI"] = " gs://kafka-materializations/lake// "
+        os.environ["CONTROL_PLANE_DEFAULT_DESTINATION_URI"] = " gs://example-bucket/lake// "
 
-        self.assertEqual(get_config().default_destination_uri, "gs://kafka-materializations/lake")
+        self.assertEqual(get_config().default_destination_uri, "gs://example-bucket/lake")
 
 
 if __name__ == "__main__":

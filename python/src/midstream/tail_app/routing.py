@@ -3,7 +3,7 @@
 **Owner.** Every tick about a table carries one key, `tail:<materialization id>:<table>`, so the
 control plane's producer puts them all in one partition of `materializer-tail-requests`: aiokafka's
 default partitioner, murmur2 over the key's UTF-8 bytes (Kaspr's default key serializer is `raw`),
-masked positive, modulo the partition count (`owner_partition`; checked on the lab against the
+masked positive, modulo the partition count (`owner_partition`; checked on a test cluster against the
 maintenance app's ticks, which the same agent sends the same way). Kaspr gives that partition to one
 member, and that member owns the table. Each tick's handler compares the partition it arrived on with
 the computed one and logs `tail_routing_mismatch` should they ever differ.

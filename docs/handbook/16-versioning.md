@@ -109,7 +109,7 @@ keep that safe:
 
 Midstream's first release is 1.0.0. The code reached it through a development line numbered 0.5 to
 4.4, and the sections below record what each of those milestones changed, because the handbook's
-measurements and lab records cite them (13 §13.8, 14). Those numbers are not releases of Midstream:
+measurements and test records cite them (13 §13.8, 14). Those numbers are not releases of Midstream:
 no installation older than 1.0.0 exists to upgrade from, so nothing migrates from them.
 
 ## 16.4 What 1.0.0 changed (development line)
@@ -222,7 +222,7 @@ request no longer accepts fields it did, so by rule 4 it is a major release.
 
 There is no migration. A 3.x materialization keeps what it was created with: its destination,
 namespace, volume and runtime name, which `resolved_runtime_name` already held. Its record's
-`runtime_name` is no longer read. Upgrading re-applies every runtime. On the lab the three 3.x
+`runtime_name` is no longer read. Upgrading re-applies every runtime. On a test cluster the three 3.x
 runtimes came back on 4.0 with their `1Gi` volumes (2026-10-23).
 
 ## 16.9 What 4.1.0 changed (development line)
@@ -305,7 +305,7 @@ with no contract change, so a patch release; the console stays 4.4.0.
 | Change | Who must care |
 |---|---|
 | The `maintenance_completed` that ends a running job — `cancelled` when the drop's cancel stopped it, `abandoned` when a restarted member no longer runs it — now clears the table record's job while its materialization is being deleted, as it did for a table dropped by a change of topics (06 §6.6). Before, every event about a materialization being deleted was ignored, so a delete that met a running compaction or orphan cleanup waited the full five minutes for it | none |
-| A job the drop has waited five minutes for is forgotten on the record (07 §7.10). Before, each pass recorded the drop's progress afresh, so a job still recorded was waited for in full before every pass: on the lab (2026-10-25) a 17 GB table's drop paused five minutes between passes, for a compaction the maintenance app had stopped when the delete began | none |
+| A job the drop has waited five minutes for is forgotten on the record (07 §7.10). Before, each pass recorded the drop's progress afresh, so a job still recorded was waited for in full before every pass: on a test cluster (2026-10-25) a 17 GB table's drop paused five minutes between passes, for a compaction the maintenance app had stopped when the delete began | none |
 
 There is no migration. A drop already waiting goes on at its next check under 4.4.1.
 
@@ -329,7 +329,7 @@ with no migration: install it on a clean slate (console 13 §13.9, item 16).
 
 Upgrading from 1.0.0-rc.2 is a clean install: delete its materializations first, so their runtimes,
 topics and tables go too, then uninstall it, delete the release's own topics and consumer groups, and
-install each domain and the console anew (`docs/install.md`; 13 §13.8j did it on the lab).
+install each domain and the console anew (`docs/install.md`; 13 §13.8j did it on a test cluster).
 
 ## 16.15 What 1.0.0-rc.4 changed: Kafka over TLS
 

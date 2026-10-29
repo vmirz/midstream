@@ -829,7 +829,7 @@ class RuntimeSettingsRolloutTests(unittest.TestCase):
         fresh = "2026-10-08T10:04:30Z"
         lineage = "20261008T090000Z-4e5f6a7b"
         self.add("mat-current", members={"a": MemberProgress(reported_at=fresh, settings_revision=3, settings_lineage=lineage)})
-        # Seen on the lab: an earlier installation's revision 14, read back from the delivery topic.
+        # Seen on a test cluster: an earlier installation's revision 14, read back from the delivery topic.
         self.add("mat-earlier", members={"a": MemberProgress(reported_at=fresh, settings_revision=14, settings_lineage="")})
         self.add("mat-other", members={"a": MemberProgress(reported_at=fresh, settings_revision=20, settings_lineage=EARLIER_LINEAGE)})
         self.add("mat-mixed", members={

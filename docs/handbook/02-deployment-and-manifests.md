@@ -795,7 +795,7 @@ Why it is set up this way:
 VPA updater's default `--min-replicas=2`, the updater leaves them alone. They take the
 recommendation when their pod is next created, at a deploy or a restart. An updater run with
 `--in-place-skip-disruption-budget=true` (beta in VPA 1.8) resizes them in place, since a CPU-only
-resize restarts nothing, and still never evicts them; the lab's runs that way. The chart leaves
+resize restarts nothing, and still never evicts them; the test cluster's updater runs that way. The chart leaves
 `minReplicas` unset: at `1`, the updater could evict an app's only pod.
 
 **Requirements.** kaspr-operator 0.19.5 or later, for the field and the KasprApp's scale

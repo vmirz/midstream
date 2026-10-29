@@ -200,7 +200,7 @@ class RuntimeSettingsDeliveryTests(unittest.TestCase):
         self.assertEqual(get_runtime_app_config().max_open_file_age_seconds, 60)
 
     def test_a_later_lineage_replaces_what_an_earlier_installation_left_on_the_topic(self) -> None:
-        # Seen on the lab: a new runtime read an earlier installation's deliveries from the topic,
+        # Seen on a test cluster: a new runtime read an earlier installation's deliveries from the topic,
         # held their revision 14, and ignored the reinstalled control plane's revision 3.
         apply_runtime_settings_message(settings_message(14, {"max_rows_per_file": 14}), self.table)
         result = apply_runtime_settings_message(

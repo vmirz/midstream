@@ -24,7 +24,7 @@ This specification turns option C of the proposal into a buildable design: any n
 | Option | C: one console over many control planes (B), with single sign-on; the end state includes search, SQL and a federated catalog across domains (the proposal's phase 3) |
 | Domains | Any number, each configured under its own entry in Helm; this document calls them Domain A, Domain B and Domain C (`domain_a`, `domain_b`, `domain_c`) |
 | Compatibility | None. A clean slate: a fresh install, new directories, no migration of sessions, tokens or settings |
-| Sign-in | Entra ID, GitHub and Google through the console, and any other OpenID Connect provider through a generic `oidc` provider (decided 2026-10-26: Dex on the lab, Okta, Keycloak or Auth0 elsewhere); password sign-in stays, one sign-in per domain. Provider identity is Helm configuration, shown in the console; the switches that are safe to change at run time are adjustable there |
+| Sign-in | Entra ID, GitHub and Google through the console, and any other OpenID Connect provider through a generic `oidc` provider (decided 2026-10-26: Dex for testing, Okta, Keycloak or Auth0 elsewhere); password sign-in stays, one sign-in per domain. Provider identity is Helm configuration, shown in the console; the switches that are safe to change at run time are adjustable there |
 | First-sign-in policy | `open` by default, configurable per domain in Helm and on the Settings page; `invited` available; `request` later (§5) |
 | Password sign-in off | A domain may turn it off; accounts holding Administrator always keep it |
 | Group claims | Not used: a provider says who a person is, never which Midstream groups they are in |
@@ -41,8 +41,8 @@ This specification turns option C of the proposal into a buildable design: any n
 | Redirects | Rendered by the chart for Gateway API and nginx; the rule documented in the handbook with examples for Gateway API, nginx, Istio, Traefik and HAProxy, and a placeholder for any other controller (§4) |
 | Per-domain consoles | None |
 | Settings home | One domain, chosen in Helm; the chart refuses zero or two |
-| Lab builds | Test builds reach the lab through a temporary, LAN-only container registry and Python package index in the lab, removed at the end; nothing is pushed to GitHub, GHCR or PyPI without the owner's approval (decided 2026-10-26) |
-| Lab providers | Dex (through `oidc`) for automated checks; GitHub: the `vmirz` account; Google: an OAuth client in the owner's GCP account; Entra ID: last, set up with the owner, step by step, when the build reaches it |
+| Test builds | Test builds reach the test cluster through a temporary container registry and Python package index on it, removed at the end; nothing is pushed to GitHub, GHCR or PyPI without the owner's approval (decided 2026-10-26) |
+| Test providers | Dex (through `oidc`) for automated checks; GitHub: an OAuth App on the owner's account; Google: an OAuth client in the owner's GCP account; Entra ID: last, set up with the owner, step by step, when the build reaches it |
 | Documentation | The handbook and the console handbook updated with the build; an architecture graphic of the multi-domain system once everything is tested |
 
 ## 2. Terms
@@ -301,9 +301,9 @@ The control plane learns which domain it is, accepts sign-ins from the providers
 | A provider outage | New sign-ins through that provider fail; issued sessions continue to their limits; administrators sign in with a password |
 | A shared console outage | No UI for any domain; every domain's API and catalog keep working for engines |
 
-## 13. Testing and the lab
+## 13. Testing and validation
 
-Unit tests and chart renders cover the design; the lab validates it end to end, with a real identity provider for each flow.
+Unit tests and chart renders cover the design; a test cluster validates it end to end, with a real identity provider for each flow.
 
 | Level | Covers |
 | --- | --- |
@@ -311,32 +311,32 @@ Unit tests and chart renders cover the design; the lab validates it end to end, 
 | Console (`node --test`) | Registry validation; one cookie per domain; the session map; route tests through a domain-aware `installTestAuth`; the merged fleet and search; three-part name parsing and the sandbox's catalogs over a two-domain fixture (two copies of `testdata/iceberg` under two locations); the catalog proxy's namespace encoding and token pass-through; Playwright flows in `e2e/` |
 | Chart | `helm template` with the three CI values files; `test_agent_manifests.py` checks the wiring of each, the single settings home, the redirects, and that a console-only release renders no Kaspr resource |
 
-**The lab.** Two domains on the lab cluster: the existing release (`midstream`: Domain A, the console, the settings home) and a second release, `midstream-b` (Domain B) in namespace `midstream-b`, on the same Kafka and bucket — the chart keeps releases apart by name and by storage prefix (handbook 02 §2.1). Hostnames under the lab's wildcard certificate, which covers one level: `midstream.local.epilix.com` (the console), `domain-a-api.local.epilix.com`, `domain-b-api.local.epilix.com`, and `domain-a.local.epilix.com` to prove the redirect. A third domain costs one more release.
+**The test cluster.** Two domains on one cluster: the existing release (`midstream`: Domain A, the console, the settings home) and a second release, `midstream-b` (Domain B) in namespace `midstream-b`, on the same Kafka and bucket — the chart keeps releases apart by name and by storage prefix (handbook 02 §2.1). Hostnames under the cluster's wildcard certificate, which covers one level: `console.example.com` (the console), `domain-a-api.example.com`, `domain-b-api.example.com`, and `domain-a.example.com` to prove the redirect. A third domain costs one more release.
 
-**An identity provider for development.** The lab has none. The implementer stands up **Dex** (`dex.local.epilix.com`, a temporary lab tool removed at the end) with static test users, configured as the generic `oidc` provider: a standard OpenID Connect issuer, which exercises the whole OIDC path — discovery, keys, nonce, email claims — that Entra ID and Google use. The provider-specific parts need the real providers, and those registrations are the owner's to make; the implementer supplies the exact callback URL and the values each asks for.
+**An identity provider for development.** The test cluster has none. The implementer stands up **Dex** (`dex.example.com`, a temporary tool removed at the end) with static test users, configured as the generic `oidc` provider: a standard OpenID Connect issuer, which exercises the whole OIDC path — discovery, keys, nonce, email claims — that Entra ID and Google use. The provider-specific parts need the real providers, and those registrations are the owner's to make; the implementer supplies the exact callback URL and the values each asks for.
 
 | Provider | The owner sets up | Needed back |
 | --- | --- | --- |
-| GitHub | An OAuth App on the owner's GitHub account (`vmirz`), callback `https://midstream.local.epilix.com/api/auth/sso/github/callback` | Client id and secret |
+| GitHub | An OAuth App on the owner's GitHub account, callback `https://console.example.com/api/auth/sso/github/callback` | Client id and secret |
 | Google | An OAuth client (web application) in the owner's GCP account, with its consent screen, the same callback | Client id and secret |
 | Microsoft Entra ID | Last, when the build reaches single sign-on: an Entra ID tenant and an app registration (web platform, the same callback), set up with the owner, step by step | Tenant id, client id and secret |
 
-**Validation on the lab**, with Playwright and `curl`: each provider's sign-in gives sessions in both domains; `invited` refuses and `open` provisions; a password sign-in into one domain; the switcher and the all-domains pages; a statement joining `domain_a.sales.orders` with `domain_b.finance.invoices`; DuckDB and PyIceberg on the federated catalog with a federated token, and on a domain's own catalog; a token minted in Domain A used in Domain B, then revoked and refused in both; the old hostname's redirect; one domain down while the rest keeps working.
+**Validation on a test cluster**, with Playwright and `curl`: each provider's sign-in gives sessions in both domains; `invited` refuses and `open` provisions; a password sign-in into one domain; the switcher and the all-domains pages; a statement joining `domain_a.sales.orders` with `domain_b.finance.invoices`; DuckDB and PyIceberg on the federated catalog with a federated token, and on a domain's own catalog; a token minted in Domain A used in Domain B, then revoked and refused in both; the old hostname's redirect; one domain down while the rest keeps working.
 
 ## 14. Delivery plan
 
-Eight work packages, each a pull request with its tests, chart render and lab check, in dependency order.
+Eight work packages, each a pull request with its tests, chart render and a check on the test cluster, in dependency order.
 
 | # | Package | Contents | Rough effort |
 | --- | --- | --- | --- |
-| 1 | Domains in the chart | `domain.*`, the enable switches, the registry rendering, routes and redirects, the CI values files; `GET /system/version` with `domain`; the lab's second release | 1 week |
+| 1 | Domains in the chart | `domain.*`, the enable switches, the registry rendering, routes and redirects, the CI values files; `GET /system/version` with `domain`; the test cluster's second release | 1 week |
 | 2 | The shared console | Registry, per-domain instances and routes, cookies per domain, password sign-in per domain, the switcher, the all-domains pages, search, Settings and Account across domains | 3–4 weeks |
-| 3 | Single sign-on | Provider modules, the login exchange, account resolution and policies, settings; the console's provider flows; Dex and the real providers on the lab | 2–3 weeks |
+| 3 | Single sign-on | Provider modules, the login exchange, account resolution and policies, settings; the console's provider flows; Dex and the real providers on a test cluster | 2–3 weeks |
 | 4 | Federated tokens | Signed tokens, verification, listing, revocation and its sync; the Account page | 1–2 weeks |
 | 5 | SQL across domains | Three-part names, resolution and authorization per domain, the sandbox's catalogs, completions and the status line | 1–2 weeks |
 | 6 | The federated catalog | The proxy, nested namespaces, per-domain catalogs, Connect snippets, DuckDB and PyIceberg checks | 1–2 weeks |
 | 7 | Documentation | Handbook 20, *Domains and the shared console*; updates to 02, 04, 11, 17, 18 and the console's 01, 03, 04, 08, 09, 11, 12, 13; the architecture graphic in `docs/handbook/assets/`; the README and `docs/install.md` | 1 week |
-| 8 | Lab validation and release | The §13 checks end to end, release notes, the chart and images published | 1–2 weeks |
+| 8 | Validation on the test cluster, and release | The §13 checks end to end, release notes, the chart and images published | 1–2 weeks |
 
 About 11 to 17 weeks for one engineer. Packages 1 and 2 give a working multi-domain console with password sign-in; 3 makes it one sign-in; 4 to 6 are the end state.
 
@@ -351,4 +351,4 @@ About 11 to 17 weeks for one engineer. Packages 1 and 2 give a working multi-dom
 - [x] Entra ID: one tenant per deployment
 - [x] Google: hosted domains restricted in production
 - [x] Guests keep the Guest group's view per domain
-- [x] Lab providers: GitHub `vmirz`; a Google OAuth client in the owner's GCP account; Entra ID last, set up with the owner, step by step
+- [x] Test providers: GitHub, an OAuth App on the owner's account; a Google OAuth client in the owner's GCP account; Entra ID last, set up with the owner, step by step

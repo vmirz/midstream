@@ -369,7 +369,7 @@ def track_no_topics(consumer: Any) -> None:
     Looking up the offsets of a partition its metadata does not know yet - a topic made since its
     last refresh - makes aiokafka track that topic, and every refresh from then on (every five
     minutes, and whenever a lookup misses a leader) names the topics it tracks. A broker that creates
-    topics on demand then creates any of them deleted since: on the lab, 52 topics deleted after
+    topics on demand then creates any of them deleted since: on a test cluster, 52 topics deleted after
     their materializations came back together, empty. Tracking none, the refreshes ask for every
     topic, which creates nothing. Only for a consumer with no assignment, which tracks its
     partitions' topics.

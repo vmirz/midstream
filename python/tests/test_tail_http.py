@@ -1,7 +1,7 @@
 """The tail app's own HTTP client, against a real aiohttp server: what the forwarder and the control plane
 client read is the whole body the other end sent, or a failure - never a part of it.
 
-The lab found the forwarder answering a Parquet file of 737 of its 5,797 bytes: `content.read(n)` answers
+A test cluster showed the forwarder answering a Parquet file of 737 of its 5,797 bytes: `content.read(n)` answers
 with whatever has arrived, and a body larger than one chunk arrives in several.
 """
 

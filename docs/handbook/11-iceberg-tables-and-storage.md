@@ -291,7 +291,7 @@ metadata.
 
 The facade vends **no storage credentials**: an engine reads data files with its own GCS access
 (an HMAC key for DuckDB, ADC for PyIceberg). Verified with DuckDB 1.5.6 and PyIceberg 0.12 (E4, and
-on the lab through the HTTPRoute with an access token); Spark and Trino follow the same protocol but
+on a test cluster through the HTTPRoute with an access token); Spark and Trino follow the same protocol but
 have not been run against it.
 
 **Across domains.** The shared console serves the same protocol over every domain at
@@ -321,7 +321,7 @@ SELECT customer_id, unnest(items).sku FROM lake.sales.orders LIMIT 10;
 SELECT o.status, sum(i.amount) FROM lake.sales.orders o JOIN lake.finance.invoices i USING (order_id) GROUP BY 1;
 ```
 
-On the lab (3.0, DuckDB 2.0): `lake.sales.orders` and `lake.finance.finance_invoices`, written by two
+On a test cluster (3.0, DuckDB 2.0): `lake.sales.orders` and `lake.finance.finance_invoices`, written by two
 materializations, joined to the expected 3,005 rows through a reader's token; a token limited to
 `sales` saw only `sales`.
 

@@ -37,7 +37,7 @@ from midstream.tail_app.views import tail_rows_view  # noqa: E402
 from midstream.web.errors import WebError  # noqa: E402
 
 #: Computed with aiokafka 0.14.0's `murmur2` and `DefaultPartitioner` - the partitioner Faust's
-#: producer uses - and, for the two maintenance keys, the partitions the lab's ticks were found on.
+#: producer uses - and, for the two maintenance keys, the partitions the test cluster's ticks were found on.
 PARTITIONER_VECTORS = [
     ("tail:mat-1:orders", 2865328073, 9, 3),
     ("tail:mat-1:payments", 1788429764, 4, 2),
@@ -51,8 +51,8 @@ PARTITIONER_VECTORS = [
     ("maintenance:mat-5e7d3a7b9147:orders_by_month", 1654715455, 63, 1),
 ]
 
-#: A member of the lab's maintenance app as DescribeGroups v2 reported it on 2026-10-23.
-LAB_MEMBER = {
+#: A member of the test cluster's maintenance app as DescribeGroups v2 reported it on 2026-10-23.
+CAPTURED_MEMBER = {
     "member_id": "develop-materializer-maintenance-app-0-a22d4404-9a28-4818-893a-9e55fbe3a01b",
     "metadata": "AAQAAAACAClkZXZlbG9wLW1hdGVyaWFsaXplci1tYWludGVuYW5jZS1yZXF1ZXN0cwA0ZGV2ZWxvcC1tYXRlcmlhbGl6ZXItbWFpbnRlbmFuY2UtYXBwLWFzc2lnbm9yLWxlYWRlcgAAAN97ImFzc2lnbm1lbnQiOiB7ImFjdGl2ZXMiOiB7fSwgInN0YW5kYnlzIjoge319LCAidXJsIjogImh0dHA6Ly9kZXZlbG9wLW1hdGVyaWFsaXplci1tYWludGVuYW5jZS1hcHAtMC5kZXZlbG9wLW1hdGVyaWFsaXplci1tYWludGVuYW5jZS1hcHAubWlkc3RyZWFtLnN2Yy5jbHVzdGVyLmxvY2FsOjYwNjUiLCAiY2hhbmdlbG9nX2Rpc3RyaWJ1dGlvbiI6IHt9LCAidG9waWNfZ3JvdXBzIjoge319",
     "assignment": "AAQAAAACADRkZXZlbG9wLW1hdGVyaWFsaXplci1tYWludGVuYW5jZS1hcHAtYXNzaWdub3ItbGVhZGVyAAAAAQAAAAAAKWRldmVsb3AtbWF0ZXJpYWxpemVyLW1haW50ZW5hbmNlLXJlcXVlc3RzAAAABgAAAAAAAAABAAAAAgAAAAMAAAAEAAAABQAAANV4nMVRy27CMBD8Fctn24S2cMivVBFanG1YYWzjXUdqUf69bvoBBXHobUfaeWjmpoGZpnjBKLpXNw1eaEZe7xFnDCnbCwgWgkBfWBqgKBgherSQs/3lp2IDwoilEd+7wai/yQWvFVl4ZRi1NerFqFej3ozaDUtTYIE4Hj+fy/JwlGH58a4lNKBPIrnfbO4y79w9b+4MH2ewfA2OZ+98qNyeXUgeQr/v9jvd3P0J4tSkpsNILIWOVSjFtYf/SNR811IkZfKHqaSanxqle3CT7bJ8A+HZ9jU=",
@@ -81,9 +81,9 @@ class OwnerPartitionTests(unittest.TestCase):
 
 
 class MemberMapTests(unittest.TestCase):
-    def test_a_lab_members_metadata_names_its_url_and_its_assignment_its_partitions(self) -> None:
-        metadata = base64.b64decode(LAB_MEMBER["metadata"])
-        assignment = base64.b64decode(LAB_MEMBER["assignment"])
+    def test_a_captured_members_metadata_names_its_url_and_its_assignment_its_partitions(self) -> None:
+        metadata = base64.b64decode(CAPTURED_MEMBER["metadata"])
+        assignment = base64.b64decode(CAPTURED_MEMBER["assignment"])
 
         version, subscription, user_data = decode_member_metadata(metadata)
         self.assertEqual(4, version)
@@ -99,7 +99,7 @@ class MemberMapTests(unittest.TestCase):
             ConsumerGroupDescription(
                 group_id="develop-materializer-maintenance-app",
                 state="Stable",
-                members=(GroupMemberDescription(member_id=LAB_MEMBER["member_id"], client_id="faust-1.17.22", client_host="/10.42.0.144", metadata=metadata, assignment=assignment),),
+                members=(GroupMemberDescription(member_id=CAPTURED_MEMBER["member_id"], client_id="faust-1.17.22", client_host="/10.42.0.144", metadata=metadata, assignment=assignment),),
             ),
             topic="develop-materializer-maintenance-requests",
         )

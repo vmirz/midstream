@@ -1,6 +1,6 @@
 # 14 — Known Gaps, Sharp Edges, and Roadmap
 
-The state of 1.0.0. Every item is derived from the code or from a measurement on the lab cluster,
+The state of 1.0.0. Every item is derived from the code or from a measurement on a test cluster,
 not speculation, and names the file a change would start from. The 0.x entries that 1.0 resolved
 or made obsolete — the schema authority's waits, commit markers, the object manifest, duplicate
 rows — are listed once in §14.13, for readers who knew them.
@@ -107,7 +107,7 @@ Kaspr's static membership hands a rejoining member its old assignment, so a runt
 with another set of topics would never read the added ones (§14.3). The control plane therefore
 drains it: the runtime is held at zero replicas until its consumer group is empty — the broker
 drops a static member only after the session timeout (120 s) — then the added topics' offsets are
-set and the runtime starts again (07 §7.9a). On the lab the whole change took 314 s, the group
+set and the runtime starts again (07 §7.9a). On a test cluster the whole change took 314 s, the group
 emptying at 129 s. Nothing is lost: records wait in their topics, and lag grows meanwhile, for every
 topic of the materialization, not only the changed ones. *To improve:* remove the static members
 through the admin API (`LeaveGroup` by `group.instance.id`, KIP-345) once the pods are gone, which
@@ -198,7 +198,7 @@ topics. Since 4.0 no request can choose one; a materialization created earlier w
 kaspr-operator's KasprTable CRD (0.19.4) declares `options` and `extraTopicConfigs` as `type: object`
 with no properties, and without `x-kubernetes-preserve-unknown-fields`, so the API server prunes
 whatever they hold: a table rendered with `options: {write_buffer_size: "4194304"}` is stored with
-`options: {}` (seen on the lab, 2026-10-23), although Kaspr would apply them. The runtime sets its
+`options: {}` (seen on a test cluster, 2026-10-23), although Kaspr would apply them. The runtime sets its
 RocksDB write buffer through the app's `K_STORE_ROCKSDB_*` environment instead (10 §10.8). *To
 fix*: mark both fields `x-kubernetes-preserve-unknown-fields: true` (or `additionalProperties: {type:
 string}`) in the operator's CRD.
@@ -348,7 +348,7 @@ Kaspr 0.11.31's scheduler partitions a request by the producer's partition count
 `<app id>-schedule-actions`; on the first request after the control plane starts, that metadata can
 still be unfetched, and the `distribute` actor crashes with `NotReady("Producer metadata for topic
 '…-schedule-actions' not available yet")`. Faust's supervisor restarts it at once, and every later
-request dispatches, but the request in flight is gone: on the lab (2026-10-26) it was a new
+request dispatches, but the request in flight is gone: on a test cluster (2026-10-26) it was a new
 materialization's first delayed observation, and the observation sweep (07 §7.7) brought the
 materialization to `running` in its stead. A delayed step that only the scheduler would run again
 is late by one sweep at worst. The fix belongs in Kaspr (`kaspr/scheduler/manager.py`,
@@ -369,7 +369,7 @@ row group for every partition value its batch touched, so a batch spread over mo
 until its end (1.36 GiB on the load test, 2.1 GiB measured for a 250,000-row batch over two years).
 Since 4.4 the seal writes one partition value's file at a time from spools on disk, so it holds one
 row group whatever the batch (10 §10.4): about 300 MiB at the default row group, and the shipped 1 GiB
-holds a backfill — at most 773 MiB of anonymous memory a member on the lab's, with no kill (12
+holds a backfill — at most 773 MiB of anonymous memory a member on a test cluster, with no kill (12
 §12.10), a quarter of the limit to spare. Before 2.0 the committer member
 also compacted, and peaked at 2.98 GiB; compaction is the maintenance app's now, sized on its own.
 
@@ -432,19 +432,19 @@ REST catalog still reads committed snapshots only.
 
 ### The control plane uses half a core while idle: Kaspr's scheduler collects garbage four times a second per partition
 
-On the lab (2026-10-24), with no materializations, the control plane used 0.48–0.51 CPU, all of it in
+On a test cluster (2026-10-24), with no materializations, the control plane used 0.48–0.51 CPU, all of it in
 its main thread, while the maintenance and tail apps, which do not run Kaspr's scheduler, used 2–10
 millicores. The cause is in Kaspr 0.11.30's scheduler: `Dispatcher._dispatch`
 (`kaspr/scheduler/dispatcher.py:257`) calls `gc.collect()` on every pass, every 0.25 s for each
 timetable partition, and `Janitor._clean` (`janitor.py:278`) every 3 s per partition. A full
 collection walks every tracked object, so it costs what the heap is: 17 ms with Kaspr alone (97k
 objects), 33 ms with the control plane's modules and definitions loaded (171k), about 42 ms in the
-lab's long-running process. With the default three timetable partitions that is eleven collections
+test cluster's long-running process. With the default three timetable partitions that is eleven collections
 a second: 3 × 1/(0.25 s + 42 ms) + 3/3 s.
 
 How it was shown: sampling the main thread's `schedstat` at 1 ms found its CPU in synchronous chunks
 of 37–42 ms, mostly three back to back every 305 ms — the three dispatchers in phase — and nothing
-else above 1 ms/s. The same image run locally (podman) with the lab's 87 definitions and the package,
+else above 1 ms/s. The same image run locally (podman) with the test cluster's 87 definitions and the package,
 its collector timed with `gc.callbacks`: 11.1–11.4 full collections a second at 33 ms, 364–377 of the
 thread's 376 ms/s; py-spy put 99% of the thread's samples on those two lines. The same run with the
 two calls removed: no full collections, 5 ms/s. Kaspr's other `gc.collect()` calls run only at
@@ -453,7 +453,7 @@ shutdown and rebalance.
 *To do:* fix it in Kaspr: drop the per-pass collections (the automatic collector still runs on its
 thresholds), or collect once a minute at most. Until then every Kaspr app with the scheduler on pays
 about this much per timetable partition, and the control plane's VerticalPodAutoscaler requests it
-(671m on the lab, 02 §2.10c); after the fix the request should settle near the 100m floor.
+(671m on a test cluster, 02 §2.10c); after the fix the request should settle near the 100m floor.
 
 ## 14.5 Data quality and privacy
 
@@ -489,7 +489,7 @@ PyIceberg 0.12 projects every data file onto the table's schema (`_to_requested_
 rebuilds a list or map of structs from its offsets alone, which carry no nulls: through PyIceberg a
 record without `items` reads as `items = []`, the same as one whose `items` was empty. The files
 hold the null, and DuckDB — so the console — reads it as written. Compaction used that projection
-until 6fed494, so files compacted before it hold `[]` where a record had no list (the lab's E13
+until 6fed494, so files compacted before it hold `[]` where a record had no list (the test cluster's E13
 table, 13 §13.8); it now projects with `lakehouse/parquet.py::project_batch`, which keeps the nulls
 (`test_compaction_keeps_a_missing_list_null_and_an_empty_one_empty`). *To do:* report it upstream,
 and drop the workaround once PyIceberg keeps the nulls itself.
@@ -780,7 +780,7 @@ Before "fixing" any of these, read the linked section.
 | `last_error` was sticky | A member clears a data or infrastructure error once it writes again (`runtime_app/state.py`) |
 | Two runtime state systems | The table-backed module is gone; `runtime_app/state.py` is the only one |
 | A runtime spec without resource limits | The chart renders one runtime spec for every installation, limits and `topicAllowDeclare` included (§14.2) |
-| No `onError` status selector on WebViews: errors might answer `200` | Without one, Kaspr answers with the raised `WebError`'s `status_code` and body (`build_error`, Kaspr's `webview/response.py`) — a `400` for an unknown maintenance job on the lab |
+| No `onError` status selector on WebViews: errors might answer `200` | Without one, Kaspr answers with the raised `WebError`'s `status_code` and body (`build_error`, Kaspr's `webview/response.py`) — a `400` for an unknown maintenance job on a test cluster |
 | `DEFAULT_MANAGED_AGENT_NAMES = ["writer", "schema-proposer"]` | Removed: the agent names come from the rendered template |
 | The authority-update fan-out (O(materializations²)) | **Gone** with the authority topic |
 | Compaction held back every partition written in the last hour, and started one partition an interval | Fixed before release: only the current partition waits, small partitions compact together, and a backlog proceeds a job a tick (§14.6) |
@@ -816,13 +816,13 @@ Handbook 19 has the model; these are its limits as built in 4.1.
 
 - **A member restart is a short outage for its tables.** A table lives on one member, with no
   standby. A restarted member takes its partitions back (static membership) and seeds its tables
-  again from the committed offsets: on the lab their newest records were unavailable for 30–60 s, the
+  again from the committed offsets: on a test cluster their newest records were unavailable for 30–60 s, the
   console saying so (unavailable, moving between members, warming up) and showing committed rows.
 - **Scaling the tail app restarts every member.** The operator rolls the StatefulSet's pods on any
   change to the KasprApp's spec, a replica count included, so a scale costs each member's tables the
   outage above, one member after the other.
 - **The bound can be passed by one fetch.** A table pauses once it holds `live_tail_max_rows_per_table`
-  rows, after the fetch that took it there: on the lab, 1,221 rows against a bound of 1,000.
+  rows, after the fetch that took it there: on a test cluster, 1,221 rows against a bound of 1,000.
 - **Each member holds transactional producers it does not use.** Kaspr runs every app with Faust's
   exactly-once processing: one producer per tick partition a member is assigned, 32 each with two
   members (19 §19.3). Kaspr has no switch for it.
@@ -841,8 +841,8 @@ Handbook 19 has the model; these are its limits as built in 4.1.
 
 | Entry | In 4.1 |
 |-------|--------|
-| Settings revisions restarted if the `settings` table was lost, and runtimes ignored every delivery until the new revision passed theirs. A control plane installed afresh over a Kafka cluster that kept its delivery topic did the same to the runtimes created after it, and its rollout called them `current` (on the lab, a new runtime held revision 14 against the control plane's 3) | Runtime settings have a **lineage**, begun when the control plane first starts on settings without one (`settings-bootstrap`). Every delivery carries it; a runtime keeps the newest by lineage, then revision, and the rollout counts a member `current` only on the current lineage and revision (17 §17.7) |
-| On a broker that creates topics on demand (Kafka's default), deleted topics came back, empty, with one partition: the control plane described topics by name — for the lag refresh every minute, topic analysis, and edits, so describing a misspelt topic made it — and its and the tail app's offset lookups left aiokafka naming every topic they had looked up in each metadata refresh. On the lab, 52 topics deleted after their materializations came back at once | No request names a topic: topics are described from a read of every topic, and the clients that look up offsets track none (`kafka/metadata.py::track_no_topics`; 19 §19.7) |
+| Settings revisions restarted if the `settings` table was lost, and runtimes ignored every delivery until the new revision passed theirs. A control plane installed afresh over a Kafka cluster that kept its delivery topic did the same to the runtimes created after it, and its rollout called them `current` (on a test cluster, a new runtime held revision 14 against the control plane's 3) | Runtime settings have a **lineage**, begun when the control plane first starts on settings without one (`settings-bootstrap`). Every delivery carries it; a runtime keeps the newest by lineage, then revision, and the rollout counts a member `current` only on the current lineage and revision (17 §17.7) |
+| On a broker that creates topics on demand (Kafka's default), deleted topics came back, empty, with one partition: the control plane described topics by name — for the lag refresh every minute, topic analysis, and edits, so describing a misspelt topic made it — and its and the tail app's offset lookups left aiokafka naming every topic they had looked up in each metadata refresh. On a test cluster, 52 topics deleted after their materializations came back at once | No request names a topic: topics are described from a read of every topic, and the clients that look up offsets track none (`kafka/metadata.py::track_no_topics`; 19 §19.7) |
 | The console's GCS reads printed `MaxListenersExceededWarning` twice per object — every few seconds while a Data tab follows a table, whose pointer it re-reads | The console reads objects with a plain GET through GCS's JSON API, with the client library's endpoint, credentials, retries and CRC32C check, not through its download stream (console 06) |
 
 ## 14.18 What 4.2 resolved

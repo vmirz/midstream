@@ -330,7 +330,7 @@ class RuntimeTemplateTests(unittest.TestCase):
             ["develop-mat-mat-1-writer", "develop-mat-mat-1-committer", "develop-mat-mat-1-settings"],
         )
 
-        long = render(build_materialization(resolved_runtime_name="develop-materializer-fusion-outbound-item-with-an-extraordinarily-long-suffix"))
+        long = render(build_materialization(resolved_runtime_name="develop-materializer-orders-outbound-item-with-an-extraordinarily-long-suffix"))
         self.assertLessEqual(len(long["kaspr_app"]["metadata"]["name"]), 59)
         table_name = long["kaspr_tables"][0]["metadata"]["name"]
         self.assertLessEqual(len(table_name), 57)
