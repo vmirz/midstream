@@ -1,0 +1,25 @@
+name: Prune dev images
+
+# Keeps the newest 50 versions of midstream-console-dev (dev-images.yml) and deletes the rest. It
+# touches no other package: release images live in midstream-console. The workflow's token may
+# delete only once the repository has the Admin role in that package's Manage Actions access.
+on:
+  schedule:
+    - cron: "23 5 * * 1"   # Mondays, 05:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prune:
+    name: Keep the newest 50 dev images
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/delete-package-versions@v5
+        with:
+          package-name: midstream-console-dev
+          package-type: container
+          min-versions-to-keep: 50

@@ -332,13 +332,14 @@ Rendering happens **before** the duplicate check because the hash is the duplica
 
 ```python
 # _duplicate_apply_skip_reason (code-derived, in order)
+if caused_by.kind == "scheduler" and caused_by.id == "reconcile-runtime-drift":
+    if existing_binding and existing_binding.last_applied_spec_hash == rendered_hash:
+                                                                        return "duplicate_reconcile_noop"
+    return None
 op = get_operation_record(table, materialization_id, operation_id=work_event.work_id)
 if op and op["payload"]["status"] in {"applied", "skipped"}:            return "duplicate_apply_work"
 if existing_binding is None:                                            return None
 if existing_binding.last_apply_operation_id == work_event.work_id:      return "duplicate_apply_work"
-if (caused_by.kind == "scheduler"
-    and caused_by.id == "reconcile-runtime-drift"
-    and existing_binding.last_applied_spec_hash == rendered_hash):      return "duplicate_reconcile_noop"
 return None
 ```
 
@@ -348,6 +349,12 @@ On skip: log `control_plane_apply_runtime_skipped` with the reason, return `None
 > `reconcile-runtime-drift` work. A user-triggered `stop`/`resume`/`update` always re-applies
 > even if the rendered spec is byte-identical. That is deliberate — a user action should
 > always touch the cluster.
+>
+> Drift work, the other way round, is judged by the hash alone, never by its operation record.
+> Its work id names the spec it wants (§7.7), so a runtime taken to another spec and back asks
+> for a work id that was done before: a release, then a build of a branch, then the release
+> again. Skipping it as done would leave the runtime on the other spec for good, re-asked every
+> sweep and skipped every time.
 
 ### Apply with rollback
 

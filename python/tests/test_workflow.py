@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterable
 from dataclasses import replace
+import os
 from pathlib import Path
 import sys
 import unittest
@@ -18,8 +19,13 @@ from gcs_fakes import FakeGcs  # noqa: E402
 from table_records import table_specs  # noqa: E402
 
 from midstream.runtime.templates import PackageSource
+from midstream import config as control_plane_config  # noqa: E402
 from midstream.config import ControlPlaneConfig  # noqa: E402
 from midstream.handlers import handle_work_event_for_routed_output  # noqa: E402
+from midstream.handlers.resource_observation import (  # noqa: E402
+    build_sweep_observation_trigger,
+    handle_observation_work_for_output,
+)
 from midstream.kafka.admin import ConsumerGroupNotEmptyError  # noqa: E402
 from midstream.lakehouse.catalog import GcsPointerCatalog, StaticTableDirectory, TableEntry  # noqa: E402
 from midstream.lakehouse.pointer import POINTER_NAME, TablePointer, utc_now, write_pointer  # noqa: E402
@@ -162,6 +168,15 @@ def work(step: str, *, work_id: str | None = None, requested_at: str = "2026-07-
         requested_at=requested_at,
         caused_by=EventCause(kind="request", id="req-1"),
         dedupe_key=f"{step}:{MATERIALIZATION_ID}",
+    )
+
+
+def git_package(revision: str) -> PackageSource:
+    """The package source of a control plane installed from this repository at `revision`."""
+    return PackageSource(
+        kind="git",
+        reference=revision,
+        requirement=f"git+https://github.com/vmirz/midstream.git@{revision}#egg=midstream-platform&subdirectory=python",
     )
 
 
@@ -547,6 +562,38 @@ class RuntimeApplyTests(WorkflowTestCase):
             sorted(record.name for record in list_materialization_tables(self.table, MATERIALIZATION_ID)),
         )
 
+    def drift_reapply(self) -> MaterializationWorkEvent:
+        """The re-apply the observation sweep publishes for the runtime, as it publishes it."""
+        outputs = [
+            output["value"]
+            for output in handle_observation_work_for_output(
+                build_sweep_observation_trigger(requested_at="2026-07-12T00:10:00Z"),
+                self.table,
+                self.kaspr,
+                observed_at="2026-07-12T00:10:00Z",
+            )
+            if output["value"]["step"] == "apply_runtime"
+        ]
+        self.assertEqual(1, len(outputs))
+        return MaterializationWorkEvent.from_dict(outputs[0])
+
+    def test_a_runtime_taken_to_another_package_and_back_is_applied_again(self) -> None:
+        # A release, a build of a branch, the release again: each control plane re-applies the
+        # runtime with its own package, and the sweep names that work after the spec it wants, so
+        # the way back asks for work that was done once before.
+        self.create()
+        for step, revision in enumerate(("pkg-rev-2", "pkg-rev-3", "pkg-rev-2"), start=1):
+            with patch("midstream.runtime.templates.installed_package_source", return_value=git_package(revision)):
+                reapply = self.drift_reapply()
+                self.assertIsNotNone(self.process(reapply), f"re-apply {step}, to {revision}, was skipped")
+            app = [resource for resource in self.kaspr.applied if resource["kind"] == "KasprApp"][-1]
+            self.assertEqual(revision, app["metadata"]["annotations"]["control-plane/package-revision"])
+
+        applied = len(self.kaspr.applied)
+        with patch("midstream.runtime.templates.installed_package_source", return_value=git_package("pkg-rev-2")):
+            self.assertIsNone(self.process(reapply), "delivered again once the runtime has its spec")
+        self.assertEqual(applied, len(self.kaspr.applied))
+
     def test_a_materialization_created_before_1_0_cannot_be_applied(self) -> None:
         self.assertIsNone(self.process(work("apply_runtime")))
 
@@ -786,6 +833,18 @@ class MultiTableDeletionTests(WorkflowTestCase):
             retry = self.process(retry)
         self.assertIsNone(self.store.get(f"{PAYMENTS_LOCATION}/metadata/{POINTER_NAME}"))
         self.assertEqual(["gs://lake/materializer/other-ffffffffffff/orders/data/x.parquet"], self.store.names())
+
+
+def setUpModule() -> None:
+    # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); the sweep
+    # reaches the configuration without choosing one, so the environment names it for it.
+    os.environ.setdefault("CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
+    control_plane_config.get_config.cache_clear()
+
+
+def tearDownModule() -> None:
+    # Renders read the deployment's configuration, which is cached: leave none behind for other modules.
+    control_plane_config.get_config.cache_clear()
 
 
 if __name__ == "__main__":

@@ -107,7 +107,9 @@ and the catalog.
 `package.source` is `index` by default: every app installs the release the chart belongs to,
 `midstream-platform==<appVersion>`, from PyPI, and the control plane pins its runtimes to the same
 version. `package.source: git` installs this repository at `package.git.ref` instead, for development.
-The console image for a release is `ghcr.io/vmirz/midstream-console:<version>`, the chart's default.
+The console image for a release is `ghcr.io/vmirz/midstream-console:<version>`, the chart's default;
+every commit pushed to a branch has one too, `ghcr.io/vmirz/midstream-console-dev:sha-<commit>`, to
+run with `package.source: git` at that commit (handbook 16 §16.3).
 
 ## 4. Install
 

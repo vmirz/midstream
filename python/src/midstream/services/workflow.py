@@ -3094,6 +3094,13 @@ def _duplicate_apply_skip_reason(
     existing_binding,
     rendered_hash: str,
 ) -> str | None:
+    if work_event.caused_by.kind == "scheduler" and work_event.caused_by.id == "reconcile-runtime-drift":
+        # The sweep names a re-apply after the spec it wants, so a runtime taken to another spec and
+        # back - a release, a build of a branch, the release again - asks for work done once before.
+        # It is a duplicate only if the runtime already has that spec.
+        if existing_binding is not None and existing_binding.last_applied_spec_hash == rendered_hash:
+            return "duplicate_reconcile_noop"
+        return None
     operation = get_operation_record(
         table,
         materialization_id=work_event.materialization_id,
@@ -3105,12 +3112,6 @@ def _duplicate_apply_skip_reason(
         return None
     if existing_binding.last_apply_operation_id == work_event.work_id:
         return "duplicate_apply_work"
-    if (
-        work_event.caused_by.kind == "scheduler"
-        and work_event.caused_by.id == "reconcile-runtime-drift"
-        and existing_binding.last_applied_spec_hash == rendered_hash
-    ):
-        return "duplicate_reconcile_noop"
     return None
 
 

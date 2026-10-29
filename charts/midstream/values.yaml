@@ -290,6 +290,8 @@ console:
       label: ""
       scopes: [openid, email, profile]
   image:
+    # A commit between releases: ghcr.io/vmirz/midstream-console-dev, tag sha-<commit>, with
+    # package.source git at the same commit (handbook 16 §16.3).
     repository: ghcr.io/vmirz/midstream-console
     tag: ""                     # empty takes the chart's appVersion
     pullPolicy: IfNotPresent

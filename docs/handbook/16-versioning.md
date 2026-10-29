@@ -105,6 +105,29 @@ keep that safe:
    1–9 for the metadata columns and the snapshot-summary properties of 11 §11.4. Changing either is
    a major change: every table already written, and every reader of it, depends on them.
 
+### Running a commit between releases
+
+Every push to a branch of the repository publishes that commit's console image,
+`ghcr.io/vmirz/midstream-console-dev:sha-<commit>` (`.github/workflows/dev-images.yml`; linux/amd64
+only, and `dev-images-prune.yml` keeps the newest 50). It is a separate package from the releases,
+so nothing that prunes it can reach a release. To run the commit on a cluster, take the chart from a
+checkout of it and set:
+
+```yaml
+package:
+  source: git
+  git:
+    ref: <commit>        # the full SHA, not a branch: each pod installs the ref when it starts
+console:
+  image:
+    repository: ghcr.io/vmirz/midstream-console-dev
+    tag: sha-<commit>
+```
+
+Every app installs that commit, the control plane pins the runtimes to it, and the console runs
+its image, so the whole deployment runs one commit. Going back to a release is the same
+`helm upgrade` with the published chart and without these values.
+
 ## The development line before 1.0.0
 
 Midstream's first release is 1.0.0. The code reached it through a development line numbered 0.5 to
