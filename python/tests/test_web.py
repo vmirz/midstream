@@ -486,7 +486,7 @@ class WebCreateTests(unittest.TestCase):
 
     def test_create_materialization_bounds_long_runtime_name(self) -> None:
         acceptance = self._create(
-            {"tables": tables("fusion-outbound-item-with-an-extraordinarily-long-suffix")}
+            {"tables": tables("orders-outbound-item-with-an-extraordinarily-long-suffix")}
         )
 
         self.assertLessEqual(len(acceptance.materialization.resolved_runtime_name), 59)
@@ -609,12 +609,12 @@ class WebCreateTests(unittest.TestCase):
                 self.assertEqual(("invalid_request", {"field": "name"}), (error.code, error.details))
 
     def test_create_materialization_writes_to_the_default_destination_when_none_is_given(self) -> None:
-        config = ControlPlaneConfig(default_destination_uri="gs://kafka-materializations", default_namespace="midstream")
+        config = ControlPlaneConfig(default_destination_uri="gs://example-bucket", default_namespace="midstream")
 
         acceptance = self._create({"tables": tables("orders")}, config=config)
 
-        self.assertEqual(acceptance.materialization.destination_uri, "gs://kafka-materializations")
-        self.assertEqual(acceptance.request_event.spec.destination_uri, "gs://kafka-materializations")
+        self.assertEqual(acceptance.materialization.destination_uri, "gs://example-bucket")
+        self.assertEqual(acceptance.request_event.spec.destination_uri, "gs://example-bucket")
 
     def test_create_materialization_takes_defaults_and_limits_from_settings_overrides(self) -> None:
         settings = FakeTable()
@@ -648,14 +648,14 @@ class WebSystemSettingsTests(unittest.TestCase):
         settings = settings_view(
             config=ControlPlaneConfig(
                 default_namespace="midstream",
-                default_destination_uri="gs://kafka-materializations",
+                default_destination_uri="gs://example-bucket",
                 default_runtime_replicas=2,
                 max_runtime_replicas=32,
                 max_materialization_topics=12,
             )
         )
 
-        self.assertEqual(settings["default_destination_uri"], "gs://kafka-materializations")
+        self.assertEqual(settings["default_destination_uri"], "gs://example-bucket")
         self.assertEqual(settings["default_replicas"], 2)
         self.assertEqual(settings["max_replicas"], 32)
         self.assertEqual(settings["default_namespace"], "midstream")

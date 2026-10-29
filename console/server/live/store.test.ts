@@ -5,7 +5,7 @@ import { committedTotals } from './store.ts';
 
 describe('what a materialization’s tables hold', () => {
   it('sums each table’s current snapshot as its committer reported it, never what the runtime wrote', () => {
-    // As the lab reported a runtime that lost writes to restarts: written 290 M, held 95 M.
+    // As a test cluster reported a runtime that lost writes to restarts: written 290 M, held 95 M.
     const progress = {
       cumulative_rows_written: 290_457_253,
       cumulative_bytes_written: 18_151_374_776,

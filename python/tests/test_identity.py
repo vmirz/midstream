@@ -1120,7 +1120,7 @@ class SessionTests(unittest.TestCase):
 class StartingTests(unittest.TestCase):
     """A restarted control plane answers before it has read its tables back: 503 until it has.
 
-    On the lab a restart answered "invalid session" for those seconds, and the console, told a
+    On a test cluster a restart answered "invalid session" for those seconds, and the console, told a
     session had ended, cleared its cookie: everyone with a tab open was signed out.
     """
 
