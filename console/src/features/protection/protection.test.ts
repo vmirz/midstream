@@ -110,8 +110,7 @@ describe('reprotect', () => {
   it('says what a run rewrote, masked and purged, leaving out what it did not do', () => {
     assert.deepEqual(reprotectCounts({ counts: { inputs: 1, outputs: 1, masked: 1200, withheld: 0, moved: 3, expired_snapshots: 4, deleted_files: 2, files_left: 0 } }), [
       '1 file rewritten',
-      '1,200 values masked',
-      '3 values moved masked to a text field',
+      '1,200 values masked, 3 of them moved to a text field',
       '4 older snapshots expired',
       '2 files deleted',
     ]);

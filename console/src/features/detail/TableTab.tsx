@@ -185,7 +185,7 @@ function TableFigures({ record, metadata }: { record: CpTable | null; metadata: 
       <StatCard
         label="Last commit"
         value={record?.last_commit_at ? <RelativeTime value={record.last_commit_at} /> : '—'}
-        hint={`${snapshots === null ? '—' : formatExact(snapshots)} snapshots kept${record?.last_commit_duration_ms ? ` · took ${formatDuration(record.last_commit_duration_ms)}` : ''}`}
+        hint={`${snapshots === null ? '—' : formatExact(snapshots)} ${snapshots === 1 ? 'snapshot' : 'snapshots'} kept${record?.last_commit_duration_ms ? ` · took ${formatDuration(record.last_commit_duration_ms)}` : ''}`}
       />
     </div>
   );

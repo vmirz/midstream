@@ -102,11 +102,12 @@ export function reprotectCounts(run: Pick<CpMaintenanceRun, 'counts'>): string[]
   const count = (key: string): number => (typeof counts[key] === 'number' ? counts[key] : 0);
   const some = (key: string, one: string, many: string): string[] =>
     count(key) > 0 ? [`${formatExact(count(key))} ${count(key) === 1 ? one : many}`] : [];
+  // Values moved into a text field are masked too: said with them, not added to them.
+  const moved = count('moved') > 0 ? `, ${formatExact(count('moved'))} of them moved to a text field` : '';
   return [
     ...some('inputs', 'file rewritten', 'files rewritten'),
-    ...some('masked', 'value masked', 'values masked'),
+    ...some('masked', 'value masked', 'values masked').map((text) => text + moved),
     ...some('withheld', 'value withheld', 'values withheld'),
-    ...some('moved', 'value moved masked to a text field', 'values moved masked to a text field'),
     ...some('expired_snapshots', 'older snapshot expired', 'older snapshots expired'),
     ...some('deleted_files', 'file deleted', 'files deleted'),
     ...some('files_left', 'file left for the next run', 'files left for the next run'),
