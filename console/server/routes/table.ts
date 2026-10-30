@@ -13,6 +13,7 @@ import { logger } from '../logger.ts';
 import { unreadableTable } from '../data/catalog.ts';
 import { compactionDue, type CompactionThresholds } from '../iceberg/compaction.ts';
 import { currentSchema, partitionGranularity, schemaById, type TableMetadata } from '../iceberg/metadata.ts';
+import { FORK_MAP_PROPERTY, PROTECTION_PROPERTY } from '../iceberg/schema.ts';
 import { snapshotCatalog, type DataObject, type SnapshotCatalog } from '../iceberg/snapshot.ts';
 import { loadTable } from '../iceberg/table.ts';
 import { materializationId, parseBody } from './materializations.ts';
@@ -156,9 +157,13 @@ async function tableRecord(request: FastifyRequest, id: string, table: string): 
   }
 }
 
-/** Table properties that describe its fields: the fork map, and any of Iceberg's `schema.*`. */
-function describesSchema(key: string): boolean {
-  return key === 'materializer.fork-map' || key.startsWith('schema.');
+/**
+ * Table properties that describe its fields, which only people who may see the dataset's schemas see:
+ * the fork map, what the table protects (its fields' paths and kinds, handbook 22), and any of
+ * Iceberg's `schema.*`.
+ */
+export function describesSchema(key: string): boolean {
+  return key === FORK_MAP_PROPERTY || key === PROTECTION_PROPERTY || key.startsWith('schema.');
 }
 
 function describeTable(
