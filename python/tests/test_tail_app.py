@@ -28,8 +28,10 @@ from tail_support import (  # noqa: E402
 )
 
 from midstream.lakehouse.lifecycle import schema_to_json  # noqa: E402
+from midstream.lakehouse.schema.forkmap import ForkMap  # noqa: E402
 from midstream.lakehouse.schema.infer import infer  # noqa: E402
 from midstream.lakehouse.schema.policy import evolve  # noqa: E402
+from midstream.lakehouse.tables import build_schema  # noqa: E402
 from midstream.tail_app import consumer as consumer_module  # noqa: E402
 from midstream.tail_app.consumer import SOURCE_FETCH_MIN_BYTES  # noqa: E402
 from midstream.tail_app.ingest import TailSchema  # noqa: E402
@@ -407,6 +409,120 @@ class FollowingTheTableTests(TailCase):
         await self.harness.settle()
 
         self.assertEqual([(3, 0), (3, 1)], offsets_of(await self.tail({0: -1, 1: -1, 2: -1})))
+
+
+class ProtectionTailTests(TailCase):
+    """The tail masks records as the writers do, follows a recorded policy, and serves nothing it
+    could not mask (handbook 22)."""
+
+    KEY = "tail-tests-protection-key-of-at-least-32-chars"
+
+    async def asyncSetUp(self) -> None:
+        from unittest.mock import patch
+
+        from midstream.lakehouse.schema.index import build_index
+        from midstream.protection import secrets
+        from midstream.protection.plan import initial_protection
+        from midstream.protection.policy import ProtectionPolicy
+
+        patcher = patch.dict("os.environ", {"PROTECTION_KEY": self.KEY})
+        patcher.start()
+        secrets.get_protection_key.cache_clear()
+        self.addCleanup(secrets.get_protection_key.cache_clear)
+        self.addCleanup(patcher.stop)
+        await super().asyncSetUp()
+        evolution = evolve(build_schema(), ForkMap(), [((), infer({"order_id": "O", "email": "h" * 32, "phone": "****1234"}))], schema_id=0)
+        self.evolution = evolution
+        index = build_index(evolution.schema, evolution.fork_map, last_column_id=evolution.last_column_id)
+        self.protection = initial_protection(index, ProtectionPolicy({"email": "hash", "phone": "partial", "secret": "redact"}), revision=1)
+        self.protected_schema = TailSchema(
+            schema_id=0,
+            iceberg_schema=schema_to_json(evolution.schema),
+            fork_map=evolution.fork_map.to_dict(),
+            last_column_id=evolution.last_column_id,
+            protection=self.protection.to_dict(),
+        )
+        self.harness.table(self.target, schema=self.protected_schema)
+
+    async def test_rows_are_masked_as_the_writers_mask_them(self) -> None:
+        from midstream.protection.mask import hash_text
+
+        self.harness.produce("orders", 0, 2, value={"order_id": "A", "email": "jane@example.com", "phone": "540-948-9848", "password": "pw"})
+        self.harness.deliver(tick(self.target, schema_id=0))
+        await self.activate()
+        rows = rows_of(await self.tail({}))
+        self.assertEqual(2, len(rows))
+        self.assertEqual({hash_text(self.KEY.encode(), "jane@example.com")}, {row["email"] for row in rows})
+        self.assertEqual({"****9848"}, {row["phone"] for row in rows})
+        self.assertTrue(all(row["_unmapped"] is None for row in rows), "a withheld value goes nowhere")
+        partition = self.owner.tables["tail:mat-1:orders"].buffer.partitions[0]
+        held = b"".join([*(line for segment in partition.segments for line in segment.lines()), *(partition.open.lines if partition.open else [])])
+        self.assertTrue(held)
+        self.assertNotIn(b"jane@example.com", held)
+        self.assertNotIn(b'"pw"', held)
+
+    async def test_a_recorded_policy_reads_the_uncommitted_records_again(self) -> None:
+        from midstream.lakehouse.schema.index import build_index
+        from midstream.protection.plan import record_policy
+        from midstream.protection.policy import ProtectionPolicy
+
+        self.harness.produce("orders", 0, 2, value={"order_id": "A", "email": "jane@example.com", "phone": "540-948-9848"})
+        self.harness.deliver(tick(self.target, schema_id=0))
+        await self.activate()
+        self.assertEqual(32, len(rows_of(await self.tail({}))[0]["email"]), "hashed first")
+        index = build_index(self.evolution.schema, self.evolution.fork_map, last_column_id=self.evolution.last_column_id)
+        revised = record_policy(self.protection, index, ProtectionPolicy({"email": "partial", "phone": "partial"}), revision=2)
+        self.harness.table_event(
+            "schema_changed",
+            "mat-1",
+            "orders",
+            {
+                "schema_id": 0,
+                "schema": schema_to_json(self.evolution.schema),
+                "fork_map": self.evolution.fork_map.to_dict(),
+                "last_column_id": self.evolution.last_column_id,
+                "rejected_paths": [],
+                "changes": [],
+                "protection": revised.to_dict(),
+            },
+        )
+        await self.harness.settle()
+        rows = rows_of(await self.tail({}))
+        self.assertEqual({"****@example.com"}, {row["email"] for row in rows})
+        table = self.owner.tables["tail:mat-1:orders"]
+        self.assertEqual(2, table.schema.protection_revision)
+
+    async def test_a_member_without_the_key_serves_no_table_that_hashes(self) -> None:
+        from unittest.mock import patch
+
+        from midstream.protection import secrets
+
+        with patch.dict("os.environ", {"PROTECTION_KEY": ""}):
+            secrets.get_protection_key.cache_clear()
+            self.harness.table(self.target, schema=TailSchema(
+                schema_id=0,
+                iceberg_schema=schema_to_json(self.evolution.schema),
+                fork_map=self.evolution.fork_map.to_dict(),
+                last_column_id=self.evolution.last_column_id,
+                protection=self.protection.to_dict(),
+            ))
+            self.harness.produce("orders", 0, 1, value={"order_id": "A", "email": "jane@example.com"})
+            self.harness.deliver(tick(self.target, schema_id=0))
+            with self.assertLogs("midstream.tail_app.table_tail", level="WARNING"):
+                await self.activate()
+            error = await self.refused({})
+        self.assertEqual((503, "protection_key_missing"), (error.status_code, error.details["reason"]))
+        self.assertEqual("unavailable", self.owner.tables["tail:mat-1:orders"].state)
+
+    async def test_a_member_with_another_key_than_the_deployments_serves_no_table_that_hashes(self) -> None:
+        self.target = target(protection_key_id="deadbeef")
+        self.harness.table(self.target, schema=self.protected_schema)
+        self.harness.produce("orders", 0, 1, value={"order_id": "A", "email": "jane@example.com"})
+        self.harness.deliver(tick(self.target, schema_id=0))
+        with self.assertLogs("midstream.tail_app.table_tail", level="WARNING"):
+            await self.activate()
+        error = await self.refused({})
+        self.assertEqual("protection_key_missing", error.details["reason"])
 
 
 class OneConsumerTests(TailCase):

@@ -164,8 +164,11 @@ class TailWorker:
         if reseeded:
             self._log("tail_table_reseeded", table=key, reason="table_uuid", table_uuid=message.target.table_uuid)
             self.apply_plan()
-        elif table.active and table.schema is not None and (table.hinted_schema_id or 0) > table.schema.schema_id:
-            # A schema change this member missed: fetch the schema again.
+        elif table.active and table.schema is not None and (
+            (table.hinted_schema_id or 0) > table.schema.schema_id
+            or (table.hints.protection_revision or 0) > table.schema.protection_revision
+        ):
+            # A schema change, or a recorded protection policy, this member missed: fetch it again.
             asyncio.ensure_future(self._refresh_schema(table))
 
     def _check_routing(self, key: str, partition: int) -> None:
@@ -351,6 +354,7 @@ class TailWorker:
             iceberg_schema=record.schema,
             fork_map=record.fork_map,
             last_column_id=record.last_column_id,
+            protection=record.protection,
         )
         return schema, committed, record.table_uuid
 
@@ -359,6 +363,9 @@ class TailWorker:
             payload = await self.control_plane.schema(table.target.materialization_id, table.target.table)
             if table.install_schema(schema_from_payload(payload)):
                 self._log("tail_schema_applied", table=table.key, schema_id=table.schema.schema_id if table.schema else None, source="refresh")
+                # A newer protection revision reads the uncommitted records again: seek back for it.
+                table.evaluate()
+                self.apply_plan()
         except Exception as error:  # noqa: BLE001 - the next tick tries again
             LOGGER.warning("Could not fetch the newer schema of %s: %s", table.key, error)
 
@@ -756,6 +763,7 @@ def schema_from_payload(payload: dict[str, Any]) -> TailSchema:
         fork_map=payload.get("fork_map") or {},
         last_column_id=payload.get("last_column_id"),
         rejected_paths=payload.get("rejected_paths") or (),
+        protection=payload.get("protection") if isinstance(payload.get("protection"), dict) else None,
     )
 
 

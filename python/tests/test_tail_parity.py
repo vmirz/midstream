@@ -37,7 +37,7 @@ from midstream.runtime_app.writer.batches import staged_line  # noqa: E402
 from midstream.runtime_app.writer.context import extract_source_record_metadata, format_timestamp  # noqa: E402
 from midstream.runtime_app.writer.seal import SealJob, run_seal  # noqa: E402
 from midstream.tail_app.buffer import TableBuffer  # noqa: E402
-from midstream.tail_app.ingest import UNDECODABLE, TailSchema, build, decode_value, epoch_ms, stage  # noqa: E402
+from midstream.tail_app.ingest import UNDECODABLE, TailSchema, build, decode_value, epoch_ms, protect, stage  # noqa: E402
 from midstream.tail_app.serve import build_answer, rows_batch  # noqa: E402
 
 READ_AT = "2026-10-18T10:00:01.250Z"
@@ -95,8 +95,9 @@ def random_record(rng: random.Random, partition: int, offset: int) -> tuple[Reco
     return record, value
 
 
-def writer_line(record: Record) -> bytes:
-    """The line the runtime's writer stages for `record`: from the Faust event Kaspr hands it."""
+def writer_line(record: Record, plan=None) -> bytes:
+    """The line the runtime's writer stages for `record`: from the Faust event Kaspr hands it, masked
+    by the writer's protection plan when the table has one (`runtime_app/handlers/writer.py`)."""
     message = SimpleNamespace(
         topic=record.topic,
         partition=record.partition,
@@ -109,16 +110,19 @@ def writer_line(record: Record) -> bytes:
     metadata = extract_source_record_metadata("mat-1", SimpleNamespace(message=message), source_topic="orders", observed_at=READ_AT)
     # Kaspr's `json` value serializer: Faust's json codec, `json.loads` of the value as UTF-8.
     value = None if record.value is None else json.loads(record.value.decode("utf-8"))
+    if plan is not None and not plan.empty:
+        value = plan.protect(value)
     return staged_line(metadata, value)
 
 
-def tail_schema(evolution, schema_id: int | None = None) -> TailSchema:
+def tail_schema(evolution, schema_id: int | None = None, protection: dict | None = None) -> TailSchema:
     return TailSchema(
         schema_id=evolution.schema.schema_id if schema_id is None else schema_id,
         iceberg_schema=schema_to_json(evolution.schema),
         fork_map=evolution.fork_map.to_dict(),
         last_column_id=evolution.last_column_id,
         rejected_paths=[list(path) for path in getattr(evolution, "rejected_paths", ()) or ()],
+        protection=protection,
     )
 
 
@@ -158,7 +162,7 @@ class TailBuffer:
 
     def ingest(self, record: Record, *, close_every: int = 7) -> None:
         value = decode_value(record.value)
-        line = stage(record, value, materialization_id="mat-1", source_topic="orders", observed_at=READ_AT)
+        line = stage(record, protect(value, self.schema), materialization_id="mat-1", source_topic="orders", observed_at=READ_AT)
         row = build(line, self.schema, default_partition=record.partition)
         moment = row.built.moment
         self.buffer.append(
@@ -218,6 +222,59 @@ class TailParityTests(unittest.TestCase):
                 # The same physical schema - names, types, field ids - so the file binds as a data file does.
                 self.assertEqual(field_ids(schema.arrow_schema), field_ids(table.schema))
                 self.assertEqual(schema.arrow_schema.remove_metadata(), table.schema.remove_metadata())
+
+    def test_protected_records_served_by_the_tail_are_the_rows_the_seal_writes(self) -> None:
+        # The writer masks each record before staging and the tail does the same with the same plan,
+        # so the rows agree with protection on - hashes, partial values and withheld fields included.
+        from unittest.mock import patch
+
+        from midstream.lakehouse.schema.index import build_index
+        from midstream.protection import secrets
+        from midstream.protection.plan import SHAPE_ONLY_SECRET, ProtectionPlan, initial_protection
+        from midstream.protection.policy import ProtectionPolicy
+
+        policy = ProtectionPolicy({"email": "hash", "phone": "partial", "national_id": "hash", "secret": "redact", "person_name": "partial"})
+        key_text = "parity-protection-key-of-at-least-32-chars"
+        sensitive = {
+            "email": lambda rng: rng.choice([f"user{rng.randint(0, 9)}@example.com", None, 7]),
+            "phone": lambda rng: rng.choice(["540-948-9848", 5409489848, {"number": "555-0100", "type": "m"}, True]),
+            "ssn": lambda rng: rng.choice([123456789, "123-45-6789"]),
+            "password": lambda rng: rng.choice(["pw", {"hash": "x", "salt": "y"}]),
+            "customer": lambda rng: {"name": rng.choice(["Jane", "J"]), "email": "c@example.com", "tier": rng.randint(0, 3)},
+        }
+        with patch.dict("os.environ", {"PROTECTION_KEY": key_text}):
+            secrets.get_protection_key.cache_clear()
+            self.addCleanup(secrets.get_protection_key.cache_clear)
+            for seed in range(8):
+                with self.subTest(seed=seed):
+                    rng = random.Random(100 + seed)
+                    records = []
+                    for partition in range(2):
+                        for offset in range(50):
+                            record, value = random_record(rng, partition, offset)
+                            if isinstance(value, dict):
+                                for name in rng.sample(sorted(sensitive), rng.randint(1, 3)):
+                                    value[name] = sensitive[name](rng)
+                                record = Record(topic=record.topic, partition=record.partition, offset=record.offset, timestamp=record.timestamp, key=record.key, value=json.dumps(value).encode("utf-8"), headers=record.headers)
+                            records.append((record, value))
+                    # Schema 0 as discovery infers it - from masked samples - and the table's record of it.
+                    shapes = ProtectionPlan.for_policy(policy, secret=SHAPE_ONLY_SECRET)
+                    evolution = self.evolution_from([shapes.protect(value) for _, value in records])
+                    index = build_index(evolution.schema, evolution.fork_map, last_column_id=evolution.last_column_id)
+                    protection = initial_protection(index, policy, revision=1).to_dict()
+                    schema = tail_schema(evolution, protection=protection)
+                    writer_plan = ProtectionPlan(schema.protection, index, secret=key_text.encode())
+                    tail = TailBuffer(schema, partitions=2)
+                    lines_by_partition: dict[int, list[bytes]] = {}
+                    for record, _ in records:
+                        tail.ingest(record)
+                        lines_by_partition.setdefault(record.partition, []).append(writer_line(record, writer_plan))
+                    _, _, served = tail.served()
+                    sealed = [row for partition in sorted(lines_by_partition) for row in sealed_rows(lines_by_partition[partition], evolution)]
+                    self.assertEqual(without_read_time(sealed), without_read_time(served))
+                    text = json.dumps(without_read_time(served), default=str)
+                    for plaintext in ("@example.com", "540-948-9848", "123-45-6789", '"pw"', "123456789"):
+                        self.assertNotIn(plaintext, text)
 
     def test_the_writers_and_the_tails_staged_lines_agree_on_every_kafka_field(self) -> None:
         rng = random.Random(7)

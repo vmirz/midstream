@@ -304,6 +304,9 @@ def _refuse_unanswerable(tail: TableTail) -> None:
             committed={str(partition): offset for partition, offset in sorted(tail.committed.items())},
         )
         raise error
+    if tail.state == "unavailable" and tail.reason in ("protection_key_missing", "protection_key_mismatch"):
+        # Never rows the writers would not write: the table hashes, and this member may not (handbook 22).
+        raise unavailable(f"The live tail cannot mask this table's records: {tail.last_error}.", reason="protection_key_missing")
     if tail.state == "unavailable":
         raise unavailable(f"The live tail cannot read this table's topic: {tail.last_error or tail.reason}.", reason="topic_unavailable")
     if tail.state not in ANSWERING or not tail.ready:
