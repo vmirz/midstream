@@ -343,9 +343,9 @@ export interface CpMaterialization {
   datasets: string[];
   /** A change of topics waiting for its new tables' names; at most one at a time. */
   pending_topic_change?: CpPendingTopicChange | null;
-  /** Which kinds of sensitive data its runtime masks, and how (handbook 22). Absent before 1.1. */
+  /** Which kinds of sensitive data its runtime masks, and how (handbook 22). Absent before 1.0.0-rc.5. */
   protection?: ProtectionPolicy;
-  /** The policy's revision: 1 at creation, one more per edit; 0 for one created before 1.1. */
+  /** The policy's revision: 1 at creation, one more per edit; 0 for one created before 1.0.0-rc.5. */
   protection_revision?: number;
 }
 
@@ -413,7 +413,7 @@ export interface CpDetail {
    * any being dropped or dropped.
    */
   tables: CpTableSummary[];
-  /** Its data protection and how far it has reached (handbook 22). Absent before 1.1. */
+  /** Its data protection and how far it has reached (handbook 22). Absent before 1.0.0-rc.5. */
   protection?: CpProtectionSummary;
 }
 
@@ -1369,7 +1369,7 @@ export interface CpSystemSettings {
   autoscaling_enabled?: boolean;
   autoscale_max_replicas?: number;
   autoscale_target_minutes?: number;
-  /** Data protection: every kind and mask, the default a create gets, and the key. Absent before 1.1. */
+  /** Data protection: every kind and mask, the default a create gets, and the key. Absent before 1.0.0-rc.5. */
   protection?: CpProtectionCatalog;
 }
 
@@ -1391,7 +1391,7 @@ export interface MaterializationDefaults {
   reservedNamespaceNames: string[];
   /** The most topics one materialization reads. */
   maxTopics: number;
-  /** What data protection offers, and the policy a create gets; null before 1.1 (handbook 22). */
+  /** What data protection offers, and the policy a create gets; null before 1.0.0-rc.5 (handbook 22). */
   protection: CpProtectionCatalog | null;
 }
 

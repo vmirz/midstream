@@ -365,3 +365,31 @@ in place, with `helm upgrade`.
 |---|---|
 | `kaspr.tls`, when set, is the `tls` of the control plane, maintenance and tail apps and of every runtime, as the KasprApp CRD spells it: `{}` turns TLS on, with `SASL_SSL`, or with `SSL` when `kaspr.authentication` is `{type: plain}` alone (02 §2.3). Unset, the chart renders as before | deployers whose Kafka listener requires TLS. The brokers' certificates must chain to a certificate authority the Kaspr image trusts: a private one, such as Strimzi's cluster CA, is not supported yet, nor are client certificates |
 | Midstream's own Kafka clients — the topic list and analysis, the lag refresh, schema discovery, topic cleanup and the live tail — take the TLS context Kaspr gives its clients (`kafka/tls.py`). Before, they could not connect over TLS | none |
+
+## 16.16 What 1.0.0-rc.5 changed: data protection
+
+1.0.0-rc.5 masks sensitive values before anything stages them — emails, phone numbers, national
+identifiers and secrets by default, hashed, partial or withheld as each materialization chooses — and
+masks the rows written before a change when asked (22). It also refuses source topics Kafka does not
+list, documents the ACLs the deployment's Kafka user needs (21), and publishes a console image of
+every pushed commit. It is a release candidate of 1.0.0, and 1.0.0-rc.4 upgrades to it in place after
+one step: **add `protection-key` to each domain's auth Secret before `helm upgrade`**, one key shared
+by the domains whose masked columns should join (22 §22.9, 12 §12.1). Without it, existing
+materializations run on, but a create that takes the default, which hashes, is refused. The new
+package changes every runtime's spec, so the control plane re-applies each runtime once after the
+upgrade; no topic or table is added to an app, so no consumer-group rebalance is needed (§16.3).
+
+| Change | Who must care |
+|---|---|
+| **The auth Secret needs a `protection-key`**, read at start by the control plane, the tail app, the maintenance app and every runtime; only its id is ever shown, as `protection_key_id` on `GET /system/version`. Until it is set, a create that takes the default answers `409 protection_key_not_configured`. Added after the upgrade, it reaches the three apps once they restart (`kubectl rollout restart statefulset`), and every runtime is re-applied once by itself. Domains that join on masked columns share one key, like `federation-key` | every deployer, once |
+| **Protected by default**: Settings › Data protection, `default_protection` (`CONTROL_PLANE_DEFAULT_PROTECTION`), ships as `email=hash,phone=hash,national_id=hash,secret=redact`. It applies to materializations created from now on; existing ones protect nothing until an edit chooses otherwise. Changing it needs the new permission `settings.manage_protection`, which only Administrator holds | administrators who want other defaults, or none |
+| **Per materialization**: `protection` on `POST` and `PATCH /materializations`. Anything other than the default needs the new dataset permission `dataset.protect` on every dataset written into; Dataset Owner holds it. An edit applies live, without a restart, to records written from then on (22 §22.7) | dataset owners; scripts that want no protection send `{"kinds": {}}` |
+| **Rows already written can be masked**: a reprotect, a job of the maintenance app — *Mask rows already written* on the Protection tab, *Also mask rows already written* in the edit dialog, `POST /materializations/{id}/maintenance {"job": "reprotect", "purge": …}` or `protection.reprotect` on `PATCH`. It needs Run table maintenance and Choose data protection on each table's dataset. With `purge`, every older snapshot is expired and the files only they held are deleted, which ends time travel to before it (22 §22.14) | dataset owners and operators; whoever relies on time travel |
+| Tables gain the property `materializer.protection`, with each protected field's state under every revision. A data file masked under a revision ends `-r<revision>.parquet`, and one a reprotect rewrote names its lineage (`reprotect-…-r3p1.parquet`); compaction never mixes them. A reprotect commit's summary says `materializer.operation: reprotect` | readers of table metadata; queries are unchanged |
+| The runtime control topic carries a second message kind, `protection_policy`, which an older runtime drops; table events gain `plaintext_counted`; requests gain the action `reprotect`; maintenance ticks carry a reprotect, the table's protection revision and three batch-age settings. No topic is added | consumers of the control plane's topics |
+| A create, or an update that starts reading a topic, is refused with `400 invalid_request`, `reason: source_topic_missing`, when Kafka does not list the topic — a missing one, or one the deployment's Kafka user may not describe — and with `503` when Kafka does not answer within 10 s. Before, the materialization was created and its table stayed empty, and a broker that creates topics on demand made the misspelt topic | scripts that create materializations before their topics: create the topic first |
+| Handbook 21: the ACLs the deployment's single Kafka user needs, required and feature-only, what breaks without each, and `kafka-acls.sh` and Strimzi examples | deployers whose Kafka enforces ACLs |
+| A resume finishes a change of topics whose discovery failed; before, every later apply failed as `table_missing` | none |
+| A runtime taken to another spec and back — release, commit, release — is re-applied; before, the sweep skipped it as a duplicate, and it stayed on the other spec | deployments that ran a commit between releases |
+| Every push to a branch publishes that commit's console image, `ghcr.io/vmirz/midstream-console-dev:sha-<commit>`; with `package.source: git` at the same commit, a whole deployment runs one commit (§16.3) | contributors |
+| A snapshot expiry's report, and a reprotect purge's, move the table record's metadata file and snapshot count forward; before, the record kept them until the next commit | none |

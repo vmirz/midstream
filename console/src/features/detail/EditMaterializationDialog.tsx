@@ -84,7 +84,7 @@ export function EditMaterializationDialog({
   const [dropKept, setDropKept] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<{ field: string | null; message: string } | null>(null);
   const { defaults, datasetRules, tableRules, labelMaxLength, maxTopics, autoscaling: autoscalingPolicy } = useMaterializationDefaults();
-  // Data protection (handbook 22): absent from control planes before 1.1, which offer none.
+  // Data protection (handbook 22): absent from control planes before 1.0.0-rc.5, which offer none.
   const protectionCatalog = defaults?.protection ?? null;
   const currentProtection = useMemo(() => choiceOf(materialization.protection ?? null, protectionCatalog), [materialization.protection, protectionCatalog]);
   const [protection, setProtection] = useState<ProtectionChoice>(currentProtection);
