@@ -1592,7 +1592,8 @@ def _record_apply_runtime(
             attempt=1,
             now=work_event.requested_at,
         )
-    if _should_preserve_running_status_during_reapply(status, work_event, now=work_event.requested_at):
+    spec_unchanged = previous_binding is not None and previous_binding.last_applied_spec_hash == plan.spec_hash
+    if _should_preserve_running_status_during_reapply(status, work_event, now=work_event.requested_at, spec_unchanged=spec_unchanged):
         apply_status = replace(
             status,
             desired_phase=materialization.desired_phase,
@@ -3198,10 +3199,16 @@ def _should_preserve_running_status_during_reapply(
     work_event: MaterializationWorkEvent,
     *,
     now: str,
+    spec_unchanged: bool = False,
 ) -> bool:
+    """Whether a healthy running runtime keeps `running` through this apply: the sweep's drift fix,
+    or an apply of the spec it already runs - a change of its protection policy, delivered with the
+    apply - which changes nothing it runs on."""
     return (
-        work_event.caused_by.kind == "scheduler"
-        and work_event.caused_by.id == "reconcile-runtime-drift"
+        (
+            spec_unchanged
+            or (work_event.caused_by.kind == "scheduler" and work_event.caused_by.id == "reconcile-runtime-drift")
+        )
         and status.observed_phase == "running"
         and status.runtime_health.level == "healthy"
         and not heartbeat_is_stale(status.last_heartbeat, now=now)

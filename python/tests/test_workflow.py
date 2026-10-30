@@ -620,6 +620,24 @@ class RuntimeApplyTests(WorkflowTestCase):
         self.assertEqual(["orders"], binding.source_topics)
         self.assertEqual("runtime_apply_in_progress", self.status().phase_reason)
 
+    def test_an_apply_of_the_spec_a_healthy_runtime_runs_keeps_it_running(self) -> None:
+        # A change of protection is such an apply: delivered with it, and nothing restarts.
+        self.create()
+        healthy = replace(
+            self.status(),
+            observed_phase="running",
+            phase_reason="processing",
+            runtime_health=RuntimeHealth(level="healthy"),
+            last_heartbeat="2026-07-12T00:09:50Z",
+        )
+        save_materialization_status(self.table, healthy)
+        self.process(work("apply_runtime", work_id="work-apply-edit", requested_at="2026-07-12T00:10:00Z"))
+        self.assertEqual(("running", "processing"), (self.status().observed_phase, self.status().phase_reason))
+
+        save_materialization(self.table, replace(get_materialization(self.table, MATERIALIZATION_ID), replicas=3))
+        self.process(work("apply_runtime", work_id="work-apply-scale", requested_at="2026-07-12T00:10:20Z"))
+        self.assertEqual(("deploying", "runtime_apply_in_progress"), (self.status().observed_phase, self.status().phase_reason))
+
     def test_one_runtime_reads_every_topic(self) -> None:
         self.two_topics(orders=SAMPLE, payments=[])
         follow_up = self.process(self.process(self.process(work("start_discovery"))))
