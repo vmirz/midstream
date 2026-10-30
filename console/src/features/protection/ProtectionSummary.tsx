@@ -2,6 +2,7 @@ import { Shield } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import { Badge } from '@/components/ui/primitives';
+import { useMaterializationDefaults } from '@/lib/defaults';
 import type { CpProtectionCatalog, CpProtectionSummary, ProtectionPolicy } from '@shared/types';
 
 import { choiceOf, kindLabel, maskName } from './protection';
@@ -64,7 +65,20 @@ export function ProtectedMark({
   catalog?: CpProtectionCatalog | null;
 }): ReactNode {
   if (!protection) return null;
-  const title = `Masked · ${kindLabel(catalog, protection.kind)} · ${maskName(protection.mask, catalog).toLowerCase()}${
+  return <ProtectedMarkIcon protection={protection} catalog={catalog} />;
+}
+
+function ProtectedMarkIcon({
+  protection,
+  catalog,
+}: {
+  protection: { kind: string; mask: string; since_schema_id?: number };
+  catalog: CpProtectionCatalog | null;
+}): ReactNode {
+  // The domain's catalog names the kinds when the caller has none at hand.
+  const domainCatalog = useMaterializationDefaults().defaults?.protection ?? null;
+  const names = catalog ?? domainCatalog;
+  const title = `Masked · ${kindLabel(names, protection.kind)} · ${maskName(protection.mask, names).toLowerCase()}${
     protection.since_schema_id !== undefined ? ` since schema ${protection.since_schema_id}` : ''
   }`;
   return (
