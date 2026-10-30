@@ -545,7 +545,9 @@ def _request_reprotect(
         "purge": purge,
         "accepted_at": accepted_at,
     }
-    return iter([{"route": "request", "response": response, "request_event": request_event.to_dict()}])
+    # A generator, as Kaspr sends each value one yields; any other iterable would go as one value.
+    values = [{"route": "request", "response": response, "request_event": request_event.to_dict()}]
+    return (value for value in values)
 
 
 def _require_materialization(table: TableProtocol, materialization_id: str) -> Materialization:

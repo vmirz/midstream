@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import asyncio
+import inspect
 from collections.abc import Iterable
 from dataclasses import replace
 import unittest
@@ -2130,6 +2131,16 @@ class WebReprotectTests(unittest.TestCase):
         # Every other job goes to the maintenance app directly.
         compaction = self._request({"job": "compaction"})
         self.assertEqual(["maintenance", "maintenance"], [value["route"] for value in compaction])
+
+    def test_every_job_answers_a_generator_which_kaspr_sends_value_by_value(self) -> None:
+        # Kaspr sends each value a generator yields, and any other iterable as one value: a list
+        # iterator reached the predicates whole and failed the request on a test cluster.
+        for body in ({"job": "reprotect"}, {"job": "compaction"}):
+            with self.subTest(body=body):
+                answer = request_maintenance(
+                    self.table, "mat-1", body, submitted_by="jane@example.com", principal=principal_of(self.directory), config=ControlPlaneConfig()
+                )
+                self.assertTrue(inspect.isgenerator(answer), type(answer))
 
     def test_a_reprotect_may_name_one_table_and_purges_only_when_asked(self) -> None:
         (accepted,) = self._request({"job": "reprotect", "table": "ORDERS"})
