@@ -66,6 +66,11 @@ export function missingKeyNotice(catalog: Pick<CpProtectionCatalog, 'key_configu
     : `${until} Until then a materialization that chooses hashed is refused.`;
 }
 
+/** How a protected field's values are masked, in words: `Phone numbers, partial`. */
+export function fieldProtectionText(protection: { kind: string; mask: string }, catalog?: CpProtectionCatalog | null): string {
+  return `${kindLabel(catalog, protection.kind)}, ${maskName(protection.mask, catalog).toLowerCase()}`;
+}
+
 /** A choice in words: `Email addresses hashed · Passwords, tokens and keys withheld`, or `Nothing`. */
 export function describeChoice(choice: ProtectionChoice, catalog?: CpProtectionCatalog | null): string {
   const entries = Object.entries(choice);

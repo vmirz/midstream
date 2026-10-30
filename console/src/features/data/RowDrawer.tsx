@@ -1,4 +1,5 @@
 import { ProtectedMark } from '../protection/ProtectionSummary';
+import { fieldProtectionText } from '../protection/protection';
 import { ChevronDown, ChevronUp, Copy, Filter, X } from 'lucide-react';
 import { useEffect, useMemo, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -8,6 +9,7 @@ import { readJsonShape } from './jsonShape';
 import { Button } from '@/components/ui/primitives';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/cn';
+import { useMaterializationDefaults } from '@/lib/defaults';
 import { formatCell, formatInstant, isInstantType, localZone } from '@/lib/format';
 import { rowNester } from '@shared/fieldPaths';
 import type { BrowseFilter, QueryColumn } from '@shared/types';
@@ -38,6 +40,7 @@ export function RowDrawer({
   onStep: (delta: number) => void;
   onFilter: (filter: BrowseFilter) => void;
 }): ReactNode {
+  const catalog = useMaterializationDefaults().defaults?.protection ?? null;
   const toast = useToast();
   const groups = useMemo(() => groupColumns(columns, schemaOrder), [columns, schemaOrder]);
   const zone = useMemo(() => localZone(), []);
@@ -135,7 +138,7 @@ export function RowDrawer({
                     >
                       <dt
                         className="numeric flex min-w-0 items-center gap-1 pt-px text-[11px] text-[var(--color-ink-muted)]"
-                        title={`${column.name} · ${column.type}${column.protection ? ` · masked: ${column.protection.kind.replace(/_/g, ' ')}, ${column.protection.mask}` : ''}`}
+                        title={`${column.name} · ${column.type}${column.protection ? ` · masked: ${fieldProtectionText(column.protection, catalog)}` : ''}`}
                       >
                         <span className="truncate">{column.name}</span>
                         <ProtectedMark protection={column.protection} />

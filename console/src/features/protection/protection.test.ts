@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { CpProtectionCatalog } from '@shared/types';
 
-import { choiceChanges, choiceOf, describeChoice, hashes, kindLabel, maskName, missingKeyNotice, sameChoice } from './protection.ts';
+import { choiceChanges, choiceOf, describeChoice, fieldProtectionText, hashes, kindLabel, maskName, missingKeyNotice, sameChoice } from './protection.ts';
 
 const CATALOG: CpProtectionCatalog = {
   kinds: [
@@ -46,6 +46,11 @@ const CATALOG: CpProtectionCatalog = {
 };
 
 describe('data protection in words', () => {
+  it('names a protected field\'s kind and mask as the catalog does', () => {
+    assert.equal(fieldProtectionText({ kind: 'phone', mask: 'partial' }, CATALOG), 'Phone numbers, partial');
+    assert.equal(fieldProtectionText({ kind: 'national_id', mask: 'hash' }, null), 'national id, hashed');
+  });
+
   it('warns of a missing protection key, and of a default that hashes without one', () => {
     assert.equal(missingKeyNotice(CATALOG), null);
     assert.equal(missingKeyNotice(null), null);

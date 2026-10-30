@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react';
 
 import { ProtectedMark } from '../protection/ProtectionSummary';
+import { fieldProtectionText } from '../protection/protection';
 import { formatSpan, fromTheStart, stoppedArriving } from './timeline';
 import { Badge } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
+import { useMaterializationDefaults } from '@/lib/defaults';
 import type { CpSchemaField, SchemaTimeline } from '@shared/types';
 
 /** Iceberg types by family, so a column of them reads at a glance. */
@@ -16,9 +18,6 @@ function typeTone(type: string): string {
 }
 
 const GRID = 'grid grid-cols-[minmax(0,1fr)_150px_84px_120px_64px] items-center gap-4';
-
-/** How a masked field's values are written, in the field table's words (handbook 22). */
-const MASK_WORDS: Record<string, string> = { hash: 'hashed', partial: 'partial', redact: 'withheld' };
 
 /** A field's name, its leading segments dimmed so deep paths stay scannable. */
 export function FieldName({ name }: { name: string }): ReactNode {
@@ -72,6 +71,7 @@ export function fieldDates(field: CpSchemaField, timeline: SchemaTimeline | null
 }
 
 export function SchemaFieldTable({ fields, timeline = null }: { fields: CpSchemaField[]; timeline?: SchemaTimeline | null }): ReactNode {
+  const catalog = useMaterializationDefaults().defaults?.protection ?? null;
   return (
     <div className="overflow-x-auto">
       <div
@@ -96,7 +96,7 @@ export function SchemaFieldTable({ fields, timeline = null }: { fields: CpSchema
           const parts = [
             note ? `written to ${note}` : null,
             (field.since_schema_id ?? 0) > 0 ? `since schema ${field.since_schema_id}` : null,
-            field.protection ? `masked: ${field.protection.kind.replace(/_/g, ' ')}, ${MASK_WORDS[field.protection.mask] ?? field.protection.mask}` : null,
+            field.protection ? `masked: ${fieldProtectionText(field.protection, catalog)}` : null,
             dates,
           ].filter((part): part is string => part !== null);
           return (
