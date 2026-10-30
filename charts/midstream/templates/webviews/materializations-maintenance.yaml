@@ -8,7 +8,7 @@ metadata:
     kaspr.io/app: {{ include "midstream.controlPlane" . }}
 spec:
   name: materializations-maintenance
-  description: Ask the maintenance app to run one table maintenance job now, on one of a materialization's tables or on each.
+  description: Ask the maintenance app to run one table maintenance job now, on one of a materialization's tables or on each; a reprotect goes through the control plane, which keeps it on each table's record until done.
   request:
     method: POST
     path: /materializations/{materialization_id}/maintenance
@@ -16,6 +16,7 @@ spec:
     pipeline:
       - prepare-maintenance
       - send-maintenance-request
+      - send-request-event
       - return-response
     operations:
       - name: prepare-maintenance
@@ -41,6 +42,8 @@ spec:
                     materialization_id,
                     body,
                     submitted_by=principal.attribution,
+                    submitted_by_id=principal.user_id,
+                    principal=principal,
                     settings_table=settings_table,
                 )
       # One message for each table the request names, keyed by the table, so the maintenance member
@@ -58,6 +61,31 @@ spec:
             python: |
               def select_value(value):
                   return value["message"]
+          predicate:
+            python: |
+              def should_send(value):
+                  return value.get("route") == "maintenance"
+      # A reprotect: one request event for request intake, which puts it on each table's record
+      # (handbook 22 §22.15).
+      - name: send-request-event
+        topicSend:
+          name: {{ include "midstream.fullname" . }}-materialization-requests
+          passThrough: true
+          valueSerializer: json
+          keySelector:
+            python: |
+              def select_key(value):
+                  from midstream.storage import materialization_routing_key
+
+                  return materialization_routing_key(value["request_event"]["materialization_id"])
+          valueSelector:
+            python: |
+              def select_value(value):
+                  return value["request_event"]
+          predicate:
+            python: |
+              def should_send(value):
+                  return value.get("route") == "request"
       - name: return-response
         map:
           python: |

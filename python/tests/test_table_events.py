@@ -28,6 +28,7 @@ from midstream.storage import (  # noqa: E402
     save_materialization_status,
     save_materialization_table,
 )
+from midstream.models.table import ReprotectRequest  # noqa: E402
 from table_records import build_table_record, table_specs  # noqa: E402
 
 MATERIALIZATION_ID = "mat-1"
@@ -367,6 +368,41 @@ class TableEventTests(unittest.TestCase):
 
         self.assertIsNone(self.record().last_error)
         self.assertNotEqual("degraded", get_materialization_status(self.table, MATERIALIZATION_ID).observed_phase)
+
+    def test_a_plaintext_count_is_kept_unless_an_older_one_arrives_later(self) -> None:
+        counted = {"revision": 2, "counted_at": "2026-10-18T10:05:00Z", "snapshot_id": 7, "files": 3, "rows": 30, "bytes": 900, "blocked_files": 1, "blocked": ["ip: no string member"]}
+        handle_table_event(event("plaintext_counted", counted, at="2026-10-18T10:05:00.000Z"), self.table)
+        report = self.record().plaintext
+        self.assertEqual((2, 7, 3, 30, 900, 1, ("ip: no string member",)), (report.revision, report.snapshot_id, report.files, report.rows, report.bytes, report.blocked_files, report.blocked))
+
+        handle_table_event(event("plaintext_counted", {**counted, "counted_at": "2026-10-18T10:01:00Z", "files": 9}, at="2026-10-18T10:06:00.000Z"), self.table)
+        self.assertEqual(3, self.record().plaintext.files)
+        handle_table_event(event("plaintext_counted", {**counted, "counted_at": "2026-10-18T10:07:00Z", "files": 0, "rows": 0}, at="2026-10-18T10:07:00.000Z"), self.table)
+        self.assertEqual((0, 0), (self.record().plaintext.files, self.record().plaintext.rows))
+
+    def test_a_reprotect_done_clears_its_own_request_and_failure(self) -> None:
+        asked = ReprotectRequest(request_id="req-r", requested_at="2026-10-18T09:00:00Z", requested_by="owner@example.com", revision=2, purge=True)
+        save_materialization_table(self.table, replace(self.record(), reprotect=asked))
+
+        # A run not done yet, and one done for an older request, leave it asked.
+        handle_table_event(event("maintenance_completed", {"job": "reprotect", "outcome": "failed", "request_id": "req-r", "done": False}, event_id="evt-r1"), self.table)
+        handle_table_event(event("maintenance_completed", {"job": "reprotect", "outcome": "succeeded", "request_id": "req-old", "done": True}, event_id="evt-r2"), self.table)
+        self.assertEqual(asked, self.record().reprotect)
+
+        handle_table_event(event("table_error", {"reason": "reprotect_failed", "message": "gave up"}), self.table)
+        handle_table_event(
+            event(
+                "maintenance_completed",
+                {"job": "reprotect", "outcome": "succeeded", "request_id": "req-r", "done": True, "snapshot_id": 8, "sequence_number": 2, "metadata_location": "gs://lake/t/metadata/00002-r.metadata.json"},
+                event_id="evt-r3",
+            ),
+            self.table,
+        )
+        record = self.record()
+        self.assertIsNone(record.reprotect)
+        self.assertIsNone(record.last_error)
+        self.assertEqual((8, 2), (record.current_snapshot_id, record.sequence_number))
+        self.assertEqual(["reprotect", "reprotect", "reprotect"], [run.job for run in record.maintenance])
 
     def test_a_materialization_being_deleted_takes_only_the_end_of_a_running_job(self) -> None:
         """Its drop waits for the record to say nothing runs on the table: the job's end says so."""

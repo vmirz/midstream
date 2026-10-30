@@ -12,6 +12,9 @@ given up (`services/table_claims.py`):
   names of the tables it drops.
 - **delete** starts the runtime's deletion and frees every name the materialization holds: its
   tables leave the catalog as the delete is accepted.
+- **reprotect** puts a `ReprotectRequest` on the tables' records, which every maintenance tick
+  carries until the maintenance app reports it done; an update whose protection change asks for it
+  does the same once the change is applied, waiting for the new revision (handbook 22 §22.15).
 """
 
 from __future__ import annotations
@@ -23,12 +26,14 @@ from typing import Any, Final
 
 from midstream.config import ControlPlaneConfig, get_config
 from midstream.models import (
+    MAINTAINED_TABLE_STATES,
     EventCause,
     IdentityRequest,
     Materialization,
     MaterializationRequestEvent,
     MaterializationStatus,
     PendingTopicChange,
+    ReprotectRequest,
     ResourceObservation,
     RuntimeHealth,
     MaterializationWorkEvent,
@@ -60,6 +65,7 @@ from midstream.storage import (
     list_materialization_tables,
     save_materialization,
     save_materialization_status,
+    save_materialization_table,
 )
 from midstream.storage.table import TableProtocol
 
@@ -172,6 +178,11 @@ def _process(
 ) -> IntakeResult:
     if request_event.action == "create":
         return _process_create(table, request_event, config=config)
+    if request_event.action == "reprotect":
+        materialization = _require_materialization(table, request_event.materialization_id)
+        if materialization.desired_phase not in _DELETION_PHASES:
+            _ask_reprotect(table, materialization, request_event)
+        return IntakeResult()
     update = _persist_mutation_request_state(table, request_event, config=config)
     materialization = _require_materialization(table, request_event.materialization_id)
     _validate_materialization_alignment(materialization, request_event)
@@ -449,6 +460,7 @@ def _persist_mutation_request_state(
     materialization = _require_materialization(table, request_event.materialization_id)
     update = _Update()
     refused: str | None = None
+    protection_refused: str | None = None
     if request_event.action == "update":
         if materialization.desired_phase in _DELETION_PHASES:
             # Raised again, with the reason, once this returns.
@@ -495,6 +507,8 @@ def _persist_mutation_request_state(
             # A resumed runtime starts at its own count; autoscaling decides afresh from its lag.
             forget_autoscale(table, materialization.materialization_id)
     save_materialization(table, updated_materialization)
+    if request_event.action == "update" and request_event.reprotect is not None and protection_refused is None:
+        _ask_reprotect(table, updated_materialization, request_event)
 
     existing_status = get_materialization_status(table, request_event.materialization_id)
     status = _build_fallback_status(updated_materialization, config=config) if existing_status is None else existing_status
@@ -508,6 +522,31 @@ def _persist_mutation_request_state(
         status = replace(status, phase_message=refused)
     save_materialization_status(table, status)
     return update
+
+
+def _ask_reprotect(table: TableProtocol, materialization: Materialization, request_event: MaterializationRequestEvent) -> int:
+    """Put the request's reprotect on the records of the tables it names (or every one kept); return
+    how many. A written table waits for the materialization's protection revision - an edit's takes
+    seconds to reach it - and a kept one, which no runtime writes, for none. A newer request replaces
+    one not done yet."""
+    asked = request_event.reprotect
+    if asked is None:
+        return 0
+    names = None if asked.tables is None else set(asked.tables)
+    count = 0
+    for record in list_materialization_tables(table, materialization.materialization_id):
+        if record.state not in MAINTAINED_TABLE_STATES or (names is not None and record.name not in names):
+            continue
+        request = ReprotectRequest(
+            request_id=request_event.request_id,
+            requested_at=request_event.submitted_at,
+            requested_by=request_event.submitted_by,
+            revision=materialization.protection_revision if record.state == "active" else 0,
+            purge=asked.purge,
+        )
+        save_materialization_table(table, replace(record, reprotect=request, updated_at=request_event.submitted_at))
+        count += 1
+    return count
 
 
 def _apply_topic_change(

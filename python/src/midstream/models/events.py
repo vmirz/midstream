@@ -17,7 +17,7 @@ from midstream.protection.policy import ProtectionPolicy
 from midstream.scale import normalize_replicas, normalize_storage_size
 
 # `pause` is no longer requested by any endpoint; it stays decodable for events already on the topic.
-REQUEST_ACTIONS = ("create", "pause", "stop", "resume", "delete", "update")
+REQUEST_ACTIONS = ("create", "pause", "stop", "resume", "delete", "update", "reprotect")
 WORK_STEPS = (
     # The directory's answer to a claim of table names (`services/table_claims.py`): a create or an
     # update that adds topics goes on once its names are claimed, and stops when they are refused.
@@ -225,6 +225,25 @@ class TopicChangeRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class RequestedReprotect:
+    """A reprotect a request asks for (handbook 22 §22.15): of the tables it names, or every table
+    the materialization keeps, and whether to purge the older snapshots once done."""
+
+    tables: tuple[str, ...] | None = None
+    purge: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"tables": None if self.tables is None else list(self.tables), "purge": self.purge}
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any] | None) -> "RequestedReprotect | None":
+        if not isinstance(value, dict):
+            return None
+        tables = value.get("tables")
+        return cls(tables=None if tables is None else tuple(str(item) for item in tables), purge=bool(value.get("purge", False)))
+
+
+@dataclass(frozen=True, slots=True)
 class MaterializationRequestEvent:
     request_id: str
     materialization_id: str
@@ -241,6 +260,8 @@ class MaterializationRequestEvent:
     claim_request_id: str | None = None
     #: An `update` that relabels the materialization: its new label. None leaves the label alone.
     label: str | None = None
+    #: `reprotect`, and an `update` whose protection change asks for it: what to rewrite.
+    reprotect: RequestedReprotect | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -270,6 +291,8 @@ class MaterializationRequestEvent:
             payload["claim_request_id"] = self.claim_request_id
         if self.label is not None:
             payload["label"] = self.label
+        if self.reprotect is not None:
+            payload["reprotect"] = self.reprotect.to_dict()
         return payload
 
     @classmethod
@@ -285,6 +308,7 @@ class MaterializationRequestEvent:
             topic_change=TopicChangeRequest.from_dict(value.get("topic_change")),
             claim_request_id=value.get("claim_request_id"),
             label=value.get("label"),
+            reprotect=RequestedReprotect.from_dict(value.get("reprotect")),
         )
 
 

@@ -25,7 +25,7 @@ from midstream.models import (
     RuntimeHealth,
     TableEvent,
 )
-from midstream.models.table import MaintenanceRun, RunningMaintenance, TableError
+from midstream.models.table import MaintenanceRun, PlaintextReport, RunningMaintenance, TableError
 from midstream.protocol_logging import log_protocol_event
 from midstream.services.schema_projection import annotate_protection
 from midstream.storage import (
@@ -45,8 +45,8 @@ LOGGER = logging.getLogger(__name__)
 
 _DELETION_PHASES = frozenset({"deleting", "deleted"})
 
-#: Table errors a successful compaction clears, as a commit clears the others.
-_CLEARED_BY_COMPACTION = frozenset({"compaction_failed"})
+#: Table errors a successful maintenance job clears, as a commit clears the others.
+_CLEARED_BY_MAINTENANCE = {"compaction": frozenset({"compaction_failed"}), "reprotect": frozenset({"reprotect_failed"})}
 
 
 def apply_table_event(
@@ -98,6 +98,8 @@ def apply_table_event(
         changed = _apply_maintenance_started(table, record, event)
     elif event.kind == "maintenance_completed":
         changed = _apply_maintenance_completed(table, record, event)
+    elif event.kind == "plaintext_counted":
+        changed = _apply_plaintext_counted(table, record, event)
     else:
         changed = _apply_table_error(table, record, event)
     log_protocol_event(
@@ -279,16 +281,33 @@ def _apply_maintenance_completed(table: TableProtocol, record: MaterializationTa
         )
     cleared = None
     if (
-        run.job == "compaction"
+        run.job in ("compaction", "reprotect")
         and run.outcome == "succeeded"
         and record.last_error is not None
-        and record.last_error.reason in _CLEARED_BY_COMPACTION
+        and record.last_error.reason in _CLEARED_BY_MAINTENANCE.get(run.job, ())
     ):
         cleared = record.last_error.reason
         updated = replace(updated, last_error=None)
+    request = updated.reprotect
+    if run.job == "reprotect" and payload.get("done") and request is not None and payload.get("request_id") == request.request_id:
+        # Done - rewritten, nothing to rewrite, or given up: the ticks stop asking for it.
+        updated = replace(updated, reprotect=None)
     save_materialization_table(table, updated)
     if cleared is not None:
         _clear_table_degradation(table, event.materialization_id, reason=cleared)
+    return True
+
+
+def _apply_plaintext_counted(table: TableProtocol, record: MaterializationTable, event: TableEvent) -> bool:
+    """What the table holds in plain text that its protection masks, as the maintenance app counted
+    it: kept unless an older count arrives after a newer one."""
+    report = PlaintextReport.from_dict({**event.payload, "counted_at": event.payload.get("counted_at") or event.occurred_at})
+    if report is None:
+        return False
+    current = record.plaintext
+    if current is not None and current.counted_at > report.counted_at:
+        return False
+    save_materialization_table(table, replace(record, plaintext=report, updated_at=event.occurred_at))
     return True
 
 

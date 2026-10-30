@@ -6,6 +6,7 @@ from midstream.models.envelopes import RecordEnvelope
 from midstream.models.events import (
 	EventCause,
 	MaterializationRequestEvent,
+	RequestedReprotect,
 	MaterializationRequestSpec,
 	MaterializationWorkEvent,
 	ObservationPolicy,
@@ -121,6 +122,7 @@ __all__ = [
 	"MaintenanceTarget",
 	"Materialization",
 	"MaterializationRequestEvent",
+	"RequestedReprotect",
 	"MaterializationRequestSpec",
 	"MaterializationSchema",
 	"MaterializationStatus",

@@ -32,7 +32,8 @@ from midstream.storage import (
     save_runtime_autoscale,
     save_runtime_binding,
 )
-from midstream.models.table import MaintenanceRun
+from midstream.models.table import MaintenanceRun, PlaintextReport, ReprotectRequest
+from midstream.models.events import MaterializationRequestEvent, RequestedReprotect
 from midstream.services.schema_projection import build_schema_projection
 from table_records import build_table_record, table_spec, table_specs
 from midstream.kafka.metadata import TopicListing, TopicMetadata
@@ -2015,8 +2016,154 @@ class WebProtectionEditTests(unittest.TestCase):
         self.assertFalse(payments["created"])
         self.assertEqual(0, review["hidden_tables"])
 
+    def test_an_edit_may_ask_to_mask_the_rows_already_written(self) -> None:
+        acceptance = self._update({"protection": {"kinds": {"email": "hash", "phone": "hash", "secret": "redact"}, "reprotect": {"purge": True}}})
+        self.assertEqual(RequestedReprotect(purge=True), acceptance.request_event.reprotect)
+        self.assertEqual(4, acceptance.materialization.protection_revision)
+        self.assertEqual({"tables": ["orders", "payments"], "purge": True}, acceptance.response["reprotect"])
+        self.assertEqual(RequestedReprotect(purge=True), MaterializationRequestEvent.from_dict(acceptance.request_event.to_dict()).reprotect)
+
+    def test_an_edit_that_keeps_the_policy_may_still_ask_for_a_reprotect(self) -> None:
+        acceptance = self._update({"protection": {"kinds": {"email": "hash", "secret": "redact"}, "reprotect": True}})
+        self.assertIsNone(acceptance.request_event.spec.protection)
+        self.assertEqual(RequestedReprotect(), acceptance.request_event.reprotect)
+        self.assertEqual(3, acceptance.materialization.protection_revision)
+        none = self._update({"protection": {"kinds": {"email": "hash", "secret": "redact"}, "reprotect": False}})
+        self.assertIsNone(none.request_event.reprotect)
+        self.assertNotIn("reprotect", none.response)
+
+    def test_an_invalid_reprotect_is_refused_naming_the_field(self) -> None:
+        for reprotect, field in (
+            ("yes", "protection.reprotect"),
+            ({"purge": "yes"}, "protection.reprotect.purge"),
+            ({"tables": ["orders"]}, "protection.reprotect.tables"),
+        ):
+            with self.subTest(reprotect=reprotect), self.assertRaises(WebError) as raised:
+                self._update({"protection": {"kinds": {"email": "hash"}, "reprotect": reprotect}})
+            self.assertEqual((400, field), (raised.exception.status_code, raised.exception.details["field"]))
+
+    def test_a_reprotect_with_an_edit_needs_run_table_maintenance(self) -> None:
+        # The owner of shop, with no deployment role: she may choose its protection, not rewrite it.
+        save_user(
+            self.directory,
+            User(user_id="usr-000000000002", email="owner@example.com", first_name="Olu", last_name="Owner", group_ids=[], created_at=NOW, created_by="system", updated_at=NOW, updated_by="system"),
+        )
+        save_dataset_grant(
+            self.directory,
+            DatasetGrant(dataset_id=SHOP, principal_type="user", principal_id="usr-000000000002", role_ids=["dataset-owner"], updated_at=NOW, updated_by="a"),
+        )
+        owner = principal_of(self.directory, "usr-000000000002")
+        edited = self._update({"protection": {"kinds": {"email": "partial"}}}, principal=owner)
+        self.assertIsNone(edited.request_event.reprotect)
+        with self.assertRaises(WebError) as raised:
+            self._update({"protection": {"kinds": {"email": "partial"}, "reprotect": True}}, principal=owner)
+        self.assertEqual((403, "materializations.maintain"), (raised.exception.status_code, raised.exception.details["permission"]))
+
+    def test_the_review_says_what_each_table_holds_in_plain_text_and_its_reprotect(self) -> None:
+        materialization = get_materialization(self.table, "mat-1")
+        kept = replace(materialization, tables=(materialization.table("orders"),), retired_tables=(materialization.table("payments"),))
+        save_materialization(self.table, kept)
+        report = PlaintextReport(revision=3, counted_at=NOW, snapshot_id=7, files=2, rows=40, bytes=4096, blocked_files=1, blocked=("ip: no string member",))
+        asked = ReprotectRequest(request_id="req-r", requested_at=NOW, requested_by="owner@example.com", revision=3, purge=True)
+        run = MaintenanceRun(job="reprotect", completed_at=NOW, outcome="succeeded", counts={"files": 2})
+        save_materialization_table(self.table, build_table_record(kept, table="orders", plaintext=report, reprotect=asked, maintenance=(run,)))
+        save_materialization_table(self.table, build_table_record(kept, table="payments", state="retired", plaintext=replace(report, files=0, rows=0)))
+
+        review = protection_review_view(self.table, "mat-1", principal=principal_of(self.directory))
+
+        (orders,) = review["review"]
+        self.assertEqual((report.to_dict(), asked.to_dict(), "reprotect"), (orders["plaintext"], orders["reprotect"], orders["last_reprotect"]["job"]))
+        (payments,) = review["kept"]
+        self.assertEqual(("payments", 0, None, None), (payments["table"], payments["plaintext"]["files"], payments["reprotect"], payments["last_reprotect"]))
+
     def _save_policy(self, policy: ProtectionPolicy) -> None:
         save_materialization(self.table, replace(get_materialization(self.table, "mat-1"), protection=policy))
+
+
+class WebReprotectTests(unittest.TestCase):
+    """The reprotect maintenance job (handbook 22 §22.15): one request event for the control plane,
+    which keeps it on each table's record until the maintenance app has run it. Jane owns shop and
+    writes to finance."""
+
+    def setUp(self) -> None:
+        self.table = FakeTable()
+        self.directory = build_directory()
+        self.materialization = replace(
+            build_materialization("mat-1", "orders", "payments"),
+            protection=ProtectionPolicy({"email": "hash"}),
+            protection_revision=2,
+        )
+        save_materialization(self.table, self.materialization)
+        for name in ("orders", "payments"):
+            save_materialization_table(self.table, build_table_record(self.materialization, table=name))
+
+    def _request(self, body: object, *, principal: Principal | None = None) -> list[dict]:
+        return list(
+            request_maintenance(
+                self.table,
+                "mat-1",
+                body,
+                submitted_by="jane@example.com",
+                submitted_by_id=JANE,
+                principal=principal or principal_of(self.directory),
+                request_id="mnt-1",
+                accepted_at=NOW,
+                config=ControlPlaneConfig(),
+            )
+        )
+
+    def _refused(self, body: object) -> WebError:
+        with self.assertRaises(WebError) as raised:
+            self._request(body)
+        return raised.exception
+
+    def test_a_reprotect_is_one_request_event_for_the_control_plane(self) -> None:
+        (accepted,) = self._request({"job": "reprotect", "purge": True})
+
+        self.assertEqual("request", accepted["route"])
+        event = MaterializationRequestEvent.from_dict(accepted["request_event"])
+        self.assertEqual(("reprotect", "mat-1", "mnt-1", JANE), (event.action, event.materialization_id, event.request_id, event.submitted_by_id))
+        self.assertEqual(RequestedReprotect(tables=None, purge=True), event.reprotect)
+        response = accepted["response"]
+        self.assertEqual(("reprotect", None, ["orders", "payments"], True), (response["job"], response["table"], response["tables"], response["purge"]))
+        # Every other job goes to the maintenance app directly.
+        compaction = self._request({"job": "compaction"})
+        self.assertEqual(["maintenance", "maintenance"], [value["route"] for value in compaction])
+
+    def test_a_reprotect_may_name_one_table_and_purges_only_when_asked(self) -> None:
+        (accepted,) = self._request({"job": "reprotect", "table": "ORDERS"})
+        self.assertEqual(RequestedReprotect(tables=("orders",), purge=False), MaterializationRequestEvent.from_dict(accepted["request_event"]).reprotect)
+        self.assertEqual((["orders"], False), (accepted["response"]["tables"], accepted["response"]["purge"]))
+
+    def test_purge_is_a_boolean_of_the_reprotect_job_only(self) -> None:
+        for body in ({"job": "compaction", "purge": True}, {"job": "reprotect", "purge": "yes"}):
+            with self.subTest(body=body):
+                error = self._refused(body)
+                self.assertEqual((400, "purge"), (error.status_code, error.details["field"]))
+
+    def test_a_reprotect_needs_choose_data_protection_on_each_tables_dataset(self) -> None:
+        moved = replace(self.materialization.table("payments"), dataset="finance", dataset_id=FINANCE)
+        save_materialization(self.table, replace(self.materialization, tables=(self.materialization.table("orders"), moved)))
+        error = self._refused({"job": "reprotect"})
+        self.assertEqual((403, "dataset.protect", "finance"), (error.status_code, error.details["permission"], error.details["dataset"]))
+        (accepted,) = self._request({"job": "reprotect", "table": "orders"})
+        self.assertEqual(["orders"], accepted["response"]["tables"])
+
+    def test_a_reprotect_that_hashes_needs_the_key(self) -> None:
+        with patch.dict(os.environ, {"PROTECTION_KEY": ""}):
+            get_protection_key.cache_clear()
+            try:
+                error = self._refused({"job": "reprotect"})
+                save_materialization(self.table, replace(self.materialization, protection=ProtectionPolicy({"email": "partial"})))
+                (accepted,) = self._request({"job": "reprotect"})
+            finally:
+                get_protection_key.cache_clear()
+        self.assertEqual((409, "protection_key_not_configured"), (error.status_code, error.details["reason"]))
+        self.assertEqual("request", accepted["route"])
+
+    def test_a_reprotect_is_refused_while_the_materialization_is_deleted(self) -> None:
+        save_materialization(self.table, replace(self.materialization, desired_phase="deleting"))
+        self.assertEqual("materialization_deleting", self._refused({"job": "reprotect"}).details["reason"])
 
 
 class WebProtectionSettingsTests(unittest.TestCase):

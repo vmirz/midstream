@@ -3,8 +3,9 @@
 Every minute the control plane ticks every table that is written or kept, of every materialization
 that is not being deleted - stopped and paused ones included, so their tables stay compacted and their
 snapshots expire. A tick carries all the app needs: where the table is, the runtimes' maintenance
-settings as they are now, when each job last finished, and which job the record says is running. The
-app keeps nothing of its own, so a restarted app picks up where its predecessor left off.
+settings as they are now, when each job last finished, which job the record says is running, the
+protection revision the table recorded, and a reprotect asked for and not done yet. The app keeps
+nothing of its own, so a restarted app picks up where its predecessor left off.
 
 A table being dropped, or one of a materialization being deleted, is sent `maintenance_cancel`
 instead, until it is gone: whatever the app runs on it is stopped before the drop deletes its files.
@@ -23,7 +24,7 @@ from midstream.models import (
     MaterializationTable,
 )
 from midstream.runtime_app.config import RuntimeAppConfig
-from midstream.storage import iter_materializations, list_materialization_tables
+from midstream.storage import get_materialization_schema, iter_materializations, list_materialization_tables
 from midstream.storage.table import TableProtocol
 
 #: The runtime settings that steer maintenance, which every tick and request carries.
@@ -92,7 +93,10 @@ def build_table_maintenance_messages(
         if materialization.desired_phase == "deleted":
             continue
         for record in list_materialization_tables(table, materialization.materialization_id):
-            messages.extend(_messages_for(materialization, record, settings=settings, issued_at=issued_at))
+            # The current projection's: a hint the app checks against the table itself.
+            projection = get_materialization_schema(table, materialization.materialization_id, record.name)
+            revision = None if projection is None else projection.protection_revision
+            messages.extend(_messages_for(materialization, record, settings=settings, issued_at=issued_at, protection_revision=revision))
     return messages
 
 
@@ -102,6 +106,7 @@ def _messages_for(
     *,
     settings: dict[str, Any],
     issued_at: str,
+    protection_revision: int | None = None,
 ) -> Iterator[MaintenanceMessage]:
     if materialization.desired_phase in _DELETION_PHASES or record.state == "dropping":
         yield MaintenanceMessage(
@@ -121,6 +126,8 @@ def _messages_for(
         settings=settings,
         last_runs=last_runs(record),
         running=record.maintenance_job,
+        reprotect=record.reprotect,
+        protection_revision=protection_revision,
     )
 
 

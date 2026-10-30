@@ -28,11 +28,13 @@ from midstream.config import (
 from midstream.identity.principals import Principal
 from midstream.kafka.metadata import KafkaMetadataClient
 from midstream.models import (
+    MAINTAINED_TABLE_STATES,
     Dataset,
     Materialization,
     MaterializationRequestEvent,
     MaterializationRequestSpec,
     MaterializationStatus,
+    RequestedReprotect,
     ResourceObservation,
     RuntimeHealth,
     TableSpec,
@@ -216,24 +218,44 @@ def protection_review_view(
     principal: Principal | None = None,
 ) -> dict[str, Any]:
     """The protection review (design §5.8): per table, what it protects, since when, and what the
-    materialization's policy with the current rules would change.
+    materialization's policy with the current rules would change; and, for each table written or
+    kept, what it holds in plain text that it masks now, and the reprotect asked or last run
+    (handbook 22 §22.15).
 
     Tables in datasets whose schemas the caller may not see are left out, and counted.
     """
     materialization = _require_materialization(table, materialization_id)
     status = get_materialization_status(table, materialization_id) or _fallback_status(materialization)
+    records = {record.name: record for record in list_materialization_tables(table, materialization_id)}
     tables: list[dict[str, Any]] = []
+    kept: list[dict[str, Any]] = []
     hidden = 0
-    for spec in materialization.tables:
+    for spec in materialization.all_tables:
         if principal is not None and not principal.can("dataset.view_schema", spec.dataset_id):
             hidden += 1
             continue
-        tables.append(_review_table(table, materialization, spec))
+        if materialization.table(spec.name) is not None:
+            tables.append({**_review_table(table, materialization, spec), **_reprotect_state(records.get(spec.name))})
+        elif spec.name in records:
+            kept.append({"table": spec.name, "dataset": spec.dataset, "dataset_id": spec.dataset_id, **_reprotect_state(records[spec.name])})
     return {
         "materialization_id": materialization_id,
         **describe_protection(table, materialization, status),
         "review": tables,
+        "kept": kept,
         "hidden_tables": hidden,
+    }
+
+
+def _reprotect_state(record: Any) -> dict[str, Any]:
+    """A table's plain-text count, its reprotect not done yet, and its last reprotect run."""
+    if record is None:
+        return {"plaintext": None, "reprotect": None, "last_reprotect": None}
+    last = next((run for run in record.maintenance if run.job == "reprotect"), None)
+    return {
+        "plaintext": None if record.plaintext is None else record.plaintext.to_dict(),
+        "reprotect": None if record.reprotect is None else record.reprotect.to_dict(),
+        "last_reprotect": None if last is None else last.to_dict(),
     }
 
 
@@ -391,6 +413,8 @@ def request_maintenance(
     body: Any,
     *,
     submitted_by: str,
+    submitted_by_id: str | None = None,
+    principal: Principal | None = None,
     request_id: str | None = None,
     accepted_at: str | None = None,
     settings_table: TableProtocol | None = None,
@@ -398,9 +422,15 @@ def request_maintenance(
 ) -> Iterator[dict[str, Any]]:
     """Validate a maintenance request; yield, for each table it names, the message for the maintenance app.
 
-    Every value carries the same response. The maintenance app runs the job at the table's next
+    Every value carries the same response, and its route: `maintenance`, a message for the
+    maintenance app, keyed by its table. The maintenance app runs the job at the table's next
     opportunity, whatever the runtime is doing - stopped included - and reports it with
     `maintenance_completed`. Without a table, the job runs on every table, kept ones included.
+
+    `reprotect` (handbook 22 §22.15) yields instead one `request` for the control plane, which puts
+    it on each table's record: every tick carries it until the maintenance app reports it done, so
+    it outlives a restart of either. It needs Choose data protection on each table's dataset too,
+    and takes `purge`: whether to expire every older snapshot and delete the files it replaced.
     """
     cfg = resolve_config(settings_table) if config is None else config
     if not isinstance(body, dict):
@@ -408,6 +438,11 @@ def request_maintenance(
     job = body.get("job")
     if job not in MAINTENANCE_JOBS:
         raise invalid_request(f"job must be one of: {', '.join(MAINTENANCE_JOBS)}", field_name="job")
+    purge = body.get("purge", False)
+    if "purge" in body and job != "reprotect":
+        raise invalid_request("purge is an option of the reprotect job", field_name="purge")
+    if not isinstance(purge, bool):
+        raise invalid_request("purge must be a boolean", field_name="purge")
     materialization = _require_materialization(table, materialization_id)
     requested_table = body.get("table")
     if requested_table not in (None, "") and not isinstance(requested_table, str):
@@ -423,6 +458,19 @@ def request_maintenance(
         )
     resolved_request_id = request_id or _new_identifier("mnt")
     resolved_accepted_at = accepted_at or _utc_now()
+    if job == "reprotect":
+        return _request_reprotect(
+            materialization,
+            spec,
+            records,
+            purge=purge,
+            principal=principal,
+            submitted_by=submitted_by,
+            submitted_by_id=submitted_by_id,
+            request_id=resolved_request_id,
+            accepted_at=resolved_accepted_at,
+            config=cfg,
+        )
     messages = maintenance_request_messages(
         records,
         job=job,
@@ -445,8 +493,54 @@ def request_maintenance(
         "accepted_at": resolved_accepted_at,
     }
     # Computed now, so a refusal is raised before anything is sent.
-    values = [{"response": response, "key": message.key, "message": message.to_dict()} for message in messages]
+    values = [
+        {"route": "maintenance", "response": response, "key": message.key, "message": message.to_dict()}
+        for message in messages
+    ]
     return (value for value in values)
+
+
+def _request_reprotect(
+    materialization: Materialization,
+    spec: TableSpec | None,
+    records: list[Any],
+    *,
+    purge: bool,
+    principal: Principal | None,
+    submitted_by: str,
+    submitted_by_id: str | None,
+    request_id: str,
+    accepted_at: str,
+    config: ControlPlaneConfig,
+) -> Iterator[dict[str, Any]]:
+    """The one request event asking the control plane to reprotect `spec`, or every table kept."""
+    _require_reprotect(principal, materialization, materialization.all_tables if spec is None else (spec,), materialization.protection)
+    tables = [record.name for record in records if record.state in MAINTAINED_TABLE_STATES]
+    if not tables:
+        raise conflict(
+            f"materialization {materialization.materialization_id} has no table to maintain",
+            reason="table_not_created",
+        )
+    request_event = MaterializationRequestEvent(
+        request_id=request_id,
+        materialization_id=materialization.materialization_id,
+        action="reprotect",
+        submitted_at=accepted_at,
+        submitted_by=submitted_by,
+        spec=_materialization_to_request_spec(materialization, config),
+        submitted_by_id=submitted_by_id,
+        reprotect=RequestedReprotect(tables=None if spec is None else (spec.name,), purge=purge),
+    )
+    response = {
+        "materialization_id": materialization.materialization_id,
+        "request_id": request_id,
+        "job": "reprotect",
+        "table": None if spec is None else spec.name,
+        "tables": tables,
+        "purge": purge,
+        "accepted_at": accepted_at,
+    }
+    return iter([{"route": "request", "response": response, "request_event": request_event.to_dict()}])
 
 
 def _require_materialization(table: TableProtocol, materialization_id: str) -> Materialization:
@@ -842,7 +936,7 @@ def update_materialization(
             raise invalid_request(str(error), field_name=error.field_name) from error
     records = list_materialization_tables(table, materialization_id)
     topic_change = _topic_change_request(body, materialization, records, directory_table=directory_table, config=cfg)
-    protection, apply_rules = _requested_protection_change(body, materialization)
+    protection, apply_rules, reprotect = _requested_protection_change(body, materialization)
 
     _require_not_deleting(materialization, verb="changed")
     if topic_change is not None or replicas != materialization.replicas or protection is not None:
@@ -852,6 +946,8 @@ def update_materialization(
         # every dataset of the tables it writes (design §5.9).
         _require_protect(principal, materialization.tables)
         _require_protection_key(protection)
+    if reprotect is not None:
+        _require_reprotect(principal, materialization, materialization.all_tables, protection or materialization.protection)
     changes: dict[str, Any] = {}
     plan: TopicChangePlan | None = None
     resolved_claim_id: str | None = None
@@ -935,9 +1031,15 @@ def update_materialization(
         claim_request_id=resolved_claim_id,
         label=label,
         spec_changes=spec_changes,
+        reprotect=reprotect,
     )
     acceptance.response["name"] = acceptance.materialization.name
     acceptance.response["live_tail"] = True
+    if reprotect is not None:
+        acceptance.response["reprotect"] = {
+            "tables": [record.name for record in records if record.state in MAINTAINED_TABLE_STATES],
+            "purge": reprotect.purge,
+        }
     if protection is not None:
         acceptance.response["protection"] = {
             "before": materialization.protection.to_dict(),
@@ -1161,6 +1263,7 @@ def _request_change(
     claim_request_id: str | None = None,
     label: str | None = None,
     spec_changes: dict[str, Any] | None = None,
+    reprotect: RequestedReprotect | None = None,
 ) -> MutationAcceptance:
     cfg = get_config() if config is None else config
     materialization_id = materialization.materialization_id
@@ -1187,6 +1290,7 @@ def _request_change(
         topic_change=topic_change,
         claim_request_id=claim_request_id,
         label=label,
+        reprotect=reprotect,
     )
     response = build_accepted_response(
         materialization_id=materialization_id,
@@ -1318,19 +1422,52 @@ def _parse_protection(value: Any, *, allow: tuple[str, ...] = ()) -> ProtectionP
         raise invalid_request(str(error), field_name=error.field) from error
 
 
-def _requested_protection_change(body: dict[str, Any], materialization: Materialization) -> tuple[ProtectionPolicy | None, bool]:
-    """The policy an update asks for, and whether it asks to record it again with the current rules;
-    (None, False) when it asks for nothing new - no `protection`, or the policy in force repeated."""
+def _requested_protection_change(
+    body: dict[str, Any], materialization: Materialization
+) -> tuple[ProtectionPolicy | None, bool, RequestedReprotect | None]:
+    """The policy an update asks for, whether it asks to record it again with the current rules, and
+    the reprotect it asks for once the change is applied; None and False for the first two when it
+    asks for nothing new - no `protection`, or the policy in force repeated."""
     raw = body.get("protection")
     if raw is None:
-        return None, False
-    policy = _parse_protection(raw, allow=("apply_rules",))
+        return None, False, None
+    policy = _parse_protection(raw, allow=("apply_rules", "reprotect"))
     apply_rules = raw.get("apply_rules", False) if isinstance(raw, dict) else False
     if not isinstance(apply_rules, bool):
         raise invalid_request("protection.apply_rules must be a boolean", field_name="protection.apply_rules")
+    reprotect = _parse_reprotect(raw.get("reprotect") if isinstance(raw, dict) else None, field_name="protection.reprotect")
     if policy == materialization.protection and not apply_rules:
-        return None, False
-    return policy, apply_rules
+        return None, False, reprotect
+    return policy, apply_rules, reprotect
+
+
+def _parse_reprotect(value: Any, *, field_name: str) -> RequestedReprotect | None:
+    """`true`, or `{"purge": bool}`: mask the rows already written once the change applies; `false`
+    or absent, not."""
+    if value is None or value is False:
+        return None
+    if value is True:
+        return RequestedReprotect()
+    if isinstance(value, dict):
+        for key in value:
+            if key != "purge":
+                raise invalid_request(f"{field_name} has an unknown key {key!r}", field_name=f"{field_name}.{key}")
+        purge = value.get("purge", False)
+        if not isinstance(purge, bool):
+            raise invalid_request(f"{field_name}.purge must be a boolean", field_name=f"{field_name}.purge")
+        return RequestedReprotect(purge=purge)
+    raise invalid_request(f"{field_name} must be true, or an object with purge", field_name=field_name)
+
+
+def _require_reprotect(principal: Principal | None, materialization: Materialization, tables: Iterable[TableSpec], policy: ProtectionPolicy) -> None:
+    """Refuse a reprotect the caller may not ask for: it needs Run table maintenance, and Choose data
+    protection on every dataset of the tables it rewrites; and a key, when what it masks is hashed."""
+    if principal is not None:
+        from midstream.identity.authorization import require
+
+        require(principal, "materializations.maintain")
+    _require_protect(principal, tables)
+    _require_protection_key(policy)
 
 
 def _require_protect(principal: Principal | None, tables: Iterable[TableSpec]) -> None:
