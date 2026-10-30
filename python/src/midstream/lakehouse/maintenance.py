@@ -22,7 +22,7 @@ from pyiceberg.table.snapshots import Operation, Summary
 from pyiceberg.table.update.snapshot import ExpireSnapshots, _OverwriteFiles
 
 from midstream.lakehouse.catalog import commit_once
-from midstream.lakehouse.files import partition_text_of, protection_revision_of
+from midstream.lakehouse.files import partition_text_of, protection_label_of, protection_revision_of
 from midstream.lakehouse.gcs import parse_gcs_uri
 from midstream.lakehouse.offsets import (
     COMMIT_ID_PROPERTY,
@@ -89,12 +89,18 @@ class LiveFile:
 
     @property
     def protection_revision(self) -> int:
-        """The protection revision its rows were masked under, from its name (`lakehouse/files.py`).
-
-        Compaction never puts two revisions in one output, so every file stays attributable to the
-        policy it was written under (design §5.6).
-        """
+        """The protection revision its rows are masked under now, from its name (`lakehouse/files.py`)."""
         return protection_revision_of(self.path)
+
+    @property
+    def protection_label(self) -> tuple[int, ...]:
+        """Its protection label: the revision its rows are masked under, then each earlier one
+        `reprotect` rewrote them from (`protection_label_of`).
+
+        Compaction never puts two labels in one output, so every file stays attributable to the
+        policies its rows were masked under (design §5.6).
+        """
+        return protection_label_of(self.path)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -263,9 +269,9 @@ def plan_compaction(
                 for item in _settled_files(by_partition[key], granularity=granularity, now_ms=now_ms, hot_ms=hot_ms)
                 if item.file_size < small_file_bytes
             ),
-            # A partition's files of one protection revision together, so the worker writes each
-            # revision's rows into outputs of their own.
-            key=lambda item: (item.protection_revision, item.timestamp_min or 0, item.path),
+            # A partition's files of one protection label together, so the worker writes each
+            # label's rows into outputs of their own.
+            key=lambda item: (item.protection_label, item.timestamp_min or 0, item.path),
         )
         if len(small) < min_input_files:
             continue

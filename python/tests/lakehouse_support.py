@@ -15,7 +15,7 @@ from gcs_fakes import FakeGcs  # noqa: E402
 
 from midstream.lakehouse.catalog import GcsPointerCatalog, StaticTableDirectory, TableEntry  # noqa: E402
 from midstream.lakehouse.commits import AnnouncedFile, PendingFiles, commit_append, plan_append  # noqa: E402
-from midstream.lakehouse.files import data_file_uri, partition_text, partition_values  # noqa: E402
+from midstream.lakehouse.files import data_file_uri, partition_text, partition_values, protection_label_suffix  # noqa: E402
 from midstream.lakehouse.offsets import committed_offsets  # noqa: E402
 from midstream.lakehouse.parquet import table_from_rows, write_table  # noqa: E402
 from midstream.lakehouse.rows import build_row  # noqa: E402
@@ -127,9 +127,11 @@ class LakeFixture:
         times: list[datetime] | None = None,
         table=None,
         protection_revision: int = 0,
+        protection_label: tuple[int, ...] | None = None,
     ) -> list[AnnouncedFile]:
         """Write a seal of rows at `offsets` (split by partition day) and return its announcements;
-        its files' names carry `protection_revision`, as a writer's do."""
+        its files' names carry `protection_revision`, as a writer's do - or `protection_label`, as a
+        file `reprotect` rewrote does."""
         table = table or self.load()
         schema = table.schema()
         fork_map = ForkMap.from_json(table.metadata.properties.get("materializer.fork-map"))
@@ -163,6 +165,8 @@ class LakeFixture:
                 unique=uuid.uuid4().hex[:12],
                 protection_revision=protection_revision,
             )
+            if protection_label is not None:
+                uri = uri[: -len(".parquet")] + protection_label_suffix(protection_label) + ".parquet"
             self.store.put(uri, Path(path).read_bytes())
             stamps = sorted(row["_kafka_timestamp"] for row in rows)
             announced.append(

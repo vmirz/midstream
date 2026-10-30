@@ -124,7 +124,7 @@ def data_file_uri(
     """
     name = (
         f"p{kafka_partition:02d}-o{offset_start:010d}-{offset_end:010d}-"
-        f"{_safe(member_id)}-{unique}{_revision_suffix(protection_revision)}.parquet"
+        f"{_safe(member_id)}-{unique}{protection_label_suffix((protection_revision,))}.parquet"
     )
     return f"{location.rstrip('/')}/data/{partition_directory(granularity, partition_value_text)}{name}"
 
@@ -136,27 +136,64 @@ def compacted_file_uri(
     partition_value_text: str | None,
     unique: str,
     protection_revision: int = 0,
+    protection_label: tuple[int, ...] | None = None,
 ) -> str:
     """`L/data/ts_day=2026-10-18/compact-<unique>[-r<revision>].parquet`: a compaction's output, of
-    inputs all written under one protection revision."""
+    inputs all of one protection label (`protection_label_of`)."""
+    label = (protection_revision,) if protection_label is None else protection_label
     return (
         f"{location.rstrip('/')}/data/{partition_directory(granularity, partition_value_text)}"
-        f"compact-{_safe(unique)}{_revision_suffix(protection_revision)}.parquet"
+        f"compact-{_safe(unique)}{protection_label_suffix(label)}.parquet"
     )
 
 
-_REVISION_SUFFIX = re.compile(r"-r(\d+)\.parquet$")
+def reprotected_file_uri(
+    location: str,
+    *,
+    granularity: str,
+    partition_value_text: str | None,
+    unique: str,
+    protection_label: tuple[int, ...],
+) -> str:
+    """`L/data/ts_day=2026-10-18/reprotect-<unique>-r<revision>p<earlier>….parquet`: a file `reprotect`
+    rewrote under the table's revision from rows written under the earlier ones (design §15.3)."""
+    return (
+        f"{location.rstrip('/')}/data/{partition_directory(granularity, partition_value_text)}"
+        f"reprotect-{_safe(unique)}{protection_label_suffix(protection_label)}.parquet"
+    )
 
 
-def _revision_suffix(revision: int) -> str:
-    return f"-r{int(revision)}" if revision and revision > 0 else ""
+_LABEL_SUFFIX = re.compile(r"-r(\d+)((?:p\d+)*)\.parquet$")
+_EARLIER = re.compile(r"p(\d+)")
+
+
+def protection_label_suffix(label: tuple[int, ...]) -> str:
+    """What a file's name ends with before `.parquet` for `label`: `-r3`, `-r3p1`; nothing for 0."""
+    if not label or (len(label) == 1 and label[0] <= 0):
+        return ""
+    head, *earlier = label
+    return f"-r{int(head)}" + "".join(f"p{int(item)}" for item in earlier)
+
+
+def protection_label_of(path: str) -> tuple[int, ...]:
+    """A data file's protection label, from its name: the revision its rows are masked under, then -
+    newest first - each revision they were masked under before `reprotect` rewrote them. `(1,)` for
+    `…-r1.parquet`, `(3, 1)` for rows written under revision 1 and rewritten under 3, `(0,)` for a
+    file written without protection, before it, or by another writer.
+
+    A file's rows all have one label: a batch never mixes revisions, and neither compaction nor
+    `reprotect` mixes labels in an output.
+    """
+    match = _LABEL_SUFFIX.search(path)
+    if not match:
+        return (0,)
+    return (int(match.group(1)), *(int(item) for item in _EARLIER.findall(match.group(2))))
 
 
 def protection_revision_of(path: str) -> int:
-    """The protection revision a data file's rows were masked under, from its name; 0 for a file
+    """The protection revision a data file's rows are masked under now, from its name; 0 for a file
     written without protection, before it, or by another writer."""
-    match = _REVISION_SUFFIX.search(path)
-    return int(match.group(1)) if match else 0
+    return protection_label_of(path)[0]
 
 
 def read_parquet_footer(client: Any, uri: str) -> tuple[pq.FileMetaData, int]:

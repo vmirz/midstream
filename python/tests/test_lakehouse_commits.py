@@ -27,12 +27,16 @@ from midstream.lakehouse.commits import (  # noqa: E402
     table_totals,
 )
 from midstream.lakehouse.files import (  # noqa: E402
+    compacted_file_uri,
     data_file_uri,
     partition_record,
     partition_text,
     partition_text_of,
     partition_values,
+    protection_label_of,
+    protection_revision_of,
     read_parquet_footer,
+    reprotected_file_uri,
 )
 from midstream.lakehouse.offsets import (  # noqa: E402
     OFFSETS_PROPERTY,
@@ -384,6 +388,21 @@ class FileNamingTests(unittest.TestCase):
         uri = data_file_uri(LOCATION, granularity="day", partition_value_text="2026-10-18", kafka_partition=3,
                             offset_start=100, offset_end=199, member_id="pod/1", unique="abc")
         self.assertEqual(uri, f"{LOCATION}/data/ts_day=2026-10-18/p03-o0000000100-0000000199-pod_1-abc.parquet")
+
+    def test_a_files_name_says_its_protection_label(self) -> None:
+        common = {"granularity": "day", "partition_value_text": "2026-10-18"}
+        written = data_file_uri(LOCATION, kafka_partition=3, offset_start=1, offset_end=2, member_id="m", unique="u", protection_revision=2, **common)
+        compacted = compacted_file_uri(LOCATION, unique="c", protection_label=(3, 1), **common)
+        rewritten = reprotected_file_uri(LOCATION, unique="r", protection_label=(5, 3, 0), **common)
+        self.assertTrue(written.endswith("-m-u-r2.parquet"))
+        self.assertTrue(compacted.endswith("/compact-c-r3p1.parquet"))
+        self.assertTrue(rewritten.endswith("/reprotect-r-r5p3p0.parquet"))
+        expected = {written: (2,), compacted: (3, 1), rewritten: (5, 3, 0), f"{LOCATION}/data/x.parquet": (0,), "gs://b/odd-r2px.parquet": (0,)}
+        for path, label in expected.items():
+            with self.subTest(path=path):
+                self.assertEqual(label, protection_label_of(path))
+                self.assertEqual(label[0], protection_revision_of(path))
+        self.assertTrue(compacted_file_uri(LOCATION, unique="c", protection_revision=0, **common).endswith("/compact-c.parquet"))
 
     def test_footer_reads_and_millis(self) -> None:
         lake = LakeFixture({"order_id": "x"})
