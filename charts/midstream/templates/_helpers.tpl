@@ -374,33 +374,319 @@ affinity:
 {{- end }}
 {{- end -}}
 
-{{/* The GCS service-account key, when one is given: a volume, its mount, and the variable that names it. */}}
-{{- define "midstream.gcsVolumes" -}}
-{{- with .Values.gcs.credentialsSecret }}
+{{/*
+Labels or annotations given as values (kaspr.podLabels, kaspr.serviceAccountAnnotations and the console's),
+one "key": "value" line each, every value a string as Kubernetes takes it. Labels may not take a key the
+chart sets itself (midstream.labels, app.kubernetes.io/component). Called with (dict "map" <the value>
+"what" <its name>), and "root" $ for labels.
+*/}}
+{{- define "midstream.metadataMap" -}}
+{{- if not (kindIs "map" .map) -}}
+{{- fail (printf "%s must be a map of keys to values" .what) -}}
+{{- end -}}
+{{- $own := dict -}}
+{{- with .root -}}
+{{- $own = merge (include "midstream.labels" . | fromYaml) (dict "app.kubernetes.io/component" "") -}}
+{{- end -}}
+{{- range $key, $value := .map }}
+{{- if hasKey $own $key }}
+{{- fail (printf "%s: %q is a label the chart sets itself" $.what $key) }}
+{{- end }}
+{{ $key | quote }}: {{ ternary "" (toString $value) (kindIs "invalid" $value) | quote }}
+{{- end }}
+{{- end -}}
+
+{{/*
+The cloud identity every Kaspr pod runs as, the runtimes' included, for a storage backend without a Secret
+(kaspr.podLabels, kaspr.serviceAccountAnnotations): IRSA's role, or AKS workload identity. The labels go
+under a KasprApp's template.pod, the annotations under its template.serviceAccount: the ServiceAccount
+kaspr-operator creates for each app and each runtime, named <app>-app.
+*/}}
+{{- define "midstream.kasprPodMetadata" -}}
+{{- with .Values.kaspr.podLabels }}
+metadata:
+  labels:
+    {{- include "midstream.metadataMap" (dict "map" . "what" "kaspr.podLabels" "root" $) | trim | nindent 4 }}
+{{- end }}
+{{- end -}}
+
+{{- define "midstream.kasprServiceAccount" -}}
+{{- with .Values.kaspr.serviceAccountAnnotations }}
+serviceAccount:
+  metadata:
+    annotations:
+      {{- include "midstream.metadataMap" (dict "map" . "what" "kaspr.serviceAccountAnnotations") | trim | nindent 6 }}
+{{- end }}
+{{- end -}}
+
+{{/*
+The lake's object storage (storage.*; handbook 11), for the control plane, the maintenance and tail apps
+and every runtime: each backend's credentials as Secret references, in the variables its SDK reads
+itself, and Midstream's own STORAGE_* settings. A backend without a Secret renders no credential: its
+SDK's default chain finds the pod's identity. A rendered manifest names Secrets, never a value.
+*/}}
+{{- define "midstream.storageEnv" -}}
+{{- $storage := .Values.storage | default dict -}}
+{{- $gcs := $storage.gcs | default dict -}}
+{{- $s3 := $storage.s3 | default dict -}}
+{{- $azure := $storage.azure | default dict -}}
+{{- if $gcs.credentialsSecret }}
+- name: GOOGLE_APPLICATION_CREDENTIALS
+  value: /etc/midstream/gcs/service-account.json
+{{- end }}
+{{- with $s3.credentialsSecret }}
+- name: AWS_ACCESS_KEY_ID
+  valueFrom:
+    secretKeyRef:
+      name: {{ . }}
+      key: access-key-id
+- name: AWS_SECRET_ACCESS_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ . }}
+      key: secret-access-key
+- name: AWS_SESSION_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ . }}
+      key: session-token
+      optional: true
+{{- end }}
+{{- with $s3.region }}
+- name: STORAGE_S3_REGION
+  value: {{ . | quote }}
+{{- end }}
+{{- with include "midstream.endpoint" (dict "value" $s3.endpoint "what" "storage.s3.endpoint") }}
+- name: STORAGE_S3_ENDPOINT
+  value: {{ . | quote }}
+{{- end }}
+{{- if eq (toString $s3.pathStyle) "true" }}
+- name: STORAGE_S3_PATH_STYLE
+  value: "true"
+{{- end }}
+{{- with $azure.credentialsSecret }}
+{{- $secret := . }}
+{{- range $pair := list (list "AZURE_STORAGE_CONNECTION_STRING" "connection-string") (list "AZURE_STORAGE_ACCOUNT_KEY" "account-key") (list "AZURE_CLIENT_ID" "client-id") (list "AZURE_TENANT_ID" "tenant-id") (list "AZURE_CLIENT_SECRET" "client-secret") }}
+- name: {{ index $pair 0 }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ $secret }}
+      key: {{ index $pair 1 }}
+      optional: true
+{{- end }}
+{{- end }}
+{{- with include "midstream.endpoint" (dict "value" $azure.endpoint "what" "storage.azure.endpoint") }}
+- name: STORAGE_AZURE_ENDPOINT
+  value: {{ . | quote }}
+{{- end }}
+{{- end -}}
+
+{{/*
+An S3-compatible server's or an Azure emulator's endpoint (storage.s3.endpoint, storage.azure.endpoint, a
+console profile's endpoint) as the stores and the console take it: an http:// or https:// URL naming the
+server alone, no path and no user, trimmed of surrounding whitespace and trailing slashes. A bare
+host:port, DuckDB's own spelling, would pass the install and fail every store's first operation. Called
+with (dict "value" <the value> "what" <where it is set>); renders nothing for an empty value.
+*/}}
+{{- define "midstream.endpoint" -}}
+{{- $given := .value | default "" | toString | trim -}}
+{{- if $given -}}
+{{- if not (regexMatch `^(?i:https?)://[^/?#@\s:][^/?#@\s]*/*$` $given) -}}
+{{- fail (printf "%s %q must be an http:// or https:// URL naming the server alone: http(s)://host[:port], with no path" .what $given) -}}
+{{- end -}}
+{{- regexReplaceAll "/+$" $given "" -}}
+{{- end -}}
+{{- end -}}
+
+{{/* The GCS service-account key, when storage.gcs names one: a volume, and its mount at /etc/midstream/gcs. */}}
+{{- define "midstream.storageVolumes" -}}
+{{- with (.Values.storage | default dict).gcs | default dict }}
+{{- with .credentialsSecret }}
 volumes:
-  - name: gcp-credentials
+  - name: gcs-credentials
     secret:
       secretName: {{ . }}
       items:
-        - key: {{ $.Values.gcs.credentialsKey }}
-          path: google_application_credentials.json
+        - key: service-account.json
+          path: service-account.json
+{{- end }}
 {{- end }}
 {{- end -}}
 
-{{- define "midstream.gcsVolumeMounts" -}}
-{{- if .Values.gcs.credentialsSecret }}
+{{- define "midstream.storageVolumeMounts" -}}
+{{- with (.Values.storage | default dict).gcs | default dict }}
+{{- if .credentialsSecret }}
 volumeMounts:
-  - name: gcp-credentials
-    mountPath: /app/gcp
+  - name: gcs-credentials
+    mountPath: /etc/midstream/gcs
     readOnly: true
 {{- end }}
+{{- end }}
 {{- end -}}
 
-{{- define "midstream.gcsEnv" -}}
-{{- if .Values.gcs.credentialsSecret }}
-- name: GOOGLE_APPLICATION_CREDENTIALS
-  value: /app/gcp/google_application_credentials.json
+{{/*
+The destination new materializations' tables go under (controlPlane.settings.defaultDestinationUri), as
+given: empty, or one of the three forms engines read, which name the backend for good (handbook 11).
+The patterns are the control plane's own, and so is the trimming: surrounding whitespace, and trailing
+slashes before the patterns are checked. file:// serves the tests alone, never a deployment.
+*/}}
+{{- define "midstream.defaultDestinationUri" -}}
+{{- $given := .Values.controlPlane.settings.defaultDestinationUri | default "" | toString | trim -}}
+{{- $uri := regexReplaceAll "/+$" $given "" -}}
+{{- if $given -}}
+{{- $forms := "gs://bucket[/prefix], s3://bucket[/prefix] or abfss://container@account.dfs.core.windows.net[/prefix]" -}}
+{{- $what := printf "controlPlane.settings.defaultDestinationUri %q" $given -}}
+{{- if hasPrefix "file://" $given -}}
+{{- fail (printf "%s: file:// destinations are for tests only; a deployment writes to %s" $what $forms) -}}
+{{- end -}}
+{{- if not (or (hasPrefix "gs://" $given) (hasPrefix "s3://" $given) (hasPrefix "abfss://" $given)) -}}
+{{- fail (printf "%s must be %s" $what $forms) -}}
+{{- end -}}
+{{- if gt (len $uri) 1024 -}}
+{{- fail (printf "%s is longer than 1024 characters" $what) -}}
+{{- end -}}
+{{- if hasPrefix "gs://" $given -}}
+{{- if not (regexMatch `^gs://[a-z0-9][a-z0-9._-]*[a-z0-9](/\S*)?$` $uri) -}}
+{{- fail (printf "%s is not gs://bucket[/prefix]: a bucket name is lower case letters, digits, dots, hyphens and underscores" $what) -}}
+{{- end -}}
+{{- else if hasPrefix "s3://" $given -}}
+{{- if not (regexMatch `^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9](/\S*)?$` $uri) -}}
+{{- fail (printf "%s is not s3://bucket[/prefix]: a bucket name is 3 to 63 lower case letters, digits, dots and hyphens" $what) -}}
+{{- end -}}
+{{- else -}}
+{{- $container := regexReplaceAll `^abfss://([^@/]*)@.*$` $uri "${1}" -}}
+{{- if not (and (regexMatch `^abfss://[a-z0-9-]{3,63}@[a-z0-9]{3,24}\.dfs\.core\.windows\.net(/\S*)?$` $uri) (regexMatch `^[a-z0-9]+(-[a-z0-9]+)*$` $container)) -}}
+{{- fail (printf "%s is not abfss://container@account.dfs.core.windows.net[/prefix]: a container is 3 to 63 lower case letters, digits and single hyphens, an account 3 to 24 lower case letters and digits" $what) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $given -}}
+{{- end -}}
+
+{{/*
+The directory under the destination this installation's tables go in (controlPlane.settings.storagePrefix),
+trimmed as the control plane trims it, of surrounding whitespace and then of slashes; the release name
+when that leaves nothing. The control plane gets it as rendered here, and NOTES.txt checks it.
+*/}}
+{{- define "midstream.storagePrefix" -}}
+{{- $given := .Values.controlPlane.settings.storagePrefix | default "" | toString | trim | trimAll "/" -}}
+{{- default (include "midstream.fullname" .) $given -}}
+{{- end -}}
+
+{{/*
+The console's storage profiles (console.storage; console/docs/07), as JSON, every rule checked: one per
+destination prefix, matched to every object by the longest scope. Credentials never reach the file: they
+come from each profile's Secret as CONSOLE_STORAGE_<NAME>_* (midstream.consoleStorageEnv) and, for gcs,
+as the key file mounted at /etc/midstream-storage/<name>, named by the profile's keyFile.
+*/}}
+{{- define "midstream.consoleStorage" -}}
+{{- $schemes := dict "gcs" "gs://" "s3" "s3://" "azure" "abfss://" -}}
+{{- $forms := dict "gcs" "gs://bucket/[prefix/]" "s3" "s3://bucket/[prefix/]" "azure" "abfss://container@account.dfs.core.windows.net/[prefix/]" -}}
+{{- $fields := list "name" "scope" "kind" "endpoint" "region" "pathStyle" "access" "credentialsSecret" -}}
+{{- $out := list -}}
+{{- $names := dict -}}
+{{- $scopes := dict -}}
+{{- range $index, $profile := .Values.console.storage | default list -}}
+{{- $where := printf "console.storage[%d]" $index -}}
+{{- if not (kindIs "map" $profile) -}}
+{{- fail (printf "%s must be a profile: {name, scope, kind, ...}" $where) -}}
+{{- end -}}
+{{- $name := $profile.name | default "" | toString -}}
+{{- if not (regexMatch `^[a-z][a-z0-9-]{0,39}$` $name) -}}
+{{- fail (printf "%s: name %q must be a lower case letter followed by up to 39 lower case letters, digits or hyphens" $where $name) -}}
+{{- end -}}
+{{- $where = printf "console.storage[%d] (%s)" $index $name -}}
+{{- if hasKey $names $name -}}
+{{- fail (printf "%s: the name is used twice; every profile's name must be unique" $where) -}}
+{{- end -}}
+{{- $_ := set $names $name true -}}
+{{- range $key, $value := $profile -}}
+{{- if not (has $key $fields) -}}
+{{- fail (printf "%s: unknown field %q; a profile takes %s" $where $key (join ", " $fields)) -}}
+{{- end -}}
+{{- end -}}
+{{- $kind := $profile.kind | default "" | toString -}}
+{{- if not (hasKey $schemes $kind) -}}
+{{- fail (printf "%s: kind %q must be gcs, s3 or azure" $where $kind) -}}
+{{- end -}}
+{{- $scheme := get $schemes $kind -}}
+{{- $scope := $profile.scope | default "" | toString -}}
+{{- if not (hasSuffix "/" $scope) -}}
+{{- fail (printf "%s: scope %q must end with '/': it is the destination prefix the profile serves" $where $scope) -}}
+{{- end -}}
+{{- if not (hasPrefix $scheme $scope) -}}
+{{- fail (printf "%s: scope %q does not start with %s, the scheme of kind %s" $where $scope $scheme $kind) -}}
+{{- end -}}
+{{- /* As the console parses a location: a bucket, or a container at an account in the one Azure form; never . or .. */ -}}
+{{- $authority := ternary `[^/@\s]+@[a-z0-9]{3,24}\.dfs\.core\.windows\.net` `[^/@\s]+` (eq $kind "azure") -}}
+{{- $container := index (splitList "@" (index (splitList "/" (trimPrefix $scheme $scope)) 0)) 0 -}}
+{{- if or (not (regexMatch (printf `^%s%s/\S*$` (regexQuoteMeta $scheme) $authority) $scope)) (has $container (list "." "..")) -}}
+{{- fail (printf "%s: scope %q must name a %s and hold no whitespace: %s" $where $scope (ternary "container and its account" "bucket" (eq $kind "azure")) (get $forms $kind)) -}}
+{{- end -}}
+{{- if hasKey $scopes $scope -}}
+{{- fail (printf "%s: scope %q is already served by profile %s" $where $scope (get $scopes $scope)) -}}
+{{- end -}}
+{{- $_ := set $scopes $scope $name -}}
+{{- $entry := dict "name" $name "scope" $scope "kind" $kind -}}
+{{- with include "midstream.endpoint" (dict "value" $profile.endpoint "what" (printf "%s: endpoint" $where)) -}}
+{{- $_ := set $entry "endpoint" . -}}
+{{- end -}}
+{{- with $profile.region -}}
+{{- $_ := set $entry "region" (toString .) -}}
+{{- end -}}
+{{- if not (kindIs "invalid" $profile.pathStyle) -}}
+{{- if not (kindIs "bool" $profile.pathStyle) -}}
+{{- fail (printf "%s: pathStyle must be true or false" $where) -}}
+{{- end -}}
+{{- $_ := set $entry "pathStyle" $profile.pathStyle -}}
+{{- end -}}
+{{- with $profile.access -}}
+{{- if not (has (toString .) (list "direct" "cached")) -}}
+{{- fail (printf "%s: access %q must be direct or cached" $where (toString .)) -}}
+{{- end -}}
+{{- $_ := set $entry "access" (toString .) -}}
+{{- end -}}
+{{- with $profile.credentialsSecret -}}
+{{- if not (kindIs "string" .) -}}
+{{- fail (printf "%s: credentialsSecret must be the name of a Secret" $where) -}}
+{{- end -}}
+{{- if eq $kind "gcs" -}}
+{{- $_ := set $entry "keyFile" (printf "/etc/midstream-storage/%s/service-account.json" $name) -}}
+{{- end -}}
+{{- end -}}
+{{- $out = append $out $entry -}}
+{{- end -}}
+{{- toJson $out -}}
+{{- end -}}
+
+{{/*
+Each console storage profile's credentials, from its Secret, as CONSOLE_STORAGE_<NAME>_<KEY> (the name
+in upper case, `-` as `_`): every key optional, so a profile uses what its Secret holds.
+*/}}
+{{- define "midstream.consoleStorageEnv" -}}
+{{- $keys := dict -}}
+{{- $_ := set $keys "gcs" (list (list "GCS_HMAC_KEY_ID" "hmac-key-id") (list "GCS_HMAC_SECRET" "hmac-secret")) -}}
+{{- $_ := set $keys "s3" (list (list "ACCESS_KEY_ID" "access-key-id") (list "SECRET_ACCESS_KEY" "secret-access-key") (list "SESSION_TOKEN" "session-token")) -}}
+{{- $_ := set $keys "azure" (list (list "AZURE_CONNECTION_STRING" "connection-string") (list "AZURE_ACCOUNT_KEY" "account-key") (list "AZURE_CLIENT_ID" "client-id") (list "AZURE_TENANT_ID" "tenant-id") (list "AZURE_CLIENT_SECRET" "client-secret")) -}}
+{{- range $profile := .Values.console.storage | default list }}
+{{- with $profile.credentialsSecret }}
+{{- $secret := . }}
+{{- $prefix := printf "CONSOLE_STORAGE_%s" ($profile.name | toString | upper | replace "-" "_") }}
+{{- range $pair := get $keys (toString $profile.kind) | default list }}
+- name: {{ $prefix }}_{{ index $pair 0 }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ $secret }}
+      key: {{ index $pair 1 }}
+      optional: true
 {{- end }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{/* A gcs console profile's key file, when it names a Secret: its volume's name. */}}
+{{- define "midstream.consoleStorageVolume" -}}
+storage-{{ . }}-key
 {{- end -}}
 
 {{/*
@@ -427,23 +713,25 @@ config:
 pythonPackages:
   {{- include "midstream.pythonPackages" . | nindent 2 }}
 template:
+  {{- include "midstream.kasprServiceAccount" . | nindent 2 }}
   pod:
+    {{- include "midstream.kasprPodMetadata" . | nindent 4 }}
     {{- include "midstream.podScheduling" (dict "root" . "own" .Values.controlPlane.runtime) | nindent 4 }}
-    {{- include "midstream.gcsVolumes" . | nindent 4 }}
+    {{- include "midstream.storageVolumes" . | nindent 4 }}
   kasprContainer:
     env:
       - name: RUNTIME_MEMBER_ID
         valueFrom:
           fieldRef:
             fieldPath: metadata.name
-      {{- include "midstream.gcsEnv" . | nindent 6 }}
+      {{- include "midstream.storageEnv" . | nindent 6 }}
       {{- include "midstream.protectionKeyEnv" . | nindent 6 }}
       - name: PROTOCOL_LOGGING_ENABLED
         value: {{ .Values.controlPlane.runtime.protocolLogging | quote }}
       {{- with .Values.controlPlane.runtime.extraEnv }}
       {{- toYaml . | nindent 6 }}
       {{- end }}
-    {{- include "midstream.gcsVolumeMounts" . | nindent 4 }}
+    {{- include "midstream.storageVolumeMounts" . | nindent 4 }}
 {{- end -}}
 
 {{/* Kaspr's Kafka client authentication, required by the KasprApp CRD: scram-sha-512, scram-sha-256 or plain. */}}

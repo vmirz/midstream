@@ -55,7 +55,8 @@ def render_failure(values: Path, *settings: str) -> str:
 class TopologyTests(unittest.TestCase):
     def test_a_console_only_release_deploys_the_console_and_nothing_else(self) -> None:
         kinds = sorted(document["kind"] for document in render(CONSOLE_ONLY))
-        self.assertEqual(kinds, ["ConfigMap", "Deployment", "Ingress", "Service"])
+        # The console runs as a ServiceAccount of its own: its cloud identity for storage without a Secret.
+        self.assertEqual(kinds, ["ConfigMap", "Deployment", "Ingress", "Service", "ServiceAccount"])
 
     def test_a_domain_only_release_deploys_no_console(self) -> None:
         names = [document["metadata"]["name"] for document in render(DOMAIN_ONLY)]

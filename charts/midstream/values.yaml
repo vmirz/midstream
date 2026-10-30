@@ -63,13 +63,55 @@ kaspr:
   nodeSelector: {}
   tolerations: []
   affinity: {}
+  # The cloud identity every Kaspr pod runs as, the runtimes included, for a storage backend without a
+  # Secret (storage.*): labels for each pod and annotations for its ServiceAccount. kaspr-operator gives
+  # every app and every runtime a ServiceAccount of its own, named <app>-app: <release>-control-plane-app,
+  # <release>-maintenance-app, <release>-tail-app and <runtimeNamePrefix>-<materialization id>-app, a new
+  # one with each materialization. So the cloud identity must trust them all:
+  #   IRSA                   serviceAccountAnnotations: {eks.amazonaws.com/role-arn: <the role's ARN>}, the
+  #                          role trusting system:serviceaccount:<namespace>:* (a StringLike condition)
+  #   AKS workload identity  podLabels: {azure.workload.identity/use: "true"} and serviceAccountAnnotations:
+  #                          {azure.workload.identity/client-id: <the identity's client id>}, with a
+  #                          federated credential for each ServiceAccount, every new runtime's included
+  # EKS Pod Identity needs no value here but an association for each ServiceAccount, every new runtime's
+  # included; GKE workload identity needs none either: grant the bucket's role to the namespace.
+  podLabels: {}
+  serviceAccountAnnotations: {}
 
-gcs:
-  # A Secret holding a service-account key under `credentialsKey`. Every app and runtime mounts it
-  # and reads it through GOOGLE_APPLICATION_CREDENTIALS. Empty: the pods use application default
-  # credentials, for example workload identity.
-  credentialsSecret: ""
-  credentialsKey: google_application_credentials.json
+# The object storage the lake lives in (handbook 11). A table's location names its backend by its
+# scheme, for good: gs:// is Google Cloud Storage, s3:// Amazon S3 or an S3-compatible server that
+# honours conditional writes, abfss:// Azure Blob Storage. Fill in the block of every backend this
+# domain's destinations use (controlPlane.settings.defaultDestinationUri, or the Settings page) and
+# leave the others empty. The control plane, the maintenance and tail apps and every runtime get the
+# same credentials, as Secret references, never values; a backend without a Secret uses the pods' own
+# cloud identity, as its SDK's default chain finds it (kaspr.podLabels and kaspr.serviceAccountAnnotations
+# give the pods one). docs/install.md has the steps for each backend.
+storage:
+  gcs:
+    # A Secret with key service-account.json, a Google service-account key: mounted read-only at
+    # /etc/midstream/gcs and named by GOOGLE_APPLICATION_CREDENTIALS. Empty: application default
+    # credentials (GKE workload identity).
+    credentialsSecret: ""
+  s3:
+    # A Secret with keys access-key-id and secret-access-key, and session-token if the keys are
+    # temporary. Empty: the pods' own identity, as boto3's default chain finds it: IRSA (see
+    # kaspr.serviceAccountAnnotations), EKS Pod Identity or the node's instance role.
+    credentialsSecret: ""
+    region: ""                  # the bucket's region; empty: us-east-1
+    # An S3-compatible server, http(s)://host[:port] with no path, for example
+    # http://seaweedfs-s3.seaweedfs.svc.cluster.local:8333; empty: AWS. One endpoint serves every s3://
+    # destination of the domain.
+    endpoint: ""
+    pathStyle: false            # path-style addressing, which most S3-compatible servers need
+  azure:
+    # A Secret with connection-string, or account-key, or client-id, tenant-id and client-secret (a
+    # service principal); each key is optional and the apps use what is there. Empty:
+    # DefaultAzureCredential: AKS workload identity (see kaspr.podLabels) or a managed identity.
+    credentialsSecret: ""
+    # An emulator's blob endpoint, http(s)://host[:port] with no path, to which the account is appended:
+    # http://azurite:10000 reaches the account at http://azurite:10000/<account>. Empty:
+    # https://<account>.blob.core.windows.net
+    endpoint: ""
 
 auth:
   # The Secret with `signing-key`, `previous-signing-key`, `service-token`, `federation-key`,
@@ -146,7 +188,10 @@ controlPlane:
       cpu: 900m
   # The settings a deployment fixes (handbook 03 §3.2, 17 §17.3); each is CONTROL_PLANE_<KEY>.
   settings:
-    defaultDestinationUri: ""   # gs://bucket/path the tables go under; set here or on the Settings page
+    # Where new materializations' tables go: gs://bucket[/prefix], s3://bucket[/prefix] or
+    # abfss://container@account.dfs.core.windows.net[/prefix], with storage.* set for its backend. Set
+    # here or on the Settings page; the chart refuses any other form, file:// included (tests only).
+    defaultDestinationUri: ""
     storagePrefix: ""           # the directory under the destination; empty takes the release name
     runtimeNamePrefix: ""       # runtimes are <prefix>-<materialization id>; empty takes the release name
     runtimeTemplateVersion: v1
@@ -251,7 +296,7 @@ tail:
 
 # The shared console (console/docs): one URL for every domain. It reaches each domain's control plane
 # and tail app through their Services (this release's) or their API hostnames (another cluster's), and
-# reads every domain's tables with the GCS credentials above: one read-only identity for every bucket.
+# reads every domain's tables through its storage profiles (console.storage), whatever their backend.
 console:
   enabled: true
   # The URL people use, without a trailing slash: the providers send people back to
@@ -308,10 +353,45 @@ console:
       cpu: "2"
       memory: 4Gi
   # CONSOLE_* variables (console/docs/03-configuration-reference.md). The chart sets PORT, HOST,
-  # CONSOLE_URL, CONSOLE_DOMAINS_FILE, the domains' service tokens, the sign-in clients and
-  # CONSOLE_DATA_DIR itself.
+  # CONSOLE_URL, CONSOLE_DOMAINS_FILE, CONSOLE_STORAGE_FILE, the domains' service tokens, the storage
+  # profiles' credentials, the sign-in clients and CONSOLE_DATA_DIR itself.
   env: {}
-  hmacSecret: ""                # a Secret with CONSOLE_GCS_HMAC_KEY_ID and CONSOLE_GCS_HMAC_SECRET: direct gs:// scans
+  # Where the console reads tables from (console/docs/07): one profile per destination prefix, with
+  # credentials of its own. Every object a table names is read through the profile whose scope is its
+  # longest matching prefix, as DuckDB picks among scoped secrets, so one console reads domains on
+  # different backends, in one statement too. A location no profile serves is never read: the table
+  # answers "no storage is configured for <location>". Empty: the console lists every domain's
+  # materializations but reads none of their tables. Each profile:
+  #   name               lower case letters, digits and hyphens, unique; its credentials' variables
+  #                      are CONSOLE_STORAGE_<NAME>_* (upper case, `-` as `_`)
+  #   scope              the destination prefix it serves, ending with `/`: gs://example-lake/,
+  #                      s3://example-lake/prod/, abfss://lake@exampleaccount.dfs.core.windows.net/
+  #   kind               gcs, s3 or azure, matching the scope's scheme: gs://, s3://, abfss://
+  #   endpoint           s3: an S3-compatible server; azure: an emulator's blob endpoint; either
+  #                      http(s)://host[:port] with no path. Empty: the cloud's
+  #   region             s3: the bucket's region; empty: us-east-1
+  #   pathStyle          s3: path-style addressing, which most S3-compatible servers need
+  #   access             direct (the default): DuckDB scans the objects in place; cached: the console
+  #                      downloads each file first. A gcs profile scans in place only with an HMAC key
+  #   credentialsSecret  a Secret in this namespace; every key is optional and the profile uses what
+  #                      is there:
+  #                        gcs    hmac-key-id and hmac-secret, for DuckDB's scans; service-account.json,
+  #                               for metadata reads, mounted at /etc/midstream-storage/<name>
+  #                        s3     access-key-id, secret-access-key, session-token
+  #                        azure  connection-string, or account-key, or client-id, tenant-id and
+  #                               client-secret (a service principal)
+  #                      Empty: the console's own identity (application default credentials, a
+  #                      credential chain, workload identity: console.podLabels and
+  #                      console.serviceAccountAnnotations).
+  # The console never writes a table: give it a read-only identity. For example:
+  #   storage:
+  #     - name: lake
+  #       scope: s3://example-lake/
+  #       kind: s3
+  #       endpoint: http://seaweedfs-s3.seaweedfs.svc.cluster.local:8333
+  #       pathStyle: true
+  #       credentialsSecret: lake-reader
+  storage: []
   persistence:
     enabled: false              # keep the Parquet cache across restarts
     size: 10Gi
@@ -320,6 +400,12 @@ console:
   nodeSelector: {}
   tolerations: []
   affinity: {}
+  # The console's cloud identity, for a storage profile without a credentialsSecret: labels for its pods
+  # and annotations for its ServiceAccount, <release>-console, which the chart creates. For example IRSA,
+  # {eks.amazonaws.com/role-arn: <a read-only role's ARN>}, or AKS workload identity, podLabels
+  # {azure.workload.identity/use: "true"} with {azure.workload.identity/client-id: <its client id>}.
+  podLabels: {}
+  serviceAccountAnnotations: {}
   service:
     type: ClusterIP
 

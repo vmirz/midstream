@@ -1,11 +1,22 @@
 # The shared console alone, in a platform cluster: every domain it serves is in another release.
 controlPlane:
   enabled: false
-gcs:
-  credentialsSecret: lake-reader
 console:
   url: https://midstream.example.com
-  hmacSecret: lake-reader-hmac
+  # Domain A's lake is on GCS, Domain B's on an S3-compatible server: a read-only identity for each.
+  storage:
+    - name: domain-a
+      scope: gs://domain-a-lake/
+      kind: gcs
+      credentialsSecret: domain-a-lake-reader
+    - name: domain-b
+      scope: s3://domain-b-lake/
+      kind: s3
+      endpoint: https://s3.example.com/
+      region: eu-west-1
+      pathStyle: true
+      access: cached
+      credentialsSecret: domain-b-lake-reader
   domains:
     - id: domain_a
       name: Domain A

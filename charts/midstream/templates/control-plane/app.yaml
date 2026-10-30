@@ -37,9 +37,11 @@ spec:
   pythonPackages:
     {{- include "midstream.pythonPackages" . | nindent 4 }}
   template:
+    {{- include "midstream.kasprServiceAccount" . | nindent 4 }}
     pod:
+      {{- include "midstream.kasprPodMetadata" . | nindent 6 }}
       {{- include "midstream.podScheduling" (dict "root" . "own" .Values.controlPlane) | nindent 6 }}
-      {{- include "midstream.gcsVolumes" . | nindent 6 }}
+      {{- include "midstream.storageVolumes" . | nindent 6 }}
     kasprContainer:
       env:
         # Which domain this control plane is (handbook 20): the console checks it against its registry.
@@ -61,10 +63,11 @@ spec:
           value: {{ .Values.controlPlane.settings.defaultRuntimeStorageSize | quote }}
         - name: CONTROL_PLANE_DEFAULT_RUNTIME_REPLICAS
           value: {{ .Values.controlPlane.settings.defaultRuntimeReplicas | quote }}
-        # The gs:// prefix every materialization's tables are created under. Left empty, no
-        # materialization can be created until it is set on the Settings page.
+        # The gs://, s3:// or abfss:// prefix every new materialization's tables are created under,
+        # checked by the chart. Left empty, no materialization can be created until it is set on the
+        # Settings page.
         - name: CONTROL_PLANE_DEFAULT_DESTINATION_URI
-          value: {{ .Values.controlPlane.settings.defaultDestinationUri | quote }}
+          value: {{ include "midstream.defaultDestinationUri" . | quote }}
         - name: CONTROL_PLANE_RUNTIME_NAME_PREFIX
           value: {{ default (include "midstream.fullname" .) .Values.controlPlane.settings.runtimeNamePrefix | quote }}
         - name: CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION
@@ -72,8 +75,9 @@ spec:
         # The directory under the destination this installation's tables are stored in: it keeps
         # installations sharing a bucket apart.
         - name: CONTROL_PLANE_STORAGE_PREFIX
-          value: {{ default (include "midstream.fullname" .) .Values.controlPlane.settings.storagePrefix | quote }}
-        {{- include "midstream.gcsEnv" . | nindent 8 }}
+          value: {{ include "midstream.storagePrefix" . | quote }}
+        # The lake's object storage (storage.*): the same credentials as every runtime's.
+        {{- include "midstream.storageEnv" . | nindent 8 }}
         # The spec every materialization's runtime is rendered from.
         - name: CONTROL_PLANE_RUNTIME_APP_SPEC
           value: |-
@@ -145,5 +149,5 @@ spec:
         {{- with .Values.controlPlane.extraEnv }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- include "midstream.gcsVolumeMounts" . | nindent 6 }}
+      {{- include "midstream.storageVolumeMounts" . | nindent 6 }}
 {{- end }}

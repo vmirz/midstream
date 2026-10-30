@@ -1,0 +1,28 @@
+# A domain on S3: an S3-compatible server reached with path-style addressing, a key pair from a Secret
+# for the apps and the runtimes, and the console reading the same bucket with a read-only pair.
+kaspr:
+  bootstrapServers: kafka:9092
+  authentication:
+    type: scram-sha-512
+    username: midstream
+    passwordSecret:
+      secretName: midstream-kafka
+      passwordKey: password
+storage:
+  s3:
+    credentialsSecret: midstream-s3
+    region: us-east-1
+    endpoint: http://s3.example.com:8333
+    pathStyle: true
+controlPlane:
+  settings:
+    defaultDestinationUri: s3://example-lake
+console:
+  storage:
+    - name: lake
+      scope: s3://example-lake/
+      kind: s3
+      endpoint: http://s3.example.com:8333
+      region: us-east-1
+      pathStyle: true
+      credentialsSecret: midstream-s3-reader
