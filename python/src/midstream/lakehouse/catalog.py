@@ -10,6 +10,15 @@ Commit protocol (spec §5.2): read the pointer and its version; validate the req
 the metadata it names; write the new metadata file create-only; replace the pointer on the
 condition that its version has not moved (the store's compare-and-swap). A moved pointer raises
 `CommitFailedException`, and the metadata file just written is deleted.
+
+A failed pointer write is not always a lost race. Every storage library retries a conditional
+write whose answer was lost, and the retry of a write that landed is refused (design §3.3); a write
+that got no answer at all may have landed too. So a failed write is checked against the pointer as
+it is read back: when it, or a commit since, names the staged file, the commit landed and is
+reported as one; only when it provably did not is the staged file deleted. When nobody can tell,
+the commit's state is unknown (`CommitStateUnknownException`) and nothing is deleted. The staged
+metadata file's own create-only write is checked the same way: its name carries a fresh uuid, so an
+object already there of the size just sent is that write, landed.
 """
 
 from __future__ import annotations
@@ -23,6 +32,7 @@ from typing import Any, Protocol
 from pyiceberg.catalog import MetastoreCatalog
 from pyiceberg.exceptions import (
     CommitFailedException,
+    CommitStateUnknownException,
     NamespaceAlreadyExistsError,
     NoSuchNamespaceError,
     NoSuchTableError,
@@ -230,7 +240,9 @@ class PointerCatalog(MetastoreCatalog):
 
         Idempotent for one materialization: a pointer already naming `materialization_id` is that
         table, created by an earlier attempt, and is returned. A pointer naming any other
-        materialization raises `TableAlreadyExistsError`.
+        materialization raises `TableAlreadyExistsError`. A pointer write refused while there is
+        still no pointer raises `CommitStateUnknownException`: a write in flight may land yet, and
+        another attempt finds out.
         """
         entry = TableEntry(identifier=tuple(identifier), location=location, materialization_id=materialization_id)
         store = self.store_for(location)
@@ -250,7 +262,8 @@ class PointerCatalog(MetastoreCatalog):
                 content_type="application/json",
             )
         except PreconditionFailedError:
-            # An earlier attempt wrote this very file (same uuid) and died before the pointer.
+            # An earlier attempt wrote this very file (same uuid) and died before the pointer, or
+            # this attempt's write landed and its retry was refused.
             pass
         pointer = TablePointer(
             table_uuid=str(metadata.table_uuid),
@@ -265,10 +278,20 @@ class PointerCatalog(MetastoreCatalog):
         )
         try:
             write_pointer(store, location, pointer, expected_version=None)
-        except PointerConflictError:
+        except PointerConflictError as exc:
+            # Another attempt created it first - or this one did, and its retry was refused.
             winner, _ = read_pointer(store, location)
-            if winner is None or winner.materialization_id != materialization_id:
+            if winner is None:
+                # Refused, yet there is none: a conflicting write is still in flight (S3 refuses a
+                # conditional write meeting another, which may be this one's own first attempt).
+                raise CommitStateUnknownException(
+                    f"{location} refused the creation of its pointer ({exc}) but holds none: a conflicting write "
+                    "may still be in flight"
+                ) from exc
+            if winner.materialization_id != materialization_id:
                 raise TableAlreadyExistsError(f"{location} was taken while creating its table") from None
+            if winner.metadata_location == metadata_location:
+                write_version_hint(store, location, metadata_location)
             return self._table_from_pointer(entry, winner)
         write_version_hint(store, location, metadata_location)
         return self._table_from_pointer(entry, pointer)
@@ -294,15 +317,15 @@ class PointerCatalog(MetastoreCatalog):
         staged = self._update_and_stage_table(current, entry.identifier, requirements, updates)
         if staged.metadata == current.metadata:
             return CommitTableResponse(metadata=current.metadata, metadata_location=current.metadata_location)
+        payload = staged.metadata.model_dump_json(exclude_none=True).encode("utf-8")
         try:
-            store.put(
-                staged.metadata_location,
-                staged.metadata.model_dump_json(exclude_none=True).encode("utf-8"),
-                if_version=ABSENT,
-                content_type="application/json",
-            )
+            store.put(staged.metadata_location, payload, if_version=ABSENT, content_type="application/json")
         except PreconditionFailedError as exc:
-            raise CommitFailedException(f"metadata file {staged.metadata_location} already exists") from exc
+            # Only this commit's own write, retried after its answer was lost, can have put an
+            # object at a name with a fresh uuid in it; one of another size is not that write.
+            existing = store.head(staged.metadata_location)
+            if existing is None or existing.size != len(payload):
+                raise CommitFailedException(f"metadata file {staged.metadata_location} already exists") from exc
         try:
             write_pointer(
                 store,
@@ -310,11 +333,102 @@ class PointerCatalog(MetastoreCatalog):
                 pointer.advanced(staged.metadata_location, updated_by=self.writer, updated_at=self._clock()),
                 expected_version=version,
             )
-        except PointerConflictError as exc:
-            store.delete(staged.metadata_location)
-            raise CommitFailedException(str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - refused or unanswered: the pointer read back tells
+            landed = self._landed(
+                store,
+                entry,
+                staged.metadata_location,
+                started_from=pointer.metadata_location,
+                expected_version=version,
+                failure=exc,
+            )
+            if landed is None:
+                store.delete(staged.metadata_location)
+                raise CommitFailedException(str(exc)) from exc
+            LOGGER.info(
+                "The pointer write of %s failed after it landed (%s); %s is committed",
+                ".".join(entry.identifier),
+                exc,
+                staged.metadata_location,
+            )
+            if landed.metadata_location != staged.metadata_location:
+                # A commit since has moved the pointer on, and named its own metadata in the hint.
+                return CommitTableResponse(metadata=staged.metadata, metadata_location=staged.metadata_location)
         write_version_hint(store, entry.location, staged.metadata_location)
         return CommitTableResponse(metadata=staged.metadata, metadata_location=staged.metadata_location)
+
+    def _landed(
+        self,
+        store: ObjectStore,
+        entry: TableEntry,
+        staged_location: str,
+        *,
+        started_from: str,
+        expected_version: str,
+        failure: BaseException,
+    ) -> TablePointer | None:
+        """The pointer as read back if a pointer write that failed landed all the same; None if it
+        provably did not.
+
+        The write's answer may have been lost and its retry refused, as the retry of a write that
+        landed is, or the write may have got no answer at all. Every pointer moves on from the one
+        before it, so the write landed if the pointer
+        names the staged metadata file, having moved from the one this commit started from, or if a
+        commit since has moved on from the staged file; and it did not if another commit moved the
+        pointer on from where this one started. Further on, the current metadata's log tells, as far
+        as it reaches back (`write.metadata.previous-versions-max` entries).
+
+        When nobody can tell, `CommitStateUnknownException`, and nothing is deleted: the pointer or
+        that metadata cannot be read, the log no longer reaches back to where this commit started,
+        or the pointer has not moved at all - a write with no answer may still land, and S3 refuses
+        a conditional write that meets another in flight (409), which may be this write's own first
+        attempt.
+        """
+        table = ".".join(entry.identifier)
+        try:
+            now, version = read_pointer(store, entry.location)
+        except Exception as error:
+            raise CommitStateUnknownException(
+                f"the pointer write of {table} failed ({failure}) and the pointer could not be read back: {error}"
+            ) from error
+        if now is None:
+            # Dropped: nothing reads the staged file any more.
+            return None
+        if version == expected_version:
+            raise CommitStateUnknownException(
+                f"the pointer write of {table} failed ({failure}) and the pointer is still at version "
+                f"{expected_version}: that write, or a conflicting one, may still be in flight"
+            )
+        if now.metadata_location == staged_location:
+            if now.previous_metadata_location != started_from:
+                # Only this commit names its staged file: never delete what the pointer names.
+                raise CommitStateUnknownException(
+                    f"the pointer of {table} names {staged_location} after {now.previous_metadata_location}, "
+                    f"not {started_from}, where this commit started"
+                )
+            return now
+        if now.previous_metadata_location == staged_location:
+            return now
+        if started_from in (now.metadata_location, now.previous_metadata_location):
+            # Another commit moved on from where this one started: this write never landed.
+            return None
+        try:
+            metadata = self.read_metadata(now.metadata_location)
+        except Exception as error:
+            raise CommitStateUnknownException(
+                f"the pointer write of {table} failed ({failure}) and the metadata {now.metadata_location} "
+                f"could not be read: {error}"
+            ) from error
+        log = [item.metadata_file for item in metadata.metadata_log]
+        if staged_location in log:
+            return now
+        if started_from in log:
+            # The log reaches back to where this commit started, and the staged file is not in it.
+            return None
+        raise CommitStateUnknownException(
+            f"the pointer write of {table} failed ({failure}) and the pointer has moved on too far to tell "
+            f"whether it landed: the metadata log of {now.metadata_location} no longer reaches back to {started_from}"
+        )
 
     def drop_table(self, identifier: str | Identifier) -> None:
         """Remove the table from the catalog: its pointer. Data and metadata are left in place."""
