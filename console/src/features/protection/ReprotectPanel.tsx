@@ -109,7 +109,7 @@ function summary(totals: ReturnType<typeof plaintextTotals>, tables: number): st
   const parts: string[] = [];
   if (totals.files > 0) {
     parts.push(
-      `${formatExact(totals.files)} ${totals.files === 1 ? 'file' : 'files'} with ${formatExact(totals.rows)} ${totals.rows === 1 ? 'row' : 'rows'} hold in plain text values ${tables === 1 ? 'the table masks' : 'these tables mask'} now: they were written before the field was masked.`,
+      `${formatExact(totals.files)} ${totals.files === 1 ? 'file' : 'files'} with ${formatExact(totals.rows)} ${totals.rows === 1 ? 'row' : 'rows'} ${totals.files === 1 ? 'holds' : 'hold'} in plain text values ${tables === 1 ? 'the table masks' : 'these tables mask'} now: they were written before the field was masked.`,
     );
   } else {
     parts.push(`No file holds in plain text a value ${tables === 1 ? 'the table masks' : 'these tables mask'} now.`);
@@ -152,7 +152,7 @@ function ReprotectRowItem({ row }: { row: ReprotectRow }): ReactNode {
               requested
             </Badge>
           ) : last ? (
-            <LastRunBadge outcome={last.outcome} />
+            <LastRunBadge run={last} />
           ) : null}
         </span>
       </div>
@@ -182,11 +182,15 @@ function ReprotectRowItem({ row }: { row: ReprotectRow }): ReactNode {
   );
 }
 
-function LastRunBadge({ outcome }: { outcome: string }): ReactNode {
-  if (outcome === 'succeeded') return <Badge tone="running">masked</Badge>;
-  if (outcome === 'skipped') return <Badge>nothing to mask</Badge>;
-  if (outcome === 'failed') return <Badge tone="failed">failed</Badge>;
-  return <Badge tone="pending">{outcome}</Badge>;
+/** The last run's outcome: what it did, not only whether it succeeded - a run may only purge. */
+function LastRunBadge({ run }: { run: CpMaintenanceRun }): ReactNode {
+  const rewrote = (run.counts?.inputs ?? 0) > 0;
+  const purged = (run.counts?.expired_snapshots ?? 0) > 0 || (run.counts?.deleted_files ?? 0) > 0;
+  if (run.outcome === 'succeeded' && rewrote) return <Badge tone="running">masked</Badge>;
+  if (run.outcome === 'succeeded' && purged) return <Badge tone="running">purged</Badge>;
+  if (run.outcome === 'succeeded' || run.outcome === 'skipped') return <Badge>nothing to mask</Badge>;
+  if (run.outcome === 'failed') return <Badge tone="failed">failed</Badge>;
+  return <Badge tone="pending">{run.outcome}</Badge>;
 }
 
 function ReprotectDialog({

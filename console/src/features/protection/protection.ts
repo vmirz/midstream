@@ -108,7 +108,7 @@ export function reprotectCounts(run: Pick<CpMaintenanceRun, 'counts'>): string[]
     ...some('withheld', 'value withheld', 'values withheld'),
     ...some('moved', 'value moved masked to a text field', 'values moved masked to a text field'),
     ...some('expired_snapshots', 'older snapshot expired', 'older snapshots expired'),
-    ...some('deleted_files', 'replaced file deleted', 'replaced files deleted'),
+    ...some('deleted_files', 'file deleted', 'files deleted'),
     ...some('files_left', 'file left for the next run', 'files left for the next run'),
   ];
 }

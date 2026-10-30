@@ -113,7 +113,7 @@ describe('reprotect', () => {
       '1,200 values masked',
       '3 values moved masked to a text field',
       '4 older snapshots expired',
-      '2 replaced files deleted',
+      '2 files deleted',
     ]);
     assert.deepEqual(reprotectCounts({ counts: {} }), []);
   });
