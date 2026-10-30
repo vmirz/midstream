@@ -1954,6 +1954,15 @@ class WebProtectionEditTests(unittest.TestCase):
             self._update({"protection": {"kinds": []}})
         self.assertEqual((403, "dataset.protect", "finance"), (raised.exception.status_code, raised.exception.details["permission"], raised.exception.details["dataset"]))
 
+    def test_an_edit_that_also_adds_a_topic_needs_choose_data_protection_on_its_dataset(self) -> None:
+        # Jane owns shop and only writes to finance: the new policy would mask the finance table too.
+        body = {"tables": [*tables("orders", "payments"), *tables("refunds", dataset="finance")]}
+        added = self._update(body)
+        self.assertEqual(("orders", "payments", "refunds"), added.materialization.table_names)
+        with self.assertRaises(WebError) as raised:
+            self._update({**body, "protection": {"kinds": []}})
+        self.assertEqual((403, "dataset.protect", "finance"), (raised.exception.status_code, raised.exception.details["permission"], raised.exception.details["dataset"]))
+
     def test_an_edit_that_hashes_needs_the_key(self) -> None:
         with patch.dict(os.environ, {"PROTECTION_KEY": ""}):
             get_protection_key.cache_clear()

@@ -870,6 +870,9 @@ def update_materialization(
                     reason="topic_change_pending",
                 )
             _require_dataset_write(principal, (*plan.added, *plan.resumed, *plan.removed, *plan.dropped), directory_table)
+            if protection is not None:
+                # The new policy masks the tables the change adds or writes again, too.
+                _require_protect(principal, (*plan.added, *plan.resumed))
             if plan.added:
                 resolved_claim_id = claim_request_id or new_request_id()
                 _preview_claim(
