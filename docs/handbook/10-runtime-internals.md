@@ -503,8 +503,10 @@ expiry with nothing to expire) runs once more after a restart.
   into one output of its own with the same rows in the same order, in a child process
   (`maintenance_app/reprotect_worker.py`) bounded like a compaction's, and commits each pass in one
   `replace` snapshot that keeps no manifest entry of the files it removes - their column bounds hold
-  the plain text. With `purge`, once nothing is left, every older snapshot is expired and the files only
-  they held are deleted. A failed pass backs off like a partition's compaction and is given up after
+  the plain text. It is done only once nothing is left to rewrite and the batch ceiling
+  (`max_open_file_age_ceiling_seconds`, which the ticks carry for it) plus two minutes has passed since
+  the table recorded its revision, so batches still open under the older revision have committed. With
+  `purge`, every older snapshot is then expired and the files only they held are deleted. A failed pass backs off like a partition's compaction and is given up after
   `compaction_max_attempts`, with a `reprotect_failed` table error. The member also counts each
   table's plain text from the manifests when the table records a new revision, its compaction is
   planned or a reprotect commits, and reports it with `plaintext_counted` when it changed.

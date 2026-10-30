@@ -370,7 +370,8 @@ change and a package release.
 | `ORPHAN_PASS_LIMIT` (`maintenance_app/worker.py`) | `1000` | files one orphan-cleanup pass deletes |
 | `REPLACE_ATTEMPTS`, `REPLACE_RETRY_SECONDS` (`maintenance_app/worker.py`) | `8`, `1.0` | tries at a replace or an expiry that keeps losing the pointer's CAS to the runtime's appends |
 | `STEP_BUDGET_SECONDS` (`maintenance_app/worker.py`) | `10` | quick maintenance work one step does across tables |
-| `REPROTECT_WAIT_SECONDS` (`maintenance_app/worker.py`) | `30` | how often a reprotect waiting for the table to record its protection revision looks again |
+| `REPROTECT_WAIT_SECONDS` (`maintenance_app/worker.py`) | `30` | how often a reprotect waiting for the table to record its protection revision, or for the batches open under the older one, looks again |
+| `REPROTECT_SETTLE_MARGIN_SECONDS` (`maintenance_app/worker.py`) | `120` | beyond the batch ceiling after a revision was recorded, what a reprotect allows the older revision's last batches to seal and commit before it is done |
 | `STATES_LIMIT` (`protection/policy.py`) | `100` | per-revision states a protected field keeps in the table's record; files of older revisions become of unknown lineage (22 §22.14) |
 | `PROTECTION_KEY_WAIT_SECONDS` (`handlers/writer.py`) | `15` | how often a member that must hash and cannot checks its key again (22 §22.5) |
 

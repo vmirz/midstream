@@ -465,7 +465,11 @@ counted with their reasons, and a reprotect asked once the cause is gone rewrite
    entry of the files it removes**: their column bounds hold the plain text, and the current snapshot
    would otherwise carry them on. The runtime's committer keeps appending meanwhile; both commit
    through the catalog pointer's compare-and-swap.
-5. Pass follows pass until nothing is left to rewrite; then, with `purge`, every snapshot older than the
+5. Pass follows pass until nothing is left to rewrite — and no sooner than the batch ceiling
+   (`max_open_file_age_ceiling_seconds`, 600 s) plus two minutes after the table recorded its revision:
+   a writer's batch keeps the revision it opened under, and one that takes no more records seals at
+   the ceiling, so rows staged before the edit may still commit under the older revision's label until
+   then; the job looks again every 30 s. Then, with `purge`, every snapshot older than the
    current one is expired, the files only they referenced are deleted whatever their age — they were
    all committed once, so none is an upload not committed yet — and then the table's other
    unreferenced files past `orphan_min_age_hours`. Time travel to before the reprotect ends there.

@@ -873,7 +873,7 @@ a `maintenance_tick` per table `active` or `retired` of every materialization no
               "location": "gs://my-lake/midstream/mat-a1b2c3d4e5f6/orders",
               "source_topic": "orders", "partition_granularity": "day", "state": "active" },
   "issued_at": "2026-10-20T04:11:00Z",
-  "settings": { "compaction_enabled": true, "compaction_interval_minutes": 15, "…": "every MAINTENANCE_SETTING_FIELDS" },
+  "settings": { "compaction_enabled": true, "compaction_interval_minutes": 15, "…": "every MAINTENANCE_SETTING_FIELDS, the batch ages a reprotect waits out included" },
   "last_runs": { "compaction": "2026-10-20T02:38:23.302Z", "orphan_cleanup": "2026-10-20T01:25:17.377Z" },
   "running": null,
   "reprotect": { "request_id": "mnt-3c4d5e6f7a8b", "requested_at": "2026-10-20T04:10:41Z",

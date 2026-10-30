@@ -76,7 +76,7 @@ Validate locally with unit tests and `helm template`; validate end-to-end agains
 
 ## 13.3 Test suite map
 
-1,563 tests across 62 modules (the counts per module below were taken at different releases; the
+1,564 tests across 62 modules (the counts per module below were taken at different releases; the
 data protection and reprotect ones are current). Treat these as the executable specification — when prose and tests
 disagree, the tests win.
 
@@ -121,7 +121,7 @@ disagree, the tests win.
 
 | Module | Tests | Covers |
 |--------|-------|--------|
-| `test_maintenance_app.py` | 36 | The app over real tables on a fake GCS (`MaintenanceHarness`): a compaction rewriting small files with every row kept, the partition being written left alone, a backfill's past days taken, small days in one job, a backlog a job a step, expiry not held up, the target file size, a failed multi-day job retried a day at a time, backoff and giving up, the deadline; the runtime committing meanwhile; expiry and orphans; the schedule from the ticks, abandoned and stale jobs, cancels, forgetting a table, settings that do not fit; one slot shared across tables, more slots; the handlers; reprotect (`ReprotectTests`): waiting for the table to record the revision, the rows masked and the request done, the purge — alone too, once every file is rewritten — nothing to rewrite, no key failing then given up, a new revision counted unasked |
+| `test_maintenance_app.py` | 37 | The app over real tables on a fake GCS (`MaintenanceHarness`): a compaction rewriting small files with every row kept, the partition being written left alone, a backfill's past days taken, small days in one job, a backlog a job a step, expiry not held up, the target file size, a failed multi-day job retried a day at a time, backoff and giving up, the deadline; the runtime committing meanwhile; expiry and orphans; the schedule from the ticks, abandoned and stale jobs, cancels, forgetting a table, settings that do not fit; one slot shared across tables, more slots; the handlers; reprotect (`ReprotectTests`): waiting for the table to record the revision, the rows masked and the request done — not before the batches open under the older revision can have committed — the purge — alone too, once every file is rewritten — nothing to rewrite, no key failing then given up, a new revision counted unasked |
 | `test_table_maintenance.py` | 6 | What the control plane ticks: every written and kept table, stopped materializations' included, with the overridden settings and the last runs; cancels for tables being dropped or deleted; the scheduled step writing nothing; a tick carrying the reprotect asked and the revision the table records |
 
 ### The live tail
