@@ -1,5 +1,5 @@
 """Reprotect: which files hold, in plain text, values a table's protection masks now; how they are
-rewritten and committed; and the job in the maintenance app (design §15.3, handbook 22 §22.15)."""
+rewritten and committed; and the job in the maintenance app (design §15.3, handbook 22 §22.14)."""
 
 from __future__ import annotations
 
@@ -363,6 +363,21 @@ class RewriteTests(unittest.TestCase):
         nothing, backlog = self.reprotect()
         self.assertIsNone(nothing)
         self.assertTrue(backlog.empty)
+
+    def test_a_family_collapsed_to_json_has_its_text_walked_as_a_record(self) -> None:
+        # `profile` forked for each new type until a list of strings collapsed it: its values are
+        # JSON text from then on.
+        for value in (7, "text", {"phone": "x"}, [1], ["s"]):
+            self.table.add_fields({"profile": value})
+        (collapsed,) = [member for member in self.table.index().members.values() if member.json and member.logical_path == ("profile",)]
+        self.table.edit(ProtectionPolicy({"email": "hash"}), revision=1)
+        # Under revision 1 the writers hashed the email inside it and left the phone number plain.
+        self.table.write({"order_id": "O-1", "profile": {"phone": "540-948-0001", "email": h("p1@example.com")}}, label=(1,))
+        self.table.edit(ProtectionPolicy({"email": "hash", "phone": "partial"}), revision=2)
+        (_, result, _), _ = self.reprotect()
+        (row,) = self.rows()
+        self.assertEqual({"phone": "****0001", "email": h("p1@example.com")}, json.loads(row[collapsed.name]))
+        self.assertEqual(1, result["counts"]["masked"])
 
     def test_the_current_snapshot_keeps_no_trace_of_the_files_it_replaced(self) -> None:
         self.table.write(plain_record(1), label=(0,))
