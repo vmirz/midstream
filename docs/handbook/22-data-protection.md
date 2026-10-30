@@ -297,7 +297,19 @@ kubectl -n "$NS" rollout restart statefulset "$RELEASE-control-plane-app" "$RELE
 
 Runtimes need nothing: the control plane renders the key's id into every runtime's spec, so the sweep
 re-applies each of them once. With `auth.existingSecret`, patch that Secret. Several domains whose
-masked columns should join share one key: generate it once and patch it into each domain's Secret.
+masked columns should join share one key: generate it once and patch the same value into each
+domain's Secret - the command above, run once per domain, would give each its own:
+
+```bash
+PROTECTION_KEY="$(openssl rand -base64 48)"
+# Repeat with each domain's kubectl context, namespace and release:
+kubectl -n "$NS" patch secret "$RELEASE-auth" --type merge \
+  -p "{\"stringData\":{\"protection-key\":\"$PROTECTION_KEY\"}}"
+unset PROTECTION_KEY
+```
+
+Once the apps have restarted, each domain's `GET /system/version` reports the key's id
+(`protection_key_id`); domains that should join report the same one.
 Until the key is there, existing materializations run on unchanged, and a create with the default is
 refused with `409 protection_key_not_configured`; one that chooses partial or withheld is accepted.
 

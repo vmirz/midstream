@@ -225,12 +225,21 @@ its Settings page. Handbook 20 §20.7 has each provider's registration, step by 
 
 **Upgrading to the release that brings data protection** takes one step first: add `protection-key`
 to the auth Secret, which the new default needs to hash with. Generated here and never printed; with
-`auth.existingSecret`, patch that Secret, and give every domain whose masked columns should join the
-same value:
+`auth.existingSecret`, patch that Secret:
 
 ```bash
 kubectl -n "$NS" patch secret "$RELEASE-auth" --type merge \
   -p "{\"stringData\":{\"protection-key\":\"$(openssl rand -base64 48)\"}}"
+```
+
+Domains whose masked columns should join need the same key: generate it once, and repeat the patch
+with each domain's kubectl context, namespace and release before unsetting it:
+
+```bash
+PROTECTION_KEY="$(openssl rand -base64 48)"
+kubectl -n "$NS" patch secret "$RELEASE-auth" --type merge \
+  -p "{\"stringData\":{\"protection-key\":\"$PROTECTION_KEY\"}}"
+unset PROTECTION_KEY
 ```
 
 Patched after `helm upgrade` instead, restart the apps to give it to them (`kubectl -n "$NS" rollout

@@ -1155,7 +1155,9 @@ to the `create secret` command, and there is no step.
 What the operator sees if the step is skipped: the Settings page's Data protection section says the
 key is not configured; a create with the default answers `409 protection_key_not_configured` with the
 message of §5.8; the console's create dialog says so before the attempt. The StatefulSet names above were confirmed
-on a test cluster; the install guide's §8 and handbook 22 §22.9 carry the same commands.
+on a test cluster, and so was the restart under kaspr-operator: it leaves the restart annotation in
+place (its drift check does not compare template annotations), each app restarts once, and the sweep
+re-applied every runtime once. The install guide's §8 and handbook 22 §22.9 carry the same commands.
 
 ### 13.2 The release note (handbook 16, a new §16.16)
 

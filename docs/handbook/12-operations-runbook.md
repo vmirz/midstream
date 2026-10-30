@@ -151,7 +151,9 @@ Added after the upgrade, it reaches the apps once they restart
 runtimes need nothing, as the control plane renders the key's id into their specs and the sweep
 re-applies each once. Until then existing materializations run on unchanged — they protect nothing
 until an edit chooses otherwise — and a create that takes the default is refused with
-`409 protection_key_not_configured`. Domains whose masked columns should join share one key.
+`409 protection_key_not_configured`. Domains whose masked columns should join share one key:
+generate it once and patch the same value into each (22 §22.9) - the command above, run in each
+domain, would give each its own. Their `GET /system/version` then reports the same `protection_key_id`.
 
 ### Upgrading to a release that adds topics
 
