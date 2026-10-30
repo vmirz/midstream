@@ -215,7 +215,9 @@ The maintenance app runs these for every table, written or kept, whatever the ru
   (`CompactionMismatch`). Rows stay readable throughout: the inputs
   are live until the replace lands, and older snapshots keep referencing them after.
 - **Snapshot expiry** removes snapshot entries from the metadata (`expire_snapshots`, one commit). It
-  **deletes no files** (E7): the files only the expired snapshots referenced become orphans.
+  **deletes no files** (E7): the files only the expired snapshots referenced become orphans. Its
+  report carries the new metadata file and snapshot count, which the table record takes at the same
+  sequence number (05 §5.12).
 - **Orphan cleanup** (`find_orphans`) lists `data/` and `metadata/` and deletes what no retained
   snapshot references (`referenced_files`: the current metadata file and those in its metadata log,
   and every retained snapshot's manifest list, manifests and data files — a manifest's `deleted`

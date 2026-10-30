@@ -953,7 +953,9 @@ count arriving after a newer one is dropped.
 Events for a table being dropped, or dropped, are ignored, but for the `maintenance_completed` that
 ends its running job. A compaction's report changes the record's totals and snapshot only if its
 sequence number is newer than the record's: the maintenance app and the runtime report apart, and the
-runtime's next commit may arrive first.
+runtime's next commit may arrive first. A snapshot expiry, or a reprotect's purge, commits metadata
+without a snapshot: its report moves the record's `metadata_location` and `snapshots` forward at the
+same sequence number, when its metadata file's version is newer than the record's.
 
 ---
 

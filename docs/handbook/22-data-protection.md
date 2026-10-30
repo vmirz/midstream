@@ -403,7 +403,8 @@ it needs both besides what the edit needs.
 | Time travel still shows the plain values after a reprotect | it ran without `purge`: the older snapshots keep the files it replaced until they expire — never the newest `min_snapshots_to_keep` — and orphan cleanup deletes them after `orphan_min_age_hours` | ask again with *Purge the plain text now*: with nothing left to rewrite it only purges |
 
 Everything above was run on a test cluster with two domains, the upgrade without a key and the key
-added afterwards included: 13 §13.8k has what was checked, how, and what it found.
+added afterwards included: 13 §13.8k has what was checked, how, and what it found; 13 §13.8l the same
+for reprotect.
 
 ## 22.14 Masking rows already written: reprotect
 
@@ -478,7 +479,8 @@ counted with their reasons, and a reprotect asked once the cause is gone rewrite
    table that can take long — and orphan cleanup deletes them.
 6. Each pass is reported with `maintenance_completed` (`job: reprotect`, `request_id`, `done`, and
    `counts`: files rewritten, values masked, withheld and moved, files left, snapshots expired and
-   files deleted); the last one has `done: true`, which clears the request from the record. A failed
+   files deleted); the last one has `done: true`, which clears the request from the record, and counts
+   what the whole request rewrote, every pass of it, with what its purge removed. A failed
    pass backs off from 5 minutes to 6 hours; after `compaction_max_attempts` failures the request is
    given up, done, with a `reprotect_failed` table error. A pass that finds its inputs changed by a
    compaction plans again at once.
