@@ -97,9 +97,12 @@ LOGGER = logging.getLogger(__name__)
 
 COMPACT_WORKER_MODULE = "midstream.maintenance_app.compact_worker"
 REPROTECT_WORKER_MODULE = "midstream.maintenance_app.reprotect_worker"
-#: How long a reprotect waits before looking again for a table that has not recorded the revision it
-#: waits for.
+#: How long a reprotect waits before looking again: for a table that has not recorded the revision it
+#: waits for, or for the batches still open under an older one.
 REPROTECT_WAIT_SECONDS = 30.0
+#: Beyond the batch ceiling, what a reprotect allows the batches a revision rolled to seal, upload
+#: and commit before it calls the table done.
+REPROTECT_SETTLE_MARGIN_SECONDS = 120.0
 #: Backoff of a partition whose compaction failed: doubling from the first, capped at the second.
 COMPACTION_BACKOFF_SECONDS = (300, 6 * 3600)
 #: Files orphan cleanup deletes at most in one pass.
@@ -793,6 +796,10 @@ class TableMaintenance:
             self.reprotect_wait_until = time.monotonic() + REPROTECT_WAIT_SECONDS
             return outputs
         if plan is None:
+            if self._settling(table):
+                # Nothing to rewrite yet; a batch open under the older revision may still commit some.
+                self.reprotect_wait_until = time.monotonic() + REPROTECT_WAIT_SECONDS
+                return outputs
             return outputs + await self._finish_reprotect(request, backlog, started_wall=started_wall, started_at=time.monotonic())
         work_dir = tempfile.mkdtemp(prefix=f"reprotect-{plan.job_id[:8]}-", dir=_work_root())
         job = _Job(
@@ -839,6 +846,20 @@ class TableMaintenance:
             attempt=job.attempt,
         )
         return outputs + [self._started_event(job)]
+
+    def _settling(self, table: Any) -> bool:
+        """Whether a batch still open under an older revision may yet commit rows the table now masks.
+
+        A writer's batch keeps the revision it opened under, and one that takes no more records seals
+        at the batch ceiling: until that long after the table recorded its revision - and a margin to
+        seal, upload and commit - files of the older revision may still arrive.
+        """
+        protection = TableProtection.from_json(protection_json_of(table.metadata))
+        recorded = next((change.at for change in reversed(protection.history) if change.revision == protection.revision), None)
+        at = _parse_time(recorded)
+        if at is None:
+            return False
+        return _wall_clock() < at + self.settings.max_open_file_age_ceiling_seconds + REPROTECT_SETTLE_MARGIN_SECONDS
 
     def _plan_reprotect(self) -> tuple[Any, ReprotectPlan | None, ReprotectBacklog]:
         table = load_table(self.context, self.client)
@@ -904,8 +925,11 @@ class TableMaintenance:
             files_left=None if backlog is None else backlog.files,
         )
         outputs = [] if backlog is None else self._plaintext_event(backlog)
-        if more is not None:
-            # More to rewrite: the next pass starts at the next step.
+        if more is not None or self._settling(table):
+            # More to rewrite: the next pass starts at the next step. Or a batch open under the older
+            # revision may still commit some: the next pass looks once the wait is over.
+            if more is None:
+                self.reprotect_wait_until = time.monotonic() + REPROTECT_WAIT_SECONDS
             return outputs + [self._reprotect_completed(ready.request, ready, snapshot_id=snapshot_id, outcome="succeeded", table=table, done=False, backlog=backlog)]
         return outputs + await self._finish_reprotect(
             ready.request, backlog, started_wall=ready.started_wall, started_at=ready.started_at, ready=ready, snapshot_id=snapshot_id, table=table
@@ -1436,6 +1460,11 @@ def _work_root() -> str:
     root = compaction_work_root()
     root.mkdir(parents=True, exist_ok=True)
     return str(root)
+
+
+def _wall_clock() -> float:
+    """Now, as a table's history records times: what a reprotect's settle check reads."""
+    return time.time()
 
 
 def _parse_time(value: str | None) -> float | None:

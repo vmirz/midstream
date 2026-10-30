@@ -658,6 +658,11 @@ class ReprotectTests(unittest.TestCase):
             patcher = patch.object(TableMaintenance, name, staticmethod(runner))
             patcher.start()
             self.addCleanup(patcher.stop)
+        # As if every batch open under an older revision had long been sealed: tests of the wait for
+        # them move the clock themselves.
+        self.clock = patch("midstream.maintenance_app.worker._wall_clock", lambda: time.time() + 3600)
+        self.clock.start()
+        self.addCleanup(self.clock.stop)
 
     async def write(self, start: int, count: int) -> None:
         for offset in range(start, start + count):
@@ -749,6 +754,28 @@ class ReprotectTests(unittest.TestCase):
         self.assertGreater(purged["counts"]["deleted_files"], 0)
         table = self.runtime.table()
         self.assertEqual([table.metadata.current_snapshot_id], [item.snapshot_id for item in table.metadata.snapshots])
+
+    def test_a_reprotect_right_after_an_edit_waits_for_the_batches_open_under_the_older_revision(self) -> None:
+        async def scenario():
+            await self.phones_written_plain()
+            # The edit was recorded a moment ago: a batch still open under revision 1 may commit later.
+            with patch("midstream.maintenance_app.worker._wall_clock", time.time):
+                await self.maintenance.tick(reprotect=self.asked(), protection_revision=2)
+                rewritten = await self.maintenance.settle()
+                waiting = self.maintenance.table().reprotect_wait_until
+                late = await self.maintenance.tick(reprotect=self.asked(), protection_revision=2)
+            # The ceiling has passed: nothing is left, and it is done.
+            self.maintenance.table().reprotect_wait_until = 0.0
+            finished = await self.maintenance.tick(reprotect=self.asked(), protection_revision=2)
+            return rewritten, waiting, late, finished
+
+        rewritten, waiting, late, finished = run(scenario())
+        (first,) = completed(rewritten)
+        self.assertEqual(("succeeded", False), (first["outcome"], first["done"]), "rewritten, but not done while batches may come")
+        self.assertGreater(waiting, time.monotonic())
+        self.assertEqual([], completed(late), "it looks again only once the wait is over")
+        (done,) = completed(finished)
+        self.assertEqual(("skipped", True, "rp-1"), (done["outcome"], done["done"], done["request_id"]))
 
     def test_without_the_tables_key_it_fails_then_gives_up(self) -> None:
         async def scenario():

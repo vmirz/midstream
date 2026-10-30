@@ -45,6 +45,12 @@ MAINTENANCE_SETTING_FIELDS = (
     "orphan_cleanup_enabled",
     "orphan_min_age_hours",
     "orphan_cleanup_interval_hours",
+    # How long a writer's batch may stay open: a reprotect waits that long after a revision for the
+    # batches still open under the older one (handbook 22 §22.14). With the two the ceiling is
+    # checked against, so the app's settings still agree with one another.
+    "max_open_file_age_seconds",
+    "max_open_file_age_ceiling_seconds",
+    "seal_schema_wait_seconds",
     "protocol_logging_enabled",
 )
 
