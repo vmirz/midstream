@@ -53,7 +53,7 @@ class MaintenanceHarness:
     def __init__(self, runtime: RuntimeHarness, *, max_concurrent_jobs: int = 1) -> None:
         self.runtime = runtime
         self.worker = MaintenanceWorker(
-            client=runtime.lake.client,
+            store=runtime.store,
             app=MaintenanceAppConfig(max_concurrent_jobs=max_concurrent_jobs, app_name="test-maintenance"),
         )
 
@@ -419,13 +419,13 @@ class ExpiryAndOrphanTests(MaintenanceAppTestCase):
 
     def test_orphan_cleanup_deletes_only_old_unreferenced_files(self) -> None:
         self.runtime.configure(orphan_cleanup_enabled=True)
-        store = self.runtime.lake.store
+        store = self.runtime.store
         old = f"{LOCATION}/data/ts_day=2026-10-18/abandoned.parquet"
         young = f"{LOCATION}/data/ts_day=2026-10-18/uploading.parquet"
         store.clock = lambda: datetime.now(tz=UTC) - timedelta(hours=48)
-        store.put(old, b"x")
+        store.write(old, b"x")
         store.clock = lambda: datetime.now(tz=UTC)
-        store.put(young, b"x")
+        store.write(young, b"x")
 
         async def scenario():
             await self.commit_batches(1)
@@ -436,8 +436,8 @@ class ExpiryAndOrphanTests(MaintenanceAppTestCase):
         self.assertEqual(["orphan_cleanup"], [event["payload"]["job"] for event in started if event["kind"] == "maintenance_started"])
         (cleaned,) = [run for run in completed(finished) if run["job"] == "orphan_cleanup"]
         self.assertEqual(1, cleaned["counts"]["deleted"])
-        self.assertIsNone(store.get(old))
-        self.assertIsNotNone(store.get(young))
+        self.assertIsNone(store.read(old))
+        self.assertIsNotNone(store.read(young))
         self.assertEqual(3, len(self.runtime.rows()))
 
 
@@ -624,7 +624,7 @@ class SharedSlotTests(MaintenanceAppTestCase):
 
     def test_more_slots_run_more_tables_at_once(self) -> None:
         self.maintenance.worker = MaintenanceWorker(
-            client=self.runtime.lake.client,
+            store=self.runtime.store,
             app=MaintenanceAppConfig(max_concurrent_jobs=2, app_name="test-maintenance"),
         )
 

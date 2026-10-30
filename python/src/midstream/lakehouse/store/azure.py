@@ -403,7 +403,7 @@ class AzureBlobStore:
                 if error is None or not _batch_refused(error):
                     status = None if error is None else error.status
                     message = f"{type(exc).__name__}: {_first_line(exc)}"
-                    return [DeleteFailure(uri, status, message, error=exc) for _, uri in chunk]
+                    return [DeleteFailure(uri, status, message, error=exc, whole_request=True) for _, uri in chunk]
                 with self._lock:
                     self._unbatched.add(account)
             else:
@@ -413,7 +413,7 @@ class AzureBlobStore:
                         first = responses[0]
                         code = _header(first, "x-ms-error-code")
                         message += f" (the first: {first.status_code}{f' {code}' if code else ''})"
-                    return [DeleteFailure(uri, None, message) for _, uri in chunk]
+                    return [DeleteFailure(uri, None, message, whole_request=True) for _, uri in chunk]
                 return [_batch_answer(uri, response) for (_, uri), response in zip(chunk, responses)]
         return [_delete_one(container_client, name, uri) for name, uri in chunk]
 

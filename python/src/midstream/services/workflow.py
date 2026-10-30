@@ -21,6 +21,7 @@ from midstream.lakehouse.schema.forkmap import ForkMap
 from midstream.lakehouse.schema.index import build_index
 from midstream.lakehouse.schema.infer import infer
 from midstream.lakehouse.schema.policy import evolve, limits_of
+from midstream.lakehouse.store import ObjectStore
 from midstream.lakehouse.tables import TableIdentity, build_schema, table_identity, table_properties
 from midstream.protection.plan import SHAPE_ONLY_SECRET, ProtectionPlan, initial_protection
 from midstream.protection.policy import NONE as NO_PROTECTION, ProtectionPolicy, TableProtection
@@ -81,7 +82,6 @@ from midstream.storage import (
 )
 from midstream.storage.objects import (
     DestinationCleanupResult,
-    ObjectStoreClientProtocol,
     drop_table_objects_pass,
     drop_table_objects_pass_async,
     retire_table_pointer,
@@ -107,7 +107,8 @@ class TableLocationInUseError(RuntimeError):
 
 
 class InvalidTableLocationError(RuntimeError):
-    """The materialization's destination cannot hold a table: not a `gs://` bucket and prefix."""
+    """The materialization's destination cannot hold a table: not a storage URI a table's location
+    can be made under (`gs://`, `s3://` or `abfss://` with a bucket or container)."""
 
     phase_reason = "invalid_destination"
 
@@ -126,8 +127,8 @@ class SourceTopicMissingError(RuntimeError):
     phase_reason = "source_topic_missing"
 
 
-# One thread: table creation is a handful of small GCS requests, and the workflow agent handles one
-# event at a time. A pool of its own keeps a slow bucket off the loop's default executor.
+# One thread: table creation is a handful of small storage requests, and the workflow agent handles
+# one event at a time. A pool of its own keeps a slow store off the loop's default executor.
 _TABLE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="table-lifecycle")
 
 
@@ -213,7 +214,7 @@ def process_work_event(
     *,
     kaspr_app_client: KasprAppClient | None = None,
     kafka_admin_client: KafkaAdminClient | None = None,
-    object_store_client: ObjectStoreClientProtocol | None = None,
+    object_store: ObjectStore | None = None,
     config: ControlPlaneConfig | None = None,
     runtime_config: RuntimeAppConfig | None = None,
     metadata_client: KafkaMetadataClient | None = None,
@@ -256,7 +257,7 @@ def process_work_event(
             follow_up = _process_create_table(
                 table,
                 work_event,
-                object_store_client=object_store_client,
+                object_store=object_store,
                 config=cfg,
                 runtime_config=runtime_cfg,
             )
@@ -285,7 +286,7 @@ def process_work_event(
             follow_up = _process_drop_table(
                 table,
                 work_event,
-                object_store_client=object_store_client,
+                object_store=object_store,
                 config=cfg,
             )
         elif work_event.step == "purge_materialization_records":
@@ -311,7 +312,7 @@ async def process_work_event_async(
     *,
     kaspr_app_client: KasprAppClient | None = None,
     kafka_admin_client: KafkaAdminClient | None = None,
-    object_store_client: ObjectStoreClientProtocol | None = None,
+    object_store: ObjectStore | None = None,
     config: ControlPlaneConfig | None = None,
     runtime_config: RuntimeAppConfig | None = None,
     metadata_client: KafkaMetadataClient | None = None,
@@ -361,7 +362,7 @@ async def process_work_event_async(
             follow_up = await _process_create_table_async(
                 table,
                 work_event,
-                object_store_client=object_store_client,
+                object_store=object_store,
                 config=cfg,
                 runtime_config=runtime_cfg,
             )
@@ -390,7 +391,7 @@ async def process_work_event_async(
             follow_up = await _process_drop_table_async(
                 table,
                 work_event,
-                object_store_client=object_store_client,
+                object_store=object_store,
                 config=cfg,
             )
         elif work_event.step == "purge_materialization_records":
@@ -1007,14 +1008,14 @@ def _process_create_table(
     table: TableProtocol,
     work_event: MaterializationWorkEvent,
     *,
-    object_store_client: ObjectStoreClientProtocol | None,
+    object_store: ObjectStore | None,
     config: ControlPlaneConfig,
     runtime_config: RuntimeAppConfig,
 ) -> MaterializationWorkEvent | None:
     """Create the next of the materialization's Iceberg tables: metadata v0 and its pointer (spec §9.1).
 
     One table a pass: the step queues itself until every table exists, then queues the runtime's
-    apply. Blocks while GCS answers. The workflow agent runs `_process_create_table_async` instead.
+    apply. Blocks while the store answers. The workflow agent runs `_process_create_table_async` instead.
     """
     started_ms = monotonic_ms()
     plan = _plan_create_table(table, work_event, config=config, runtime_config=runtime_config, started_ms=started_ms)
@@ -1022,7 +1023,7 @@ def _process_create_table(
         return None
     if isinstance(plan, MaterializationWorkEvent):
         return plan
-    created = _create_table(plan, object_store_client)
+    created = _create_table(plan, object_store)
     return _record_create_table(table, work_event, plan, created, config=config, started_ms=started_ms)
 
 
@@ -1030,11 +1031,11 @@ async def _process_create_table_async(
     table: TableProtocol,
     work_event: MaterializationWorkEvent,
     *,
-    object_store_client: ObjectStoreClientProtocol | None,
+    object_store: ObjectStore | None,
     config: ControlPlaneConfig,
     runtime_config: RuntimeAppConfig,
 ) -> MaterializationWorkEvent | None:
-    """`_process_create_table` with the GCS calls on the table-lifecycle thread."""
+    """`_process_create_table` with the storage calls on the table-lifecycle thread."""
     started_ms = monotonic_ms()
     plan = _plan_create_table(table, work_event, config=config, runtime_config=runtime_config, started_ms=started_ms)
     if plan is None:
@@ -1043,7 +1044,7 @@ async def _process_create_table_async(
         return plan
     created = await asyncio.get_running_loop().run_in_executor(
         _TABLE_EXECUTOR,
-        partial(_create_table, plan, object_store_client),
+        partial(_create_table, plan, object_store),
     )
     return _record_create_table(table, work_event, plan, created, config=config, started_ms=started_ms)
 
@@ -1140,7 +1141,7 @@ def _initial_protection_json(materialization: Materialization, projection: Mater
     return protection.to_json()
 
 
-def _create_table(plan: _TableCreate, client: ObjectStoreClientProtocol | None) -> CreatedTable:
+def _create_table(plan: _TableCreate, store: ObjectStore | None) -> CreatedTable:
     try:
         return create_materializer_table(
             plan.identity,
@@ -1148,7 +1149,7 @@ def _create_table(plan: _TableCreate, client: ObjectStoreClientProtocol | None) 
             fork_map=ForkMap.from_dict(plan.schema.fork_map),
             granularity=plan.materialization.partition_granularity,
             properties=plan.properties,
-            client=client,
+            store=store,
             writer="control-plane",
         )
     except TableAlreadyExistsError as error:
@@ -2395,14 +2396,14 @@ def _process_drop_table(
     table: TableProtocol,
     work_event: MaterializationWorkEvent,
     *,
-    object_store_client: ObjectStoreClientProtocol | None,
+    object_store: ObjectStore | None,
     config: ControlPlaneConfig,
 ) -> MaterializationWorkEvent | None:
     """Run one bounded pass of the tables' drop and queue what follows it (spec §9.1).
 
     The tables are dropped one after another, a table's passes until it is gone. With destination
     cleanup on, a pass deletes `data/`, then `metadata/`, then the pointer. Off, the pointer alone
-    is retired, so the table leaves the catalog but stays readable by path. Blocks while GCS
+    is retired, so the table leaves the catalog but stays readable by path. Blocks while the store
     answers; the workflow agent runs `_process_drop_table_async` instead.
     """
     started_ms = monotonic_ms()
@@ -2414,13 +2415,13 @@ def _process_drop_table(
             result = drop_table_objects_pass(
                 location=target.location,
                 materialization_id=target.materialization_id,
-                client=object_store_client,
+                store=object_store,
             )
         else:
             result = retire_table_pointer(
                 location=target.location,
                 materialization_id=target.materialization_id,
-                client=object_store_client,
+                store=object_store,
             )
     except Exception as exc:
         return _retry_drop_table(table, work_event, exc, config=config, started_ms=started_ms)
@@ -2431,7 +2432,7 @@ async def _process_drop_table_async(
     table: TableProtocol,
     work_event: MaterializationWorkEvent,
     *,
-    object_store_client: ObjectStoreClientProtocol | None,
+    object_store: ObjectStore | None,
     config: ControlPlaneConfig,
 ) -> MaterializationWorkEvent | None:
     """`_process_drop_table` with the pass on the cleanup thread.
@@ -2448,13 +2449,13 @@ async def _process_drop_table_async(
             result = await drop_table_objects_pass_async(
                 location=target.location,
                 materialization_id=target.materialization_id,
-                client=object_store_client,
+                store=object_store,
             )
         else:
             result = await retire_table_pointer_async(
                 location=target.location,
                 materialization_id=target.materialization_id,
-                client=object_store_client,
+                store=object_store,
             )
     except Exception as exc:
         return _retry_drop_table(table, work_event, exc, config=config, started_ms=started_ms)

@@ -1,11 +1,13 @@
-"""A runtime in one process, for tests: writer, pipeline and committer over a fake bucket.
+"""A runtime in one process, for tests: writer, pipeline and committer over an object store.
 
-`RuntimeHarness` creates a materializer table per source topic on the fake GCS
-(`lakehouse_support.LakeFixture`, one shared bucket) and runs the runtime's own code against them -
-`stage_source_record` for each record, the batch pipeline (seals in this process, uploads on its
-thread pool), and the committer - passing the outbox's messages to the committer the way the
-pipeline task's `topicSend` and the commits topic would. Faust is modelled by `FakeApp`: a
-rebalance count, a consumer that records acknowledgements, and `Message`s that acknowledge through it.
+`RuntimeHarness` creates a materializer table per source topic (`lakehouse_support.LakeFixture`),
+all in one store - a `MemoryStore` unless it is given another, such as
+`GcsStore(client=FakeGcs().client())` - which it installs as the process's store for the tables'
+scheme. It runs the runtime's own code against them - `stage_source_record` for each record, the
+batch pipeline (seals in this process, uploads on its thread pool), and the committer - passing the
+outbox's messages to the committer the way the pipeline task's `topicSend` and the commits topic
+would. Faust is modelled by `FakeApp`: a rebalance count, a consumer that records acknowledgements,
+and `Message`s that acknowledge through it.
 """
 
 from __future__ import annotations
@@ -24,11 +26,10 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from gcs_fakes import FakeGcs  # noqa: E402
 from lakehouse_support import MATERIALIZATION_ID, MATERIALIZATION_LOCATION, NAMESPACE, LakeFixture  # noqa: E402
 from table_records import table_specs  # noqa: E402
 
-from midstream.lakehouse.gcs import set_shared_storage_client  # noqa: E402
+from midstream.lakehouse.store import MemoryStore, ObjectStore, scheme_of, set_store  # noqa: E402
 from midstream.protection.secrets import get_expected_key_id, get_protection_key  # noqa: E402
 from midstream.runtime_app import acks, flow  # noqa: E402
 from midstream.runtime_app.committer import (  # noqa: E402
@@ -206,16 +207,18 @@ class RuntimeHarness:
         protection_revision: int = 1,
         protection_key: str | None = PROTECTION_KEY,
         expected_key_id: str | None = None,
+        store: ObjectStore | None = None,
         **config: Any,
     ) -> None:
         """`seed_records` give every table's schema 0; `seeds_by_topic` a topic's own instead.
 
         With `protection_policy`, every table is created protected by it at `protection_revision`.
         The member's environment has `protection_key` (none when None) and, when given,
-        `expected_key_id` as the id the deployment expects.
+        `expected_key_id` as the id the deployment expects. `store` holds every table: a new
+        `MemoryStore` unless one is given.
         """
         seeds = seed_records or ({"order_id": "O-0", "amount": 1},)
-        self.store = FakeGcs()
+        self.store: ObjectStore = MemoryStore() if store is None else store
         self.specs = table_specs(*topics)
         #: Each table's lake, by table name; `lake` is the first table's.
         self.lakes = {
@@ -259,14 +262,16 @@ class RuntimeHarness:
             if name not in environment:
                 self._stack.enter_context(patch.dict(os.environ, {name: ""}))
         reset_everything()
-        set_shared_storage_client(self.lake.client)
+        # The committer finds its store by its table's location, as in a runtime.
+        self._scheme = scheme_of(MATERIALIZATION_LOCATION)
+        set_store(self._scheme, self.store)
         batch_pipeline.sealer = seal_in_process
-        batch_pipeline.storage_client = self.lake.client
+        batch_pipeline.store = self.store
         self.events: list[dict] = []
 
     def close(self) -> None:
         reset_everything()
-        set_shared_storage_client(None)
+        set_store(self._scheme, None)
         self._stack.close()
         self._tmp.cleanup()
         for lake in self.lakes.values():
@@ -284,7 +289,7 @@ class RuntimeHarness:
         """
         reset_member()
         batch_pipeline.sealer = seal_in_process
-        batch_pipeline.storage_client = self.lake.client
+        batch_pipeline.store = self.store
         self._stack.enter_context(patch("midstream.runtime_app.writer.context.PROCESS_EPOCH", uuid.uuid4().hex))
         partitions, topics = self._assignment
         self.app = FakeApp(consumer=FakeConsumer(partitions, topics=topics))

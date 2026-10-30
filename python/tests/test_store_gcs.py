@@ -498,6 +498,7 @@ class GcsBatchDeleteTests(unittest.TestCase):
             outcome = self.store_over(api).delete_many(names)
         self.assertEqual(outcome.deleted, (names[0], names[1], names[4]))
         self.assertEqual([(failure.uri, failure.status, failure.retryable) for failure in outcome.failed], [(names[2], 403, False), (names[3], 503, True)])
+        self.assertFalse(any(failure.whole_request for failure in outcome.failed))
         self.assertEqual(outcome.failed[0].message, "403 Forbidden: Object is under active Event-Based hold and cannot be deleted.")
         self.assertEqual(outcome.failed[1].message, "503 Service Unavailable: Service Unavailable")
         self.assertEqual(api.requests, Counter({"batch": 1}))
@@ -523,6 +524,7 @@ class GcsBatchDeleteTests(unittest.TestCase):
                 self.assertEqual([failure.uri for failure in outcome.failed], names)
                 self.assertTrue(all(failure.status == status for failure in outcome.failed))
                 self.assertTrue(all(failure.retryable is (status is None or status >= 500) for failure in outcome.failed))
+                self.assertTrue(all(failure.whole_request for failure in outcome.failed))
                 self.assertEqual(len(api.objects), 3)
                 self.assertTrue(outcome.failed[0].message)
 

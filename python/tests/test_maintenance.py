@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import asyncio
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
 import itertools
@@ -78,10 +78,11 @@ from midstream.storage import (
     save_operation_record,
     save_runtime_binding,
 )
+from midstream.lakehouse.store import DeleteOutcome, MemoryStore, ObjectInfo, StoreError
+from midstream.lakehouse.store.gcs import GcsStore
 from midstream.storage import objects
 from midstream.storage.objects import (
     CLEANUP_PASS_MAX_OBJECTS,
-    DELETE_BATCH_SIZE,
     DestinationDeleteError,
     drop_table_objects,
     drop_table_objects_pass,
@@ -89,6 +90,8 @@ from midstream.storage.objects import (
     retire_table_pointer,
     table_object_prefixes,
 )
+from gcs_fakes import FakeGcs
+from google.api_core.exceptions import Forbidden, ServiceUnavailable
 from table_records import build_table_record, table_specs
 from midstream import config as control_plane_config
 
@@ -679,125 +682,76 @@ class RetentionTests(unittest.TestCase):
         self.assertEqual(self._purged(purges), ["mat-done"])
 
 
-class NotFound(Exception):
-    """Named as google-cloud-storage's own, which is how a missing object is recognised."""
-
-
-class FakeBlob:
-    def __init__(self, name: str, bucket: "FakeBucket | None" = None) -> None:
-        self.name = name
-        self._bucket = bucket
-
-    def delete(self) -> None:
-        if self._bucket is None or self.name not in self._bucket.blobs:
-            raise NotFound(self.name)
-        self._bucket.blobs.remove(self.name)
-        self._bucket.deleted.append(self.name)
-
-
-class FakeBucket:
-    def __init__(self, blobs: list[str], *, delete_seconds: float = 0.0) -> None:
-        self.blobs = blobs
-        self.deleted: list[str] = []
-        self.delete_seconds = delete_seconds
-        self.threads: set[str] = set()
-
-    def blob(self, name: str) -> FakeBlob:
-        return FakeBlob(name, self)
-
-    def list_blobs(self, *, prefix: str):
-        self.threads.add(threading.current_thread().name)
-        return [FakeBlob(name) for name in self.blobs if name.startswith(prefix)]
-
-    def delete_blobs(self, blobs, on_error=None):
-        self.threads.add(threading.current_thread().name)
-        # Blocks the calling thread the way an HTTP request to GCS does.
-        time.sleep(self.delete_seconds * len(blobs))
-        names = [blob.name for blob in blobs]
-        self.deleted.extend(names)
-        # A deleted object leaves the listing, as in GCS.
-        removed = set(names)
-        self.blobs = [name for name in self.blobs if name not in removed]
-
-
-class FakeObjectStoreClient:
-    def __init__(self, bucket: FakeBucket) -> None:
-        self._bucket = bucket
-        self.requested_buckets: list[str] = []
-
-    def bucket(self, bucket_name: str) -> FakeBucket:
-        self.requested_buckets.append(bucket_name)
-        return self._bucket
-
-
-class FakeHttpError(Exception):
-    """An object-store error carrying its HTTP status, as google-cloud-storage's errors do."""
-
-    def __init__(self, code: int) -> None:
-        super().__init__(f"{code} from GCS")
-        self.code = code
-
-
-class OneByOneBlob:
-    def __init__(self, bucket: OneByOneBucket, name: str) -> None:
-        self.bucket = bucket
-        self.name = name
-
-    def delete(self) -> None:
-        error = self.bucket.errors.get(self.name)
-        if error is not None and error.code == 404:
-            self.bucket.blobs.remove(self.name)  # someone else deleted it first
-        if error is not None:
-            raise error
-        self.bucket.blobs.remove(self.name)
-
-
-class OneByOneBucket:
-    """A bucket with no `delete_blobs`: each blob deletes itself, one request apiece."""
-
-    def __init__(self, blobs: list[str], errors: dict[str, FakeHttpError] | None = None) -> None:
-        self.blobs = blobs
-        self.errors = errors or {}
-
-    def blob(self, name: str) -> OneByOneBlob:
-        if name not in self.blobs:
-            missing = OneByOneBlob(self, name)
-            missing.delete = lambda: (_ for _ in ()).throw(NotFound(name))  # type: ignore[method-assign]
-            return missing
-        return OneByOneBlob(self, name)
-
-    def list_blobs(self, *, prefix: str):
-        return [OneByOneBlob(self, name) for name in self.blobs if name.startswith(prefix)]
-
-
-class StreamingBucket(FakeBucket):
-    """A listing that yields as it is read, recording how many listed objects await deletion."""
-
-    def __init__(self, blobs: list[str]) -> None:
-        super().__init__(blobs)
-        self.outstanding = 0
-        self.most_outstanding = 0
-
-    def list_blobs(self, *, prefix: str):
-        for name in [name for name in self.blobs if name.startswith(prefix)]:
-            self.outstanding += 1
-            self.most_outstanding = max(self.most_outstanding, self.outstanding)
-            yield FakeBlob(name)
-
-    def delete_blobs(self, blobs, on_error=None):
-        super().delete_blobs(blobs, on_error=on_error)
-        self.outstanding -= len(blobs)
-
-
 LOCATION = "gs://lake/materializer/mat-1/orders"
 DATA = "materializer/mat-1/orders/data/"
 METADATA = "materializer/mat-1/orders/metadata/"
 POINTER = "materializer/mat-1/orders/metadata/catalog-pointer.json"
 
 
+def lake_uri(key: str) -> str:
+    """The URI of the object `key` in the bucket `LOCATION` is in."""
+    return f"gs://lake/{key}"
+
+
+def memory_store(keys: Iterable[str], *, store: MemoryStore | None = None) -> MemoryStore:
+    """A `MemoryStore` (or `store`) holding an object at each of `keys` in the bucket `lake`."""
+    store = MemoryStore() if store is None else store
+    for key in keys:
+        store.write(lake_uri(key), b"x")
+    return store
+
+
+def gcs_store(keys: Iterable[str]) -> tuple[FakeGcs, GcsStore]:
+    """The GCS store over the google client double, holding `keys`. The double cannot batch, so each
+    delete is a request of its own, and it answers with the library's own exceptions."""
+    fake = FakeGcs()
+    for key in keys:
+        fake.put(lake_uri(key), b"x")
+    return fake, GcsStore(client=fake.client())
+
+
+def deletes(store: MemoryStore) -> list[str]:
+    """The URIs `store` was asked to delete, in order."""
+    return [uri for operation, uri in store.calls if operation == "delete"]
+
+
+class StreamingStore(MemoryStore):
+    """A listing that yields as it is read, recording how many listed objects await deletion."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.outstanding = 0
+        self.most_outstanding = 0
+
+    def list(self, prefix: str) -> Iterator[ObjectInfo]:
+        for info in super().list(prefix):
+            self.outstanding += 1
+            self.most_outstanding = max(self.most_outstanding, self.outstanding)
+            yield info
+
+    def delete_many(self, uris: Sequence[str]) -> DeleteOutcome:
+        outcome = super().delete_many(uris)
+        self.outstanding -= len(uris)
+        return outcome
+
+
 class TableDropTests(unittest.TestCase):
     def test_prefixes_are_the_table_data_then_metadata_and_the_pointer(self) -> None:
         self.assertEqual(table_object_prefixes(LOCATION, "mat-1"), ("lake", (DATA, METADATA), POINTER))
+
+    def test_a_table_in_any_store_has_the_same_prefixes(self) -> None:
+        """The guard reads the parsed key, so a table in S3, Azure or a local store is recognised as one
+        in GCS is. Azure's bucket is the container at its account; a local store has none."""
+        for location, container, key in (
+            ("s3://lake/materializer/mat-1/orders", "lake", "materializer/mat-1/orders"),
+            ("abfss://lake@acme.dfs.core.windows.net/materializer/mat-1/orders", "lake@acme", "materializer/mat-1/orders"),
+            ("file:///tmp/lake/materializer/mat-1/orders", "", "tmp/lake/materializer/mat-1/orders"),
+        ):
+            with self.subTest(location=location):
+                self.assertEqual(
+                    table_object_prefixes(location, "mat-1"),
+                    (container, (f"{key}/data/", f"{key}/metadata/"), f"{key}/metadata/catalog-pointer.json"),
+                )
 
     def test_a_location_that_is_not_the_materialization_table_is_refused(self) -> None:
         for location, materialization_id in (
@@ -814,14 +768,21 @@ class TableDropTests(unittest.TestCase):
             ("gs://lake/materializer/mat-1/..", "mat-1"),
             ("gs://lake", "mat-1"),
             (LOCATION, ""),
-            ("s3://lake/materializer/mat-1/orders", "mat-1"),
+            # The same guard in every store.
+            ("s3://lake/materializer/mat-2/orders", "mat-1"),
+            ("s3://lake/materializer/mat-1", "mat-1"),
+            ("abfss://lake@acme.dfs.core.windows.net/materializer/xmat-1/orders", "mat-1"),
+            ("abfss://lake@acme.dfs.core.windows.net/materializer/mat-1/Orders", "mat-1"),
+            ("file:///tmp/lake/materializer/mat-1/orders/data", "mat-1"),
+            # A scheme no store serves.
+            ("http://lake/materializer/mat-1/orders", "mat-1"),
         ):
             with self.subTest(location=location, materialization_id=materialization_id), self.assertRaises(ValueError):
                 table_object_prefixes(location, materialization_id)
 
     def test_only_the_table_objects_are_deleted_and_the_pointer_goes_last(self) -> None:
         other = "materializer/mat-1/payments/data/ts_day=2026-10-18/p00.parquet"
-        bucket = FakeBucket(
+        store = memory_store(
             [
                 f"{DATA}ts_day=2026-10-18/p00.parquet",
                 f"{METADATA}00000-a.metadata.json",
@@ -829,67 +790,71 @@ class TableDropTests(unittest.TestCase):
                 other,
             ]
         )
-        result = drop_table_objects(location=LOCATION, materialization_id="mat-1", client=FakeObjectStoreClient(bucket))
+        result = drop_table_objects(location=LOCATION, materialization_id="mat-1", store=store)
         self.assertTrue(result.complete)
         self.assertEqual(result.deleted_count, 3)
-        self.assertEqual(bucket.blobs, [other])
-        self.assertEqual(bucket.deleted[-1], POINTER)
+        self.assertEqual(store.names(), [lake_uri(other)])
+        self.assertEqual(deletes(store)[-1], lake_uri(POINTER))
 
     def _owned(self, count: int, *, prefix: str = DATA) -> list[str]:
         return [f"{prefix}part-{index:05d}.parquet" for index in range(count)]
 
-    def _pass(self, bucket, **kwargs):
-        return drop_table_objects_pass(location=LOCATION, materialization_id="mat-1", client=FakeObjectStoreClient(bucket), **kwargs)
+    def _pass(self, store, **kwargs):
+        return drop_table_objects_pass(location=LOCATION, materialization_id="mat-1", store=store, **kwargs)
 
     def test_a_pass_stops_at_its_object_budget_and_keeps_the_pointer_until_the_end(self) -> None:
         manifest = f"{METADATA}snap-1-a.avro"
-        bucket = FakeBucket(self._owned(250) + [manifest, POINTER])
+        store = memory_store(self._owned(250) + [manifest, POINTER])
 
         passes = []
         while not passes or not passes[-1].complete:
-            passes.append(self._pass(bucket, max_objects=100, max_seconds=None))
+            passes.append(self._pass(store, max_objects=100, max_seconds=None))
             if not passes[-1].complete:
-                self.assertIn(POINTER, bucket.blobs)
+                self.assertIn(lake_uri(POINTER), store.names())
 
         # The budget spans prefixes: the last pass finishes the data, the metadata and the pointer.
         self.assertEqual([(result.deleted_count, result.complete) for result in passes], [(100, False), (100, False), (52, True)])
-        self.assertEqual(bucket.blobs, [])
+        self.assertEqual(store.names(), [])
 
     def test_a_pass_that_fills_its_budget_exactly_leaves_the_next_to_confirm_nothing_is_left(self) -> None:
-        bucket = FakeBucket(self._owned(100))
+        store = memory_store(self._owned(100))
 
-        first = self._pass(bucket, max_objects=100, max_seconds=None)
-        second = self._pass(bucket, max_objects=100, max_seconds=None)
+        first = self._pass(store, max_objects=100, max_seconds=None)
+        second = self._pass(store, max_objects=100, max_seconds=None)
 
         self.assertEqual((first.deleted_count, first.complete), (100, False))
         self.assertEqual((second.deleted_count, second.complete), (0, True))
 
     def test_a_pass_stops_at_its_deadline_once_it_has_deleted_a_batch(self) -> None:
-        bucket = FakeBucket(self._owned(350))
-        clock = iter([0.0] + [99.0] * 10).__next__  # the pass starts, then every reading is late
+        # A batch is what the store deletes in one request: `delete_batch_size`, whatever it is.
+        for batch_size in (MemoryStore.delete_batch_size, 7):
+            with self.subTest(batch_size=batch_size):
+                store = memory_store(self._owned(350))
+                store.delete_batch_size = batch_size
+                clock = iter([0.0] + [99.0] * 10).__next__  # the pass starts, then every reading is late
 
-        result = self._pass(bucket, max_seconds=10, clock=clock)
+                result = self._pass(store, max_seconds=10, clock=clock)
 
-        self.assertFalse(result.complete)
-        self.assertEqual(result.deleted_count, DELETE_BATCH_SIZE)
-        self.assertEqual(len(bucket.blobs), 350 - DELETE_BATCH_SIZE)
+                self.assertFalse(result.complete)
+                self.assertEqual(result.deleted_count, batch_size)
+                self.assertEqual(len(store.names()), 350 - batch_size)
 
-    def test_every_pass_makes_progress_however_slow_the_bucket(self) -> None:
+    def test_every_pass_makes_progress_however_slow_the_store(self) -> None:
         """A pass that runs out of time has always deleted something, so the chain terminates."""
-        bucket = FakeBucket(self._owned(250))
+        store = memory_store(self._owned(250))
         clock = itertools.count(0, 100).__next__  # every reading is past the previous deadline
 
         deleted = []
         while not deleted or deleted[-1][1] is False:
-            result = self._pass(bucket, max_seconds=10, clock=clock)
+            result = self._pass(store, max_seconds=10, clock=clock)
             deleted.append((result.deleted_count, result.complete))
             self.assertLess(len(deleted), 10)
 
         self.assertEqual(deleted, [(100, False), (100, False), (50, False), (0, True)])
-        self.assertEqual(bucket.blobs, [])
+        self.assertEqual(store.names(), [])
 
     def test_an_empty_table_is_complete_in_one_pass(self) -> None:
-        result = self._pass(FakeBucket([]))
+        result = self._pass(MemoryStore())
 
         self.assertTrue(result.complete)
         self.assertEqual(result.deleted_count, 0)
@@ -898,10 +863,19 @@ class TableDropTests(unittest.TestCase):
     def test_pass_budgets_must_be_positive(self) -> None:
         for kwargs in ({"max_objects": 0}, {"max_seconds": 0}):
             with self.subTest(**kwargs), self.assertRaises(ValueError):
-                self._pass(FakeBucket([]), **kwargs)
+                self._pass(MemoryStore(), **kwargs)
 
     def test_the_async_pass_deletes_on_its_own_thread_while_the_loop_keeps_running(self) -> None:
-        bucket = FakeBucket(self._owned(200), delete_seconds=0.002)
+        store = memory_store(self._owned(200))
+        threads: set[str] = set()
+
+        def slow(operation: str, uri: str) -> None:
+            threads.add(threading.current_thread().name)
+            if operation == "delete":
+                # Blocks the calling thread the way a request to the store does.
+                time.sleep(0.002)
+
+        store.fail = slow
 
         async def scenario():
             ticks = 0
@@ -917,7 +891,7 @@ class TableDropTests(unittest.TestCase):
             result = await drop_table_objects_pass_async(
                 location=LOCATION,
                 materialization_id="mat-1",
-                client=FakeObjectStoreClient(bucket),
+                store=store,
             )
             done.set()
             await ticking
@@ -929,83 +903,124 @@ class TableDropTests(unittest.TestCase):
         self.assertEqual(result.deleted_count, 200)
         # The deletes block their thread for 0.4 s; run on the loop, it could not tick meanwhile.
         self.assertGreaterEqual(ticks, 5)
-        self.assertTrue(all(name.startswith("destination-cleanup") for name in bucket.threads), bucket.threads)
+        self.assertTrue(threads and all(name.startswith("destination-cleanup") for name in threads), threads)
 
-    def test_a_client_that_cannot_batch_keeps_the_per_object_budget(self) -> None:
-        bucket = FakeBucket(self._owned(CLEANUP_PASS_MAX_OBJECTS + 1))
+    def test_a_store_that_cannot_batch_keeps_the_per_object_budget(self) -> None:
+        store = memory_store(self._owned(CLEANUP_PASS_MAX_OBJECTS + 1))
+        store.delete_batch_size = 1  # one object per delete request
 
-        result = self._pass(bucket, max_seconds=None)
+        result = self._pass(store, max_seconds=None)
 
         self.assertEqual((result.deleted_count, result.complete), (CLEANUP_PASS_MAX_OBJECTS, False))
 
     def test_the_listing_is_read_a_chunk_at_a_time(self) -> None:
         """However large the budget, a pass holds one chunk of listed objects, not the listing."""
-        bucket = StreamingBucket(self._owned(2_500))
+        for batch_size in (MemoryStore.delete_batch_size, 1000):
+            with self.subTest(batch_size=batch_size):
+                store = memory_store(self._owned(2_500), store=StreamingStore())
+                store.delete_batch_size = batch_size
 
-        result = self._pass(bucket, max_objects=2_000, max_seconds=None)
+                result = self._pass(store, max_objects=2_000, max_seconds=None)
 
-        self.assertEqual((result.deleted_count, result.complete), (2_000, False))
-        self.assertEqual(bucket.most_outstanding, DELETE_BATCH_SIZE)
+                self.assertEqual((result.deleted_count, result.complete), (2_000, False))
+                self.assertEqual(store.most_outstanding, batch_size)
 
-    def test_without_delete_blobs_an_object_already_gone_counts_as_deleted(self) -> None:
+    def test_one_by_one_an_object_already_gone_counts_as_deleted(self) -> None:
+        """An object someone else deleted between the listing and its delete is gone, as wanted."""
         names = self._owned(5)
-        bucket = OneByOneBucket(list(names), errors={names[2]: FakeHttpError(404)})
 
-        result = self._pass(bucket)
+        with self.subTest(store="gcs"):
+            fake, store = gcs_store(names)
 
-        self.assertEqual((result.deleted_count, result.complete), (5, True))
-        self.assertEqual(bucket.blobs, [])
+            def deleted_first(operation: str, bucket: str, name: str) -> None:
+                if operation == "delete" and name == names[2]:
+                    # Someone else deleted it first: GCS answers 404, the library raises `NotFound`.
+                    fake.objects.pop((bucket, name))
 
-    def test_without_delete_blobs_a_refused_object_is_left_and_reported(self) -> None:
+            fake.fail = deleted_first
+
+            result = self._pass(store)
+
+            self.assertEqual((result.deleted_count, result.complete), (5, True))
+            self.assertEqual(fake.names(), [])
+
+        with self.subTest(store="memory"):
+            store = memory_store(names)
+
+            def taken_first(operation: str, uri: str) -> None:
+                if operation == "delete" and uri == lake_uri(names[2]):
+                    store.objects.pop(uri)  # someone else deleted it first: nothing is left to delete
+
+            store.fail = taken_first
+
+            result = self._pass(store)
+
+            self.assertEqual((result.deleted_count, result.complete), (5, True))
+            self.assertEqual(store.names(), [])
+
+    def test_one_by_one_a_refused_object_is_left_and_reported(self) -> None:
         """An object left behind must not let the chain call the table gone."""
         names = self._owned(150)
-        bucket = OneByOneBucket(list(names) + [POINTER], errors={names[0]: FakeHttpError(403)})
+        fake, gcs = gcs_store(names + [POINTER])
+        # GCS refuses the delete of an object under a hold with 403: the library raises `Forbidden`.
+        fake.fail = lambda operation, bucket, name: (
+            Forbidden(f"{name} is under a hold") if operation == "delete" and name == names[0] else None
+        )
+        memory = memory_store(names + [POINTER])
+        memory.fail = lambda operation, uri: (
+            StoreError(f"{uri} is under a hold", uri=uri, status=403) if operation == "delete" and uri == lake_uri(names[0]) else None
+        )
 
-        with self.assertLogs(objects.LOGGER, "WARNING") as logs:
-            result = self._pass(bucket)
+        for store, listed, refusal in ((gcs, fake.names, Forbidden), (memory, memory.names, StoreError)):
+            with self.subTest(store=type(store).__name__):
+                with self.assertLogs(objects.LOGGER, "WARNING") as logs:
+                    result = self._pass(store)
 
-        self.assertIn("could not delete 1 object from gs://lake (403: 1)", logs.output[0])
-        self.assertEqual((result.deleted_count, result.failed_count, result.complete), (149, 1, False))
-        # The pointer stays while anything else is left.
-        self.assertIn(POINTER, bucket.blobs)
-        with self.assertRaises(DestinationDeleteError) as raised:
-            self._pass(bucket)
-        self.assertIsInstance(raised.exception.__cause__, FakeHttpError)
-        self.assertIn(names[0], str(raised.exception))
+                self.assertIn("could not delete 1 object from gs://lake (403: 1)", logs.output[0])
+                self.assertEqual((result.deleted_count, result.failed_count, result.complete), (149, 1, False))
+                # The pointer stays while anything else is left.
+                self.assertIn(lake_uri(POINTER), listed())
+                with self.assertRaises(DestinationDeleteError) as raised:
+                    self._pass(store)
+                self.assertIsInstance(raised.exception.__cause__, refusal)
+                self.assertIn(names[0], str(raised.exception))
 
     def test_a_pass_that_fails_after_deleting_reports_what_it_deleted(self) -> None:
         manifest = f"{METADATA}snap-1-a.avro"
+        keys = self._owned(150) + [manifest]
+        fake, gcs = gcs_store(keys)
+        # Listing metadata/ fails: GCS answers 503, the library raises `ServiceUnavailable`.
+        fake.fail = lambda operation, bucket, name: (
+            ServiceUnavailable("try again later") if operation == "list_blobs" and name == METADATA else None
+        )
+        memory = memory_store(keys)
+        memory.fail = lambda operation, uri: (
+            StoreError("503 from the store", uri=uri, status=503) if operation == "list" and uri == lake_uri(METADATA) else None
+        )
 
-        class MetadataFailsToList(FakeBucket):
-            def list_blobs(self, *, prefix: str):
-                if prefix == METADATA:
-                    raise FakeHttpError(503)
-                return super().list_blobs(prefix=prefix)
+        for store, listed in ((gcs, fake.names), (memory, memory.names)):
+            with self.subTest(store=type(store).__name__):
+                with self.assertLogs(objects.LOGGER, "WARNING") as logs:
+                    result = self._pass(store)
 
-        bucket = MetadataFailsToList(self._owned(150) + [manifest])
-
-        with self.assertLogs(objects.LOGGER, "WARNING") as logs:
-            result = self._pass(bucket)
-
-        self.assertIn("stopped after deleting 150 objects", logs.output[0])
-        self.assertEqual((result.deleted_count, result.complete), (150, False))
-        with self.assertRaises(FakeHttpError):
-            self._pass(bucket)
-        self.assertEqual(bucket.blobs, [manifest])
+                self.assertIn("stopped after deleting 150 objects", logs.output[0])
+                self.assertEqual((result.deleted_count, result.complete), (150, False))
+                with self.assertRaises(StoreError) as raised:
+                    self._pass(store)
+                self.assertEqual(503, raised.exception.status)
+                self.assertEqual(listed(), [lake_uri(manifest)])
 
     def test_a_table_kept_on_delete_only_leaves_the_catalog(self) -> None:
-        from gcs_fakes import FakeGcs
+        store = MemoryStore()
+        store.write(f"{LOCATION}/metadata/catalog-pointer.json", b'{"format": 1}')
+        store.write(f"{LOCATION}/data/ts_day=2026-10-18/p00.parquet", b"rows")
 
-        store = FakeGcs()
-        store.put(f"{LOCATION}/metadata/catalog-pointer.json", b'{"format": 1}')
-        store.put(f"{LOCATION}/data/ts_day=2026-10-18/p00.parquet", b"rows")
-
-        result = retire_table_pointer(location=LOCATION, materialization_id="mat-1", client=store.client())
+        result = retire_table_pointer(location=LOCATION, materialization_id="mat-1", store=store)
 
         self.assertEqual("destination_cleanup_disabled", result.skipped_reason)
-        self.assertIsNone(store.get(f"{LOCATION}/metadata/catalog-pointer.json"))
-        self.assertEqual(b'{"format": 1}', store.get(f"{LOCATION}/metadata/catalog-pointer.dropped.json"))
-        self.assertEqual(b"rows", store.get(f"{LOCATION}/data/ts_day=2026-10-18/p00.parquet"))
+        self.assertIsNone(store.read(f"{LOCATION}/metadata/catalog-pointer.json"))
+        self.assertEqual(b'{"format": 1}', store.read(f"{LOCATION}/metadata/catalog-pointer.dropped.json"))
+        self.assertEqual(b"rows", store.read(f"{LOCATION}/data/ts_day=2026-10-18/p00.parquet"))
 
 
 class FakeMetadataClient:

@@ -128,7 +128,6 @@ class JoinTests(unittest.TestCase):
 
 class DestinationTests(unittest.TestCase):
     def test_gcs_destinations(self) -> None:
-        self.assertEqual(GCS_DESTINATION_PATTERN.pattern, config.GCS_DESTINATION_PATTERN.pattern)
         accepted = ["gs://my-lake", "gs://ab", "gs://lake.example_1-x", "gs://lake/prefix", "gs://lake/a/b/c.d", "gs://lake/"]
         refused = ["gs://a", "gs://My-Lake", "gs://-lake", "gs://lake-", "gs://lake_", "gs://la ke", "gs://", "gs:/lake"]
         self._check("gs", accepted, refused)
@@ -230,11 +229,11 @@ class DestinationTests(unittest.TestCase):
                 self.assertEqual(normalize_destination_uri(value), config.normalize_destination_uri(value))
         self.assertEqual(normalize_destination_uri(" s3://lake/prod/ "), "s3://lake/prod")
 
-    def test_gcs_validation_agrees_with_config(self) -> None:
-        values = ["gs://lake", "gs://a", "gs://Lake", "gs://lake/p/q", "gs://lake-", "gs://l.a_k-e", "gs://lake/" + "x" * 1020]
-        for value in values:
-            with self.subTest(value=value):
-                self.assertEqual(is_destination_uri(value), config.is_gcs_destination_uri(value))
+    def test_config_validates_with_these_rules(self) -> None:
+        self.assertIs(config.destination_problem, destination_problem)
+        self.assertIs(config.is_destination_uri, is_destination_uri)
+        self.assertIsNone(config.ControlPlaneConfig(allow_file_destinations=True).destination_problem("file:///tmp/lake"))
+        self.assertIn("tests only", config.ControlPlaneConfig().destination_problem("file:///tmp/lake"))
 
     def _check(self, scheme: str, accepted: list[str], refused: list[str]) -> None:
         pattern = {"gs": GCS_DESTINATION_PATTERN, "s3": S3_DESTINATION_PATTERN, "abfss": AZURE_DESTINATION_PATTERN}[scheme]

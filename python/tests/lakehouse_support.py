@@ -1,4 +1,9 @@
-"""Shared helpers for the lakehouse tests: a table on the fake GCS, rows written as data files."""
+"""Shared helpers for the lakehouse tests: a table in an object store, rows written as data files.
+
+`LakeFixture` keeps its table in a `MemoryStore` unless it is given another `ObjectStore` - such as
+`GcsStore(client=FakeGcs().client())`, to run the same test through the GCS store and the client
+double behind it. It writes only through the store's contract, so any store will do.
+"""
 
 from __future__ import annotations
 
@@ -11,9 +16,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from gcs_fakes import FakeGcs  # noqa: E402
-
-from midstream.lakehouse.catalog import GcsPointerCatalog, StaticTableDirectory, TableEntry  # noqa: E402
+from midstream.lakehouse.catalog import PointerCatalog, StaticTableDirectory, TableEntry  # noqa: E402
 from midstream.lakehouse.commits import AnnouncedFile, PendingFiles, commit_append, plan_append  # noqa: E402
 from midstream.lakehouse.files import data_file_uri, partition_text, partition_values, protection_label_suffix  # noqa: E402
 from midstream.lakehouse.offsets import committed_offsets  # noqa: E402
@@ -24,6 +27,7 @@ from midstream.lakehouse.schema.forkmap import ForkMap  # noqa: E402
 from midstream.lakehouse.schema.infer import infer  # noqa: E402
 from midstream.lakehouse.schema.policy import evolve  # noqa: E402
 from midstream.lakehouse.schema.index import build_index  # noqa: E402
+from midstream.lakehouse.store import MemoryStore, ObjectStore, scheme_of, set_store  # noqa: E402
 from midstream.lakehouse.tables import (  # noqa: E402
     build_schema,
     new_table_metadata,
@@ -42,9 +46,12 @@ BASE_TIME = datetime(2026, 10, 18, 10, 0, tzinfo=UTC)
 
 
 class LakeFixture:
-    """A fake bucket holding a materializer table, and helpers to add data files to it.
+    """An object store holding a materializer table, and helpers to add data files to it.
 
-    Several fixtures can share one bucket (`store`): a materialization's tables, one per topic.
+    `store` is the fixture's `ObjectStore`: a new `MemoryStore` unless one is given. Several
+    fixtures can share one store: a materialization's tables, one per topic. The catalog reads and
+    writes through it, never through the process's stores; `install()` makes it the process's
+    store for the location's scheme too, for code that finds its store by URI (`store_for`).
     """
 
     def __init__(
@@ -54,21 +61,20 @@ class LakeFixture:
         location: str = LOCATION,
         identifier: tuple[str, str] = IDENTIFIER,
         source_topic: str = "orders",
-        store: FakeGcs | None = None,
+        store: ObjectStore | None = None,
         materialization_id: str = MATERIALIZATION_ID,
         protection_policy=None,
         protection_revision: int = 1,
     ) -> None:
         """With `protection_policy`, the table is created as a materialization of this release creates
         it: schema 0 from masked samples, and its `materializer.protection` property (design §5.5)."""
-        self.store = FakeGcs() if store is None else store
-        self.client = self.store.client()
+        self.store: ObjectStore = MemoryStore() if store is None else store
         self.location = location
         self.identifier = identifier
         self.materialization_id = materialization_id
         self.entry = TableEntry(identifier=identifier, location=location, materialization_id=materialization_id)
         self.directory = StaticTableDirectory([self.entry])
-        self.catalog = GcsPointerCatalog(directory=self.directory, client=self.client, writer="test")
+        self.catalog = PointerCatalog(directory=self.directory, store=self.store, writer="test")
         self.granularity = granularity
         if protection_policy is not None:
             plan = ProtectionPlan.for_policy(protection_policy, secret=SHAPE_ONLY_SECRET)
@@ -97,8 +103,19 @@ class LakeFixture:
             identifier, location=location, materialization_id=materialization_id, metadata=metadata
         )
         self._tmp = tempfile.TemporaryDirectory()
+        self._installed: str | None = None
+
+    def install(self) -> None:
+        """Make the fixture's store the process's store for its location's scheme (`set_store`), for
+        code that finds its store by URI - a committer, the compaction worker, the tail's seed.
+        `close()` removes it again."""
+        self._installed = scheme_of(self.location)
+        set_store(self._installed, self.store)
 
     def close(self) -> None:
+        if self._installed is not None:
+            set_store(self._installed, None)
+            self._installed = None
         self._tmp.cleanup()
 
     def load(self):
@@ -112,7 +129,7 @@ class LakeFixture:
                 pending.add(item)
         table = self.load()
         plan = plan_append(pending.seals(), committed_offsets(table.metadata), max_files=10_000, max_bytes=1 << 50)
-        return commit_append(table, plan, runtime="test-runtime", client=self.client)
+        return commit_append(table, plan, runtime="test-runtime", store=self.store)
 
     def write_seal(
         self,

@@ -124,8 +124,9 @@ _DELETE_ERROR_STATUSES: Final = {
 #: Words in an unknown code that say the failure is passing (throttling, a busy or failing server).
 _PASSING_FAILURE_WORDS: Final = ("Internal", "Unavailable", "SlowDown", "Throttl", "Timeout", "TooMany", "Busy")
 
-#: Why one key of a `DeleteObjects` request was not deleted: the status, a message, the exception.
-_KeyFailure = tuple[int | None, str, BaseException | None]
+#: Why one key of a `DeleteObjects` request was not deleted: the status, a message, the exception,
+#: and whether the request failed as a whole.
+_KeyFailure = tuple[int | None, str, BaseException | None, bool]
 
 
 class S3Store:
@@ -308,8 +309,8 @@ class S3Store:
             if failure is None:
                 deleted.append(uri)
             else:
-                status, message, error = failure
-                failed.append(DeleteFailure(uri, status, message, error=error))
+                status, message, error, whole_request = failure
+                failed.append(DeleteFailure(uri, status, message, error=error, whole_request=whole_request))
         return DeleteOutcome(deleted=tuple(deleted), failed=tuple(failed))
 
     def _delete_chunk(self, bucket: str, keys: list[str]) -> dict[tuple[str, str], _KeyFailure]:
@@ -323,7 +324,7 @@ class S3Store:
             error = store_error(exc, f"s3://{bucket}/{keys[0]}")
             status = None if error is None else error.status
             message = f"{type(exc).__name__}: {exc}"
-            return {(bucket, key): (status, message, exc) for key in keys}
+            return {(bucket, key): (status, message, exc, True) for key in keys}
         requested = set(keys)
         failures: dict[tuple[str, str], _KeyFailure] = {}
         for entry in response.get("Errors") or ():
@@ -332,7 +333,7 @@ class S3Store:
             if key not in requested or code in _MISSING_CODES:
                 continue  # a key this request did not send; a missing object counts as deleted
             message = f"{code}: {entry.get('Message')}" if entry.get("Message") else code or "no error code"
-            failures[(bucket, key)] = (delete_error_status(code), message, None)
+            failures[(bucket, key)] = (delete_error_status(code), message, None, False)
         return failures
 
     def list(self, prefix: str) -> Iterator[ObjectInfo]:

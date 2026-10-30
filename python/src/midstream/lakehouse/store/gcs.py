@@ -1,14 +1,14 @@
 """Google Cloud Storage behind the `ObjectStore` contract, through google-cloud-storage.
 
-A version is the object's generation. Every operation makes the requests the code it replaces made,
-with the same arguments (`lakehouse/gcs.py`, `pointer.py`, `io.py`, `storage/objects.py`): a read is
-one `download_as_bytes`, whose answer carries the generation read; a conditional write passes
-`if_generation_match` (0: create-only); deletes go a hundred to a batch request of the JSON API. The
-library's own retries apply as before - except inside a batch, which it never retries, and which
-`delete_many` leaves to its caller. One thing differs from `pointer.py`: a download whose answer names
-no generation raises `StoreError` (`NoGeneration`) instead of asking for the generation in a second
-request, whose answer could belong to a newer object than the bytes - and a compare-and-swap with it
-would overwrite the write in between. GCS and fake-gcs-server always name it.
+A version is the object's generation. Every operation makes the requests Midstream made to GCS
+before the store layer existed, with the same arguments: a read is one `download_as_bytes`, whose
+answer carries the generation read; a conditional write passes `if_generation_match` (0:
+create-only); deletes go a hundred to a batch request of the JSON API. The library's own retries
+apply - except inside a batch, which it never retries, and which `delete_many` leaves to its caller.
+A download whose answer names no generation raises `StoreError` (`NoGeneration`) rather than asking
+for the generation in a second request, whose answer could belong to a newer object than the bytes -
+and a compare-and-swap with it would overwrite the write in between. GCS and fake-gcs-server always
+name it.
 
 Errors are mapped once, here: the library's `PreconditionFailed` (412) to `PreconditionFailedError`,
 `NotFound` (404) to `ObjectNotFoundError` or the operation's answer for a missing object, any other API
@@ -317,7 +317,7 @@ def _delete_batch(client: Any, bucket: Any, chunk: list[tuple[int, str, str]]) -
         error = store_error(exc, chunk[0][1])
         status = None if error is None else error.status
         message = f"{type(exc).__name__}: {exc}"
-        return [DeleteFailure(uri, status, message, error=exc) for _, uri, _ in chunk]
+        return [DeleteFailure(uri, status, message, error=exc, whole_request=True) for _, uri, _ in chunk]
     failures: list[DeleteFailure | None] = []
     for (_, uri, _), response in zip(chunk, responses):
         status = response.status_code

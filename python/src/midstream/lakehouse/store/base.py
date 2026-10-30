@@ -136,12 +136,16 @@ class DeleteFailure:
 
     `status` is the HTTP status of the answer, None when the request got none. `error` is the
     exception behind the failure when there was one, kept for chaining; it takes no part in equality.
+    `whole_request` is True when the store turned away the request that carried this delete as a
+    whole, rather than answering for this object: every delete in that request failed alike, and
+    another request like it would most likely fare the same.
     """
 
     uri: str
     status: int | None
     message: str
     error: BaseException | None = field(default=None, compare=False, repr=False)
+    whole_request: bool = False
 
     @property
     def retryable(self) -> bool:

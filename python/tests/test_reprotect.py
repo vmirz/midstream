@@ -18,7 +18,6 @@ from lakehouse_support import LakeFixture  # noqa: E402
 
 from midstream.lakehouse.commits import commit_protection, commit_schema, fork_map_of  # noqa: E402
 from midstream.lakehouse.files import build_data_file, protection_label_of, read_parquet_footer  # noqa: E402
-from midstream.lakehouse.gcs import delete_object, set_shared_storage_client  # noqa: E402
 from midstream.lakehouse.lifecycle import schema_to_json  # noqa: E402
 from midstream.lakehouse.maintenance import commit_reprotect, live_data_files, purge_before  # noqa: E402
 from midstream.maintenance_app.reprotect_worker import run as run_reprotect  # noqa: E402
@@ -285,8 +284,8 @@ class RewriteTests(unittest.TestCase):
     def setUp(self) -> None:
         self.table = ReprotectTable(PLAIN_SEED)
         self.addCleanup(self.table.close)
-        set_shared_storage_client(self.table.lake.client)
-        self.addCleanup(set_shared_storage_client, None)
+        # The reprotect worker finds its store by URI, as in the maintenance app.
+        self.table.lake.install()
         work = tempfile.TemporaryDirectory()
         self.addCleanup(work.cleanup)
         self.work = work.name
@@ -319,7 +318,7 @@ class RewriteTests(unittest.TestCase):
         inputs = {item.path: item for item in plan.inputs}
         rewritten = []
         for output in result["outputs"]:
-            footer, size = read_parquet_footer(self.table.lake.client, output["uri"])
+            footer, size = read_parquet_footer(self.table.lake.store, output["uri"])
             data_file = build_data_file(
                 table.metadata, file_path=output["uri"], file_size=size, parquet_metadata=footer, granularity="day", partition=Record(*output["partition"])
             )
@@ -420,16 +419,16 @@ class RewriteTests(unittest.TestCase):
         result = purge_before(
             self.table.load,
             snapshot_id,
-            client=self.table.lake.client,
+            store=store,
             now=datetime.now(tz=UTC),
             orphan_min_age_hours=24,
-            delete=lambda uri: delete_object(self.table.lake.client, uri),
+            delete=store.delete,
         )
         table = self.table.load()
         self.assertEqual([snapshot_id], [item.snapshot_id for item in table.metadata.snapshots])
         self.assertEqual(2, result.expired)
         for path in replaced:
-            self.assertNotIn(tuple(path.removeprefix("gs://").split("/", 1)), store.objects, f"{path} is still in the bucket")
+            self.assertNotIn(path, store.names(), f"{path} is still in the bucket")
         self.assertGreaterEqual(result.deleted, len(replaced))
         self.assertEqual(0, result.failed)
         self.assertEqual([h("jane1@example.com"), h("jane2@example.com")], [row["email"] for row in self.rows()])

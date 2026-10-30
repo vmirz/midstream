@@ -55,6 +55,7 @@ from midstream.lakehouse.offsets import (
 from midstream.lakehouse.pointer import utc_now
 from midstream.lakehouse.schema.forkmap import ForkMap
 from midstream.lakehouse.schema.policy import Evolution
+from midstream.lakehouse.store import ObjectStore, store_for
 from midstream.lakehouse.tables import PROPERTY_FORK_MAP, PROPERTY_PROTECTION, partition_granularity_of
 
 LOGGER = logging.getLogger(__name__)
@@ -448,13 +449,14 @@ def commit_append(
     plan: AppendPlan,
     *,
     runtime: str,
-    client: Any,
+    store: ObjectStore | None = None,
     footer_pool: ThreadPoolExecutor | None = None,
     committed_at: str | None = None,
     commit_id: str | None = None,
 ) -> AppendResult:
     """Commit a plan's accepted files as one merge-append snapshot carrying the new offsets.
 
+    Each file's footer is read through `store`, else through the process's store for its scheme.
     Commits once: a `CommitFailedException` propagates, and the caller refreshes, plans again and
     retries - which re-judges every file against offsets another commit may have moved.
     """
@@ -466,7 +468,7 @@ def commit_append(
 
     def describe(item: AnnouncedFile):
         try:
-            footer, size = read_parquet_footer(client, item.file_path)
+            footer, size = read_parquet_footer(store_for(item.file_path) if store is None else store, item.file_path)
         except FileNotFoundError as error:
             raise MissingDataFileError(item.file_path) from error
         return build_data_file(

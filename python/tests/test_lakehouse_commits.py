@@ -239,7 +239,7 @@ class AppendCommitTests(unittest.TestCase):
                 pending.add(item)
         table = self.lake.load()
         plan = plan_append(pending.seals(), committed_offsets(table.metadata), **UNLIMITED)
-        return plan, commit_append(table, plan, runtime="develop-mat-a1b2", client=self.lake.client)
+        return plan, commit_append(table, plan, runtime="develop-mat-a1b2", store=self.lake.store)
 
     def test_snapshot_carries_offsets_and_totals(self) -> None:
         plan, result = self.commit(
@@ -340,7 +340,7 @@ class AppendCommitTests(unittest.TestCase):
             for item in announced:
                 pending.add(item)
             table = lake.load()
-            commit_append(table, plan_append(pending.seals(), committed_offsets(table.metadata), **UNLIMITED), runtime="rt", client=lake.client)
+            commit_append(table, plan_append(pending.seals(), committed_offsets(table.metadata), **UNLIMITED), runtime="rt", store=lake.store)
             table = lake.load()
             data_file = next(iter(table.scan().plan_files())).file
             email_id = table.schema().find_field("customer.email").field_id
@@ -408,7 +408,7 @@ class FileNamingTests(unittest.TestCase):
         lake = LakeFixture({"order_id": "x"})
         try:
             announced = lake.write_seal(partition=0, after_offset=-1, offsets=[1])
-            footer, size = read_parquet_footer(lake.client, announced[0].file_path)
+            footer, size = read_parquet_footer(lake.store, announced[0].file_path)
             self.assertEqual(footer.num_rows, 1)
             self.assertEqual(size, announced[0].file_size)
         finally:

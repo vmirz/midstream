@@ -35,7 +35,7 @@ AZURE_DFS_SUFFIX: Final = ".dfs.core.windows.net"
 
 #: At most this many characters in a destination.
 DESTINATION_MAX_LENGTH: Final = 1024
-#: A GCS bucket and optionally a prefix in it (as `config.GCS_DESTINATION_PATTERN`).
+#: A GCS bucket and optionally a prefix in it.
 GCS_DESTINATION_PATTERN: Final = re.compile(r"^gs://[a-z0-9][a-z0-9._-]*[a-z0-9](/\S*)?$")
 #: An S3 bucket - 3 to 63 lowercase letters, digits, dots and hyphens, starting and ending with a
 #: letter or digit - and optionally a prefix in it.

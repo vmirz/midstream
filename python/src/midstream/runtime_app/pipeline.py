@@ -51,6 +51,7 @@ import uuid
 from midstream.lakehouse.commits import AnnouncedFile
 from midstream.lakehouse.offsets import CommittedOffsets
 from midstream.lakehouse.schema.policy import evolve, limits_of
+from midstream.lakehouse.store import ObjectStore
 from midstream.protocol_logging import elapsed_ms, log_protocol_event, monotonic_ms
 from midstream.runtime_app import acks, flow
 from midstream.runtime_app.config import RuntimeAppConfig, get_runtime_app_config
@@ -138,8 +139,8 @@ class BatchPipeline:
 
     def __init__(self) -> None:
         self.sealer = seal_in_subprocess
-        #: Storage client for uploads and table reads; None builds the process's shared one.
-        self.storage_client: Any = None
+        #: The object store for uploads and table reads; None: each location's own (`store_for`).
+        self.store: ObjectStore | None = None
         self._app: Any = None
         self._state_table: Any = None
         #: The runtime's tables, by table name: all of them once the writer has handled a record.
@@ -259,11 +260,11 @@ class BatchPipeline:
         )
 
     async def _offsets_for_session(self, app, context: TableContext, *, fresh: bool = False) -> CommittedOffsets:
-        """The table's committed offsets: from GCS once per rebalance generation, never older than the state table's."""
+        """The table's committed offsets: from the table once per rebalance generation, never older than the state table's."""
         generation = _generation(app)
         cached = self._session_offsets.get(context.name)
         if fresh or cached is None or cached[0] != generation or generation is None:
-            offsets = await load_table_offsets(context, app=app, client=self.storage_client)
+            offsets = await load_table_offsets(context, app=app, store=self.store)
             self._session_offsets[context.name] = (generation, offsets)
         else:
             offsets = cached[1]
@@ -714,7 +715,7 @@ class BatchPipeline:
             loop = asyncio.get_running_loop()
             files = await loop.run_in_executor(
                 self._executor_for(config),
-                partial(upload_batch_files, batch, client=self.storage_client),
+                partial(upload_batch_files, batch, store=self.store),
             )
         except asyncio.CancelledError:
             raise

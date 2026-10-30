@@ -43,6 +43,7 @@ class ControlPlaneConfigTests(unittest.TestCase):
             "PROTOCOL_LOGGING_ENABLED",
             "PROTOCOL_LOG_SLOW_WAIT_SECONDS",
             "CONTROL_PLANE_DEFAULT_DESTINATION_URI",
+            "CONTROL_PLANE_ALLOW_FILE_DESTINATIONS",
             "CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC",
             "CONTROL_PLANE_STORAGE_PREFIX",
             "CONTROL_PLANE_DEFAULT_PARTITION_GRANULARITY",
@@ -202,6 +203,37 @@ template:
         os.environ["CONTROL_PLANE_DEFAULT_DESTINATION_URI"] = " gs://example-bucket/lake// "
 
         self.assertEqual(get_config().default_destination_uri, "gs://example-bucket/lake")
+
+    def test_get_config_reads_a_destination_on_any_backend(self) -> None:
+        for raw, expected in (
+            ("s3://example-bucket/lake/", "s3://example-bucket/lake"),
+            (" abfss://lake@example.dfs.core.windows.net/prod// ", "abfss://lake@example.dfs.core.windows.net/prod"),
+        ):
+            with self.subTest(value=raw):
+                get_config.cache_clear()
+                os.environ["CONTROL_PLANE_DEFAULT_DESTINATION_URI"] = raw
+                config = get_config()
+                self.assertEqual(expected, config.default_destination_uri)
+                self.assertIsNone(config.destination_problem(config.default_destination_uri))
+
+    def test_file_destinations_serve_only_a_deployment_that_allows_them(self) -> None:
+        config = get_config()
+        self.assertFalse(config.allow_file_destinations)
+        self.assertIn("tests only", config.destination_problem("file:///tmp/lake"))
+
+        os.environ["CONTROL_PLANE_ALLOW_FILE_DESTINATIONS"] = "true"
+        get_config.cache_clear()
+        config = get_config()
+        self.assertTrue(config.allow_file_destinations)
+        self.assertIsNone(config.destination_problem("file:///tmp/lake"))
+        # Allowing files takes nothing away from the deployable schemes, and admits no other.
+        self.assertIsNone(config.destination_problem("s3://example-bucket"))
+        self.assertIsNotNone(config.destination_problem("ftp://example-bucket"))
+
+        os.environ["CONTROL_PLANE_ALLOW_FILE_DESTINATIONS"] = "sometimes"
+        get_config.cache_clear()
+        with self.assertRaisesRegex(ValueError, "boolean environment values"):
+            get_config()
 
 
 if __name__ == "__main__":

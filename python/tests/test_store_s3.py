@@ -337,6 +337,7 @@ class S3DeleteManyTests(StubbedStoreTestCase):
                 "s3://lake/t/throttled": (503, True, "RequestThrottledLater"),
             },
         )
+        self.assertFalse(any(failure.whole_request for failure in outcome.failed))
 
     def test_a_request_that_fails_fails_every_key_in_it_with_its_status(self) -> None:
         uris = [f"s3://lake/t/object-{index}" for index in range(3)]
@@ -347,6 +348,7 @@ class S3DeleteManyTests(StubbedStoreTestCase):
                 self.assertEqual(outcome.deleted, ())
                 self.assertEqual([(failure.uri, failure.status, failure.retryable) for failure in outcome.failed], [(uri, status, retryable) for uri in uris])
                 self.assertTrue(all(code in failure.message for failure in outcome.failed))
+                self.assertTrue(all(failure.whole_request for failure in outcome.failed))
 
     def test_keys_are_grouped_by_bucket_and_each_sent_once(self) -> None:
         uris = ["s3://lake/a", "s3://other/b", "s3://lake/c", "s3://lake/a"]
@@ -460,6 +462,7 @@ class S3TransportFailureTests(unittest.TestCase):
         outcome = self.store.delete_many(["s3://lake/a", "s3://lake/b"])
         self.assertEqual(outcome.deleted, ())
         self.assertEqual([(failure.uri, failure.status, failure.retryable) for failure in outcome.failed], [("s3://lake/a", None, True), ("s3://lake/b", None, True)])
+        self.assertTrue(all(failure.whole_request for failure in outcome.failed))
         self.assertIs(outcome.failed[0].error, self.failure)
 
     def test_a_missing_credential_is_raised_as_it_is(self) -> None:

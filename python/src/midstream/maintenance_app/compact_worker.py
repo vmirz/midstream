@@ -96,7 +96,7 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
     from pyiceberg.io.pyarrow import pyarrow_to_schema
 
     from midstream.lakehouse.files import compacted_file_uri, partition_text_of, protection_label_of
-    from midstream.lakehouse.gcs import parse_gcs_uri, shared_storage_client
+    from midstream.lakehouse.store import ABSENT, store_for
     from midstream.lakehouse.lifecycle import schema_from_json
     from midstream.lakehouse.maintenance import CompactionPlan
     from midstream.lakehouse.parquet import arrow_schema, project_batch
@@ -114,7 +114,6 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
     budget = int(job.get("memory_budget_bytes") or DEFAULT_MEMORY_BUDGET_BYTES)
     row_group_rows = int(job.get("row_group_rows") or DEFAULT_ROW_GROUP_ROWS)
     target_bytes = int(job.get("target_file_size_bytes") or DEFAULT_TARGET_FILE_SIZE_BYTES)
-    client = shared_storage_client()
     outputs: list[dict[str, Any]] = []
     chunk: list[Any] = []
     chunk_bytes = 0
@@ -183,8 +182,7 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
             unique=f"{plan.job_id[:16]}-{current['index']}-{uuid.uuid4().hex[:8]}",
             protection_label=current["label"],
         )
-        bucket_name, name = parse_gcs_uri(uri)
-        client.bucket(bucket_name).blob(name).upload_from_filename(str(current["local"]), if_generation_match=0)
+        store_for(uri).put_file(uri, str(current["local"]), if_version=ABSENT)
         low, high = current["low"], current["high"]
         outputs.append(
             {
@@ -211,9 +209,8 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
             flush()
             close()
             partition, partition_key, label = item.partition, item.partition_key, item_label
-        bucket_name, name = parse_gcs_uri(item.path)
         local_input = confined_path(work_dir, f"input-{position}.parquet")
-        client.bucket(bucket_name).blob(name).download_to_filename(str(local_input))
+        store_for(item.path).get_to_file(item.path, str(local_input))
         with pq.ParquetFile(str(local_input)) as parquet:
             file_schema = pyarrow_to_schema(parquet.schema_arrow)
             for batch in parquet.iter_batches(batch_size=READ_BATCH_ROWS):

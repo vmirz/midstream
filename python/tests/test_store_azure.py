@@ -433,12 +433,14 @@ class AzureDeleteManyTests(FakeStoreTestCase):
                 (self.uri("t/container"), 404, False, "404 Not Found (ContainerNotFound)"),
             ],
         )
+        self.assertFalse(any(failure.whole_request for failure in outcome.failed))
 
     def test_a_batch_that_answers_for_too_few_blobs_fails_them_all(self) -> None:
         self.calls.script["delete_blobs"].append([FakeResponse(202)])
         outcome = self.store.delete_many([self.uri("t/a"), self.uri("t/b")])
         self.assertEqual(outcome.deleted, ())
         self.assertEqual([(failure.status, failure.retryable) for failure in outcome.failed], [(None, True), (None, True)])
+        self.assertTrue(all(failure.whole_request for failure in outcome.failed))
         # How an emulator refuses a batch whose deletes name their blobs wrongly: one answer for all.
         self.calls.script["delete_blobs"].append([FakeResponse(400, "InvalidInput")])
         outcome = self.store.delete_many([self.uri("t/a"), self.uri("t/b")])
@@ -457,6 +459,7 @@ class AzureDeleteManyTests(FakeStoreTestCase):
                 outcome = self.store.delete_many(uris)
                 self.assertEqual(outcome.deleted, ())
                 self.assertEqual([(item.uri, item.status) for item in outcome.failed], [(uri, status) for uri in uris])
+                self.assertTrue(all(item.whole_request for item in outcome.failed))
                 self.assertIs(outcome.failed[0].error, failure)
                 # A real failure never turns into a request per blob.
                 self.assertEqual(self.calls.of("delete_blob"), [])

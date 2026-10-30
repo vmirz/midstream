@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from midstream.config import ControlPlaneConfig
 from midstream.kafka import KafkaAdminClient
+from midstream.lakehouse.store import ObjectStore
 from midstream.models import EventCause, MaterializationWorkEvent
 from midstream.observation import DEFAULT_OBSERVATION_BACKOFF_SECONDS, build_one_shot_observation_policy
 from midstream.kubernetes import KasprAppClient
@@ -25,7 +26,6 @@ from midstream.services.workflow import FollowUp, follow_ups, scheduled_request_
 from midstream.services.protection import protection_policy_output_for_apply
 from midstream.services.settings import runtime_settings_output_for_apply
 from midstream.settings import effective_runtime_config, resolve_config
-from midstream.storage.objects import ObjectStoreClientProtocol
 from midstream.storage.table import TableProtocol
 
 MAX_MISSING_STATE_RETRIES = len(DEFAULT_OBSERVATION_BACKOFF_SECONDS)
@@ -42,7 +42,7 @@ def handle_work_event(
     *,
     kaspr_app_client: KasprAppClient | None = None,
     kafka_admin_client: KafkaAdminClient | None = None,
-    object_store_client: ObjectStoreClientProtocol | None = None,
+    object_store: ObjectStore | None = None,
     settings_table: TableProtocol | None = None,
     config: ControlPlaneConfig | None = None,
 ) -> FollowUp:
@@ -55,7 +55,7 @@ def handle_work_event(
         discovery_service,
         kaspr_app_client=kaspr_app_client,
         kafka_admin_client=kafka_admin_client,
-        object_store_client=object_store_client,
+        object_store=object_store,
         config=cfg,
         runtime_config=_runtime_config_for(work_event, settings_table, cfg),
     )
@@ -68,7 +68,7 @@ def handle_work_event_for_output(
     *,
     kaspr_app_client: KasprAppClient | None = None,
     kafka_admin_client: KafkaAdminClient | None = None,
-    object_store_client: ObjectStoreClientProtocol | None = None,
+    object_store: ObjectStore | None = None,
     settings_table: TableProtocol | None = None,
     config: ControlPlaneConfig | None = None,
 ) -> dict | None:
@@ -82,7 +82,7 @@ def handle_work_event_for_output(
         discovery_service,
         kaspr_app_client=kaspr_app_client,
         kafka_admin_client=kafka_admin_client,
-        object_store_client=object_store_client,
+        object_store=object_store,
         config=cfg,
         runtime_config=_runtime_config_for(work_event, settings_table, cfg),
     )
@@ -97,7 +97,7 @@ def handle_work_event_for_routed_output(
     *,
     kaspr_app_client: KasprAppClient | None = None,
     kafka_admin_client: KafkaAdminClient | None = None,
-    object_store_client: ObjectStoreClientProtocol | None = None,
+    object_store: ObjectStore | None = None,
     settings_table: TableProtocol | None = None,
     config: ControlPlaneConfig | None = None,
 ) -> Iterator[dict]:
@@ -111,7 +111,7 @@ def handle_work_event_for_routed_output(
             discovery_service,
             kaspr_app_client=kaspr_app_client,
             kafka_admin_client=kafka_admin_client,
-            object_store_client=object_store_client,
+            object_store=object_store,
             config=cfg,
             runtime_config=_runtime_config_for(work_event, settings_table, cfg),
         )
@@ -132,7 +132,7 @@ async def handle_work_event_for_routed_output_async(
     *,
     kaspr_app_client: KasprAppClient | None = None,
     kafka_admin_client: KafkaAdminClient | None = None,
-    object_store_client: ObjectStoreClientProtocol | None = None,
+    object_store: ObjectStore | None = None,
     settings_table: TableProtocol | None = None,
     config: ControlPlaneConfig | None = None,
 ) -> Generator[dict, None, None]:
@@ -155,7 +155,7 @@ async def handle_work_event_for_routed_output_async(
             discovery_service,
             kaspr_app_client=kaspr_app_client,
             kafka_admin_client=kafka_admin_client,
-            object_store_client=object_store_client,
+            object_store=object_store,
             config=cfg,
             runtime_config=_runtime_config_for(work_event, settings_table, cfg),
         )

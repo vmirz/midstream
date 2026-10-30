@@ -11,6 +11,9 @@ from typing import Any
 
 import yaml
 
+# Destinations are checked by the store layer's rules, the same for every backend; imported here for
+# everything that validates one with the deployment's configuration.
+from midstream.lakehouse.store.uris import destination_problem, is_destination_uri, normalize_destination_uri
 from midstream.protection.catalog import DEFAULT_PROTECTION_TEXT, ProtectionTextError, normalize_protection_text
 
 ALLOWED_LIST_LIMITS = ("10", "30", "100", "all")
@@ -68,8 +71,11 @@ RUNTIME_AUTOSCALE_COOLDOWN_SECONDS = 300
 # Most source topics one materialization may read. Each is a table its one committer commits to and
 # maintains, one at a time, so the bound keeps a commit cycle and the maintenance rotation short.
 MAX_MATERIALIZATION_TOPICS = 20
-# Where every new materialization's tables are created. Unset, no materialization can be created.
+# Where every new materialization's tables are created: gs://, s3:// or abfss:// (lakehouse/store/
+# uris.py). Unset, no materialization can be created. file:// destinations serve tests only, and only
+# where ALLOW_FILE_DESTINATIONS lets them.
 DEFAULT_DESTINATION_URI: str | None = None
+ALLOW_FILE_DESTINATIONS = False
 DESTINATION_CLEANUP_ENABLED = True
 CONSUMER_LAG_REFRESH_BATCH_LIMIT = 100
 TOPIC_ANALYSIS_MAX_TOPICS = 20
@@ -114,29 +120,6 @@ LIVE_TAIL_FETCH_WAIT_MS = 200
 LIVE_TAIL_MAX_RECORDS_PER_SECOND_PER_TABLE = 5_000
 LIVE_TAIL_PEEK_MAX_ROWS = 1_000
 LIVE_TAIL_IDLE_SECONDS = 600
-
-
-#: A destination a table can live under: a GCS bucket, and optionally a prefix in it.
-GCS_DESTINATION_PATTERN = re.compile(r"^gs://[a-z0-9][a-z0-9._-]*[a-z0-9](/\S*)?$")
-GCS_DESTINATION_MAX_LENGTH = 1024
-
-
-def is_gcs_destination_uri(value: str | None) -> bool:
-    """Whether `value` (normalized) is a `gs://bucket[/prefix]` a table can be created under."""
-    return value is not None and len(value) <= GCS_DESTINATION_MAX_LENGTH and GCS_DESTINATION_PATTERN.match(value) is not None
-
-
-def normalize_destination_uri(value: str | None) -> str | None:
-    """Trim a destination prefix, dropping trailing slashes so object paths join cleanly.
-
-    Blank is no destination at all, which is how an unset default reads from the environment.
-    """
-    if value is None:
-        return None
-    trimmed = value.strip()
-    if not trimmed:
-        return None
-    return trimmed.rstrip("/") or trimmed
 
 
 #: One email domain: labels of letters, digits and hyphens, at least two of them.
@@ -231,6 +214,8 @@ class ControlPlaneConfig:
     runtime_autoscale_cooldown_seconds: int = RUNTIME_AUTOSCALE_COOLDOWN_SECONDS
     max_materialization_topics: int = MAX_MATERIALIZATION_TOPICS
     default_destination_uri: str | None = DEFAULT_DESTINATION_URI
+    #: Whether a destination may be a `file:///` path (tests); never set by the chart.
+    allow_file_destinations: bool = ALLOW_FILE_DESTINATIONS
     destination_cleanup_enabled: bool = DESTINATION_CLEANUP_ENABLED
     consumer_lag_refresh_batch_limit: int = CONSUMER_LAG_REFRESH_BATCH_LIMIT
     topic_analysis_max_topics: int = TOPIC_ANALYSIS_MAX_TOPICS
@@ -274,6 +259,11 @@ class ControlPlaneConfig:
     def runtime_name_for_materialization(self, materialization_id: str) -> str:
         """The name of a materialization's dedicated runtime: always generated, never chosen."""
         return f"{self.default_runtime_name_prefix}-{materialization_id}"
+
+    def destination_problem(self, value: str | None) -> str | None:
+        """Why `value` (normalized) cannot be a destination here, in a sentence a person can act on;
+        None when it can. `file:///` paths only with `allow_file_destinations`."""
+        return destination_problem(value, allow_file=self.allow_file_destinations)
 
 
 def _resolve_default_namespace(*, in_cluster_namespace_file: str | None = None) -> str:
@@ -497,6 +487,10 @@ def get_config() -> ControlPlaneConfig:
         ),
         default_destination_uri=normalize_destination_uri(
             os.getenv("CONTROL_PLANE_DEFAULT_DESTINATION_URI")
+        ),
+        allow_file_destinations=_parse_bool_env(
+            os.getenv("CONTROL_PLANE_ALLOW_FILE_DESTINATIONS"),
+            default=ALLOW_FILE_DESTINATIONS,
         ),
         destination_cleanup_enabled=_parse_bool_env(
             os.getenv("CONTROL_PLANE_DESTINATION_CLEANUP_ENABLED"),

@@ -23,7 +23,6 @@ from midstream.config import (
     PARTITION_GRANULARITIES,
     ControlPlaneConfig,
     get_config,
-    is_gcs_destination_uri,
 )
 from midstream.identity.principals import Principal
 from midstream.kafka.metadata import KafkaMetadataClient
@@ -1533,11 +1532,12 @@ def deployment_destination(config: ControlPlaneConfig) -> str:
             "An administrator sets one on the Settings page, under Materializations.",
             reason="destination_not_configured",
         )
-    # Refused here, not when the tables are created: they live in Google Cloud Storage.
-    if not is_gcs_destination_uri(destination):
+    # Refused here, not when the tables are created: only a storage URI can hold them.
+    problem = config.destination_problem(destination)
+    if problem is not None:
         raise conflict(
-            f"No materialization can be created: the destination for tables, {destination}, is not a "
-            "gs:// URI. An administrator sets one on the Settings page, under Materializations.",
+            f"No materialization can be created: the destination for tables, {destination}, cannot hold "
+            f"them: {problem}. An administrator sets one on the Settings page, under Materializations.",
             reason="destination_not_configured",
         )
     return destination

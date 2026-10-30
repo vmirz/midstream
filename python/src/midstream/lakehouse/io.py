@@ -1,28 +1,25 @@
-"""A PyIceberg FileIO over the google-cloud-storage client.
+"""A PyIceberg FileIO over the object store layer: one implementation for every backend.
 
-PyIceberg reads table metadata, manifest lists and manifests through a FileIO, and writes manifests
-and manifest lists through one when it commits. Using the same storage client as everything else
-gives one set of credentials and one retry policy, and lets tests put an in-memory bucket behind
-the whole catalog. Data files never go through here: the runtime uploads them itself.
+PyIceberg reads table metadata, manifest lists, manifests and - in a scan - data files through a
+FileIO, and writes manifests and manifest lists through one when it commits. Going through the same
+store as everything else (`lakehouse/store/`) gives one set of credentials and one retry policy per
+backend, and lets tests put an in-memory store behind the whole catalog. The runtime uploads its
+data files itself.
 
-Reads download the whole object, which suits metadata files (kilobytes to a few megabytes).
+Each location is served by the store the FileIO was given (tests), else by the process's store for
+the location's scheme (`store_for`). Reads fetch the whole object, which suits metadata files
+(kilobytes to a few megabytes).
 """
 
 from __future__ import annotations
 
 import io
 from types import TracebackType
-from typing import Any
 
 from pyiceberg.io import FileIO, InputFile, InputStream, OutputFile, OutputStream
 from pyiceberg.typedef import EMPTY_DICT, Properties
 
-from midstream.lakehouse.gcs import (
-    is_not_found,
-    is_precondition_failed,
-    parse_gcs_uri,
-    shared_storage_client,
-)
+from midstream.lakehouse.store import ABSENT, ObjectNotFoundError, ObjectStore, PreconditionFailedError, store_for
 
 
 class _BytesInputStream(io.BytesIO):
@@ -40,36 +37,30 @@ class _BytesInputStream(io.BytesIO):
         self.close()
 
 
-class GcsInputFile(InputFile):
-    def __init__(self, location: str, client: Any) -> None:
-        super().__init__(location)
-        self._client = client
-        self._size: int | None = None
+class ObjectStoreInputFile(InputFile):
+    """One object to read: its size and existence from the store's `head`, its bytes from `get`."""
 
-    def _blob(self):
-        bucket, name = parse_gcs_uri(self.location)
-        return self._client.bucket(bucket).blob(name)
+    def __init__(self, location: str, store: ObjectStore) -> None:
+        super().__init__(location)
+        self._store = store
+        self._size: int | None = None
 
     def __len__(self) -> int:
         if self._size is None:
-            bucket, name = parse_gcs_uri(self.location)
-            blob = self._client.bucket(bucket).get_blob(name)
-            if blob is None:
+            info = self._store.head(self.location)
+            if info is None:
                 raise FileNotFoundError(self.location)
-            self._size = int(blob.size)
+            self._size = info.size
         return self._size
 
     def exists(self) -> bool:
-        bucket, name = parse_gcs_uri(self.location)
-        return self._client.bucket(bucket).get_blob(name) is not None
+        return self._store.head(self.location) is not None
 
     def open(self, seekable: bool = True) -> InputStream:
         try:
-            data = self._blob().download_as_bytes()
-        except Exception as exc:
-            if is_not_found(exc):
-                raise FileNotFoundError(self.location) from exc
-            raise
+            data, _ = self._store.get(self.location)
+        except ObjectNotFoundError as exc:
+            raise FileNotFoundError(self.location) from exc
         self._size = len(data)
         return _BytesInputStream(data)
 
@@ -77,7 +68,7 @@ class GcsInputFile(InputFile):
 class _UploadStream(io.BytesIO):
     """Buffers what PyIceberg writes and uploads it when closed."""
 
-    def __init__(self, output: "GcsOutputFile", *, overwrite: bool) -> None:
+    def __init__(self, output: "ObjectStoreOutputFile", *, overwrite: bool) -> None:
         super().__init__()
         self._output = output
         self._overwrite = overwrite
@@ -105,10 +96,16 @@ class _UploadStream(io.BytesIO):
         self.close()
 
 
-class GcsOutputFile(OutputFile):
-    def __init__(self, location: str, client: Any) -> None:
+class ObjectStoreOutputFile(OutputFile):
+    """One object to write, whole, when PyIceberg closes its stream.
+
+    `create(overwrite=False)` writes create-only: `FileExistsError` when the object is there, before
+    the write or by the time it lands. `overwrite=True` writes unconditionally.
+    """
+
+    def __init__(self, location: str, store: ObjectStore) -> None:
         super().__init__(location)
-        self._client = client
+        self._store = store
         self._written: int | None = None
 
     def __len__(self) -> int:
@@ -120,7 +117,7 @@ class GcsOutputFile(OutputFile):
         return self.to_input_file().exists()
 
     def to_input_file(self) -> InputFile:
-        return GcsInputFile(self.location, self._client)
+        return ObjectStoreInputFile(self.location, self._store)
 
     def create(self, overwrite: bool = False) -> OutputStream:
         if not overwrite and self.exists():
@@ -128,48 +125,40 @@ class GcsOutputFile(OutputFile):
         return _UploadStream(self, overwrite=overwrite)
 
     def _upload(self, data: bytes, *, overwrite: bool) -> None:
-        bucket, name = parse_gcs_uri(self.location)
-        blob = self._client.bucket(bucket).blob(name)
         try:
-            if overwrite:
-                blob.upload_from_string(data, content_type=_content_type(name))
-            else:
-                blob.upload_from_string(data, content_type=_content_type(name), if_generation_match=0)
-        except Exception as exc:
-            if is_precondition_failed(exc):
-                raise FileExistsError(self.location) from exc
-            raise
+            self._store.put(
+                self.location,
+                data,
+                if_version=None if overwrite else ABSENT,
+                content_type=_content_type(self.location),
+            )
+        except PreconditionFailedError as exc:
+            raise FileExistsError(self.location) from exc
         self._written = len(data)
 
 
-class GcsFileIO(FileIO):
-    """FileIO for `gs://` locations through one shared google-cloud-storage client."""
+class ObjectStoreFileIO(FileIO):
+    """FileIO for every location a store serves: `store` when given, else the process's store for
+    each location's scheme."""
 
-    def __init__(self, properties: Properties = EMPTY_DICT, client: Any = None) -> None:
+    def __init__(self, properties: Properties = EMPTY_DICT, store: ObjectStore | None = None) -> None:
         super().__init__(properties=properties)
-        self._client = client
+        self._store = store
 
-    @property
-    def client(self) -> Any:
-        if self._client is None:
-            self._client = shared_storage_client()
-        return self._client
+    def store_for(self, location: str) -> ObjectStore:
+        """The store that serves `location`."""
+        return store_for(location) if self._store is None else self._store
 
     def new_input(self, location: str) -> InputFile:
-        return GcsInputFile(location, self.client)
+        return ObjectStoreInputFile(location, self.store_for(location))
 
     def new_output(self, location: str) -> OutputFile:
-        return GcsOutputFile(location, self.client)
+        return ObjectStoreOutputFile(location, self.store_for(location))
 
     def delete(self, location: str | InputFile | OutputFile) -> None:
         uri = location if isinstance(location, str) else location.location
-        bucket, name = parse_gcs_uri(uri)
-        try:
-            self.client.bucket(bucket).blob(name).delete()
-        except Exception as exc:
-            if is_not_found(exc):
-                raise FileNotFoundError(uri) from exc
-            raise
+        if not self.store_for(uri).delete(uri):
+            raise FileNotFoundError(uri)
 
 
 def _content_type(name: str) -> str:

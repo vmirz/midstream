@@ -1,20 +1,22 @@
-"""`GcsPointerCatalog`: a PyIceberg catalog whose only state is one pointer object per table.
+"""`PointerCatalog`: a PyIceberg catalog whose only state is one pointer object per table.
 
 Both planes embed it. The runtime's committer uses it for every write to its table; the control
 plane uses it to create and drop tables and to serve the Iceberg REST facade. Which tables exist,
 and where, comes from an injected `TableDirectory`: the control plane's state table, or, in a
-runtime, its one table.
+runtime, its one table. Every table is read and written through the object store of its location
+(`lakehouse/store/`), so the catalog works the same on every backend.
 
-Commit protocol (spec §5.2): read the pointer and its generation; validate the requirements against
+Commit protocol (spec §5.2): read the pointer and its version; validate the requirements against
 the metadata it names; write the new metadata file create-only; replace the pointer on the
-condition that its generation has not moved. A moved pointer raises `CommitFailedException`, and
-the metadata file just written is deleted.
+condition that its version has not moved (the store's compare-and-swap). A moved pointer raises
+`CommitFailedException`, and the metadata file just written is deleted.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+import io
 import logging
 from typing import Any, Protocol
 
@@ -38,14 +40,7 @@ from pyiceberg.table.sorting import UNSORTED_SORT_ORDER, SortOrder
 from pyiceberg.table.update import AssertTableUUID
 from pyiceberg.typedef import EMPTY_DICT, Identifier, Properties
 
-from midstream.lakehouse.gcs import (
-    delete_object,
-    download_bytes,
-    is_precondition_failed,
-    shared_storage_client,
-    upload_bytes_create_only,
-)
-from midstream.lakehouse.io import GcsFileIO
+from midstream.lakehouse.io import ObjectStoreFileIO
 from midstream.lakehouse.pointer import (
     PointerConflictError,
     TablePointer,
@@ -55,6 +50,7 @@ from midstream.lakehouse.pointer import (
     write_pointer,
     write_version_hint,
 )
+from midstream.lakehouse.store import ABSENT, ObjectStore, PreconditionFailedError, store_for
 from midstream.lakehouse.tables import PROPERTY_MATERIALIZATION_ID
 
 LOGGER = logging.getLogger(__name__)
@@ -108,39 +104,46 @@ class StaticTableDirectory:
         return [item for item in values if _normalized(item.identifier[:-1]) == wanted]
 
 
-class GcsPointerCatalog(MetastoreCatalog):
-    """A catalog over `<location>/metadata/catalog-pointer.json` objects."""
+class PointerCatalog(MetastoreCatalog):
+    """A catalog over `<location>/metadata/catalog-pointer.json` objects.
+
+    `store` serves every table when given (tests); otherwise each table goes through the process's
+    store for the scheme of its location (`store_for`).
+    """
 
     def __init__(
         self,
         name: str = DEFAULT_CATALOG_NAME,
         *,
         directory: TableDirectory,
-        client: Any = None,
+        store: ObjectStore | None = None,
         writer: str = "unknown",
         clock: Callable[[], str] = utc_now,
         **properties: str,
     ) -> None:
         super().__init__(name, **properties)
         self._directory = directory
-        self._client = client
+        self._store = store
         self.writer = writer
         self._clock = clock
 
     # -- plumbing --------------------------------------------------------------------------------
 
     @property
-    def client(self) -> Any:
-        if self._client is None:
-            self._client = shared_storage_client()
-        return self._client
+    def store(self) -> ObjectStore | None:
+        """The store given to the catalog; None when each location's own store serves it."""
+        return self._store
+
+    def store_for(self, location: str) -> ObjectStore:
+        """The store that serves `location`."""
+        return store_for(location) if self._store is None else self._store
 
     @property
     def directory(self) -> TableDirectory:
         return self._directory
 
     def _load_file_io(self, properties: Properties = EMPTY_DICT, location: str | None = None) -> FileIO:
-        return GcsFileIO(properties=dict(self.properties) | dict(properties), client=self.client)
+        return ObjectStoreFileIO(properties=dict(self.properties) | dict(properties), store=self._store)
 
     def _entry(self, identifier: str | Identifier) -> TableEntry:
         entry = self._directory.entry(_normalized(self.identifier_to_tuple(identifier)))
@@ -149,10 +152,8 @@ class GcsPointerCatalog(MetastoreCatalog):
         return entry
 
     def read_metadata(self, metadata_location: str) -> TableMetadata:
-        import io as _io
-
-        raw = download_bytes(self.client, metadata_location)
-        return FromByteStream.table_metadata(_io.BytesIO(raw))
+        raw, _ = self.store_for(metadata_location).get(metadata_location)
+        return FromByteStream.table_metadata(io.BytesIO(raw))
 
     def _table_from_pointer(self, entry: TableEntry, pointer: TablePointer) -> Table:
         if pointer.materialization_id != entry.materialization_id:
@@ -169,16 +170,16 @@ class GcsPointerCatalog(MetastoreCatalog):
             catalog=self,
         )
 
-    def load_pointer(self, identifier: str | Identifier) -> tuple[TablePointer | None, int]:
-        """The table's pointer and its generation, without reading the metadata it names."""
+    def load_pointer(self, identifier: str | Identifier) -> tuple[TablePointer | None, str | None]:
+        """The table's pointer and its version, without reading the metadata it names."""
         entry = self._entry(identifier)
-        return read_pointer(self.client, entry.location)
+        return read_pointer(self.store_for(entry.location), entry.location)
 
     # -- reads -----------------------------------------------------------------------------------
 
     def load_table(self, identifier: str | Identifier) -> Table:
         entry = self._entry(identifier)
-        pointer, _ = read_pointer(self.client, entry.location)
+        pointer, _ = read_pointer(self.store_for(entry.location), entry.location)
         if pointer is None:
             raise NoSuchTableError(f"Table does not exist: {'.'.join(entry.identifier)}")
         return self._table_from_pointer(entry, pointer)
@@ -232,7 +233,8 @@ class GcsPointerCatalog(MetastoreCatalog):
         materialization raises `TableAlreadyExistsError`.
         """
         entry = TableEntry(identifier=tuple(identifier), location=location, materialization_id=materialization_id)
-        existing, _ = read_pointer(self.client, location)
+        store = self.store_for(location)
+        existing, _ = read_pointer(store, location)
         if existing is not None:
             if existing.materialization_id != materialization_id:
                 raise TableAlreadyExistsError(
@@ -241,16 +243,15 @@ class GcsPointerCatalog(MetastoreCatalog):
             return self._table_from_pointer(entry, existing)
         metadata_location = f"{location.rstrip('/')}/metadata/00000-{metadata.table_uuid}.metadata.json"
         try:
-            upload_bytes_create_only(
-                self.client,
+            store.put(
                 metadata_location,
                 metadata.model_dump_json(exclude_none=True).encode("utf-8"),
+                if_version=ABSENT,
                 content_type="application/json",
             )
-        except Exception as exc:
-            if not is_precondition_failed(exc):
-                raise
+        except PreconditionFailedError:
             # An earlier attempt wrote this very file (same uuid) and died before the pointer.
+            pass
         pointer = TablePointer(
             table_uuid=str(metadata.table_uuid),
             identifier=tuple(identifier),
@@ -263,13 +264,13 @@ class GcsPointerCatalog(MetastoreCatalog):
             updated_by=self.writer,
         )
         try:
-            write_pointer(self.client, location, pointer, generation=0)
+            write_pointer(store, location, pointer, expected_version=None)
         except PointerConflictError:
-            winner, _ = read_pointer(self.client, location)
+            winner, _ = read_pointer(store, location)
             if winner is None or winner.materialization_id != materialization_id:
                 raise TableAlreadyExistsError(f"{location} was taken while creating its table") from None
             return self._table_from_pointer(entry, winner)
-        write_version_hint(self.client, location, metadata_location)
+        write_version_hint(store, location, metadata_location)
         return self._table_from_pointer(entry, pointer)
 
     def create_table(
@@ -285,7 +286,8 @@ class GcsPointerCatalog(MetastoreCatalog):
 
     def commit_table(self, table: Table, requirements, updates) -> CommitTableResponse:
         entry = self._entry(table.name())
-        pointer, generation = read_pointer(self.client, entry.location)
+        store = self.store_for(entry.location)
+        pointer, version = read_pointer(store, entry.location)
         if pointer is None:
             raise NoSuchTableError(f"Table does not exist: {'.'.join(entry.identifier)}")
         current = self._table_from_pointer(entry, pointer)
@@ -293,33 +295,31 @@ class GcsPointerCatalog(MetastoreCatalog):
         if staged.metadata == current.metadata:
             return CommitTableResponse(metadata=current.metadata, metadata_location=current.metadata_location)
         try:
-            upload_bytes_create_only(
-                self.client,
+            store.put(
                 staged.metadata_location,
                 staged.metadata.model_dump_json(exclude_none=True).encode("utf-8"),
+                if_version=ABSENT,
                 content_type="application/json",
             )
-        except Exception as exc:
-            if is_precondition_failed(exc):
-                raise CommitFailedException(f"metadata file {staged.metadata_location} already exists") from exc
-            raise
+        except PreconditionFailedError as exc:
+            raise CommitFailedException(f"metadata file {staged.metadata_location} already exists") from exc
         try:
             write_pointer(
-                self.client,
+                store,
                 entry.location,
                 pointer.advanced(staged.metadata_location, updated_by=self.writer, updated_at=self._clock()),
-                generation=generation,
+                expected_version=version,
             )
         except PointerConflictError as exc:
-            delete_object(self.client, staged.metadata_location)
+            store.delete(staged.metadata_location)
             raise CommitFailedException(str(exc)) from exc
-        write_version_hint(self.client, entry.location, staged.metadata_location)
+        write_version_hint(store, entry.location, staged.metadata_location)
         return CommitTableResponse(metadata=staged.metadata, metadata_location=staged.metadata_location)
 
     def drop_table(self, identifier: str | Identifier) -> None:
         """Remove the table from the catalog: its pointer. Data and metadata are left in place."""
         entry = self._entry(identifier)
-        if not delete_pointer(self.client, entry.location):
+        if not delete_pointer(self.store_for(entry.location), entry.location):
             raise NoSuchTableError(f"Table does not exist: {'.'.join(entry.identifier)}")
 
     def purge_table(self, identifier: str | Identifier) -> None:

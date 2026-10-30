@@ -182,7 +182,7 @@ class CatalogTests(unittest.TestCase):
                 directory_table=self.directory,
                 principal=principal or self.reader,
                 config=config,
-                client=self.lake.client,
+                store=self.lake.store,
                 **kwargs,
             )
         )
@@ -198,7 +198,7 @@ class CatalogTests(unittest.TestCase):
                 directory_table=self.directory,
                 principal=principal or reader_of(SHOP, write=True),
                 config=CONFIG,
-                client=self.lake.client,
+                store=self.lake.store,
             )
         )
 
@@ -269,7 +269,7 @@ class CatalogTests(unittest.TestCase):
     def test_loading_a_table_returns_its_metadata_location_and_metadata(self) -> None:
         result = self.load()
 
-        pointer, _ = read_pointer(self.lake.client, LOCATION)
+        pointer, _ = read_pointer(self.lake.store, LOCATION)
         self.assertEqual(pointer.metadata_location, result["metadata-location"])
         self.assertEqual(2, result["metadata"]["format-version"])
         self.assertEqual(LOCATION, result["metadata"]["location"])
@@ -292,7 +292,7 @@ class CatalogTests(unittest.TestCase):
             cached.fetched_at -= 10
         before = len(self.lake.store.calls)
         self.load(config=reset)
-        downloads = [call for call in self.lake.store.calls[before:] if call[0] == "download"]
+        downloads = [call for call in self.lake.store.calls[before:] if call[0] == "get"]
         self.assertEqual(1, len(downloads))
 
     def test_a_name_taken_by_another_table_never_answers_with_the_first_ones_metadata(self) -> None:
@@ -354,7 +354,7 @@ class CatalogTests(unittest.TestCase):
         response = self.commit(body)
 
         self.assertEqual("analytics", response["metadata"]["properties"]["owner"])
-        pointer, _ = read_pointer(self.lake.client, LOCATION)
+        pointer, _ = read_pointer(self.lake.store, LOCATION)
         self.assertEqual(response["metadata-location"], pointer.metadata_location)
         self.assertEqual("catalog:jane@example.com", pointer.updated_by)
         self.assertEqual("analytics", self.lake.load().metadata.properties["owner"])
@@ -363,7 +363,7 @@ class CatalogTests(unittest.TestCase):
 
     def test_committing_needs_catalog_write_on_the_tables_dataset(self) -> None:
         body = {"requirements": [], "updates": [{"action": "set-properties", "updates": {"owner": "analytics"}}]}
-        before = read_pointer(self.lake.client, LOCATION)[0].metadata_location
+        before = read_pointer(self.lake.store, LOCATION)[0].metadata_location
 
         for principal in (self.reader, reader_of(FINANCE, write=True)):
             with self.subTest(principal=principal.grants.datasets), self.assertRaises(CatalogError) as caught:
@@ -373,7 +373,7 @@ class CatalogTests(unittest.TestCase):
             self.commit(body, principal=self.reader)
         self.assertEqual((403, "ForbiddenException"), (caught.exception.status_code, caught.exception.error_type))
         self.assertIn("dataset shop", caught.exception.message)
-        self.assertEqual(before, read_pointer(self.lake.client, LOCATION)[0].metadata_location)
+        self.assertEqual(before, read_pointer(self.lake.store, LOCATION)[0].metadata_location)
 
     def test_a_commit_against_a_stale_table_is_409(self) -> None:
         body = {
@@ -388,7 +388,7 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(400, caught.exception.status_code)
 
     def test_a_commit_cannot_move_the_tables_files_away_from_its_location(self) -> None:
-        before = read_pointer(self.lake.client, LOCATION)[0].metadata_location
+        before = read_pointer(self.lake.store, LOCATION)[0].metadata_location
         for update in (
             {"action": "set-location", "location": "gs://elsewhere/orders"},
             {"action": "set-properties", "updates": {"write.metadata.path": "gs://elsewhere/metadata"}},
@@ -399,7 +399,7 @@ class CatalogTests(unittest.TestCase):
                 self.commit({"requirements": [], "updates": [update]})
             self.assertEqual((400, "BadRequestException"), (caught.exception.status_code, caught.exception.error_type))
             self.assertIn("location", caught.exception.message)
-        self.assertEqual(before, read_pointer(self.lake.client, LOCATION)[0].metadata_location)
+        self.assertEqual(before, read_pointer(self.lake.store, LOCATION)[0].metadata_location)
         self.assertNotIn("write.data.path", self.lake.load().metadata.properties)
 
     def test_metrics_are_accepted_and_unsupported_operations_are_501(self) -> None:

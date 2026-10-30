@@ -27,8 +27,10 @@ from midstream.handlers.resource_observation import (  # noqa: E402
     handle_observation_work_for_output,
 )
 from midstream.kafka.admin import ConsumerGroupNotEmptyError  # noqa: E402
-from midstream.lakehouse.catalog import GcsPointerCatalog, StaticTableDirectory, TableEntry  # noqa: E402
+from midstream.lakehouse.catalog import PointerCatalog, StaticTableDirectory, TableEntry  # noqa: E402
 from midstream.lakehouse.pointer import POINTER_NAME, TablePointer, utc_now, write_pointer  # noqa: E402
+from midstream.lakehouse.store import MemoryStore, StoreError  # noqa: E402
+from midstream.lakehouse.store.gcs import GcsStore  # noqa: E402
 from midstream.lakehouse.tables import partition_granularity_of  # noqa: E402
 from midstream.models import (  # noqa: E402
     TableClaimResult,
@@ -190,8 +192,7 @@ SAMPLE = [
 class WorkflowTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.table = FakeTable()
-        self.store = FakeGcs()
-        self.client = self.store.client()
+        self.store = self.make_store()
         self.kaspr = FakeKasprAppClient()
         self.config = ControlPlaneConfig(discovery_sample_records=50, discovery_sample_seconds=3)
         self.discovery = StubDiscoveryService(SAMPLE)
@@ -201,9 +202,17 @@ class WorkflowTestCase(unittest.TestCase):
         save_materialization(self.table, build_materialization())
         save_materialization_status(self.table, build_status())
 
+    def make_store(self) -> MemoryStore:
+        """The store the tables live in: in memory, with its inspection helpers (`read`, `write`, `names`)."""
+        return MemoryStore()
+
+    def fail_listings(self) -> None:
+        """Make every listing of the store fail, as an unavailable store answers it (503)."""
+        self.store.fail = lambda operation, uri: StoreError(f"{uri}: unavailable", uri=uri, status=503) if operation == "list" else None
+
     def process(self, event: MaterializationWorkEvent, **kwargs) -> MaterializationWorkEvent | None:
         kwargs.setdefault("kaspr_app_client", self.kaspr)
-        kwargs.setdefault("object_store_client", self.client)
+        kwargs.setdefault("object_store", self.store)
         kwargs.setdefault("config", self.config)
         return process_work_event(self.table, event, self.discovery, **kwargs)
 
@@ -217,9 +226,9 @@ class WorkflowTestCase(unittest.TestCase):
         self.assertEqual("observe_runtime", follow_up.step)
         return follow_up
 
-    def catalog(self, name: str = "orders", location: str = LOCATION) -> GcsPointerCatalog:
+    def catalog(self, name: str = "orders", location: str = LOCATION) -> PointerCatalog:
         entry = TableEntry(identifier=("shop", name), location=location, materialization_id=MATERIALIZATION_ID)
-        return GcsPointerCatalog(directory=StaticTableDirectory([entry]), client=self.client, writer="test")
+        return PointerCatalog(directory=StaticTableDirectory([entry]), store=self.store, writer="test")
 
     def two_topics(self, **discovered) -> None:
         """Make the materialization read `orders` and `payments`, each sampled as `discovered` says."""
@@ -447,7 +456,7 @@ class ProtectionDiscoveryTests(WorkflowTestCase):
                 self.table,
                 self.discovery,
                 kaspr_app_client=self.kaspr,
-                object_store_client=self.client,
+                object_store=self.store,
                 config=self.config,
             )
         )
@@ -486,7 +495,7 @@ class TableCreationTests(WorkflowTestCase):
         follow_up = self.process(self.process(work("start_discovery")))
 
         self.assertEqual("apply_runtime", follow_up.step)
-        self.assertIsNotNone(self.store.get(f"{LOCATION}/metadata/{POINTER_NAME}"))
+        self.assertIsNotNone(self.store.read(f"{LOCATION}/metadata/{POINTER_NAME}"))
         iceberg = self.catalog().load_table(("shop", "orders"))
         self.assertEqual(0, iceberg.schema().schema_id)
         self.assertEqual("day", partition_granularity_of(iceberg.metadata.properties))
@@ -568,7 +577,7 @@ class TableCreationTests(WorkflowTestCase):
 
     def test_a_location_holding_another_materializations_table_is_refused(self) -> None:
         write_pointer(
-            self.client,
+            self.store,
             LOCATION,
             TablePointer(
                 table_uuid="00000000-0000-0000-0000-000000000000",
@@ -580,7 +589,7 @@ class TableCreationTests(WorkflowTestCase):
                 updated_at=utc_now(),
                 updated_by="someone-else",
             ),
-            generation=0,
+            expected_version=None,
         )
 
         self.assertIsNone(self.process(self.process(work("start_discovery"))))
@@ -716,7 +725,7 @@ class RuntimeApplyTests(WorkflowTestCase):
                 self.table,
                 self.discovery,
                 kaspr_app_client=self.kaspr,
-                object_store_client=self.client,
+                object_store=self.store,
                 config=self.config,
             )
         )
@@ -729,8 +738,7 @@ class RuntimeApplyTests(WorkflowTestCase):
         expected = get_materialization_table(self.table, MATERIALIZATION_ID, "orders")
 
         self.table = blocking
-        self.store = FakeGcs()
-        self.client = self.store.client()
+        self.store = self.make_store()
 
         async def chain():
             event = work("start_discovery")
@@ -740,7 +748,7 @@ class RuntimeApplyTests(WorkflowTestCase):
                     event,
                     self.discovery,
                     kaspr_app_client=self.kaspr,
-                    object_store_client=self.client,
+                    object_store=self.store,
                     config=self.config,
                 )
             return event
@@ -754,8 +762,8 @@ class DeletionTests(WorkflowTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.create()
-        self.store.put(f"{LOCATION}/data/ts_day=2026-07-12/p00-o0000000000-0000000009-m-0.parquet", b"rows")
-        self.store.put("gs://lake/materializer/other-ffffffffffff/orders/data/x.parquet", b"another table")
+        self.store.write(f"{LOCATION}/data/ts_day=2026-07-12/p00-o0000000000-0000000009-m-0.parquet", b"rows")
+        self.store.write("gs://lake/materializer/other-ffffffffffff/orders/data/x.parquet", b"another table")
         save_materialization(self.table, replace(get_materialization(self.table, MATERIALIZATION_ID), desired_phase="deleting"))
         save_materialization_status(
             self.table,
@@ -787,16 +795,16 @@ class DeletionTests(WorkflowTestCase):
 
         self.delete_chain()
 
-        self.assertIsNone(self.store.get(f"{LOCATION}/metadata/{POINTER_NAME}"))
-        self.assertIsNotNone(self.store.get(f"{LOCATION}/metadata/catalog-pointer.dropped.json"))
-        self.assertIsNotNone(self.store.get(f"{LOCATION}/data/ts_day=2026-07-12/p00-o0000000000-0000000009-m-0.parquet"))
+        self.assertIsNone(self.store.read(f"{LOCATION}/metadata/{POINTER_NAME}"))
+        self.assertIsNotNone(self.store.read(f"{LOCATION}/metadata/catalog-pointer.dropped.json"))
+        self.assertIsNotNone(self.store.read(f"{LOCATION}/data/ts_day=2026-07-12/p00-o0000000000-0000000009-m-0.parquet"))
 
     def test_a_large_table_is_dropped_in_passes_under_one_operation(self) -> None:
         for index in range(5):
-            self.store.put(f"{LOCATION}/data/ts_day=2026-07-12/extra-{index}.parquet", b"rows")
+            self.store.write(f"{LOCATION}/data/ts_day=2026-07-12/extra-{index}.parquet", b"rows")
         self.config = replace(self.config, purge_records_on_delete=False)
 
-        with patch.object(objects, "CLEANUP_PASS_MAX_OBJECTS", 2):
+        with patch.object(objects, "pass_object_budget", lambda store: 2):
             events = self.delete_chain()
 
         drops = [event for event in events if event.step == "drop_table"]
@@ -812,13 +820,13 @@ class DeletionTests(WorkflowTestCase):
         runs for ever. Waited out once, it is forgotten: before, every pass of a large table's drop
         waited the full five minutes for it again."""
         for index in range(5):
-            self.store.put(f"{LOCATION}/data/ts_day=2026-07-12/extra-{index}.parquet", b"rows")
+            self.store.write(f"{LOCATION}/data/ts_day=2026-07-12/extra-{index}.parquet", b"rows")
         self.config = replace(self.config, purge_records_on_delete=False)
         record = get_materialization_table(self.table, MATERIALIZATION_ID, "orders")
         stale = RunningMaintenance(job="compaction", started_at="2026-07-12T00:00:00Z", member_id="maintenance-0")
         save_materialization_table(self.table, replace(record, maintenance_job=stale))
 
-        with patch.object(objects, "CLEANUP_PASS_MAX_OBJECTS", 2):
+        with patch.object(objects, "pass_object_budget", lambda store: 2):
             drop = self.process(work("cleanup_runtime_kafka"), kafka_admin_client=FakeKafkaAdminClient())
             wait = self.process(drop)
             self.assertIsNotNone(wait.observation_policy.scheduled_for, "it waits for the job first")
@@ -845,7 +853,7 @@ class DeletionTests(WorkflowTestCase):
         self.assertEqual(["gs://lake/materializer/other-ffffffffffff/orders/data/x.parquet"], self.store.names())
 
     def test_a_failing_drop_is_retried_with_backoff_then_fails_loudly(self) -> None:
-        self.store.fail = lambda operation, bucket, name: ServiceUnavailable("GCS is down") if operation == "list_blobs" else None
+        self.fail_listings()
         event = self.process(work("cleanup_runtime_kafka"), kafka_admin_client=FakeKafkaAdminClient())
         attempts = []
         while event is not None and event.step == "drop_table":
@@ -856,7 +864,7 @@ class DeletionTests(WorkflowTestCase):
 
         self.assertEqual(list(range(1, MAX_DESTINATION_CLEANUP_RETRY_ATTEMPTS + 1)), attempts)
         self.assertEqual("failed", self.status().observed_phase)
-        self.assertIsNotNone(self.store.get(f"{LOCATION}/metadata/{POINTER_NAME}"))
+        self.assertIsNotNone(self.store.read(f"{LOCATION}/metadata/{POINTER_NAME}"))
 
     def test_a_materialization_without_a_table_goes_straight_to_the_purge(self) -> None:
         del self.table[f"materialization-table:{MATERIALIZATION_ID}:orders"]
@@ -864,7 +872,7 @@ class DeletionTests(WorkflowTestCase):
         steps = [event.step for event in self.delete_chain()]
 
         self.assertEqual(["cleanup_runtime_kafka", "drop_table", "purge_materialization_records"], steps)
-        self.assertIsNotNone(self.store.get(f"{LOCATION}/metadata/{POINTER_NAME}"))
+        self.assertIsNotNone(self.store.read(f"{LOCATION}/metadata/{POINTER_NAME}"))
 
 
 class MultiTableDeletionTests(WorkflowTestCase):
@@ -876,8 +884,8 @@ class MultiTableDeletionTests(WorkflowTestCase):
             event = self.process(event)
         for location in (LOCATION, PAYMENTS_LOCATION):
             for index in range(3):
-                self.store.put(f"{location}/data/ts_day=2026-07-12/p00-o{index:010d}-m-0.parquet", b"rows")
-        self.store.put("gs://lake/materializer/other-ffffffffffff/orders/data/x.parquet", b"another table")
+                self.store.write(f"{location}/data/ts_day=2026-07-12/p00-o{index:010d}-m-0.parquet", b"rows")
+        self.store.write("gs://lake/materializer/other-ffffffffffff/orders/data/x.parquet", b"another table")
         save_materialization(self.table, replace(get_materialization(self.table, MATERIALIZATION_ID), desired_phase="deleting"))
         save_materialization_status(
             self.table,
@@ -896,7 +904,7 @@ class MultiTableDeletionTests(WorkflowTestCase):
     def test_every_table_is_dropped_under_one_operation_then_the_records_purged(self) -> None:
         self.config = replace(self.config, purge_records_on_delete=False)
 
-        with patch.object(objects, "CLEANUP_PASS_MAX_OBJECTS", 2):
+        with patch.object(objects, "pass_object_budget", lambda store: 2):
             events = self.delete_chain()
 
         drops = [event for event in events if event.step == "drop_table"]
@@ -925,9 +933,9 @@ class MultiTableDeletionTests(WorkflowTestCase):
             if record is not None and record["payload"].get("tables_dropped") == ["orders"]:
                 break
             event = self.process(event)
-        self.assertIsNone(self.store.get(f"{LOCATION}/metadata/{POINTER_NAME}"))
-        self.assertIsNotNone(self.store.get(f"{PAYMENTS_LOCATION}/metadata/{POINTER_NAME}"))
-        self.store.fail = lambda operation, bucket, name: ServiceUnavailable("GCS is down") if operation == "list_blobs" else None
+        self.assertIsNone(self.store.read(f"{LOCATION}/metadata/{POINTER_NAME}"))
+        self.assertIsNotNone(self.store.read(f"{PAYMENTS_LOCATION}/metadata/{POINTER_NAME}"))
+        self.fail_listings()
 
         retry = self.process(event)
 
@@ -937,8 +945,35 @@ class MultiTableDeletionTests(WorkflowTestCase):
         self.store.fail = None
         while retry is not None and retry.step == "drop_table":
             retry = self.process(retry)
-        self.assertIsNone(self.store.get(f"{PAYMENTS_LOCATION}/metadata/{POINTER_NAME}"))
+        self.assertIsNone(self.store.read(f"{PAYMENTS_LOCATION}/metadata/{POINTER_NAME}"))
         self.assertEqual(["gs://lake/materializer/other-ffffffffffff/orders/data/x.parquet"], self.store.names())
+
+
+class InspectableGcsStore(GcsStore):
+    """The GCS store over its client double, with a `MemoryStore`'s inspection helpers."""
+
+    def __init__(self) -> None:
+        self.fake = FakeGcs()
+        super().__init__(client=self.fake.client())
+
+    def read(self, uri: str) -> bytes | None:
+        return self.fake.get(uri)
+
+    def write(self, uri: str, data: bytes) -> str:
+        return str(self.fake.put(uri, data))
+
+    def names(self, prefix: str = "") -> list[str]:
+        return self.fake.names(prefix)
+
+
+class GcsStoreDeletionTests(DeletionTests):
+    """The drop over the GCS store and its client double, which fails with the library's own exceptions."""
+
+    def make_store(self) -> InspectableGcsStore:
+        return InspectableGcsStore()
+
+    def fail_listings(self) -> None:
+        self.store.fake.fail = lambda operation, bucket, name: ServiceUnavailable("GCS is down") if operation == "list_blobs" else None
 
 
 def setUpModule() -> None:

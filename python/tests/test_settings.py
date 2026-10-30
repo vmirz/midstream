@@ -29,6 +29,7 @@ from midstream.models import (
 )
 from midstream.runtime_app.config import RuntimeAppConfig
 from midstream.runtime_app.live_settings import LIVE_SETTING_ENV_VARS, LIVE_SETTING_FIELDS
+from midstream.settings.effective import apply_control_plane_overrides
 from midstream.services.settings import (
     apply_settings_change,
     build_runtime_settings_message,
@@ -155,7 +156,7 @@ class SettingsCatalogTests(unittest.TestCase):
         samples = {
             "boolean": ("false", False),
             "integer": ("7", 7),
-            "gcs_uri": ("gs://lake/root/", "gs://lake/root"),
+            "destination_uri": ("gs://lake/root/", "gs://lake/root"),
             "quantity": ("4Gi", "4Gi"),
             "domain_list": ("Example.com, @corp.example.org", "example.com,corp.example.org"),
             # Kinds alone take their default mask, and the stored text is in the catalog's order.
@@ -213,7 +214,7 @@ class SettingsCatalogTests(unittest.TestCase):
         self.assertEqual(coerce_setting_value(destination, " gs://lake/data/ "), "gs://lake/data")
         self.assertIsNone(coerce_setting_value(destination, ""))
         self.assertIsNone(coerce_setting_value(destination, None))
-        for bad in ("s3://lake", "gs://", "gs://Lake", "lake/data", 5):
+        for bad in ("gs://", "gs://Lake", "lake/data", 5):
             with self.subTest(value=bad), self.assertRaises(SettingValueError):
                 coerce_setting_value(destination, bad)
 
@@ -230,6 +231,38 @@ class SettingsCatalogTests(unittest.TestCase):
             with self.subTest(value=bad), self.assertRaises(SettingValueError):
                 coerce_setting_value(granularity, bad)
         self.assertIsNone(replicas.describe()["options"])
+
+    def test_a_destination_is_any_of_the_three_storage_uris(self) -> None:
+        destination = definition_for("control-plane", "default_destination_uri")
+        self.assertEqual("destination_uri", destination.kind)
+        for value in ("gs://lake/prod", "s3://lake/prod/", "abfss://lake@acme.dfs.core.windows.net/prod"):
+            with self.subTest(value=value):
+                self.assertEqual(value.rstrip("/"), coerce_setting_value(destination, value))
+        for value in ("s3a://lake", "https://acme.blob.core.windows.net/lake", "abfss://lake@acme.blob.core.windows.net", "ftp://lake", "S3://lake"):
+            with self.subTest(value=value), self.assertRaises(SettingValueError) as refused:
+                coerce_setting_value(destination, value)
+            self.assertEqual("default_destination_uri", refused.exception.key)
+        with self.assertRaises(SettingValueError) as refused:
+            coerce_setting_value(destination, "lake/data")
+        for form in ("gs://<bucket>[/<prefix>]", "s3://<bucket>[/<prefix>]", "abfss://<container>@<account>.dfs.core.windows.net[/<prefix>]"):
+            self.assertIn(form, str(refused.exception))
+        self.assertIn("s3://", destination.description)
+        self.assertIn("abfss://", destination.description)
+
+    def test_a_file_destination_only_where_the_deployment_allows_it(self) -> None:
+        destination = definition_for("control-plane", "default_destination_uri")
+        with self.assertRaises(SettingValueError) as refused:
+            coerce_setting_value(destination, "file:///tmp/lake")
+        self.assertIn("tests only", str(refused.exception))
+        self.assertEqual("file:///tmp/lake", coerce_setting_value(destination, "file:///tmp/lake/", allow_file_destinations=True))
+        # The deployment's switch decides for stored overrides too.
+        document = SettingsDocument(
+            scope="control-plane",
+            values={"default_destination_uri": SettingOverride(value="file:///tmp/lake", updated_at="2026-10-30T00:00:00Z", updated_by="jane")},
+        )
+        self.assertIsNone(apply_control_plane_overrides(ControlPlaneConfig(), document).default_destination_uri)
+        allowed = apply_control_plane_overrides(ControlPlaneConfig(allow_file_destinations=True), document)
+        self.assertEqual("file:///tmp/lake", allowed.default_destination_uri)
 
     def test_values_that_cannot_work_together_are_refused(self) -> None:
         with self.assertRaises(SettingValueError) as caught:
@@ -751,6 +784,39 @@ class SettingsViewTests(unittest.TestCase):
         self.assertEqual(view["values"]["pageRowLimit"]["value"], 500)
         self.assertEqual(view["revision"], 1)
         self.assertEqual(view["recent_request_ids"], ["set-1"])
+
+    def test_deployment_reports_the_stores_settings(self) -> None:
+        environment = {
+            "STORAGE_S3_ENDPOINT": "http://seaweedfs.storage:8333/",
+            "STORAGE_S3_REGION": "eu-west-1",
+            "STORAGE_S3_PATH_STYLE": "true",
+            "STORAGE_AZURE_ENDPOINT": "http://azurite:10000",
+        }
+        with patch.dict(os.environ, environment):
+            view = settings_scope_view(self.settings, "control-plane", config=replace(self.config, allow_file_destinations=True), environ=self.environ)
+        deployment = {item["key"]: item for item in view["deployment"]}
+        self.assertEqual(
+            ["http://seaweedfs.storage:8333", "eu-west-1", True, "http://azurite:10000", True],
+            [deployment[key]["value"] for key in ("storage_s3_endpoint", "storage_s3_region", "storage_s3_path_style", "storage_azure_endpoint", "allow_file_destinations")],
+        )
+        self.assertEqual("STORAGE_S3_ENDPOINT", deployment["storage_s3_endpoint"]["env_var"])
+        self.assertEqual("CONTROL_PLANE_ALLOW_FILE_DESTINATIONS", deployment["allow_file_destinations"]["env_var"])
+        for key in ("storage_s3_endpoint", "storage_s3_region", "storage_s3_path_style", "storage_azure_endpoint", "allow_file_destinations"):
+            self.assertIsNone(definition_for("control-plane", key), "fixed by the deployment, never overridable")
+
+        unset = {name: "" for name in environment}
+        with patch.dict(os.environ, unset):
+            view = settings_scope_view(self.settings, "control-plane", config=self.config, environ=self.environ)
+        deployment = {item["key"]: item["value"] for item in view["deployment"]}
+        self.assertEqual(
+            [None, "us-east-1", False, None, False],
+            [deployment[key] for key in ("storage_s3_endpoint", "storage_s3_region", "storage_s3_path_style", "storage_azure_endpoint", "allow_file_destinations")],
+        )
+
+        with patch.dict(os.environ, {"STORAGE_S3_PATH_STYLE": "sometimes"}):
+            view = settings_scope_view(self.settings, "control-plane", config=self.config, environ=self.environ)
+        deployment = {item["key"]: item["value"] for item in view["deployment"]}
+        self.assertIn("STORAGE_S3_PATH_STYLE", deployment["storage_s3_path_style"])
 
     def test_deployment_reports_credentials_only_as_configured(self) -> None:
         values = {

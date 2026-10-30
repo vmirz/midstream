@@ -10,12 +10,11 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from google.api_core.exceptions import ServiceUnavailable  # noqa: E402
-
 from lakehouse_support import BASE_TIME, LOCATION, MATERIALIZATION_ID  # noqa: E402
 from runtime_support import RuntimeHarness, run  # noqa: E402
 
 from midstream.lakehouse.offsets import committed_offsets  # noqa: E402
+from midstream.lakehouse.store import StoreError  # noqa: E402
 from midstream.runtime_app.table_state import file_decisions_key, schema_key  # noqa: E402
 
 
@@ -72,7 +71,7 @@ class CommitterTests(unittest.TestCase):
         self.assertEqual(0, left)
         self.assertEqual({0: 1}, self.offsets())
         # Its file is not the table's, but it is left to orphan cleanup like any covered file.
-        self.assertIsNotNone(self.lake.store.get(partial[0]["file_path"]))
+        self.assertIsNotNone(self.lake.store.read(partial[0]["file_path"]))
 
     def test_an_incomplete_seal_announced_after_its_records_are_committed_is_forgotten(self) -> None:
         two_days = [BASE_TIME, BASE_TIME + timedelta(days=1)]
@@ -100,7 +99,7 @@ class CommitterTests(unittest.TestCase):
         events = run(scenario())
         self.assertEqual([], [event for event in events if event["kind"] == "table_committed"])
         # The duplicate is not the table's, but the committer cannot tell it from one that is.
-        self.assertIsNotNone(self.lake.store.get(again[0]["file_path"]))
+        self.assertIsNotNone(self.lake.store.read(again[0]["file_path"]))
         self.assertEqual({0: 1}, self.offsets())
         self.assertEqual(2, len(self.lake.load().scan().to_arrow()))
 
@@ -118,7 +117,7 @@ class CommitterTests(unittest.TestCase):
         committed, again = run(scenario())
         self.assertEqual(["table_committed"], [event["kind"] for event in committed if event["kind"] == "table_committed"])
         self.assertEqual([], [event for event in again if event["kind"] == "table_committed"])
-        self.assertIsNotNone(self.lake.store.get(seal[0]["file_path"]))
+        self.assertIsNotNone(self.lake.store.read(seal[0]["file_path"]))
         self.assertEqual(2, len(self.lake.load().scan().to_arrow()))
         self.assertEqual({0: 1}, self.offsets())
 
@@ -132,8 +131,8 @@ class CommitterTests(unittest.TestCase):
             return await self.runtime.deliver(overlapping)
 
         run(scenario())
-        self.assertIsNone(self.lake.store.get(overlapping[0]["file_path"]))
-        self.assertIsNotNone(self.lake.store.get(first[0]["file_path"]))
+        self.assertIsNone(self.lake.store.read(overlapping[0]["file_path"]))
+        self.assertIsNotNone(self.lake.store.read(first[0]["file_path"]))
         (decision,) = self.decisions().values()
         self.assertEqual(("overlap", 1), (decision["decision"], decision["covered_through"]))
         self.assertEqual(2, len(self.lake.load().scan().to_arrow()))
@@ -155,7 +154,7 @@ class CommitterTests(unittest.TestCase):
 
     def test_an_announced_file_that_is_not_there_is_decided_an_error(self) -> None:
         missing = self.seal(after=-1, offsets=[0, 1])
-        self.lake.store.objects.pop(tuple(missing[0]["file_path"].removeprefix("gs://").split("/", 1)))
+        self.lake.store.objects.pop(missing[0]["file_path"])
 
         async def scenario():
             return await self.runtime.deliver(missing)
@@ -170,9 +169,9 @@ class CommitterTests(unittest.TestCase):
     def test_a_failing_commit_reports_once_backs_off_and_keeps_the_files_pending(self) -> None:
         pending = self.seal(after=-1, offsets=[0, 1])
 
-        def outage(operation, bucket, name):
-            if operation == "upload" and name.endswith(".metadata.json"):
-                return ServiceUnavailable("GCS is down")
+        def outage(operation, uri):
+            if operation == "put" and uri.endswith(".metadata.json"):
+                return StoreError(f"{uri}: the store is down", uri=uri, status=503, code="ServiceUnavailable")
             return None
 
         async def scenario():
@@ -190,6 +189,9 @@ class CommitterTests(unittest.TestCase):
 
         failed, backoff, still_pending, again, recovered = run(scenario())
         self.assertEqual(["commit_failed"], [event["payload"]["reason"] for event in failed if event["kind"] == "table_error"])
+        # The store's own failure, the metadata file's write, is what failed the commit.
+        (error,) = [event["payload"] for event in failed if event["kind"] == "table_error"]
+        self.assertIn("the store is down", error["message"])
         self.assertGreater(backoff, 0)
         self.assertEqual(1, still_pending)
         # The same error is reported again only after a while.

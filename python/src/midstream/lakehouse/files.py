@@ -12,7 +12,6 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 import io
 import re
-from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -31,7 +30,7 @@ from pyiceberg.schema import Schema
 from pyiceberg.typedef import Record
 from pyiceberg.types import BinaryType, IcebergType, ListType, MapType, StringType, StructType
 
-from midstream.lakehouse.gcs import is_not_found, parse_gcs_uri
+from midstream.lakehouse.store import ObjectNotFoundError, ObjectStore
 from midstream.lakehouse.tables import PARTITION_NAMES
 
 EPOCH_DATE = date(1970, 1, 1)
@@ -196,28 +195,28 @@ def protection_revision_of(path: str) -> int:
     return protection_label_of(path)[0]
 
 
-def read_parquet_footer(client: Any, uri: str) -> tuple[pq.FileMetaData, int]:
-    """The Parquet footer of an object and the object's size, in one or two range requests."""
-    bucket_name, name = parse_gcs_uri(uri)
-    blob = client.bucket(bucket_name).get_blob(name)
-    if blob is None:
+def read_parquet_footer(store: ObjectStore, uri: str) -> tuple[pq.FileMetaData, int]:
+    """The Parquet footer of an object and the object's size: its size, then one or two range reads.
+
+    `FileNotFoundError` when there is no such object, or when it goes before the footer is read.
+    """
+    info = store.head(uri)
+    if info is None:
         raise FileNotFoundError(uri)
-    size = int(blob.size)
+    size = info.size
     if size < 12:
         raise ValueError(f"{uri} is too small to be a Parquet file ({size} bytes)")
     start = max(0, size - FOOTER_PREFETCH_BYTES)
     try:
-        tail = blob.download_as_bytes(start=start, end=size - 1)
+        tail, _ = store.get(uri, start=start, end=size - 1)
         if tail[-4:] != b"PAR1":
             raise ValueError(f"{uri} is not a Parquet file")
         footer_length = int.from_bytes(tail[-8:-4], "little")
         if footer_length + 8 > len(tail):
             footer_start = size - 8 - footer_length
-            tail = blob.download_as_bytes(start=footer_start, end=size - 1)
-    except Exception as exc:
-        if is_not_found(exc):
-            raise FileNotFoundError(uri) from exc
-        raise
+            tail, _ = store.get(uri, start=footer_start, end=size - 1)
+    except ObjectNotFoundError as exc:
+        raise FileNotFoundError(uri) from exc
     footer = tail[-(footer_length + 8):]
     # A footer is readable alone once it is preceded by the leading magic bytes.
     metadata = pq.read_metadata(pa.BufferReader(pa.py_buffer(b"PAR1" + footer)))
