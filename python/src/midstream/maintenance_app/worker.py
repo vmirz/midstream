@@ -967,13 +967,20 @@ class TableMaintenance:
             if backlog.unknown_files:
                 parts.append(f"{backlog.unknown_files} file(s) were written under revisions whose masking the table's record no longer says")
             message = ". ".join(parts) + "."
+        # A purge alone - an earlier run rewrote every file without one - still removes what the
+        # older snapshots hold.
+        purged = purge is not None and bool(purge.expired or purge.deleted)
+        if message is None and ready is None:
+            message = "No file holds a value the table's protection masks in plain text" + (
+                f"; {purge.expired} older snapshot(s) expired and {purge.deleted} file(s) deleted." if purged else "."
+            )
         return [
             self._reprotect_completed(
                 request,
                 ready,
                 snapshot_id=snapshot_id,
-                outcome="succeeded" if ready is not None else "skipped",
-                message=message or (None if ready is not None else "No file holds a value the table's protection masks in plain text."),
+                outcome="succeeded" if ready is not None or purged else "skipped",
+                message=message,
                 table=table,
                 done=True,
                 backlog=backlog,

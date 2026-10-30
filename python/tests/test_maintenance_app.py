@@ -736,6 +736,20 @@ class ReprotectTests(unittest.TestCase):
         self.assertEqual(("skipped", True), (done["outcome"], done["done"]))
         self.assertIn("No file holds", done["message"])
 
+    def test_a_purge_asked_once_every_file_is_rewritten_still_removes_the_older_snapshots(self) -> None:
+        async def scenario():
+            await self.phones_written_plain()
+            await self.maintenance.tick(reprotect=self.asked(), protection_revision=2)
+            await self.maintenance.settle()
+            return await self.maintenance.tick(reprotect=self.asked(purge=True, request_id="rp-2"), protection_revision=2)
+
+        (purged,) = [event for event in completed(run(scenario())) if event["request_id"] == "rp-2"]
+        self.assertEqual(("succeeded", True, True), (purged["outcome"], purged["done"], purged["purged"]))
+        self.assertIn("older snapshot(s) expired", purged["message"])
+        self.assertGreater(purged["counts"]["deleted_files"], 0)
+        table = self.runtime.table()
+        self.assertEqual([table.metadata.current_snapshot_id], [item.snapshot_id for item in table.metadata.snapshots])
+
     def test_without_the_tables_key_it_fails_then_gives_up(self) -> None:
         async def scenario():
             await self.phones_written_plain()
