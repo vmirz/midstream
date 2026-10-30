@@ -11,7 +11,7 @@ import { useAuth } from '@/lib/auth';
 import { useMaterializationDefaults } from '@/lib/defaults';
 import { formatExact } from '@/lib/format';
 import { useApi } from '@/lib/domains';
-import type { CpProtectionCatalog, CpProtectionReviewTable, DetailSnapshot } from '@shared/types';
+import type { CpProtectionCatalog, CpProtectionReviewItem, CpProtectionReviewTable, DetailSnapshot } from '@shared/types';
 
 import { ProtectionChips, ProtectionStateBadge } from './ProtectionSummary';
 import { describeChoice, choiceOf, kindLabel, maskName } from './protection';
@@ -42,7 +42,7 @@ export function ProtectionTab({ snapshot }: { snapshot: DetailSnapshot }): React
         protection: { kinds: choiceOf(detail?.materialization.protection ?? null, catalog), apply_rules: true },
       }),
     onSuccess: () => {
-      toast.success('Applying the current rules', 'Each table records them within a commit interval; members follow within seconds.');
+      toast.success('Applying the current rules', 'Each table records them within seconds, and its writers follow.');
       void queryClient.invalidateQueries({ queryKey: ['protection', materializationId] });
     },
     onError: (error: unknown) => toast.error('Could not apply the current rules', error instanceof ApiError ? error.message : String(error)),
@@ -74,7 +74,13 @@ export function ProtectionTab({ snapshot }: { snapshot: DetailSnapshot }): React
     );
   }
   const data = review.data;
-  const rulesWouldChange = data.review.reduce((count, table) => count + table.would_change.length, 0);
+  // A table that has not recorded the current revision yet lists what that revision is about to
+  // change; one that has lists only what a newer release's rules match that it recorded otherwise.
+  const behind = (table: CpProtectionReviewTable): boolean => table.created && (table.recorded_revision ?? 0) < data.revision;
+  const pending = data.review.filter(behind);
+  const ruled = data.review.filter((table) => !behind(table));
+  const pendingCount = pending.reduce((count, table) => count + table.would_change.length, 0);
+  const rulesWouldChange = ruled.reduce((count, table) => count + table.would_change.length, 0);
   return (
     <PageBody className="space-y-4">
       <Panel>
@@ -105,11 +111,21 @@ export function ProtectionTab({ snapshot }: { snapshot: DetailSnapshot }): React
         </p>
       </Panel>
 
+      {pendingCount > 0 ? (
+        <Panel>
+          <PanelHeader
+            title={`${formatExact(pendingCount)} ${pendingCount === 1 ? 'field' : 'fields'} revision ${data.revision} is about to protect otherwise`}
+            description="Each table records the revision on its next commit, within seconds; its writers follow."
+          />
+          <ReviewItems tables={pending} catalog={catalog} />
+        </Panel>
+      ) : null}
+
       {rulesWouldChange > 0 ? (
         <Panel>
           <PanelHeader
             title={`${formatExact(rulesWouldChange)} ${rulesWouldChange === 1 ? 'field' : 'fields'} the current rules would protect otherwise`}
-            description="Fields keep the protection they were written with until the rules are applied again: a newer release's rules, or a kind the policy gained, reach existing fields only then."
+            description="A newer release's rules match fields these tables recorded otherwise. A field keeps the protection its table recorded until the rules are applied again; applying them affects records written from then on."
             actions={
               mayChoose ? (
                 <Button size="sm" onClick={() => applyRules.mutate()} loading={applyRules.isPending}>
@@ -119,22 +135,7 @@ export function ProtectionTab({ snapshot }: { snapshot: DetailSnapshot }): React
               ) : null
             }
           />
-          <ul className="divide-y divide-[var(--color-line)]">
-            {data.review.flatMap((table) =>
-              table.would_change.map((item) => (
-                <li key={`${table.table}:${item.field_id}`} className="flex flex-wrap items-center justify-between gap-2 px-5 py-2.5 text-[13px]">
-                  <code className="numeric">
-                    {table.dataset}.{table.table} · {item.name}
-                  </code>
-                  <span className="text-[12px] text-[var(--color-ink-muted)]">
-                    {item.current ? `${kindLabel(catalog, item.current.kind)} ${maskName(item.current.mask, catalog).toLowerCase()}` : 'plain'}
-                    {' → '}
-                    {item.proposed ? `${kindLabel(catalog, item.proposed.kind)} ${maskName(item.proposed.mask, catalog).toLowerCase()}` : 'plain'}
-                  </span>
-                </li>
-              )),
-            )}
-          </ul>
+          <ReviewItems tables={ruled} catalog={catalog} />
         </Panel>
       ) : null}
 
@@ -147,6 +148,30 @@ export function ProtectionTab({ snapshot }: { snapshot: DetailSnapshot }): React
         </p>
       ) : null}
     </PageBody>
+  );
+}
+
+/** Each field whose protection would change, with its table: `kind mask → kind mask`. */
+function ReviewItems({ tables, catalog }: { tables: CpProtectionReviewTable[]; catalog: CpProtectionCatalog | null }): ReactNode {
+  const describe = (decision: CpProtectionReviewItem['current']): string =>
+    decision ? `${kindLabel(catalog, decision.kind)} ${maskName(decision.mask, catalog).toLowerCase()}` : 'plain';
+  return (
+    <ul className="divide-y divide-[var(--color-line)]">
+      {tables.flatMap((table) =>
+        table.would_change.map((item) => (
+          <li key={`${table.table}:${item.field_id}`} className="flex flex-wrap items-center justify-between gap-2 px-5 py-2.5 text-[13px]">
+            <code className="numeric">
+              {table.dataset}.{table.table} · {item.name}
+            </code>
+            <span className="text-[12px] text-[var(--color-ink-muted)]">
+              {describe(item.current)}
+              {' → '}
+              {describe(item.proposed)}
+            </span>
+          </li>
+        )),
+      )}
+    </ul>
   );
 }
 
