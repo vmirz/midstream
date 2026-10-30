@@ -367,6 +367,9 @@ steward" role works across the deployment.
 | A column people need is masked | a rule matched its name | Choose data protection: drop the kind, or show it partial; existing rows keep their masks |
 | A sensitive column is not masked | no rule matches its name; or a newer release's rules match it and the table recorded it plain, which the Protection tab lists under what the rules would change | *Apply the current rules* on the Protection tab; a name no rule matches waits for per-field choices (§22.14) |
 
+Everything above was run on a test cluster with two domains, the upgrade without a key and the key
+added afterwards included: 13 §13.8k has what was checked, how, and what it found.
+
 ## 22.14 Limits, and what comes next
 
 - **Names only.** A sensitive value under a name no rule matches (`contact`, `note: "call 555-…"`), a

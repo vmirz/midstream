@@ -681,6 +681,39 @@ topic are in handbook 20 §20.15; the browser record is console 14 §14.4. In sh
 committed exactly 102,033,103 rows, in 89.4 and 88.9 minutes; the console's requests answered within a
 millisecond or two of rc.2's; nothing on the data path changed between the builds.
 
+## 13.8k Verified on a test cluster: data protection (1.1)
+
+On 2026-10-30 two domains on a test cluster ran `feature/data-protection` — at c2a4ae4, then at cffb5a6
+with the fixes the run found — on Kaspr 0.11.31 and kaspr-operator 0.19.8, with the shared console in
+the cluster and Playwright (Chromium) in light and dark. Topics made for it held made-up personal
+data: `dp-customers` (3 partitions; a field of nearly every kind, a numeric `mobile`, a boolean
+`has_email`, a list `emails`, `contact.phone.number`, a `credentials.secret` object), `dp-signups` (2)
+and `dp-orders` (2; each order with a customer's email and phone). A Dataset Owner and a Dataset Writer
+of the test datasets acted beside an administrator.
+
+| Step | Observed |
+|---|---|
+| 1. No key (22 §22.9) | Deployed without `protection-key`: both domains' `protection_key_id` `null`, the Deployment section *not configured: nothing can be hashed*, the create dialog's alert. A create keeping the default `409 protection_key_not_configured`, as was the Owner's choosing a hash; the Writer choosing otherwise `403` (`dataset.protect`) before that. The Owner's all-partial create accepted and running without a key. A materialization from before data protection ran on at revision 0, `current` |
+| 2. Adding the key | One key generated once and patched into both auth Secrets, then `kubectl rollout restart statefulset` of the three apps: kaspr-operator left the restart annotation in place (its drift check compares no template annotations), and every app pod restarted once, all within 75 s. The control plane's first sweep re-applied both running runtimes once, now with `PROTECTION_KEY_ID`. Both domains reported the same `protection_key_id`; no runtime degraded |
+| 3. Masking | 505 customers, 305 signups and 305 orders; the counters were exactly the values masked and withheld (8 hashed and 4 withheld per customer, 14 partial per signup). Every kind's partial as 22 §22.2 says; booleans and nulls untouched; `password` and `api_key` absent; the numeric `mobile` hashed as its text. Every hash equal to the first 32 hex characters of HMAC-SHA256 under the Secret's key, checked without printing the key |
+| 4. Tail parity | The tail's rows before each commit against the committed rows, every column but `_materialized_at`: 305, 305 and 505 rows, no difference; after the edits, 100 of 100 |
+| 5. Across domains | A console statement joining Domain A's customers to Domain B's orders on the hashed email matched 305 orders to 305 customers; on the hashed phone, 305 |
+| 6. A live edit | The Owner made phones partial and added IP addresses, people's names and bank accounts. `202`, with the review listing the eight fields revision 2 was about to change; the table recorded it in 3.7 s and the member followed in 17 s (`current`). The status stayed `running` and the runtime pod was the same: no restart. Rows written before kept their values. After it: phones `****0700`, names `A****`, IPs and IBANs hashed, and `account_number`, a number, forked to `account_number__v2`, hashed and recorded protected from schema 1. Files `-r1` before, `-r2` after. *Apply the current rules* then recorded revision 3 (`apply_rules`), changing no field; the same policy sent again changed nothing |
+| 7. Compaction | Nine files of two revisions in one day partition, compacted on request, gave two files: `compact-…-r1` (605 rows, every phone hashed) and `compact-…-r2` (100 rows, every phone partial) |
+| 8. The default | IP addresses (partial) added to *Protected by default*: existing materializations kept their policies and revisions, and the Writer's next create took the new default without `dataset.protect` |
+| 9. Plain text anywhere | Each table's masked raw values (11,760 for the customers) were searched for in every object under the tables' locations (data files decoded with their statistics and footers, manifests and their bounds, metadata), the runtimes' staged lines, 26 topics (176 MB: the runtimes' changelogs and commits; the control planes' requests, work, status, table events, tail and maintenance requests, state and settings changelogs) and every pod's log: none found. The same search found all 6,060 of the customers' values in the source topic. The key's text was in no log or topic. A search of compressed Parquet pages' raw bytes once matched a value that no row held (two plain values run together by the compression); only decoded cells, statistics and footers count |
+| 10. Access | The Writer saw the control locked — *Choosing other protection needs Choose data protection on dataset dp_test* — in the create and edit dialogs, and got `403` editing protection through the API. On a materialization in a dataset whose schemas they may not see: no Schema, Data or Protection tab, the Table tab without `materializer.protection` and the fork map, the protection answer without its review (`hidden_tables: 1`), and the tail `403`. The Owner's edit dialog named each change before it was saved |
+| 11. The console | The Protection tab (policy, revision, members and tables on it, each table's fields with kind, mask and schema, the counters, the history with *current rules applied*), the shields and notes of the Schema tab, masked values on the Data tab, and the Settings section, in light and dark, with no browser errors |
+
+Found and fixed, each with a regression test: a `credentials.secret` object whose every value was
+withheld left `{}`, which reached `_unmapped` on every row (08e0888; no row the fixed runtime wrote
+has one); a boolean `has_email` was recorded as hashed and showed a shield (87b339e); the Settings
+section did not say the domain had no key (634a82e); the Schema tab's notes and the row drawer named
+kinds by their ids (34fca95); and the upgrade text asked domains that join to share a key, with a
+command that made a new key on each run (cffb5a6). Not run on the test cluster: someone with
+*Manage settings* but not *Manage data protection defaults*, and an edit giving a revision-0
+materialization its first policy; unit tests cover both.
+
 ## 13.9 Pre-finish checklist
 
 Before considering any change complete:
