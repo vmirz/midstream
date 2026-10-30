@@ -405,6 +405,9 @@ class ExpiryAndOrphanTests(MaintenanceAppTestCase):
         self.assertEqual(2, expired["counts"]["expired"])
         self.assertEqual(1, len(self.runtime.table().metadata.snapshots))
         self.assertEqual(9, len(self.runtime.rows()))
+        # Metadata without a snapshot: the report says it, so the table's record can take it.
+        table = self.runtime.table()
+        self.assertEqual((table.metadata_location, 1, table.current_snapshot().sequence_number), (expired["metadata_location"], expired["snapshots"], expired["sequence_number"]))
 
     def test_requested_expiry_with_nothing_old_enough_is_skipped(self) -> None:
         async def scenario():
@@ -730,6 +733,7 @@ class ReprotectTests(unittest.TestCase):
         self.assertGreater(done["counts"]["deleted_files"], 0)
         table = self.runtime.table()
         self.assertEqual([table.metadata.current_snapshot_id], [item.snapshot_id for item in table.metadata.snapshots])
+        self.assertEqual((table.metadata_location, 1), (done["metadata_location"], done["snapshots"]), "the record takes the purged metadata")
 
     def test_nothing_to_rewrite_is_said_and_the_request_done(self) -> None:
         async def scenario():
@@ -775,7 +779,10 @@ class ReprotectTests(unittest.TestCase):
         self.assertGreater(waiting, time.monotonic())
         self.assertEqual([], completed(late), "it looks again only once the wait is over")
         (done,) = completed(finished)
-        self.assertEqual(("skipped", True, "rp-1"), (done["outcome"], done["done"], done["request_id"]))
+        self.assertEqual(("succeeded", True, "rp-1"), (done["outcome"], done["done"], done["request_id"]))
+        # The last report says what the whole request rewrote, the first pass included.
+        self.assertEqual((first["counts"]["inputs"], first["counts"]["masked"]), (done["counts"]["inputs"], done["counts"]["masked"]))
+        self.assertIn("any more", done["message"])
 
     def test_without_the_tables_key_it_fails_then_gives_up(self) -> None:
         async def scenario():

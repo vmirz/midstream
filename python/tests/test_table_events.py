@@ -369,6 +369,27 @@ class TableEventTests(unittest.TestCase):
         self.assertIsNone(self.record().last_error)
         self.assertNotEqual("degraded", get_materialization_status(self.table, MATERIALIZATION_ID).observed_phase)
 
+    def test_an_expiry_moves_the_records_metadata_forward_at_the_same_snapshot(self) -> None:
+        handle_table_event(
+            event("table_committed", {"snapshot_id": 9, "sequence_number": 3, "metadata_location": "gs://lake/t/metadata/00005-a.metadata.json", "snapshots": 12}),
+            self.table,
+        )
+        expiry = {
+            "job": "expire_snapshots",
+            "outcome": "succeeded",
+            "counts": {"expired": 11, "remaining": 1},
+            "metadata_location": "gs://lake/t/metadata/00006-b.metadata.json",
+            "sequence_number": 3,
+            "snapshots": 1,
+        }
+        handle_table_event(event("maintenance_completed", expiry, event_id="evt-x1"), self.table)
+        record = self.record()
+        self.assertEqual(("gs://lake/t/metadata/00006-b.metadata.json", 1, 9, 3), (record.metadata_location, record.snapshots, record.current_snapshot_id, record.sequence_number))
+
+        # An older one arriving late changes nothing.
+        handle_table_event(event("maintenance_completed", {**expiry, "metadata_location": "gs://lake/t/metadata/00004-c.metadata.json", "snapshots": 30}, event_id="evt-x2"), self.table)
+        self.assertEqual(("gs://lake/t/metadata/00006-b.metadata.json", 1), (self.record().metadata_location, self.record().snapshots))
+
     def test_a_plaintext_count_is_kept_unless_an_older_one_arrives_later(self) -> None:
         counted = {"revision": 2, "counted_at": "2026-10-18T10:05:00Z", "snapshot_id": 7, "files": 3, "rows": 30, "bytes": 900, "blocked_files": 1, "blocked": ["ip: no string member"]}
         handle_table_event(event("plaintext_counted", counted, at="2026-10-18T10:05:00.000Z"), self.table)

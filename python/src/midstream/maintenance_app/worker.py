@@ -253,6 +253,8 @@ class TableMaintenance:
         self.reprotect_failure = _Failure()
         self.reprotect_failure_for: str | None = None
         self.reprotect_wait_until = 0.0
+        #: What the passes of the reprotect asked for have rewritten so far, for its last report.
+        self.reprotect_totals: tuple[str | None, dict[str, int]] = (None, {})
         #: The protection revision the table recorded, as the ticks carry it.
         self.protection_revision: int | None = None
         #: What the table holds in plain text, as last reported; counted again when due.
@@ -847,6 +849,14 @@ class TableMaintenance:
         )
         return outputs + [self._started_event(job)]
 
+    def _add_to_totals(self, ready: _ReprotectReady) -> None:
+        totals_for, totals = self.reprotect_totals
+        if totals_for != ready.request.request_id:
+            totals = {}
+        for key, value in _pass_counts(ready).items():
+            totals[key] = totals.get(key, 0) + value
+        self.reprotect_totals = (ready.request.request_id, totals)
+
     def _settling(self, table: Any) -> bool:
         """Whether a batch still open under an older revision may yet commit rows the table now masks.
 
@@ -904,6 +914,7 @@ class TableMaintenance:
             return self._reprotect_failed(ready.request, str(error), started_wall=ready.started_wall)
         self.reprotect_failure = _Failure()
         self.reprotect_failure_for = ready.request.request_id
+        self._add_to_totals(ready)
         try:
             _, more, backlog = await loop.run_in_executor(_POOL, self._plan_reprotect)
         except Exception as error:  # noqa: BLE001 - the next pass plans again
@@ -977,9 +988,11 @@ class TableMaintenance:
         """Nothing is left to rewrite: purge if asked, and report the request done."""
         purge: PurgeResult | None = None
         message = None
+        purged_table = None
         if request.purge:
             try:
                 purge = await asyncio.get_running_loop().run_in_executor(_POOL, self._purge_blocking)
+                purged_table = await asyncio.get_running_loop().run_in_executor(_POOL, load_table, self.context, self.client)
             except Exception as error:  # noqa: BLE001 - the rewrite stands; expiry and orphan cleanup finish the job
                 LOGGER.warning("Purging table %s after a reprotect failed: %s", self.target.table, error)
                 message = f"Every file is rewritten, but the purge failed: {error}. Snapshot expiry and orphan cleanup remove the old files in time."
@@ -994,8 +1007,10 @@ class TableMaintenance:
         # A purge alone - an earlier run rewrote every file without one - still removes what the
         # older snapshots hold.
         purged = purge is not None and bool(purge.expired or purge.deleted)
+        totals_for, totals = self.reprotect_totals
+        rewrote = ready is not None or (totals_for == request.request_id and bool(totals.get("inputs")))
         if message is None and ready is None:
-            message = "No file holds a value the table's protection masks in plain text" + (
+            message = ("No file holds a value the table's protection masks in plain text any more" if rewrote else "No file holds a value the table's protection masks in plain text") + (
                 f"; {purge.expired} older snapshot(s) expired and {purge.deleted} file(s) deleted." if purged else "."
             )
         return [
@@ -1003,12 +1018,13 @@ class TableMaintenance:
                 request,
                 ready,
                 snapshot_id=snapshot_id,
-                outcome="succeeded" if ready is not None or purged else "skipped",
+                outcome="succeeded" if rewrote or purged else "skipped",
                 message=message,
                 table=table,
                 done=True,
                 backlog=backlog,
                 purge=purge,
+                purged_table=purged_table,
                 started_wall=started_wall,
                 started_at=started_at,
             )
@@ -1047,23 +1063,17 @@ class TableMaintenance:
         table: Any = None,
         backlog: ReprotectBacklog | None = None,
         purge: PurgeResult | None = None,
+        purged_table: Any = None,
         started_wall: str | None = None,
         started_at: float | None = None,
     ) -> dict[str, Any]:
         counts: dict[str, Any] = {}
         if ready is not None:
-            counts.update(
-                {
-                    "inputs": len(ready.plan.inputs),
-                    "outputs": len(ready.outputs),
-                    "records": ready.plan.input_records,
-                    "input_bytes": ready.plan.input_bytes,
-                    "output_bytes": sum(int(item.get("file_size") or 0) for item in ready.outputs),
-                    "masked": int(ready.counts.get("masked", 0)),
-                    "withheld": int(ready.counts.get("withheld", 0)),
-                    "moved": int(ready.counts.get("moved", 0)),
-                }
-            )
+            counts.update(_pass_counts(ready))
+        totals_for, totals = self.reprotect_totals
+        if done and request is not None and totals_for == request.request_id and totals:
+            # The last report says what the whole request rewrote, every pass of it.
+            counts.update(totals)
         if backlog is not None:
             counts.update({"files_left": backlog.files, "blocked_files": backlog.blocked_files, "unknown_files": backlog.unknown_files})
         if purge is not None:
@@ -1083,15 +1093,10 @@ class TableMaintenance:
             "counts": counts,
         }
         if table is not None and outcome == "succeeded" and snapshot_id is not None:
-            snapshot = table.current_snapshot()
-            payload.update(
-                {
-                    "totals": table_totals(table),
-                    "metadata_location": table.metadata_location,
-                    "sequence_number": None if snapshot is None else snapshot.sequence_number,
-                    "snapshots": len(table.metadata.snapshots),
-                }
-            )
+            payload.update({"totals": table_totals(table), **_metadata_state(table)})
+        if purged_table is not None:
+            # The purge's expiry commits metadata without a snapshot: the record takes it as it is now.
+            payload.update(_metadata_state(purged_table))
         return self._completed_event(payload)
 
     def _reprotect_failed(self, request: ReprotectRequest | None, message: str, *, started_wall: str | None = None) -> list[dict[str, Any]]:
@@ -1198,6 +1203,8 @@ class TableMaintenance:
                     "message": None if expired else "No snapshot is past its retention.",
                     "duration_ms": int((time.monotonic() - started) * 1000),
                     "counts": {"expired": expired, "remaining": len(table.metadata.snapshots)},
+                    # Metadata without a snapshot: the record takes it at the same sequence number.
+                    **(_metadata_state(table) if expired else {}),
                 }
             )
         ]
@@ -1460,6 +1467,30 @@ def _work_root() -> str:
     root = compaction_work_root()
     root.mkdir(parents=True, exist_ok=True)
     return str(root)
+
+
+def _metadata_state(table: Any) -> dict[str, Any]:
+    """What a table record keeps of the table's metadata, as it is now."""
+    snapshot = table.current_snapshot()
+    return {
+        "metadata_location": table.metadata_location,
+        "sequence_number": None if snapshot is None else snapshot.sequence_number,
+        "snapshots": len(table.metadata.snapshots),
+    }
+
+
+def _pass_counts(ready: _ReprotectReady) -> dict[str, int]:
+    """What one reprotect pass rewrote."""
+    return {
+        "inputs": len(ready.plan.inputs),
+        "outputs": len(ready.outputs),
+        "records": ready.plan.input_records,
+        "input_bytes": ready.plan.input_bytes,
+        "output_bytes": sum(int(item.get("file_size") or 0) for item in ready.outputs),
+        "masked": int(ready.counts.get("masked", 0)),
+        "withheld": int(ready.counts.get("withheld", 0)),
+        "moved": int(ready.counts.get("moved", 0)),
+    }
 
 
 def _wall_clock() -> float:

@@ -26,6 +26,7 @@ from midstream.models import (
     TableEvent,
 )
 from midstream.models.table import MaintenanceRun, PlaintextReport, RunningMaintenance, TableError
+from midstream.lakehouse.pointer import metadata_version
 from midstream.protocol_logging import log_protocol_event
 from midstream.services.schema_projection import annotate_protection
 from midstream.storage import (
@@ -269,9 +270,16 @@ def _apply_maintenance_completed(table: TableProtocol, record: MaterializationTa
     # overtaken changes none of that.
     sequence = payload.get("sequence_number")
     newer = isinstance(sequence, int) and (updated.sequence_number is None or sequence > updated.sequence_number)
+    # An expiry - a purge too - commits metadata without a snapshot: the same snapshot, newer metadata.
+    expired = (
+        isinstance(sequence, int)
+        and sequence == updated.sequence_number
+        and bool(payload.get("metadata_location"))
+        and metadata_version(payload["metadata_location"]) > metadata_version(updated.metadata_location or "")
+    )
     if run.outcome == "succeeded" and newer and isinstance(payload.get("totals"), dict):
         updated = replace(updated, totals=_int_map(payload["totals"]) or updated.totals)
-    if run.outcome == "succeeded" and newer and payload.get("metadata_location"):
+    if run.outcome == "succeeded" and (newer or expired) and payload.get("metadata_location"):
         updated = replace(
             updated,
             metadata_location=payload["metadata_location"],
