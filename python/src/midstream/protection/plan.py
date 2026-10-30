@@ -21,6 +21,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from typing import Any
 
+from pyiceberg.types import BooleanType, IcebergType, ListType
+
 from midstream.lakehouse.schema.index import ElementIndex, Family, Member, SchemaIndex, StructIndex
 from midstream.protection.catalog import MASK_HASH
 from midstream.protection.mask import REDACTED, MissingProtectionKey, apply
@@ -53,16 +55,28 @@ _PLAIN = None
 
 
 def _scalar_members(family: Family | None) -> list[Member]:
-    """The family's members that hold scalars (or lists of scalars), newest first; collapsed ones excluded."""
+    """The family's members that hold scalars (or lists of scalars) a mask could apply to, newest first;
+    collapsed ones excluded, and booleans: no kind's values are true or false, so a boolean `has_email`
+    is never masked and never recorded as protected."""
     if family is None:
         return []
     found = [
         member
         for member in family.members
-        if not member.json and member.struct is None and (member.element is None or _scalar_element(member.element))
+        if not member.json
+        and member.struct is None
+        and (member.element is None or _scalar_element(member.element))
+        and not _boolean(member.type)
     ]
     found.sort(key=lambda member: (member.fork_version, member.field_id), reverse=True)
     return found
+
+
+def _boolean(iceberg_type: IcebergType) -> bool:
+    """A boolean, or a list (of lists) of booleans."""
+    while isinstance(iceberg_type, ListType):
+        iceberg_type = iceberg_type.element_type
+    return isinstance(iceberg_type, BooleanType)
 
 
 def _scalar_element(element: ElementIndex) -> bool:

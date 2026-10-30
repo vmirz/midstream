@@ -319,6 +319,26 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(len(forks), 1)
         self.assertEqual((forks[0].kind, forks[0].mask, forks[0].since), ("national_id", "hash", after_index.schema_id))
 
+    def test_a_boolean_field_is_never_recorded_as_protected(self) -> None:
+        # `has_email` and `mobile` match the rules by name, but a flag is never masked: recording it
+        # would claim, on its shield, a masking its values never get.
+        index = index_of(schema_from({"has_email": True, "mobile": False, "flags": {"emails": [True, False]}, "email": "a"}))
+        protection = initial_protection(index, DEFAULT, revision=1)
+        self.assertEqual({item.path for item in protection.fields.values()}, {("email",)})
+        self.assertEqual(record_policy(protection, index, DEFAULT, revision=2).fields, protection.fields)
+        self.assertEqual(review(protection, index), [])
+
+    def test_a_string_under_a_boolean_family_follows_the_rules(self) -> None:
+        # Nothing recorded for the boolean, so a string arriving under its name is masked by the rules.
+        before = schema_from({"has_email": True})
+        before_index = index_of(before)
+        protection = initial_protection(before_index, DEFAULT, revision=1)
+        plan = ProtectionPlan(protection, before_index, secret=KEY)
+        self.assertEqual(plan.protect({"has_email": "a@b"}), {"has_email": h("a@b")})
+        after = schema_from({"has_email": h("a@b")}, base=(before.schema, before.fork_map, before.last_column_id))
+        updated = record_new_fields(protection, before_index, index_of(after))
+        self.assertEqual([(item.kind, item.mask) for item in updated.fields.values()], [("email", "hash")])
+
     def test_a_field_added_to_a_plain_family_stays_plain(self) -> None:
         before = schema_from({"email": 5})
         before_index = index_of(before)

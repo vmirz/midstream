@@ -69,7 +69,8 @@ the container's kind, so `phone: {"number": "…", "type": "mobile"}` masks `num
 matching name masks each value; a list of objects is walked.
 
 **Never masked:** a null (a missing value stays missing) and a boolean (no kind's values are true or
-false, so `mobile: true` stays a boolean).
+false, so `mobile: true` stays a boolean). A boolean column is never recorded as protected either, so
+no shield claims it is masked; should a string arrive under its name, the rules decide it.
 
 `secret` allows partial and withheld only: a hashed password is a cracking target, and the API
 refuses `hash` for it.
