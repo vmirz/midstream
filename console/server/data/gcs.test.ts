@@ -207,3 +207,16 @@ describe('data files', () => {
     assert.deepEqual(await filesUnder(config.parquetCacheDir), [], 'neither the file nor its partial copy');
   });
 });
+
+describe('the cache path of a data file', () => {
+  it('stays inside the cache however the object is named', async () => {
+    const { localPathFor } = await import('./gcs.ts');
+    const { config } = await import('../config.ts');
+    const root = `${config.parquetCacheDir}/`;
+    const dotted = `materializer/mat-a1b2c3d4e5f6/orders/data/${'.\u0000./'.repeat(12)}etc/escaped.parquet`;
+    const path = localPathFor({ uri: `gs://lake/${dotted}`, name: dotted });
+    assert.ok(path.startsWith(root), `${path} is outside ${root}`);
+    assert.ok(!path.split('/').includes('..'), path);
+    assert.equal(localPathFor({ uri: 'gs://lake/a/../b.parquet', name: 'a/../b.parquet' }), `${root}lake/a/b.parquet`);
+  });
+});

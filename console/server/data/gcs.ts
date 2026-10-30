@@ -150,13 +150,18 @@ export interface MirrorTarget {
   name: string;
 }
 
-/** Local cache path for one object, mirroring its name within the bucket. */
-function localPathFor(file: MirrorTarget): string {
+/**
+ * Local cache path for one object, mirroring its name within the bucket.
+ *
+ * Null bytes go before empty, `.` and `..` segments are dropped, so a segment such as `.\0.` cannot
+ * become `..` after the filter has passed it and climb out of the cache.
+ */
+export function localPathFor(file: MirrorTarget): string {
   const { bucket } = parseGcsUri(file.uri);
   const segments = file.name
     .split('/')
-    .filter((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
-    .map((segment) => segment.replace(/[\0]/g, ''));
+    .map((segment) => segment.replace(/[\0]/g, ''))
+    .filter((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
   if (segments.length === 0) {
     throw badRequest(`object name is not usable as a cache path: ${file.name}`);
   }
