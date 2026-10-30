@@ -50,7 +50,8 @@ Load the document you need. Each one is self-contained and cross-links the other
    See [05](./05-live-store-and-realtime.md#53-cadence-and-backoff).
 
 4. **The console reads each table itself.** The control plane says where a materialization's
-   Iceberg table is; the console reads its pointer, metadata and manifests from GCS and its data
+   Iceberg table is; the console reads its pointer, metadata and manifests from object storage — GCS,
+   S3 or Azure, through the storage profile covering its location — and its data
    files through DuckDB, pinned to one snapshot per run. Row counts come from the manifests, so the
    first page of any table is instant. Everything behind the pointer is immutable, so it is cached
    for the life of the process. See [06](./06-iceberg-tables.md).
@@ -101,7 +102,7 @@ console/
   server/
     main.ts                    Bootstrap: Fastify, error handler, routes, static, shutdown
     workerPool.ts              Sizes Node's worker pool before anything starts it
-    config.ts                  Environment-driven configuration, live overrides, derived data access mode
+    config.ts                  Environment-driven configuration, live overrides
     logger.ts                  Pino instance typed as FastifyBaseLogger
     errors.ts                  ConsoleError + constructors + identifier validation
     auth/guard.ts              The onRequest hook: resolve the caller, renew cookie sessions, refuse cross-site changes; permit(), permitAnywhere(), requireOnDatasets()
@@ -113,7 +114,7 @@ console/
     live/store.ts              Polling, series, lag history, SSE fan-out, snapshot cache, visibleDetail per person
     live/rates.ts              Rates from each runtime member's own heartbeats
     iceberg/json.ts            JSON parsing that keeps 64-bit snapshot ids exact
-    iceberg/io.ts              Reading an object from GCS (or disk, in tests)
+    iceberg/io.ts              Reading an object through its storage profile (or from disk, in tests)
     iceberg/pointer.ts         The table's catalog pointer
     iceberg/metadata.ts        Metadata files: schemas, snapshots, the partition spec
     iceberg/manifests.ts       Avro manifest lists and manifests, with Iceberg's inheritance rules
@@ -121,7 +122,11 @@ console/
     iceberg/table.ts           The table as last read: pointer freshness, parsed metadata
     iceberg/schema.ts          The schema walk with the fork map: the control plane's projection, ported
     schema/diff.ts             Schema comparison by field id
-    data/gcs.ts                Downloads, the local mirror, cache eviction
+    storage/registry.ts        The storage profiles: loading and checking them, the longest scope serving an object
+    storage/{gcs,s3,azure}.ts  Each backend's reads, DuckDB secret and DuckDB paths
+    storage/profile.ts         The profile contract, retries, whole-file writes
+    storage/cache.ts           The local mirror of cached profiles' files, cache eviction
+    storage/uris.ts            gs://, s3:// and abfss:// locations taken apart
     data/duckdb.ts             Instance lifecycle, the statement sandbox, query execution, value coercion, interrupts
     data/sql.ts                Identifier/literal quoting and the read-only statement guard
     data/catalog.ts            A snapshot's files per materialization: summaries, time pruning, warming

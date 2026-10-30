@@ -10,7 +10,7 @@ import fastifyStatic from '@fastify/static';
 import Fastify, { LogController } from 'fastify';
 
 import { registerAuth } from './auth/guard.ts';
-import { config, dataAccessMode, hmacCredentialWarning } from './config.ts';
+import { config } from './config.ts';
 import { ConsoleError } from './errors.ts';
 import { consoleSettings, domains } from './domains/index.ts';
 import { logger } from './logger.ts';
@@ -30,6 +30,7 @@ import { registerConsoleSettingsRoutes, registerSettingsRoutes } from './routes/
 import { registerFleetStreamRoutes, registerStreamRoutes } from './routes/stream.ts';
 import { registerSystemRoutes } from './routes/system.ts';
 import { registerTopicRoutes } from './routes/topics.ts';
+import { storage, type StorageRegistry } from './storage/registry.ts';
 
 const rootDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 const clientDir = join(rootDir, 'dist');
@@ -61,8 +62,10 @@ async function main(): Promise<void> {
     });
   });
 
-  // The domains this console serves; a registry that breaks a rule stops the console here.
+  // The domains this console serves, and the storage it reads their tables from; a registry that
+  // breaks a rule stops the console here.
   const served = domains();
+  const profiles = storage();
 
   // Before every route: who is calling, in each domain, and whether a change comes from this
   // console's own pages.
@@ -141,7 +144,7 @@ async function main(): Promise<void> {
     },
     'midstream console ready',
   );
-  logDataAccessMode();
+  logStorage(profiles);
 
   // Stored statement results are the only thing the console leaves on disk that grows with use.
   const runEviction = setInterval(() => {
@@ -156,30 +159,45 @@ main().catch((error: unknown) => {
 });
 
 /**
- * State the data-access mode at startup, with what it costs.
- *
- * `cached` is the mode you get by omitting configuration, and its budgets are the console's most
- * visible limitation — so it is worth one explicit line at boot rather than being discovered later
- * through a refused query. `direct` needs only an HMAC key pair and removes the budgets entirely.
+ * State the storage the console reads at startup: one line per profile — what it serves, how, and
+ * whether its credentials were found (never a value) — and what each costs. Cached profiles' budgets
+ * are the console's most visible limitation, so they are worth a line at boot rather than being
+ * discovered through a refused query.
  */
-function logDataAccessMode(): void {
-  if (dataAccessMode() === 'disabled') {
-    logger.warn('data access is disabled; the Data tab is unavailable');
+function logStorage(registry: StorageRegistry): void {
+  if (!config.dataAccessEnabled) logger.warn('data access is disabled; the Data tab is unavailable');
+  if (registry.size === 0) {
+    logger.warn(
+      'no storage profiles are configured (CONSOLE_STORAGE_FILE or CONSOLE_STORAGE): the console reads no object storage, ' +
+        'and every table answers that no storage is configured for its location',
+    );
     return;
   }
-  if (dataAccessMode() === 'direct') {
-    const warning = hmacCredentialWarning();
-    if (warning) logger.warn(warning);
-    logger.info('data access mode: direct — DuckDB reads gs:// in place, with no per-scan budget');
-    return;
+  for (const profile of registry.profiles) {
+    const described = profile.describe();
+    logger.info(
+      {
+        profile: described.name,
+        kind: described.kind,
+        scope: described.scope,
+        mode: described.mode,
+        endpoint: described.endpoint ?? undefined,
+        credentials: described.credentialsFound ? 'found' : 'not found',
+        readsWith: described.credentials,
+        ...(described.mode === 'cached' ? { maxFiles: config.cachedModeMaxFiles, maxBytes: config.cachedModeMaxBytes } : {}),
+      },
+      described.mode === 'direct'
+        ? 'storage profile: DuckDB reads its data files in place'
+        : 'storage profile: its data files are downloaded before each scan, within the cached-mode budgets',
+    );
+    for (const warning of profile.warnings()) logger.warn(warning);
   }
-  logger.info(
-    {
-      maxFiles: config.cachedModeMaxFiles,
-      maxBytes: config.cachedModeMaxBytes,
-    },
-    'data access mode: cached — objects are mirrored to local disk before each scan, bounded by ' +
-      'the budgets above. Set CONSOLE_GCS_HMAC_KEY_ID and CONSOLE_GCS_HMAC_SECRET to read gs:// ' +
-      'directly and remove them.',
-  );
+  const direct = registry.profiles.filter((profile) => profile.mode === 'direct').map((profile) => profile.name);
+  if (direct.length > 0) {
+    logger.warn(
+      { profiles: direct },
+      'storage profiles read in place hand their credentials to DuckDB: give them read-only access. A statement’s sandbox ' +
+        'does not stop COPY … TO a path it may read; only the SQL guard does',
+    );
+  }
 }

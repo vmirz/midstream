@@ -44,7 +44,7 @@ and giving it its registry of domains (`CONSOLE_DOMAINS_FILE`, 03 §3.3).
 └───────────────────────────────┘         │        │                         │
                                           │        ├─ LiveStore              │
                                           │        ├─ Iceberg reader         │
-                                          │        └─ DuckDB + GCS           │
+                                          │        └─ DuckDB + storage       │
                                           └────────┬─────────────────────────┘
                                                    │ HTTP
                                           ┌────────▼─────────────────────────┐
@@ -55,7 +55,7 @@ and giving it its registry of domains (`CONSOLE_DOMAINS_FILE`, 03 §3.3).
                                           └────────┬─────────────────────────┘
                                                    │
                                           ┌────────▼─────────────────────────┐
-                                          │ Iceberg tables in GCS (gs://)    │
+                                          │ Iceberg tables in GCS, S3, Azure │
                                           │ read directly by the console     │
                                           └──────────────────────────────────┘
 ```
@@ -130,9 +130,9 @@ for four reasons.
 | HTTP server | Fastify 5 | Fast, first-class async, plugin ecosystem for static and CORS |
 | Validation | Zod 4 | Request-body validation at the trust boundary |
 | Logging | Pino 10 | Structured JSON, typed as `FastifyBaseLogger` so Fastify keeps its default generics |
-| Query engine | `@duckdb/node-api` 1.5 | Reads Parquet by field id natively; can read `gs://` directly with httpfs; sandboxes a statement with `enable_external_access` |
+| Query engine | `@duckdb/node-api` 1.5 | Reads Parquet by field id natively; reads `gs://`, `s3://` and Azure in place with httpfs and azure and scoped secrets; sandboxes a statement with `enable_external_access` |
 | Iceberg metadata | the console's own reader (`server/iceberg/`) with `avsc` 5 | Pointer, metadata and Avro manifests, per snapshot, with exact 64-bit ids |
-| Object storage | `@google-cloud/storage` 8 | ADC-based download |
+| Object storage | `@google-cloud/storage` 8, `@aws-sdk/client-s3` 3, `@azure/storage-blob` 12 with `@azure/identity` 4 | One storage profile per destination prefix (`server/storage/`): metadata objects and cached files through each SDK |
 | UI | React 19 + Vite 8 | Current stable; Vite gives a fast dev loop and small production output |
 | Routing | React Router 7 | URL-addressable tabs and deep links |
 | Server state | TanStack Query 5 | On-demand resources (schema, dataset, query results). Live data does **not** use it — it comes over SSE |
@@ -194,7 +194,8 @@ never import from `routes/`.
 - **Not a source of truth.** Every piece of state it displays originates in the control plane or
   the tables themselves. It writes nothing to either; **Run now** on the Table tab asks the
   control plane, which hands the job to its maintenance app.
-- **Not multi-cloud.** The data explorer is GCS-only, matching the runtime.
+- **Not a credentials broker.** It reads each destination with the storage profile that covers it
+  (GCS, S3 or Azure) and hands nobody its credentials; a table outside every profile is not read.
 - **Not a general SQL workbench.** Queries read tables by their full names, in any domain the person
   may query, each at its snapshot, restricted to read-only statements, in a sandbox. Engines on the
   federated Iceberg REST catalog (`/catalog`) are the general workbench.

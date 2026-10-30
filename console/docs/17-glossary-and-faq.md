@@ -54,8 +54,9 @@
 | **Member rate** | One runtime member's rows (or bytes) per second, from the change in its counters between its own heartbeats |
 | **Field name** | A field's path without the schema's `payload.` root — `customer.email` — the way the console shows it and SQL refers to it |
 | **Sample** | One observation: cumulative counters plus rates derived against the previous sample |
-| **Direct mode** | DuckDB scans `gs://` in place using HMAC credentials |
-| **Cached mode** | Data files are mirrored to local disk, under their bucket and object name, then scanned |
+| **Storage profile** | How the console reads one destination prefix (its scope): a kind (`gcs`, `s3`, `azure`), an endpoint, credentials from `CONSOLE_STORAGE_<NAME>_…`, and a mode. Each object is read with the profile whose scope is its longest prefix (07 §07.10) |
+| **Direct mode** | A storage profile's data files are scanned in place by DuckDB, with the profile's scoped secret: every S3 and Azure profile, and a GCS profile with an HMAC key pair |
+| **Cached mode** | A storage profile's data files are mirrored to local disk, under `<cache>/<profile>/<container>/<key>`, then scanned |
 | **Baseline diff** | A diff against nothing, where every field is new |
 | **Table name** | What SQL and engines call one of a materialization's tables, inside its dataset: its topic's name made an identifier (`orders`, `payments_v2`) unless another was typed, fixed once the table exists. In a statement, always with its domain: `<domain>.<dataset>.<table>` (`domain_a.sales.orders`) is a view over the snapshot's data files in the chosen time range, one column per field with forks folded in; `<domain>_iceberg.<dataset>.<table>` is the same rows as the native Iceberg table. Engines read `lake.<domain>.<dataset>.<table>` through the federated catalog, or `lake.<dataset>.<table>` through a domain's own |
 | **Sandbox** | The DuckDB instance a statement runs in, made for it: it can open only the run's data files and write only the run's own directory |
@@ -198,7 +199,7 @@ named on its page.
 
 **Does a dataset role protect the files?**
 No. Roles decide what the control plane, the REST catalog and this console show and serve. Anyone
-holding credentials that read the bucket — an HMAC key for DuckDB, Google credentials for PyIceberg —
+holding credentials that read the destination — an S3 or Azure key, or a GCS HMAC key for DuckDB —
 reads every table in it.
 
 **I deleted it and it is still listed.**
@@ -306,9 +307,15 @@ An export is the run's whole result in the order shown, up to `CONSOLE_EXPORT_RO
 tool for a whole dataset: read the table with an engine through the REST catalog (Table ›
 Connect).
 
-**Why is the first Data tab load slow in cached mode?**
-It downloads each data file the first time a page or scan needs it. Later reads reuse the cache —
-data files are immutable, so nothing is downloaded twice. Direct mode avoids downloads entirely.
+**Why is the first Data tab load slow for some tables?**
+A table read through a cached storage profile downloads each data file the first time a page or scan
+needs it. Later reads reuse the cache — data files are immutable, so nothing is downloaded twice. A
+direct profile avoids downloads entirely: give a GCS profile its HMAC key pair.
+
+**What does "no storage is configured for …" mean?**
+No storage profile's scope covers the table's location, so the console reads nothing of it — it
+never guesses at credentials, and never lets DuckDB send the path anonymously to a public cloud. Add
+a profile whose scope covers the location (`console.storage[]`, 03 §3.6a).
 
 **Why can't I query a snapshot another engine wrote?**
 A snapshot with delete files — rows an engine deleted — or with data files outside the table's

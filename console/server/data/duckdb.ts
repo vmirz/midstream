@@ -15,9 +15,12 @@ import {
   type DuckDBConnection,
 } from '@duckdb/node-api';
 
-import { config, hmacCredentialWarning } from '../config.ts';
+import { config } from '../config.ts';
 import { ConsoleError } from '../errors.ts';
 import { logger } from '../logger.ts';
+import { GcsProfile } from '../storage/gcs.ts';
+import type { StorageProfile } from '../storage/profile.ts';
+import { storage } from '../storage/registry.ts';
 import { quoteLiteral } from './sql.ts';
 import { fieldName } from '../../shared/fieldPaths.ts';
 import type { QueryColumn } from '../../shared/types.ts';
@@ -80,41 +83,97 @@ async function getInstance(): Promise<DuckDBInstance> {
   return instancePromise;
 }
 
-let httpfsReady: Promise<void> | null = null;
-let secretReady: Promise<void> | null = null;
+/** The extensions a storage profile may need; nothing else is ever installed by name. */
+const STORAGE_EXTENSIONS = new Set(['httpfs', 'aws', 'azure']);
+
+const installs = new Map<string, Promise<void>>();
+const profilesReady = new WeakMap<StorageProfile, Promise<void>>();
+let setupQueue: Promise<unknown> = Promise.resolve();
+
+/** One instance-wide change at a time: two at once can fail with `Catalog write-write conflict`. */
+function serially<T>(work: () => Promise<T>): Promise<T> {
+  const next = setupQueue.then(work, work);
+  setupQueue = next.catch(() => undefined);
+  return next;
+}
 
 /**
- * Install httpfs and register the GCS secret, for direct `gs://` scans.
- *
- * The secret is a catalog object owned by the instance, so it is created exactly once per process;
- * creating it per connection fails as soon as two queries start together (`Catalog write-write
- * conflict`). A failed attempt is not cached, so one transient error cannot poison direct mode.
+ * Install an extension once per process, through the shared instance; every instance — a sandbox
+ * too — then only loads it. A failed attempt is not cached, so one transient error cannot stick.
  */
-async function ensureRemoteAccess(connection: DuckDBConnection): Promise<void> {
-  if (!config.gcsHmacKeyId || !config.gcsHmacSecret) return;
-
-  httpfsReady ??= (async () => {
-    await connection.run('INSTALL httpfs');
-    await connection.run('LOAD httpfs');
-  })().catch((cause) => {
-    httpfsReady = null;
-    throw cause;
-  });
-  await httpfsReady;
-
-  // Extensions load per connection; the secret does not.
-  await connection.run('LOAD httpfs');
-
-  secretReady ??= connection
-    .run(
-      `CREATE OR REPLACE SECRET console_gcs (TYPE GCS, KEY_ID ${quoteLiteral(config.gcsHmacKeyId)}, SECRET ${quoteLiteral(config.gcsHmacSecret)})`,
-    )
-    .then(() => undefined)
-    .catch((cause) => {
-      secretReady = null;
-      throw cause;
+function ensureInstalled(extension: string): Promise<void> {
+  if (!STORAGE_EXTENSIONS.has(extension)) return Promise.reject(new Error(`not a storage extension: ${extension}`));
+  let pending = installs.get(extension);
+  if (!pending) {
+    pending = serially(async () => {
+      const connection = await (await getInstance()).connect();
+      try {
+        await connection.run(`INSTALL ${extension}`);
+      } finally {
+        connection.closeSync();
+      }
     });
-  await secretReady;
+    installs.set(extension, pending);
+    pending.catch(() => installs.delete(extension));
+  }
+  return pending;
+}
+
+/**
+ * Create a profile's secret on `connection`, failing with what went wrong but never the statement:
+ * DuckDB echoes a statement it cannot parse (`LINE 1: … KEY_ID '…'`), credentials and all, and the
+ * error reaches the run's status and the log. Every quoted value of the statement is kept out of the
+ * message too.
+ */
+async function createSecret(connection: DuckDBConnection, profile: StorageProfile, statement: string): Promise<void> {
+  try {
+    await connection.run(statement);
+  } catch (cause) {
+    const raw = cause instanceof Error ? cause.message : String(cause);
+    let message = raw.split('\nLINE')[0]?.trim() || 'the secret could not be created';
+    for (const [, quoted] of statement.matchAll(/'((?:[^']|'')+)'/g)) {
+      const value = (quoted as string).replace(/''/g, "'");
+      if (value.length >= 4) message = message.split(value).join('<redacted>');
+    }
+    throw new ConsoleError('storage_unavailable', `DuckDB could not create the secret of storage profile ${profile.name}: ${message}`, 503, {
+      profile: profile.name,
+    });
+  }
+}
+
+/**
+ * Give the shared instance what DuckDB needs to read each direct profile's objects in place: its
+ * extensions, loaded once (a load is the instance's, not a connection's), and its secret, created
+ * once — a secret is a catalog object owned by the instance. A profile is prepared the first time its
+ * objects are read, so an Azure extension is loaded only where an Azure profile is read. A failed
+ * attempt is not cached.
+ */
+export async function prepareStorageAccess(profiles: readonly StorageProfile[]): Promise<void> {
+  await Promise.all(
+    profiles.map((profile) => {
+      let pending = profilesReady.get(profile);
+      if (!pending) {
+        pending = (async () => {
+          const statement = profile.duckdbSecret();
+          if (statement === null) return;
+          for (const extension of profile.duckdbExtensions()) await ensureInstalled(extension);
+          await serially(async () => {
+            const connection = await (await getInstance()).connect();
+            try {
+              for (const extension of profile.duckdbExtensions()) await connection.run(`LOAD ${extension}`);
+              await createSecret(connection, profile, statement);
+            } finally {
+              connection.closeSync();
+            }
+          });
+          logger.debug({ profile: profile.name, scope: profile.scope }, 'duckdb storage secret ready');
+        })();
+        profilesReady.set(profile, pending);
+        pending.catch(() => profilesReady.delete(profile));
+      }
+      return pending;
+    }),
+  );
 }
 
 /**
@@ -143,7 +202,6 @@ export async function withConnection<T>(
   signal?.addEventListener('abort', interrupt, { once: true });
 
   try {
-    await ensureRemoteAccess(connection);
     return await work(connection);
   } catch (cause) {
     if (signal?.aborted) throw cancelledError();
@@ -173,6 +231,13 @@ export interface SandboxAccess {
  * configuration is locked before the statement runs, which DuckDB enforces instance-wide and will
  * not undo, so the sandbox lives exactly as long as the work. It costs ~30 ms to set up and starts
  * with cold caches, which only statement runs pay; browsing uses the shared instance.
+ *
+ * Its storage access is only what its paths need: the extensions of the direct profiles whose scopes
+ * serve them, loaded before the lock (nothing can load after it), and only those profiles' secrets,
+ * so a sandbox holds no secret its statement does not read with. `access.paths` are the sources exactly as
+ * DuckDB opens them, the `az://` form for Azure, so they match the secrets' scopes. The sandbox does
+ * not tell reads from writes — `COPY … TO` an allowed object path would succeed — so the SQL guard's
+ * refusal of COPY is what stops a write, and profiles should hold read-only credentials.
  */
 export async function withSandbox<T>(
   access: SandboxAccess,
@@ -203,12 +268,14 @@ export async function withSandbox<T>(
       }
     }
     await enableProgress(connection);
-    if (config.gcsHmacKeyId && config.gcsHmacSecret) {
-      await ensureHttpfsInstalled();
-      await connection.run('LOAD httpfs');
-      await connection.run(
-        `CREATE SECRET console_gcs (TYPE GCS, KEY_ID ${quoteLiteral(config.gcsHmacKeyId)}, SECRET ${quoteLiteral(config.gcsHmacSecret)})`,
-      );
+    const profiles = storage().forDuckdbSources(access.paths);
+    for (const extension of new Set(profiles.flatMap((profile) => profile.duckdbExtensions()))) {
+      await ensureInstalled(extension);
+      await connection.run(`LOAD ${extension}`);
+    }
+    for (const profile of profiles) {
+      const statement = profile.duckdbSecret();
+      if (statement !== null) await createSecret(connection, profile, statement);
     }
     const list = (values: string[]): string => `[${[...new Set(values)].map(quoteLiteral).join(', ')}]`;
     await connection.run(`SET allowed_directories = ${list(access.directories)}`);
@@ -230,16 +297,6 @@ export async function withSandbox<T>(
   }
 }
 
-/** httpfs is installed once, through the shared instance; a sandbox only loads it. */
-async function ensureHttpfsInstalled(): Promise<void> {
-  const instance = await getInstance();
-  const connection = await instance.connect();
-  try {
-    await ensureRemoteAccess(connection);
-  } finally {
-    connection.closeSync();
-  }
-}
 
 /** Execute one statement and return its rows, converted to JSON-safe values. */
 export async function runQuery(
@@ -370,7 +427,7 @@ export function parseDuckDbError(
 ): { message: string; position: StatementPosition | null } {
   const raw = cause instanceof Error ? cause.message : String(cause);
   const message = suggestTableName(
-    suggestFieldName(replaceMisleadingRegionHint(raw.split('\nLINE')[0]?.trim() || raw)),
+    suggestFieldName(gcsSignatureHint(explainMissingDataFile(raw.split('\nLINE')[0]?.trim() || raw))),
     tableNames,
   );
 
@@ -444,26 +501,69 @@ export function isCancelled(cause: unknown): boolean {
 }
 
 /**
- * Correct DuckDB's boilerplate when a `gs://` read fails to authenticate.
+ * Say which of the console's variables to check when GCS refuses DuckDB's signature.
  *
- * Every S3-layer HTTP error blames an unset region, which is wrong for GCS and sends people to
- * debug the wrong thing; the real cause is credentials that cannot sign the request.
+ * Only for an object a gcs profile serves: DuckDB's own S3 messages are accurate, and HMAC advice
+ * would send someone reading S3 to the wrong variables. DuckDB names the object by the URL it asked
+ * (`https://storage.googleapis.com/<bucket>/<key>`, or the profile's endpoint), so that is mapped back
+ * to its `gs://` URI and its profile. Where DuckDB blames an unset region, the region is dropped: the
+ * cause is credentials that cannot sign the request.
  */
-function replaceMisleadingRegionHint(message: string): string {
-  const authFailure = /MalformedSecurityHeader|SignatureDoesNotMatch|InvalidAccessKeyId/.test(message);
-  if (!authFailure) return message;
-
-  const withoutRegionHint = message
+function gcsSignatureHint(message: string): string {
+  if (!/GCS authentication failed|MalformedSecurityHeader|SignatureDoesNotMatch|InvalidAccessKeyId/.test(message)) return message;
+  const profile = gcsProfileNamedIn(message);
+  if (!profile) return message;
+  const blamedRegion = /No region is provided|S3 region being set incorrectly/i.test(message);
+  const cleaned = message
     .replace(/\s*\*?\s*No region is provided\.?/gi, '')
     .replace(/\s*-?\s*this can be caused by the S3 region being set incorrectly\.?/gi, '')
     .trim();
+  return `${cleaned}${blamedRegion ? ' — GCS rejected the request signature, not the region.' : ''}\n${profile.hmacAdvice()}`;
+}
 
-  const detail =
-    hmacCredentialWarning() ??
-    'Check that CONSOLE_GCS_HMAC_KEY_ID and CONSOLE_GCS_HMAC_SECRET are a matching, active GCS ' +
-      'HMAC key pair whose service account can read this bucket.';
+/** The gcs profile serving an object a DuckDB message names, by `gs://` URI or by the URL DuckDB asked. */
+function gcsProfileNamedIn(message: string): GcsProfile | null {
+  const registry = storage();
+  const gcs = registry.profiles.filter((profile): profile is GcsProfile => profile instanceof GcsProfile);
+  if (gcs.length === 0) return null;
+  for (const token of message.match(/(?:gs|https?):\/\/[^\s'"()]+/g) ?? []) {
+    const candidates = [token];
+    const url = /^https?:\/\/(?:([^/.]+)\.)?storage\.googleapis\.com\/(.*)$/.exec(token);
+    if (url) candidates.push(url[1] ? `gs://${url[1]}/${url[2]}` : `gs://${url[2]}`);
+    for (const profile of gcs) {
+      const endpoint = profile.describe().endpoint;
+      if (endpoint && token.startsWith(`${endpoint}/`)) candidates.push(`gs://${token.slice(endpoint.length + 1)}`);
+    }
+    for (const candidate of candidates) {
+      const found = registry.find(candidate);
+      if (found instanceof GcsProfile) return found;
+    }
+  }
+  return null;
+}
 
-  return `${withoutRegionHint} — GCS rejected the request signature, not the region. ${detail}`;
+/** DuckDB's sandbox wording for an allowed path it retried as a directory: the file is not there. */
+const MISSING_IN_SANDBOX = /Permission Error: Cannot access file "([^"]+?)\/\*\*\/\*\.parquet"[^\n]*/;
+const REMOTE_PATH = /(?:gs|s3|az|abfss|https?):\/\//;
+
+/**
+ * Say plainly that a data file is gone, whatever the backend.
+ *
+ * A snapshot expiry removes the files of snapshots no longer kept, so a run pinned to an older
+ * snapshot can find one gone. DuckDB words it per scheme: `HTTP 404 Not Found` for `gs://` and
+ * `s3://`, `No files found that match the pattern` for `az://`, and in a statement's sandbox a
+ * Permission Error on the path followed by `/**\/*.parquet` — DuckDB retried the missing file as a
+ * directory, which the sandbox refuses. Local files are not explained: the cache can evict one.
+ */
+export function explainMissingDataFile(message: string): string {
+  const hint = 'The data file is no longer in storage: a snapshot expiry may have removed it. Run the query again to read the table’s current snapshot.';
+  const sandboxed = MISSING_IN_SANDBOX.exec(message);
+  if (sandboxed && REMOTE_PATH.test(sandboxed[1] as string)) {
+    return message.replace(MISSING_IN_SANDBOX, `IO Error: ${sandboxed[1]} could not be read.\n${hint}`);
+  }
+  if (!REMOTE_PATH.test(message)) return message;
+  if (/No files found that match the pattern/.test(message) || /HTTP 404\b/.test(message)) return `${message}\n${hint}`;
+  return message;
 }
 
 /**

@@ -74,8 +74,9 @@ administrator can give the Guest group less, or more, from the Groups page.
 **What still belongs to the deployment.** Serve the console over TLS (the cookies are `Secure`
 only when the request arrived over HTTPS, `CONSOLE_COOKIE_SECURE=auto`), keep each control plane's
 port off any public address — a control plane in another cluster is reached through its API route,
-over TLS — and treat the pod's ADC/HMAC credentials, every domain's service token and each
-provider's client secret as sensitive. The federation key most of all: every domain honours a token
+over TLS — and treat every storage profile's credentials (`CONSOLE_STORAGE_<NAME>_…`, a gcs key
+file), every domain's service token and each provider's client secret as sensitive, and make the
+storage credentials read-only (§12.4). The federation key most of all: every domain honours a token
 it signs, for anyone in that domain's directory, administrators included, so whoever holds it can act
 as anyone anywhere (control-plane handbook 18 §18.11). Keep it in the auth Secret of each domain's
 release and nowhere else, and rotate it in every domain together. Ingress authentication in front of the console is still a reasonable extra layer, but
@@ -85,8 +86,8 @@ no longer the only one.
 someone who may query `sales` may query every table in it, whatever materialization writes it. What
 is not data is not secret: anyone who may see materializations sees each one's topics, status, totals
 and table names, locked datasets' included. Access is not storage access: the console's own
-credential reads every table, and so does anyone holding credentials that read the bucket — GCS
-enforces none of this (control-plane handbook 14). The per-address sign-in limit trusts the address
+credentials read every table under their profiles' scopes, and so does anyone holding credentials
+that read the destination — storage enforces none of this (control-plane handbook 14). The per-address sign-in limit trusts the address
 the ingress reports (`trustProxy`); a client that reaches the pod directly can choose its own. There
 is no "forgot password" (an administrator resets it), and no email. The same email is the same
 person in every domain: a federated token made in one domain acts, in another, for the account
@@ -176,6 +177,10 @@ and closed after it:
 | `enable_external_access = false` | every other file, URL and object is refused, however the statement names it |
 | `lock_configuration = true` | the statement cannot change any of the above |
 
+Before the lock, the instance gets the storage access its sources need and no more: the extensions
+and secrets of the direct storage profiles whose scopes serve the run's sources (07 §07.10). Other
+profiles' secrets are not there to list.
+
 DuckDB enforces these instance-wide and will not undo them (E10). The instance holds two views of
 each table the statement names, both over exactly that table's files, read by field id:
 `<domain>.<dataset>.<table>` with logical columns, and `<domain>_iceberg.<dataset>.<table>` with the
@@ -203,6 +208,21 @@ call pragma set reset checkpoint vacuum analyze begin commit rollback grant revo
 read_text read_blob read_csv read_json read_parquet read_avro avro_scan
 iceberg_scan iceberg_metadata iceberg_snapshots iceberg_table_properties glob sniff_csv shell system
 ```
+
+Forbidden functions are refused as calls, however the call is written — the name quoted or not, in
+any case, qualified with a catalog or schema or not — and whatever surrounds it:
+
+```
+duckdb_secrets which_secret query json_execute_serialized_sql
+```
+
+`duckdb_secrets()` and `which_secret()` list the secrets of the instance a statement runs in — every
+storage profile's name, scope, endpoint, region and key id; the secret values are redacted, and
+`duckdb_secrets(redact := false)` is refused by DuckDB itself. They open no file, so the sandbox cannot
+refuse them, and before this check they passed the guard. `query()` and `json_execute_serialized_sql()`
+run SQL given as a string, which no keyword check sees into. Being calls only, these reserve no table
+name: `FROM sales.which_secret` and a column named `query` stay queryable. `duckdb_settings()` and
+`current_setting()` were checked against a sandbox holding every kind of secret and name no profile.
 
 String literals and comments are blanked before scanning, so:
 
@@ -246,6 +266,16 @@ after one (`update`) makes the table `update_topic` (`shared/tableNames.ts`, the
 - **The sandbox's own directory was once shared.** As first built, every statement's sandbox was
   allowed the whole run directory, where every run's result is stored, so a statement could read
   another person's result by naming it. Each run now has a directory of its own (E10).
+- **The sandbox does not tell reads from writes.** `COPY … TO` an object path the sandbox may read
+  succeeds in a locked sandbox when the profile's credentials can write it; only the guard's refusal
+  of `COPY` stops it. Give every storage profile read-only credentials — S3 `GetObject` and
+  `ListBucket`, a read-only SeaweedFS identity, Azure's "Storage Blob Data Reader" or a read-and-list
+  SAS, GCS `objectViewer` for the HMAC key's service account. The console cannot tell whether a
+  profile's identity can write and does not try; it warns at start for every direct profile.
+- **The secret-listing functions passed the guard.** Until `FORBIDDEN_FUNCTIONS`, a statement could
+  call `duckdb_secrets()` and see the scope, endpoint, region and key id of every secret its sandbox
+  held — across domains, and the GCS HMAC key id. A sandbox now holds only the secrets its own sources
+  need, and the guard refuses the calls.
 
 If you extend the guard, keep the layering: never widen the sandbox to make validation simpler.
 
@@ -284,17 +314,24 @@ catalog refuses the commits that would move a table's files in the first place: 
 and setting `write.data.path`, `write.metadata.path` or `write.py-location-provider.impl`
 (handbook 11 §11.8).
 
-In cached mode, `localPathFor` mirrors an object to `<CONSOLE_PARQUET_CACHE_DIR>/<bucket>/<name>`:
+These checks run on the canonical URIs — `gs://`, `s3://`, `abfss://…dfs.core.windows.net` — whatever
+the backend; only the hand-over of an Azure path to DuckDB spells it `az://<account>.blob.core.windows.net/…`
+(07 §07.10). A location that passes them must still be covered by a storage profile, or nothing under
+it is read: `503 storage_not_configured`.
+
+For a cached profile, `storage/cache.ts::cachePathFor` mirrors an object to
+`<CONSOLE_PARQUET_CACHE_DIR>/<profile>/<container>/<key>`:
 
 ```ts
-const segments = file.name.split('/')
+const segments = location.key.split('/')
   .filter((s) => s.length > 0 && s !== '.' && s !== '..')
   .map((s) => s.replace(/[\0]/g, ''));
 ```
 
 Empty, `.`, and `..` segments are dropped and null bytes removed, so the join cannot escape the
-cache directory even for a name that passed the location check. The bucket name is the first
-segment, keeping buckets apart.
+cache directory even for a name that passed the location check; a container of `.` or `..` is not
+one (`storage/uris.ts`). The profile's name and the container are the first segments, keeping
+destinations and buckets apart.
 
 ## 12.7 Outbound request safety
 
@@ -327,7 +364,8 @@ segment, keeping buckets apart.
 | Logs | `authorization` and `cookie` headers are removed; per-request logging is disabled |
 | DuckDB errors | Relayed to the user (they are needed to fix a query) but stripped of the statement echo. They can reveal column names of the tables being queried — acceptable, since the user can already `DESCRIBE` them; a table in a dataset they may not query never reaches a sandbox |
 | A table in a dataset locked to the caller | Its schema, schema errors, fork map and `schema.*` properties are left out of the detail, the detail stream and the table record. Its name, topic, counts, snapshots and maintenance stay: names are not secret, and totals are a materialization's status |
-| Object storage credentials | Never leave the server; the browser never receives a signed URL or a bucket path it could not already infer |
+| Object storage credentials | Never leave the server, and never appear in a log — at most a variable's name; the browser never receives a signed URL or a bucket path it could not already infer. The Table tab's `storage` names the profile serving the table, its endpoint, region, path style, mode and Azure account, for the Connect snippets; the Settings page (`settings.view`) adds what each profile reads with, by the names of its variables |
+| A location no profile covers | `503 storage_not_configured`, naming the location: never read, never handed to DuckDB, which would send it anonymously to the public cloud |
 
 ## 12.9 Browser-side considerations
 

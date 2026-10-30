@@ -146,7 +146,7 @@ export function SettingRow({
       );
     }
     const text = pendingReset ? formatInputValue(fallbackValue(setting)) : String(input);
-    const wide = setting.kind === 'gcs_uri' || setting.kind === 'string' || setting.kind === 'domain_list';
+    const wide = setting.kind === 'destination_uri' || setting.kind === 'string' || setting.kind === 'domain_list';
     return (
       <div
         className={cn(
@@ -163,7 +163,7 @@ export function SettingRow({
           disabled={readOnly}
           inputMode={setting.kind === 'integer' ? 'numeric' : undefined}
           spellCheck={false}
-          placeholder={setting.kind === 'gcs_uri' ? 'None' : setting.kind === 'domain_list' ? 'Any: example.com, corp.example.org' : undefined}
+          placeholder={setting.kind === 'destination_uri' ? 'None' : setting.kind === 'domain_list' ? 'Any: example.com, corp.example.org' : undefined}
           aria-invalid={error ? true : undefined}
           aria-describedby={`${id}-meta`}
           className={cn(

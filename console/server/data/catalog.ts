@@ -9,7 +9,7 @@
  * range cheap — the files outside it are never read at all.
  */
 
-import { dataAccessMode } from '../config.ts';
+import { config } from '../config.ts';
 import { ConsoleError, unavailable } from '../errors.ts';
 import { logger } from '../logger.ts';
 import { ObjectMissingError } from '../iceberg/io.ts';
@@ -17,7 +17,8 @@ import { currentSchema, type IcebergSchema } from '../iceberg/metadata.ts';
 import { FORK_MAP_PROPERTY, PROTECTION_PROPERTY, parseForkMap, parseProtection, type ForkMap, type ProtectionMap } from '../iceberg/schema.ts';
 import { snapshotCatalog, type DataObject, type SnapshotCatalog } from '../iceberg/snapshot.ts';
 import { loadTable } from '../iceberg/table.ts';
-import { warmFooter } from './objects.ts';
+import { storage } from '../storage/registry.ts';
+import { directSource, warmFooter } from './objects.ts';
 import type { DataSummary, ScopeEstimate, TimeRange } from '../../shared/types.ts';
 
 export type { DataObject } from '../iceberg/snapshot.ts';
@@ -123,7 +124,7 @@ function emptyCatalog(materializationId: string, table: string | null, location:
 }
 
 function assertQueryable(): void {
-  if (dataAccessMode() === 'disabled') throw unavailable('data access is turned off for this console (Settings › Data explorer)');
+  if (!config.dataAccessEnabled) throw unavailable('data access is turned off for this console (Settings › Data explorer)');
 }
 
 export function parseInstant(text: string | null): number | null {
@@ -221,7 +222,9 @@ export function estimateRange(catalog: Catalog, range: TimeRange): ScopeEstimate
  * the first scan that needs them takes that cost off the first filter or statement someone runs.
  * Newest first and capped, because a long-lived table can hold more files than are worth holding in
  * memory, and recent data is what people look at. A few at a time, and held back while any run
- * scans, so it never competes with a question someone is waiting on.
+ * scans, so it never competes with a question someone is waiting on. Only objects a direct profile
+ * serves: a cached profile's would be downloaded whole, and an object no profile covers is never
+ * handed to DuckDB.
  */
 
 const WARM_LIMIT = 5_000;
@@ -245,9 +248,10 @@ export function pauseWarming(): () => void {
 }
 
 function scheduleFooterWarming(catalog: Catalog): void {
-  if (dataAccessMode() !== 'direct') return;
+  const registry = storage();
+  if (registry.size === 0) return;
   const pending = [...catalog.objects]
-    .filter((object) => !warmed.has(object.uri))
+    .filter((object) => !warmed.has(object.uri) && registry.find(object.uri)?.mode === 'direct')
     .sort((a, b) => (b.timeMax ?? 0) - (a.timeMax ?? 0))
     .slice(0, Math.max(0, WARM_LIMIT - warmed.size));
   if (pending.length === 0) return;
@@ -265,7 +269,8 @@ async function drainWarmQueue(): Promise<void> {
       const object = warmQueue.shift();
       if (!object) return;
       try {
-        await warmFooter(object.uri);
+        const source = await directSource(object.uri);
+        if (source !== null) await warmFooter(source);
       } catch (cause) {
         warmed.delete(object.uri);
         logger.debug({ err: cause, uri: object.uri }, 'footer warming failed');

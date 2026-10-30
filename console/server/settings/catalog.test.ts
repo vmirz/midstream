@@ -6,7 +6,6 @@ import {
   applySettingOverrides,
   config,
   currentSettingOverrides,
-  dataAccessMode,
   deploymentSettings,
   environmentDefault,
 } from '../config.ts';
@@ -114,13 +113,13 @@ describe('live settings', () => {
   });
 
   it('turn the data explorer off and on while running', () => {
-    const deployed = dataAccessMode();
+    const deployed = config.dataAccessEnabled;
     applySettingOverrides({ dataAccessEnabled: false });
-    assert.equal(dataAccessMode(), 'disabled');
+    assert.equal(config.dataAccessEnabled, false);
     applySettingOverrides({ dataAccessEnabled: true });
-    assert.notEqual(dataAccessMode(), 'disabled');
+    assert.equal(config.dataAccessEnabled, true);
     applySettingOverrides({});
-    assert.equal(dataAccessMode(), deployed);
+    assert.equal(config.dataAccessEnabled, deployed);
   });
 
   it('keep a false override rather than falling back to the deployment', () => {

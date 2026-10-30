@@ -43,7 +43,14 @@ export function initialInput(setting: SettingView): string | boolean {
   return typeof setting.value === 'number' ? formatNumber(setting.value) : String(setting.value);
 }
 
-const GCS_URI = /^gs:\/\/[a-z0-9][a-z0-9._-]*[a-z0-9](\/\S*)?$/;
+/** A destination as the control plane checks it (design 6.5): a bucket or container, and optionally a prefix. */
+const DESTINATION_URI = [
+  /^gs:\/\/[a-z0-9][a-z0-9._-]*[a-z0-9](\/\S*)?$/,
+  /^s3:\/\/[a-z0-9][a-z0-9.-]{1,61}[a-z0-9](\/\S*)?$/,
+  /^abfss:\/\/[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){2,62}@[a-z0-9]{3,24}\.dfs\.core\.windows\.net(\/\S*)?$/,
+];
+const DESTINATION_MAX_LENGTH = 1024;
+const DESTINATION_FORMS = 'gs://bucket/prefix, s3://bucket/prefix or abfss://container@account.dfs.core.windows.net/prefix';
 /** One email domain, as the control plane checks it (`config.normalize_email_domains`). */
 const EMAIL_DOMAIN = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 const MAX_EMAIL_DOMAINS = 50;
@@ -113,13 +120,13 @@ export function parseInput(setting: SettingView, input: string | boolean): Parse
       }
       return { ok: true, value };
     }
-    case 'gcs_uri': {
+    case 'destination_uri': {
       const text = String(input).trim().replace(/\/+$/, '');
       if (!text) {
         return setting.nullable ? { ok: true, value: null } : { ok: false, error: `${label} is required` };
       }
-      if (text.length > 1024 || !GCS_URI.test(text)) {
-        return { ok: false, error: 'A gs:// URI such as gs://bucket/prefix' };
+      if (text.length > DESTINATION_MAX_LENGTH || !DESTINATION_URI.some((pattern) => pattern.test(text))) {
+        return { ok: false, error: `A destination such as ${DESTINATION_FORMS}` };
       }
       return { ok: true, value: text };
     }
@@ -281,7 +288,7 @@ export function formatValue(
   value: SettingValue,
 ): string {
   if (value === null || value === undefined || value === '') {
-    return setting.kind === 'gcs_uri' || setting.kind === 'choice_map' ? 'None' : setting.kind === 'domain_list' ? 'Any' : '—';
+    return setting.kind === 'destination_uri' || setting.kind === 'choice_map' ? 'None' : setting.kind === 'domain_list' ? 'Any' : '—';
   }
   if (setting.kind === 'domain_list') return String(value).split(',').join(', ');
   if (setting.kind === 'choice_map') {

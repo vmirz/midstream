@@ -76,12 +76,39 @@ describe('parseInput', () => {
     assert.equal(parseInput(setting(), '').ok, false);
   });
 
-  it('reads gs:// destinations, empty meaning none when that is allowed', () => {
-    const destination = setting({ kind: 'gcs_uri', key: 'default_destination_uri', nullable: true, unit: null });
+  it('reads destinations in each of the three forms, empty meaning none when that is allowed', () => {
+    const destination = setting({ kind: 'destination_uri', key: 'default_destination_uri', nullable: true, unit: null });
     assert.deepEqual(parseInput(destination, ' gs://lake/data/ '), { ok: true, value: 'gs://lake/data' });
+    assert.deepEqual(parseInput(destination, 'gs://lake_eu'), { ok: true, value: 'gs://lake_eu' });
+    assert.deepEqual(parseInput(destination, 's3://example-lake/midstream/'), { ok: true, value: 's3://example-lake/midstream' });
+    assert.deepEqual(parseInput(destination, 's3://lake'), { ok: true, value: 's3://lake' });
+    assert.deepEqual(
+      parseInput(destination, 'abfss://lake@exampleacct.dfs.core.windows.net/midstream'),
+      { ok: true, value: 'abfss://lake@exampleacct.dfs.core.windows.net/midstream' },
+    );
     assert.deepEqual(parseInput(destination, ''), { ok: true, value: null });
-    assert.equal(parseInput(destination, 's3://lake').ok, false);
     assert.equal(parseInput({ ...destination, nullable: false }, '').ok, false);
+  });
+
+  it('refuse destinations the control plane refuses, naming the three forms', () => {
+    const destination = setting({ kind: 'destination_uri', key: 'default_destination_uri', nullable: true, unit: null });
+    for (const text of [
+      's3://ab',
+      's3://lake_eu',
+      's3://Lake',
+      'gs://-lake',
+      'az://lake/prefix',
+      'wasbs://lake@exampleacct.blob.core.windows.net',
+      'abfss://lake@exampleacct.blob.core.windows.net/x',
+      'abfss://la--ke@exampleacct.dfs.core.windows.net',
+      'abfss://lake@ex.dfs.core.windows.net',
+      'file:///tmp/lake',
+      `s3://lake/${'x'.repeat(1024)}`,
+    ]) {
+      const parsed = parseInput(destination, text);
+      assert.equal(parsed.ok, false, text);
+      if (!parsed.ok) assert.match(parsed.error, /gs:\/\/bucket\/prefix, s3:\/\/bucket\/prefix or abfss:\/\/container@account\.dfs\.core\.windows\.net\/prefix/);
+    }
   });
 
   it('reads Kubernetes quantities, enums and text', () => {
@@ -109,7 +136,7 @@ describe('drafts', () => {
 
   it('become one change per scope against that scope’s revision', () => {
     const replicas = setting({ value: 64 });
-    const destination = setting({ key: 'default_destination_uri', kind: 'gcs_uri', unit: null, nullable: true, value: null, source: 'override' });
+    const destination = setting({ key: 'default_destination_uri', kind: 'destination_uri', unit: null, nullable: true, value: null, source: 'override' });
     const seal = setting({ scope: 'runtime', key: 'max_open_file_age_seconds', value: 300, unit: 'seconds', section: 'runtimes' });
     const page = overview([replicas, destination, seal]);
     const { changed, invalid } = pendingDrafts(
@@ -158,7 +185,7 @@ describe('formatting', () => {
     assert.equal(formatValue({ kind: 'integer', unit: 'ms' }, 30_000), '30 s');
     assert.equal(formatValue({ kind: 'integer', unit: 'replicas' }, 16), '16 replicas');
     assert.equal(formatValue({ kind: 'boolean', unit: null }, false), 'Off');
-    assert.equal(formatValue({ kind: 'gcs_uri', unit: null }, null), 'None');
+    assert.equal(formatValue({ kind: 'destination_uri', unit: null }, null), 'None');
     assert.equal(formatValue({ kind: 'integer', unit: 'hours' }, 168), '168 hours');
   });
 

@@ -48,7 +48,7 @@ browser ──SSE──┐                                  ┌─HTTP─▶ Dom
                ├─ console server (Fastify) ───────┼─HTTP─▶ Domain B's control plane (another cluster)
 browser ──HTTP─┘        │                         └─HTTP─▶ …
                         ├─ a live store per domain  poll + per-member rates + lag history + fan-out
-                        ├─ Iceberg reader           pointer → metadata → manifests, per snapshot (GCS)
+                        ├─ Iceberg reader           pointer → metadata → manifests, per snapshot (GCS, S3, Azure)
                         ├─ DuckDB                   runs over snapshots' files, across domains
                         ├─ sign-in providers        Entra ID, GitHub, Google, OpenID Connect
                         └─ /catalog                 one Iceberg REST catalog over every domain
@@ -105,23 +105,28 @@ override wins until it is reset ([docs/03](docs/03-configuration-reference.md)).
 | `CONSOLE_LIST_POLL_MS` | `2000` | Fleet refresh cadence while a client is connected |
 | `CONSOLE_DETAIL_POLL_MS` | `1500` | Refresh cadence for a materialization with an open detail view |
 | `CONSOLE_IDLE_POLL_MS` | `30000` | Cadence when no client is connected |
-| `CONSOLE_GCS_HMAC_KEY_ID` / `_SECRET` | unset | Enables direct `gs://` scans in DuckDB |
+| `CONSOLE_STORAGE_FILE` / `CONSOLE_STORAGE` | none: no object storage is read | The storage profiles: one per destination prefix (`gs://`, `s3://`, `abfss://`), its kind, endpoint, region, path style and access. The chart renders it from `console.storage[]` |
+| `CONSOLE_STORAGE_<NAME>_…` | unset | Each profile's credentials: `GCS_HMAC_KEY_ID`/`_SECRET`; `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, `SESSION_TOKEN`; `AZURE_CONNECTION_STRING`, `AZURE_ACCOUNT_KEY` or a service principal. Read-only ones |
 | `CONSOLE_RUN_SCAN_CONCURRENCY` | `48` | Files one run reads in parallel; Node's worker pool is sized from it at startup |
 | `CONSOLE_RESULT_ROW_LIMIT` | `1000000` | Rows a statement's result keeps for paging and export; its total is always counted |
 | `CONSOLE_SNAPSHOT_CACHE_MS` / `CONSOLE_TABLE_METADATA_FRESH_MS` | `2000` / `5000` | How old a table's pointer may be for a run / for the summary |
 | `CONSOLE_DATA_DIR` | OS temp dir | Run results and the cached-mode file cache |
 
-### Data access modes
+### Storage profiles
+
+Each object is read with the storage profile whose scope is the longest prefix of its URI, as DuckDB
+picks among scoped secrets ([docs/07 §07.10](docs/07-data-access-and-duckdb.md)); a table outside every
+scope answers "no storage is configured for …".
 
 | Mode | When | Behaviour |
 |------|------|-----------|
-| `direct` | GCS HMAC credentials are configured | DuckDB reads `gs://` in place; nothing is downloaded |
-| `cached` | No HMAC credentials (uses ADC) | The pruned file set is mirrored to a local LRU cache first |
-| `disabled` | `CONSOLE_DATA_ACCESS_ENABLED=false` | The Data tab is unavailable |
+| `direct` | an S3 or Azure profile; a GCS profile with an HMAC key pair | DuckDB reads data files in place with the profile's scoped secret; nothing is downloaded |
+| `cached` | a GCS profile without an HMAC pair, or `"access": "cached"` | Data files are mirrored to a local LRU cache first, under `<cache>/<profile>/<container>/…` |
 
-`cached` mode is bounded by `CONSOLE_CACHED_MODE_MAX_FILES` and `CONSOLE_CACHED_MODE_MAX_BYTES`
+`cached` profiles are bounded by `CONSOLE_CACHED_MODE_MAX_FILES` and `CONSOLE_CACHED_MODE_MAX_BYTES`
 per scan. Narrow the time range to stay inside them — files outside it are pruned on their manifest
-bounds *before* anything is downloaded. Pages read one file at a time and are never refused.
+bounds *before* anything is downloaded. Pages read one file at a time and are never refused. With
+`CONSOLE_DATA_ACCESS_ENABLED=false` the Data tab is unavailable.
 
 ## Query safety
 
@@ -175,7 +180,8 @@ server/
   live/store.ts          Polling, rate derivation, SSE fan-out
   iceberg/               Reading Iceberg tables: pointer, metadata, Avro manifests, snapshots, schema projection
   schema/                Schema diff engine
-  data/                  Snapshot catalog, logical columns, DuckDB and its sandbox, SQL guard, GCS
+  storage/               Storage profiles: the registry, GCS, S3 and Azure readers, DuckDB secrets, the cache
+  data/                  Snapshot catalog, logical columns, DuckDB and its sandbox, SQL guard
   runs/                  Runs: browse and statement execution, pages, exports, profiles
   routes/                HTTP surface, the domain-scoped routes under /api/d/<domain>, the catalogs
 src/

@@ -14,10 +14,10 @@ platform cluster (`controlPlane.enabled=false`) — and needs:
 | Control planes that say who they are | Every domain's control plane at Midstream 1.0 or later, with `domain.id` set to the id the registry gives it: one that says it is another domain is shown nothing of (`misconfigured`). Someone signs in to each as its bootstrap administrator first, adds people, and creates the first datasets |
 | One federation key | The same `federation-key` in every domain's auth Secret, for access tokens that work in every domain; the console's Domains section says when they differ |
 | Network to object storage | For the Data and Table tabs: the console reads each table itself, in whichever domain's bucket |
-| GCP credentials | One read-only identity that reads every domain's lake: ADC to read tables' metadata and manifests, and in cached mode their data files; HMAC additionally for direct mode, where DuckDB reads `gs://` in place |
+| Storage profiles | `console.storage[]`, rendered into `CONSOLE_STORAGE_FILE`: one profile per destination prefix the domains' tables are on — `gs://`, `s3://` or `abfss://` — each with its Secret of **read-only** credentials (`CONSOLE_STORAGE_<NAME>_…`, a gcs key file). Without one covering a table's location the console reads nothing of it ([03 §3.6a](./03-configuration-reference.md)) |
 | TLS at the ingress | The session cookies are `Secure` only for requests that arrived over HTTPS (`CONSOLE_COOKIE_SECURE=auto`); the ingress must set `X-Forwarded-Proto` |
 | Sign-in providers (optional) | `CONSOLE_URL`, the console's public URL, and each provider's redirect URI registered with it: `<CONSOLE_URL>/api/auth/sso/<provider>/callback` ([03 §3.3a](./03-configuration-reference.md)). Each domain turns the provider on for itself (handbook 18 §18.17) |
-| Optional persistent volume | For the Parquet cache (cached mode) |
+| Optional persistent volume | For the Parquet cache (cached profiles) |
 
 Build order matters: **build the client, then start the server.** `@fastify/static` registers
 routes for the files present at startup.
@@ -78,7 +78,7 @@ tables'.
 
 | Path | Contents | Lose it and… |
 |------|----------|--------------|
-| `<CONSOLE_PARQUET_CACHE_DIR>/` | Mirrored Parquet (cached mode) | First query after restart re-downloads |
+| `<CONSOLE_PARQUET_CACHE_DIR>/<profile>/<container>/` | Mirrored Parquet (cached profiles) | First query after restart re-downloads |
 | `<CONSOLE_RUN_DIR>/` | A directory per statement run, holding its result; Parquet exports while they download | Nothing a restart does not lose anyway: runs live in memory |
 
 Both default under `os.tmpdir()`, so by default nothing survives a restart. A restart leaves the
@@ -95,7 +95,7 @@ volumeMounts:
 ```
 
 Sizing: the Parquet cache is bounded by `CONSOLE_PARQUET_CACHE_MAX_BYTES` (8 GiB default); stored
-results by `CONSOLE_RESULT_ROW_LIMIT` per run. In direct mode the cache is never used.
+results by `CONSOLE_RESULT_ROW_LIMIT` per run. Direct profiles never use the cache.
 
 ## 13.4 Running more than one replica
 
@@ -164,7 +164,10 @@ Structured JSON via Pino, `service: midstream-console`.
 | `info` | `console log level changed` | A Settings page change to the log level was applied |
 | `info` | `shutting down console` | SIGTERM/SIGINT received |
 | `warn` | `live refresh failed` | A whole refresh pass of one domain failed; `domain` names it, `err` has the cause |
-| `info` | `data access mode: direct …` / `data access mode: cached …` | At start: how DuckDB reads data files |
+| `info` | `storage profile: DuckDB reads its data files in place` / `storage profile: its data files are downloaded …` | At start, one per storage profile: `profile`, `kind`, `scope`, `mode`, `credentials` found or not (§13.11) |
+| `warn` | `no storage profiles are configured …` | At start: the console reads no object storage, and every table says so |
+| `warn` | `storage profiles read in place hand their credentials to DuckDB: give them read-only access …` | At start, naming the direct profiles (12 §12.4) |
+| `warn` | `storage profile <name>: …` | At start: something wrong with one profile, by its variables' names (§13.11) |
 | `warn` | `data access is disabled; the Data tab is unavailable` | At start, or after the Settings page turned the Data explorer off |
 | `warn` | `parquet cache eviction failed` | Cache may exceed its budget |
 | `warn` | `table could not be read` | A Data tab read or a run could not read a table; `err` has storage's own error, and the user got a `503` naming what failed (§13.7) |
@@ -326,9 +329,10 @@ The message says what failed:
 
 | Message ends with | Cause | Fix |
 |---|---|---|
-| `object storage answered 403` | The console's credentials may not read the table's bucket | Grant its service account (ADC) read on the bucket; in direct mode the HMAC key's account too |
-| `object storage could not be reached` | No ADC, no network to GCS, or a timeout | `gcloud auth application-default login` locally; check egress in the cluster |
-| `no object at gs://…` | A metadata file or manifest the table names is gone: usually a snapshot that expired mid-read, so a retry works | If it persists, the table is damaged; handbook 12 |
+| `no storage is configured for …` | No storage profile's scope covers the table's location | Add a profile whose scope covers it (`console.storage[]`); the Settings page lists the profiles |
+| `object storage answered 403` | The profile's credentials may not read the table's bucket or container | Grant its identity read (and list) on it: the key file's or ADC's service account and, for direct gcs, the HMAC key's; the S3 key's policy; the Azure role or SAS |
+| `object storage could not be reached` | No credentials found, no network to the storage or its endpoint, or a timeout | `gcloud auth application-default login` locally for gcs; check the profile's endpoint and egress in the cluster |
+| `no object at …` | A metadata file or manifest the table names is gone: usually a snapshot that expired mid-read, so a retry works | If it persists, the table is damaged; handbook 12 |
 | `names … outside its location` / `says it is at …` | The table points at files the console will not read ([12 §12.6](./12-security-model.md#126-paths-a-table-names)) | Find the commit that did it (Table tab › Snapshots) |
 
 ```bash
@@ -365,8 +369,9 @@ object is four round trips. Check, in order:
 
 ### The create dialog says no materialization can be created
 
-The control plane has no destination for tables, or one that is not `gs://`: set it on the Settings
-page, under Materializations › Destination. The dialog learns of a change made there at once; one
+The control plane has no destination for tables: set it on the Settings page, under Materializations
+› Destination — `gs://bucket[/prefix]`, `s3://bucket[/prefix]` or
+`abfss://container@account.dfs.core.windows.net[/prefix]`. The dialog learns of a change made there at once; one
 made on the control plane directly (an environment variable and a restart, or the API) shows within
 the minute the console keeps its defaults.
 
@@ -387,8 +392,9 @@ The client was rebuilt while the server was running. Restart the server.
 du -sh "$CONSOLE_DATA_DIR/parquet-cache"
 ```
 
-Lower `CONSOLE_PARQUET_CACHE_MAX_BYTES`, or switch to direct mode with HMAC credentials so nothing
-is downloaded at all. The cache can also be deleted at any time while the console is running.
+Lower `CONSOLE_PARQUET_CACHE_MAX_BYTES`, or give the cached profiles direct access — an HMAC pair for
+a gcs profile, no `"access": "cached"` for the others — so nothing is downloaded at all. The cache can
+also be deleted at any time while the console is running.
 
 ### High memory
 
@@ -407,7 +413,8 @@ term.
 | Create a dataset, or give someone access to one | Datasets › **New dataset** (`datasets.create`); a dataset's page › **Access**, for its owners |
 | Find who may read a dataset | Its page › **Access**; a person's or group's page › **Dataset access** for theirs |
 | Force a full refresh | Restart, or simply open the UI — subscribing calls `wake()` |
-| Switch to direct mode | Set both HMAC variables and restart |
+| Read a gcs profile's files in place | Set its `CONSOLE_STORAGE_<NAME>_GCS_HMAC_KEY_ID` and `_GCS_HMAC_SECRET` (its Secret's `hmac-key-id` and `hmac-secret`) and restart |
+| Add a destination | Add a profile to `console.storage[]` — name, scope, kind, endpoint, region, path style — with a Secret of read-only credentials, and upgrade the console's release |
 | Disable data access | Settings → Data explorer → **Data explorer** off; no restart |
 | Change any other tunable | Settings page; see [03 §3.10](./03-configuration-reference.md) for which ones |
 | Verify a deploy | `curl -sS <host>/api/health` — every domain `ok` — then open the UI, sign in, and confirm the header reads `Live` |
@@ -472,28 +479,36 @@ term.
     names a table with its domain now, `domain_a.sales.orders`, and an access token made before is
     refused: make a new one.
 
-## 13.10 `MalformedSecurityHeader` on every gs:// scan
+## 13.10 GCS refuses every scan of a gcs profile
 
 ```
-HTTP GET error reading 'gs://…' in region '' (HTTP 400 Bad Request)
-MalformedSecurityHeader: Invalid argument. Bad Request - this can be caused by
-the S3 region being set incorrectly. * No region is provided.
+HTTP Error: HTTP error on 'https://storage.googleapis.com/…' (HTTP 403 Forbidden)
+Authentication Failure - GCS authentication failed.
 ```
 
-**The region is a red herring.** GCS ignores it, the same text appears on requests that succeed,
-and setting one changes nothing. The failure is credential shape: `CONSOLE_GCS_HMAC_KEY_ID` is not
-a GCS HMAC access ID, so the signed `Authorization` header is malformed and GCS rejects it before
-ever checking the signature.
-
-The usual cause is pasting a service account email, a project id, or a path to a JSON key file into
-the key id. A *well-formed but wrong* key fails differently — `403 SignatureDoesNotMatch` — which
-is a useful way to tell the two apart.
+or, from older DuckDB wording, `MalformedSecurityHeader … this can be caused by the S3 region being
+set incorrectly. * No region is provided.` **The region is a red herring**: GCS ignores it. The
+failure is the profile's HMAC key pair: usually its key id is not a GCS HMAC access ID (a service
+account email, a project id or a key file's path pasted in its place), so the signature is malformed
+and GCS rejects it before checking it. A *well-formed but wrong* key fails with
+`SignatureDoesNotMatch` instead. The console appends to the message which of the profile's variables
+to check — only for a gcs profile's objects: S3's messages are DuckDB's own and accurate.
 
 | Check | Expected |
 |-------|----------|
-| `CONSOLE_GCS_HMAC_KEY_ID` | ~61 characters, begins `GOOG1E` |
-| `CONSOLE_GCS_HMAC_SECRET` | 40 characters of base64 |
+| `CONSOLE_STORAGE_<NAME>_GCS_HMAC_KEY_ID` | ~61 characters, begins `GOOG1E` |
+| `CONSOLE_STORAGE_<NAME>_GCS_HMAC_SECRET` | 40 characters of base64 |
 | `gcloud storage hmac list` | The key exists and is `ACTIVE` |
 
-The console logs a warning naming the problem at startup, so check the boot log before the query
-log. See [03](./03-configuration-reference.md) for how to create a key.
+The console warns at startup about a key id or secret of the wrong shape, by the variable's name,
+so check the boot log before the query log. See [03](./03-configuration-reference.md) for how to
+create a key.
+
+## 13.11 Storage profiles at start
+
+The boot log has a line per storage profile — its name, kind, scope, mode, and whether its
+credentials were found — and a warning for anything wrong with one: half a key pair, a key file that
+is not there, an Azure emulator DuckDB could not reach. With no profile at all it warns that no
+object storage is read. A profile that breaks a rule of the registry stops the console, naming the
+rule. The direct profiles are named in one more warning: they hand their credentials to DuckDB, so
+they must be read-only (12 §12.4).

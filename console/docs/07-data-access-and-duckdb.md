@@ -1,7 +1,7 @@
 # 07 — Data Access and DuckDB
 
-Sources: `server/data/{catalog,gcs,objects,logical,duckdb,sql,tail}.ts`, `server/iceberg/` (06),
-`server/runs/{run,browse,statement,view,export,profile,store,tail}.ts`.
+Sources: `server/data/{catalog,objects,logical,duckdb,sql,tail}.ts`, `server/storage/` (§07.10),
+`server/iceberg/` (06), `server/runs/{run,browse,statement,view,export,profile,store,tail}.ts`.
 
 ## 07.1 What a table holds
 
@@ -41,10 +41,12 @@ Freshness is the pointer's (06 §6.2): a run reads a pointer no older than 2 s, 
 estimates one up to 5 s old, or up to 5 minutes while a fresh read happens in the background.
 Everything behind the pointer is immutable, so caching it is always correct.
 
-After each read of the current snapshot the catalog **warms footers** in the background in direct
-mode — newest files first, capped, eight at a time — reading each file's footer into DuckDB's
-metadata cache. Warming waits while any run is scanning, so it never competes with a question
-someone is waiting on.
+After each read of the current snapshot the catalog **warms footers** in the background for the
+files a direct storage profile serves — newest files first, capped, eight at a time — reading each
+file's footer into DuckDB's metadata cache, by the path DuckDB is given for it. A cached profile's
+files are not warmed (that would download them whole), and a file no profile covers is never handed
+to DuckDB. Warming waits while any run is scanning, so it never competes with a question someone is
+waiting on.
 
 ### Summary and estimates
 
@@ -245,11 +247,12 @@ sandbox lives exactly as long as the statement: every file outside its access is
 itself, however the statement names it — `"read_csv"('/etc/hosts')`, `read_csv_auto`,
 `parquet_scan('gs://…')`, `iceberg_scan` all fail with a permission error (E10). A sandbox costs
 ~25–35 ms to set up and starts with cold caches; statement validation runs in one with no access at
-all, over empty views.
+all, over empty views. Its storage access is only what its sources need: the extensions and secrets
+of the direct profiles whose scopes serve them, created before the lock (§07.10).
 
-Every query also holds one of Node's libuv worker threads for as long as it runs, waiting on GCS
-included; `server/workerPool.ts` sizes the pool at startup (`RUN_CONCURRENCY × RUN_SCAN_CONCURRENCY
-+ 32`).
+Every query also holds one of Node's libuv worker threads for as long as it runs, waiting on object
+storage included; `server/workerPool.ts` sizes the pool at startup (`RUN_CONCURRENCY ×
+RUN_SCAN_CONCURRENCY + 32`).
 
 Measured against the test cluster's bucket from a laptop: binding a read of 200 files by field id takes 1 ms
 where `union_by_name` took 1,400 ms (E3). On the E13 table — 102.6 M rows in 2,840 files, 17.2 GB
@@ -258,10 +261,10 @@ a statement grouping that day in 0.39 s; over all time a filter counted in 14.4 
 at 64 ms, and a `count(*)` statement took 21.1 s in its cold sandbox. Time-range estimates for five
 presets answered in 1 ms.
 
-Each unit of work runs on its own connection, so an interrupt is local to it. `direct` mode reads
-`gs://` in place with an HMAC secret; `cached` mode mirrors files to local disk first and refuses
-scans beyond `CONSOLE_CACHED_MODE_MAX_FILES`/`_BYTES` (a page reads one file at a time and is never
-refused).
+Each unit of work runs on its own connection, so an interrupt is local to it. A direct profile's
+files are read in place with its scoped secret; a cached profile's are mirrored to local disk first,
+and a scan whose cached profiles' files exceed `CONSOLE_CACHED_MODE_MAX_FILES`/`_BYTES` is refused,
+naming the profiles to give direct access (a page reads one file at a time and is never refused).
 
 ### Values
 
@@ -309,12 +312,18 @@ holding the panel open.
 Applies to user-authored SQL only (`sql.ts`). One statement; must start with `SELECT`, `WITH`,
 `DESCRIBE`, `SUMMARIZE`, `PIVOT`, `UNPIVOT`, `FROM`, `TABLE` or `VALUES`; no file-access functions
 (`read_parquet`, `read_csv`, `read_avro`, `iceberg_scan`, `iceberg_metadata`, `iceberg_snapshots`,
-`iceberg_table_properties`, …) or DDL/DML tokens outside strings and comments. It is defence in
-depth and a clear error message: the real control is the statement's sandbox (§07.6), which refuses
-every file but the run's own whatever the guard misses. A
-materialization cannot be named after any word the guard refuses, so a valid table is always
-queryable. The guard can be bypassed, though — see [12 §12.4](./12-security-model.md). See
-[12 — Security model](./12-security-model.md).
+`iceberg_table_properties`, …) or DDL/DML tokens outside strings and comments. For files it is
+defence in depth and a clear error message: the real control is the statement's sandbox (§07.6),
+which refuses every file but the run's own whatever the guard misses. A materialization cannot be
+named after any word the guard refuses, so a valid table is always queryable.
+
+It also refuses calls to `duckdb_secrets()` and `which_secret()` — which list the sandbox's secrets:
+each storage profile's name, scope, endpoint, region and key id, the secret values redacted — and to
+`query()` and `json_execute_serialized_sql()`, which run SQL given as a string (`FORBIDDEN_FUNCTIONS`).
+None of these opens a file, so the sandbox cannot refuse them: here the guard is the control. They are
+matched as calls — the name, quoted or not, qualified or not, then `(` — so a table or column of the
+same name stays queryable. `duckdb_settings()` and `current_setting()` were checked and name no
+profile. The guard can be bypassed for files, though — see [12 §12.4](./12-security-model.md).
 
 ## 07.9 The live tail
 
@@ -403,3 +412,62 @@ Measured on a test cluster (handbook 13 §13.8e): a record produced was on scree
 mode at a p50 of 0.93 s and a p95 of 1.6 s, and in a statement run at a p50 of 0.70 s and a p95 of
 1.1 s.
 
+
+## 07.10 Storage profiles and DuckDB
+
+Every object a table names is read with the storage profile whose scope is the longest prefix of
+its URI (`server/storage/registry.ts`; configuration in 03 §3.6a): one per destination prefix, its own
+kind — `gcs`, `s3` or `azure` — credentials and mode. A domain's tables may sit on different
+destinations, and a console serving several domains reads domains on different backends, in one
+statement too: DuckDB picks each source's secret by its scope, so `runs/view.ts` needs no change.
+
+| | gcs | s3 | azure |
+|---|---|---|---|
+| Metadata objects | JSON API GET, CRC32C-checked | `GetObject`, checksum when the object carries one | blob download, MD5 when the blob carries one |
+| Its DuckDB secret | `TYPE gcs` with the HMAC pair; for an emulator also `ENDPOINT`, `USE_SSL`, `URL_STYLE 'path'` | `TYPE s3` with the keys or `PROVIDER credential_chain, REFRESH 'auto'`; `REGION`; for an S3-compatible server `ENDPOINT` as `host:port` (never with the scheme: DuckDB adds `http://` itself), `USE_SSL` from the scheme and `URL_STYLE 'path'` when `pathStyle` | `TYPE azure` with a connection string — the deployment's, or one built from the account key with the emulator's endpoint as `BlobEndpoint` — or `PROVIDER service_principal`, or `PROVIDER credential_chain`, always with the account named |
+| What DuckDB is given for a data file | the URI | the URI | `az://<account>.blob.core.windows.net/<container>/<key>` |
+| Extensions | `httpfs` | `httpfs` (+ `aws` for the chain) | `azure` |
+| Direct | with the HMAC pair | always | always, except an emulator reached without a connection string or key |
+
+Each secret is `CREATE OR REPLACE TEMPORARY SECRET console_<name> (…, SCOPE '<scope>')` — never
+persistent. On the shared instance a profile's extensions are loaded and its secret created once,
+the first time its objects are read (`data/duckdb.ts::prepareStorageAccess`), one instance-wide change
+at a time; a failed attempt is not kept. So the Azure extension — about 13 ms per sandbox and 9 MB of
+download per pod on first use — is loaded only where an Azure profile is read. A statement's sandbox
+loads the extensions and creates the secrets of only the profiles whose scopes serve its sources,
+before `enable_external_access = false` and `lock_configuration = true`: nothing can load after the
+lock, and a statement could list every secret its sandbox held (the guard refuses that, §07.8). A
+secret DuckDB refuses fails the read with `503 storage_unavailable` naming the profile, never with
+DuckDB's own echo of the statement, which would repeat its credentials.
+
+**Azure's two spellings.** Locations keep the one Azure form everywhere — location checks (12 §12.6),
+cache keys, the API — `abfss://<container>@<account>.dfs.core.windows.net/…`. Only the hand-over to
+DuckDB rewrites it: sources, the sandbox's `allowed_paths` (an exact-string match) and secret scopes
+are all `az://<account>.blob.core.windows.net/<container>/…`, spelled identically. DuckDB sends that
+form to the connection string's `BlobEndpoint` when it has one and to the account's own blob host
+otherwise, and checks the account it names against the connection string's. The short `az://c/k`
+form could not tell two accounts apart. The secret's `ENDPOINT` attribute is a DNS suffix for
+sovereign clouds, always https, and is never used for an emulator.
+
+**No path without a profile.** DuckDB sends a path no secret covers anonymously to the public cloud
+(`s3://x/…` to `https://x.s3.amazonaws.com`, an `az://` path to the account's real host), so every
+remote object is resolved to its profile before its path reaches DuckDB — in `objectSources`, in
+warming and in every run — and one no profile covers is refused with `storage_not_configured`.
+
+**A data file gone.** A snapshot expiry removes the files of snapshots no longer kept, so a run pinned
+to an older snapshot can find one gone. DuckDB words it per scheme — `HTTP 404 Not Found` for `gs://`
+and `s3://`, `No files found that match the pattern` for `az://`, and in a sandbox a Permission Error
+on the path followed by `/**/*.parquet` (DuckDB retried the missing file as a directory, which the
+sandbox refuses) — and the console says the same for all three: the file is no longer in storage, a
+snapshot expiry may have removed it, run the query again (`data/duckdb.ts::explainMissingDataFile`).
+A tail file gone from the run's directory is noticed on disk, whatever the backend (§07.9).
+
+**Writes.** The sandbox does not tell reads from writes: `COPY … TO` an allowed object path succeeds
+in a locked sandbox, and only the SQL guard's refusal of `COPY` stops it. Give every profile
+read-only credentials (12 §12.4); the console cannot tell whether a profile's identity can write, and
+says so at start.
+
+**Known cost.** Warm Azure reads cost 2–12 HEAD requests per file per query: DuckDB's
+`enable_http_metadata_cache` does not cover the Azure extension. S3 and GCS reads cost none.
+`validate_external_file_cache` is left as it is — it is instance-wide, and changing it would change
+GCS's behaviour too.

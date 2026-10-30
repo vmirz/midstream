@@ -140,28 +140,27 @@ case 'ends_with':
 
 ## 15.6 Supporting another object store
 
-The data path is GCS-only in four places:
+The console reads GCS, S3 and Azure through **storage profiles** (`server/storage/`, 07 §07.10).
+Everything above the profiles — `iceberg/io.ts`, `data/objects.ts`, `data/duckdb.ts`, warming, runs —
+asks the registry for the profile covering a URI and never branches on the backend. A new backend is:
 
-| File | Coupling |
-|------|----------|
-| `data/gcs.ts` | `@google-cloud/storage`, `parseGcsUri`, `downloadObject`, the cached-mode mirror |
-| `iceberg/io.ts` | `readObject`: a `gs://` table object through `data/gcs.ts`, anything else from local disk (the test fixtures) |
-| `data/objects.ts` | Which data files to mirror in cached mode: `gs://` ones |
-| `data/duckdb.ts` | Registers a `TYPE GCS` secret for direct mode |
+1. A URI form in `storage/uris.ts` (one per backend: the form every engine reads), and its scheme in
+   `profile.ts::SCHEME_OF_KIND`, with its credential variables in `CREDENTIAL_SUFFIXES`.
+2. A `StorageProfile` (`profile.ts`, extending `BaseProfile`): `read(uri)` for metadata objects,
+   retried with `withRetries` and checked against whatever checksum the object carries;
+   `download(uri, target)` through `writeWhole`; its mode; `duckdbSecret()` — a `TEMPORARY` secret
+   scoped to `duckdbScope()`; `duckdbExtensions()`; and `duckdbSource(uri)`, what DuckDB is given for
+   a data file, spelled exactly as `duckdbScope()` spells the scope (the sandbox's `allowed_paths` is
+   an exact-string match).
+3. Its kind in `registry.ts::createProfile` and `validateStorageRegistry`, with every rule the chart
+   applies to `console.storage[]` — and any DuckDB cannot tell apart, as for two endpoints behind one
+   `s3://` bucket.
+4. Its spelling of a missing file in `data/duckdb.ts::explainMissingDataFile`, and its snippets in
+   `src/features/detail/connect.ts`.
 
-A table's own objects are read whole through `readObject`, and data files by DuckDB, so a clean
-approach is:
-
-1. Define an `ObjectStore` interface: `read(uri)` for metadata objects, `download(uri, target)` for
-   the mirror, and the DuckDB secret statement.
-2. Implement `GcsStore` (move the existing code) and, say, `S3Store`.
-3. Select the implementation from the table location's scheme, not from configuration — a single
-   console may need to serve materializations with different destinations.
-4. Keep `iceberg/io.ts::isUnderLocation` in front of every read, whatever the store
-   ([12 §12.6](./12-security-model.md#126-paths-a-table-names)).
-
-Note this only makes the **console** multi-cloud. The runtime and the control plane are GCS-only:
-the catalog pointer depends on GCS's generation preconditions (handbook 11 §11.2).
+Keep `iceberg/io.ts::isUnderLocation` in front of every read, on the canonical URI, whatever the
+store ([12 §12.6](./12-security-model.md#126-paths-a-table-names)), and never let a path reach DuckDB
+without a profile covering it.
 
 ## 15.7 Adding a chart
 

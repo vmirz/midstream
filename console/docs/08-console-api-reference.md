@@ -181,7 +181,7 @@ This endpoint does **not** trigger a refresh, so it is safe to probe frequently.
   ],
   "settingsHome": "domain_a",
   "federationKeysAgree": true,
-  "dataAccessMode": "direct",
+  "dataAccessEnabled": true,
   "pageRowLimit": 1000,
   "exportRowLimit": 1000000,
   "resultRowLimit": 1000000,
@@ -915,7 +915,7 @@ the same shape with only `console` set, `rollout` null, and the console's deploy
 domain it serves, the settings home, the console URL and its sign-in providers — in `deployment`.
 
 A `SettingView` (`shared/types.ts`) is the same for every scope: `scope`, `key`, `section`,
-`label`, `description`, `kind` (`integer`, `boolean`, `gcs_uri`, `quantity`, `enum`, `string`,
+`label`, `description`, `kind` (`integer`, `boolean`, `destination_uri`, `quantity`, `enum`, `string`,
 `domain_list`, `choice_map`), `unit`, `minimum`, `maximum`, `options`, `choiceOptions` and
 `choiceLabels` (a `choice_map`'s options — each with the choices it allows — and what each choice is
 called), `maxLength`, `nullable`, `advanced`, `danger`, `effect`, `envVar`, `permission` (one more
@@ -1142,7 +1142,9 @@ still answers. A `:table` the materialization does not have is a `404` naming it
     "…": "…"
   },
   "metadataError": null,
-  "connection": { "uri": "https://midstream.example.com/catalog", "configured": true, "enabled": true }
+  "connection": { "uri": "https://midstream.example.com/catalog", "configured": true, "enabled": true },
+  "storage": { "name": "lake", "kind": "s3", "scope": "s3://example-lake/", "endpoint": "http://seaweedfs-s3.seaweedfs.svc:8333",
+               "region": "us-east-1", "pathStyle": true, "mode": "direct", "account": null }
 }
 ```
 
@@ -1150,8 +1152,9 @@ still answers. A `:table` the materialization does not have is a `404` naming it
 |---|---|
 | `record` | The control plane's `GET /materializations/{id}/tables/{table}` (handbook 04 §4.6.4), from the runtime's commit events and the maintenance app's; `state` is `active`, `retired` (kept), `dropping` or `dropped`, `maintenance_job` the compaction or orphan cleanup the app runs now, `live` the committer's own report on its heartbeat (files pending). `null` before the table exists |
 | `metadata` | Read from the table: the newest 200 snapshots, newest first, every partition with files, newest first. A file is small below `smallFileBytes` (the runtimes' `compaction_small_file_bytes`); `compactionDue` marks a partition the maintenance app's next compaction takes: one with `compaction_min_input_files` small files that compaction may take now, by its planner's rule (`server/iceberg/compaction.ts`, mirroring `lakehouse/maintenance.py`) — today or this hour only once no commit has added to it for `compaction_hot_partition_delay_minutes`, this month's files each once they are that old. A compacted day is usually still "small" by that measure — what matters is how many there are |
-| `metadataError` | Why `metadata` is `null`: the table has not been created, data access is turned off, or the table could not be read (§8.13) |
+| `metadataError` | Why `metadata` is `null`: the table has not been created, data access is turned off, no storage profile covers its location (`no storage is configured for …`), or the table could not be read (§8.13) |
 | `connection` | As `GET /api/catalog/connection` (§8.27). An engine names the table `lake.<dataset>.<table>`: its dataset is its Iceberg namespace |
+| `storage` | The console's storage profile for the table's location — name, kind, scope, endpoint, region, path style, mode, and an Azure profile's account — for the Connect panel's snippets; never a credential, nor which credentials the console holds. `null` when no profile covers the location |
 
 `metadata.properties` leaves out the fork map and Iceberg's `schema.*` properties for a caller who may
 not see the table's dataset's schemas; snapshots, files and maintenance are anyone's who may see the

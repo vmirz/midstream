@@ -6,7 +6,7 @@ import { consoleBaseUrl } from '../consoleUrl.ts';
 import type { Domain } from '../domains/domain.ts';
 import { authOf, callerOf, domainOf, permit, permitAnywhere } from '../auth/guard.ts';
 import { can } from '../auth/principal.ts';
-import { dataAccessMode } from '../config.ts';
+import { config } from '../config.ts';
 import { ConsoleError } from '../errors.ts';
 import { tableSpec } from '../live/store.ts';
 import { logger } from '../logger.ts';
@@ -16,6 +16,7 @@ import { currentSchema, partitionGranularity, schemaById, type TableMetadata } f
 import { FORK_MAP_PROPERTY, PROTECTION_PROPERTY } from '../iceberg/schema.ts';
 import { snapshotCatalog, type DataObject, type SnapshotCatalog } from '../iceberg/snapshot.ts';
 import { loadTable } from '../iceberg/table.ts';
+import { storage } from '../storage/registry.ts';
 import { materializationId, parseBody } from './materializations.ts';
 import {
   MAINTENANCE_JOBS,
@@ -25,6 +26,7 @@ import {
   type TableMetadataView,
   type TablePartitionRow,
   type TableSnapshotRow,
+  type TableStorage,
   type TableView,
 } from '../../shared/types.ts';
 
@@ -86,6 +88,18 @@ function connectionOf(request: FastifyRequest, domain: Domain, enabled: boolean)
   return { uri: `${base}/d/${domain.id}/catalog`, federatedUri: `${base}/catalog`, domain: domain.id, configured: true, enabled };
 }
 
+/**
+ * The console's storage profile for a table's location, for the Connect panel's snippets: its kind,
+ * endpoint, region and path style — never a credential, nor which credentials the console holds.
+ */
+export function tableStorage(location: string | null): TableStorage | null {
+  if (!location) return null;
+  const profile = storage().forLocation(location);
+  if (!profile) return null;
+  const { name, kind, scope, endpoint, region, pathStyle, mode, account } = profile.describe();
+  return { name, kind, scope, endpoint, region, pathStyle, mode, account };
+}
+
 function logUnavailable(cause: unknown, scope: string): null {
   logger.debug({ err: cause, scope }, 'settings unavailable for the table view; using defaults');
   return null;
@@ -116,18 +130,27 @@ export async function registerTableRoutes(app: FastifyInstance): Promise<void> {
     let metadata: TableMetadataView | null = null;
     let metadataError: string | null = null;
     if (!location) metadataError = 'the table has not been created yet';
-    else if (dataAccessMode() === 'disabled') metadataError = 'data access is turned off for this console (Settings › Data explorer)';
+    else if (!config.dataAccessEnabled) metadataError = 'data access is turned off for this console (Settings › Data explorer)';
     else {
       try {
         const table = await loadTable(location);
         if (!table) metadataError = 'the table has not been created yet';
         else metadata = describeTable(table.metadataLocation, table.metadata, await snapshotCatalog(table.metadata), settings, schemaVisible);
       } catch (cause) {
-        logger.warn({ err: cause, domain: domain.id, materializationId: id, table }, 'table metadata unreadable');
+        // The console's own refusals (no storage profile for the location, say) are answers, not failures.
+        if (!(cause instanceof ConsoleError)) logger.warn({ err: cause, domain: domain.id, materializationId: id, table }, 'table metadata unreadable');
         metadataError = unreadableTable(location, cause).message;
       }
     }
-    return { materializationId: id, table, record, metadata, metadataError, connection: connectionOf(request, domain, settings.catalogEnabled) };
+    return {
+      materializationId: id,
+      table,
+      record,
+      metadata,
+      metadataError,
+      connection: connectionOf(request, domain, settings.catalogEnabled),
+      storage: tableStorage(metadata?.location ?? location),
+    };
   });
 
   /**

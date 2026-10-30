@@ -95,14 +95,17 @@ const deployment = {
    */
   domainsFile: optional('CONSOLE_DOMAINS_FILE'),
   domainsJson: optional('CONSOLE_DOMAINS'),
+  /**
+   * The storage profiles (design 5.8): which destination prefix is read how, a JSON file the chart
+   * renders, or the same JSON inline for development. With neither, the console reads no object
+   * storage. Each profile's credentials come from `CONSOLE_STORAGE_<NAME>_…` (`storage/registry.ts`).
+   */
+  storageFile: optional('CONSOLE_STORAGE_FILE'),
+  storageJson: optional('CONSOLE_STORAGE'),
 
   dataDir,
   parquetCacheDir: str('CONSOLE_PARQUET_CACHE_DIR', join(dataDir, 'parquet-cache')),
   parquetCacheMaxBytes: int('CONSOLE_PARQUET_CACHE_MAX_BYTES', 8 * 1024 * 1024 * 1024),
-
-  /** HMAC credentials enable zero-copy `gs://` scans straight from DuckDB. */
-  gcsHmacKeyId: optional('CONSOLE_GCS_HMAC_KEY_ID'),
-  gcsHmacSecret: optional('CONSOLE_GCS_HMAC_SECRET'),
 
   duckdbMemoryLimit: str('CONSOLE_DUCKDB_MEMORY_LIMIT', '4GB'),
   /**
@@ -219,10 +222,11 @@ const tunableDeployment = {
   /** How long consumer-lag history is kept, one point per measurement. */
   lagHistoryMs: int('CONSOLE_LAG_HISTORY_MS', 6 * 60 * 60 * 1000),
 
+  /** The Data explorer: off, the console reads no table's data or metadata. */
   dataAccessEnabled: bool('CONSOLE_DATA_ACCESS_ENABLED', true),
   /** Budget for work the console volunteers rather than work a user asked for: column profiles. */
   queryStatsTimeoutMs: int('CONSOLE_QUERY_STATS_TIMEOUT_MS', 8_000),
-  /** Guard rail against pulling an unbounded dataset into the local cache. */
+  /** Guard rail against pulling an unbounded dataset into the local cache: cached profiles' files per scan. */
   cachedModeMaxBytes: int('CONSOLE_CACHED_MODE_MAX_BYTES', 2 * 1024 * 1024 * 1024),
   cachedModeMaxFiles: int('CONSOLE_CACHED_MODE_MAX_FILES', 400),
   /**
@@ -304,60 +308,3 @@ export const config: Readonly<Config> = (() => {
   }
   return Object.freeze(target);
 })();
-
-/**
- * How the Data tab reads object storage, from the settings in force now.
- *
- * `direct` needs both HMAC credentials, which only the deployment can provide; `disabled` follows
- * the Data explorer setting, which an administrator may turn off and on while the console runs.
- */
-export function dataAccessMode(): 'direct' | 'cached' | 'disabled' {
-  if (!config.dataAccessEnabled) return 'disabled';
-  return config.gcsHmacKeyId && config.gcsHmacSecret ? 'direct' : 'cached';
-}
-
-/**
- * A GCS HMAC access ID: `GOOG1E…` for a service account, `GOOG…` for a user.
- *
- * Deliberately permissive about length — Google has shipped more than one size — but the prefix is
- * fixed, and it is the part people get wrong.
- */
-const HMAC_KEY_ID_PATTERN = /^GOOG[0-9A-Z]{16,}$/;
-
-/** A GCS HMAC secret is 40 characters of base64. */
-const HMAC_SECRET_LENGTH = 40;
-
-/**
- * Complain about HMAC credentials that cannot possibly sign a request.
- *
- * Worth checking at boot because the runtime failure is so misleading: DuckDB rejects a malformed
- * access ID with `MalformedSecurityHeader` and appends its own boilerplate blaming an unset S3
- * region, which sends you looking in entirely the wrong place. The shape is cheap to verify and
- * the mistake — pasting a service-account email or a project id into the key id — is common.
- *
- * Never returns the credential itself, only its length and prefix.
- */
-export function hmacCredentialWarning(): string | null {
-  if (dataAccessMode() !== 'direct') return null;
-
-  const keyId = config.gcsHmacKeyId ?? '';
-  if (!HMAC_KEY_ID_PATTERN.test(keyId)) {
-    return (
-      `CONSOLE_GCS_HMAC_KEY_ID does not look like a GCS HMAC access ID: expected "GOOG1E…", got ` +
-      `${keyId.length} characters starting "${keyId.slice(0, 6)}". This is an HMAC access ID, not a ` +
-      `service account email or a JSON key file — create one with ` +
-      `\`gcloud storage hmac create <service-account-email>\`. Every gs:// scan will fail with ` +
-      `MalformedSecurityHeader until it is corrected.`
-    );
-  }
-
-  const secret = config.gcsHmacSecret ?? '';
-  if (secret.length !== HMAC_SECRET_LENGTH) {
-    return (
-      `CONSOLE_GCS_HMAC_SECRET is ${secret.length} characters; a GCS HMAC secret is ` +
-      `${HMAC_SECRET_LENGTH}. Every gs:// scan will fail to authenticate until it is corrected.`
-    );
-  }
-
-  return null;
-}

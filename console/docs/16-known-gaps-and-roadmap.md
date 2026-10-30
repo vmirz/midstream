@@ -61,8 +61,10 @@ Until a day is compacted, a query over it reads its small files — correct, slo
 | Cold scans are latency-bound | From outside the cloud each file costs a few ~50 ms round trips; overlapping 48 files per run and caching footers and bytes for the process's life (files are immutable) keep it bounded |
 | A statement's sandbox starts cold | ~30 ms to set up, and none of the shared instance's footer and byte caches: a statement re-reads footers that a browse run already had |
 | All-time statements are slow from far away | A statement is one DuckDB query, bounded by `CONSOLE_DUCKDB_THREADS`. The time range is the lever; running the console near the bucket is the fix |
-| **GCS only** | Matches the runtime, which is GCS-only |
-| Cached mode downloads whole files | Bounded by `CONSOLE_CACHED_MODE_MAX_FILES` / `_BYTES` per scan; pages read one file at a time and are never refused. Direct mode avoids downloads entirely |
+| A cached profile downloads whole files | Bounded by `CONSOLE_CACHED_MODE_MAX_FILES` / `_BYTES` per scan; pages read one file at a time and are never refused. A direct profile avoids downloads entirely |
+| A table outside every storage profile is unreadable | It answers "no storage is configured for …" until a profile covers its location: the console never guesses credentials, and never hands DuckDB a path no secret covers (07 §07.10) |
+| Warm Azure reads cost HEAD requests | 2–12 per file per query: DuckDB's `enable_http_metadata_cache` does not cover the Azure extension. S3 and GCS cost none. `validate_external_file_cache` is left alone, being instance-wide |
+| The sandbox does not tell reads from writes | `COPY … TO` an allowed object path succeeds in a locked sandbox; the SQL guard is what refuses it. Storage profiles must hold read-only credentials, which the console cannot check |
 | No query history or saved queries | A view lives in the address bar and can be shared, but nothing is kept server-side |
 | No cross-materialization queries | A statement reads and joins the tables of one materialization; another materialization's tables are not there, and `iceberg.<other>` is refused. Engines on the REST catalog can join any tables |
 | No result charting or timeline | Results render as a grid; the manifests already know where rows sit in time |
