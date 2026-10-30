@@ -66,7 +66,7 @@ spec:
               def should_send(value):
                   return value.get("route") == "maintenance"
       # A reprotect: one request event for request intake, which puts it on each table's record
-      # (handbook 22 §22.15).
+      # (handbook 22 §22.14).
       - name: send-request-event
         topicSend:
           name: {{ include "midstream.fullname" . }}-materialization-requests

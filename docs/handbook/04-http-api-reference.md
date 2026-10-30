@@ -35,7 +35,7 @@ is no session.
 | `GET` | `/materializations/{materialization_id}/tables/{table_name}/schema/versions` | `materializations-schema-versions` | as above | 200 | no | no |
 | `GET` | `/materializations/{materialization_id}/tables/{table_name}/schema/versions/{schema_id}` | `materializations-schema-version` | as above | 200 | no | no |
 | `GET` | `/materializations/{materialization_id}/tables/{table_name}` | `materializations-table` | `materializations.view_details` | 200 | no | no |
-| `POST` | `/materializations/{materialization_id}/maintenance` | `materializations-maintenance` | `materializations.maintain` | **202** | **no** | `<release>-maintenance-requests`, one message per table |
+| `POST` | `/materializations/{materialization_id}/maintenance` | `materializations-maintenance` | `materializations.maintain`; a `reprotect` also `dataset.protect` on each table's dataset | **202** | **no** | `<release>-maintenance-requests`, one message per table; a `reprotect`: `<release>-materialization-requests`, one request event |
 | `POST` | `/materializations/{materialization_id}/stop` | `materializations-stop` | `materializations.stop` | **202** | **no** | `materialization-requests` |
 | `POST` | `/materializations/{materialization_id}/resume` | `materializations-resume` | `materializations.resume` | **202** | **no** | `materialization-requests` |
 | `PATCH` | `/materializations/{materialization_id}` | `materializations-update` | `materializations.edit`, and `dataset.write` on each dataset a change of topics touches; `dataset.protect` on each dataset written into when it changes `protection` | **202** | **no** | `materialization-requests` |
@@ -786,6 +786,9 @@ reports.
   "state": "active",
   "maintenance_job": { "job": "compaction", "started_at": "2026-10-18T12:15:00Z", "partition": "2026-10-18",
                        "attempt": 1, "member_id": "midstream-maintenance-app-0" },
+  "reprotect": null,
+  "plaintext": { "revision": 3, "counted_at": "2026-10-18T12:00:02Z", "snapshot_id": 6001234567890123456,
+                 "files": 4, "rows": 18211, "bytes": 2210931, "blocked_files": 0, "blocked": [], "unknown_files": 0 },
   "live": { "member_id": "midstream-mat-a1b2c3d4e5f6-app-0", "pending_files": 2 },
   "readable": true,
   "queryable": true
@@ -794,7 +797,11 @@ reports.
 
 `state` is the table's place in the materialization (11 §11.7): `active`, `retired` (kept read-only
 after its topic was removed), `dropping`, or `dropped` (with its files kept). `maintenance_job` is the
-compaction or orphan cleanup the maintenance app runs on it now, `null` otherwise.
+compaction, orphan cleanup or reprotect the maintenance app runs on it now, `null` otherwise.
+`reprotect` is a reprotect asked for and not done yet (`request_id`, `requested_at`, `requested_by`,
+`revision` — the protection revision it waits for the table to record — and `purge`), and
+`plaintext` what the table holds in plain text that its protection masks now, as the maintenance app
+last counted it (22 §22.14); `null` until first counted.
 
 `404 not_found` (`resource: "materialization-table"`) before the table exists, and for a name the
 materialization has no table of - a kept table is found, one being dropped is not. `snapshot_id`s are 64-bit: a client that parses JSON into doubles
@@ -805,13 +812,22 @@ must keep them as text (the console does, console 06).
 ## 4.6.5 `POST /materializations/{materialization_id}/maintenance`
 
 Run a table maintenance job now:
-`{"job": "compaction" | "expire_snapshots" | "orphan_cleanup", "table": "<table name>"}`. With
-`table` the job runs on that table, written or kept; without it, on every table, kept ones included.
-The WebView publishes one `maintenance_request` per table on `<release>-maintenance-requests`,
-keyed by the table (06); the maintenance app runs each at its next opportunity, ahead of scheduled
-jobs, whether or not the runtime runs - a stopped materialization's tables included (10 §10.10). The
-outcome arrives as a `maintenance_completed` table event in the table record's `maintenance` history,
-and a running compaction or orphan cleanup shows as the record's `maintenance_job` (§4.6.4).
+`{"job": "compaction" | "expire_snapshots" | "orphan_cleanup" | "reprotect", "table": "<table name>", "purge": <bool>}`.
+With `table` the job runs on that table, written or kept; without it, on every table, kept ones
+included. The WebView publishes one `maintenance_request` per table on
+`<release>-maintenance-requests`, keyed by the table (06); the maintenance app runs each at its next
+opportunity, ahead of scheduled jobs, whether or not the runtime runs - a stopped materialization's
+tables included (10 §10.10). The outcome arrives as a `maintenance_completed` table event in the table
+record's `maintenance` history, and a running compaction, orphan cleanup or reprotect shows as the
+record's `maintenance_job` (§4.6.4).
+
+**`reprotect`** (22 §22.14) rewrites the files holding in plain text what each table masks now. It also
+needs `dataset.protect` on the dataset of every table it rewrites, and `409
+protection_key_not_configured` while the policy in force hashes and the deployment has no key. It goes
+as one `reprotect` request event on `<release>-materialization-requests` instead (06 §6.2): request
+intake puts it on each table's record, where every maintenance tick carries it until the app reports it
+done. `purge` (only with `reprotect`, default `false`): once nothing is left to rewrite, expire every
+older snapshot and delete the files only they held - time travel to before the job ends.
 
 ### Response `202`
 
@@ -820,10 +836,15 @@ and a running compaction or orphan cleanup shows as the record's `maintenance_jo
   "job": "compaction", "table": null, "tables": ["orders", "payments"], "accepted_at": "2026-10-18T11:00:00Z" }
 ```
 
+A reprotect's answer also says `"purge": true` or `false`.
+
 | Error | When |
 |---|---|
 | `400 invalid_request`, `field: "job"` | an unknown job |
 | `400 invalid_request`, `field: "table"` | a table the materialization does not have, or one being dropped |
+| `400 invalid_request`, `field: "purge"` | `purge` with another job than `reprotect`, or not a boolean |
+| `403 forbidden`, `permission: "dataset.protect"` | a reprotect of a table in a dataset the caller may not choose protection on |
+| `409 conflict`, `reason: "protection_key_not_configured"` | a reprotect while the policy in force hashes and the deployment has no protection key |
 | `409 conflict`, `reason: "table_not_created"` | the table named — or, without one, every table — is not created yet |
 | `409`, `materialization_deleting` | it is being deleted |
 
@@ -862,8 +883,15 @@ caller may not see schemas (`dataset.view_schema`) are left out and counted in `
         { "field_id": 40, "path": ["ip"], "name": "ip", "current": null, "proposed": { "kind": "ip_address", "mask": "partial" } }
       ],
       "history": [ { "revision": 3, "policy": { "kinds": { "email": "hash" } },
-                     "at": "2026-11-20T15:12:41Z", "by": "jane@example.com", "schema_id": 3, "sequence_number": 412, "key_id": "3f9a1c2e" } ]
+                     "at": "2026-11-20T15:12:41Z", "by": "jane@example.com", "schema_id": 3, "sequence_number": 412, "key_id": "3f9a1c2e" } ],
+      "plaintext": { "revision": 3, "counted_at": "2026-11-20T15:14:02Z", "snapshot_id": 6001234567890123456,
+                     "files": 12, "rows": 40211, "bytes": 5120331, "blocked_files": 0, "blocked": [], "unknown_files": 0 },
+      "reprotect": null,
+      "last_reprotect": null
     }
+  ],
+  "kept": [
+    { "table": "payments", "dataset": "finance", "dataset_id": "ds-9a0b…", "plaintext": null, "reprotect": null, "last_reprotect": null }
   ],
   "hidden_tables": 0
 }
@@ -876,6 +904,11 @@ a newer release's rules match that the table recorded otherwise — what *Apply 
 `PATCH` with the policy in force and `apply_rules: true` (§4.8.1), would do. A table not created yet
 has `created: false` and empty lists. Read from the control plane's schema projections; it never
 opens a table.
+
+`plaintext`, `reprotect` and `last_reprotect` are each table's — written ones in `review`, kept ones in
+`kept`, which a reprotect rewrites too (22 §22.14): what it holds in plain text that it masks now as
+last counted (`null` until counted), a reprotect asked for and not done yet, and its last reprotect run
+from the record's `maintenance` history.
 
 ---
 
@@ -970,7 +1003,7 @@ curl -sS -X PATCH localhost:6065/materializations/mat-a1b2c3d4e5f6 \
 | `autoscaling` | A boolean. Turned off while the runtime is scaled up, the runtime goes back to `replicas` at once; turned on, the next lag measurements decide. Not part of the runtime's spec: `spec_version` stays |
 | `tables` | The topics to read from now on, in order, each `{source_topic, dataset?, name?}`, at most `max_materialization_topics`. A topic already read, or kept a table of, keeps its table: it may only repeat its dataset and name, and to put it in another dataset its table must be dropped first. Any other topic needs a `dataset`, and gets a new table there named `name` or after the topic, apart from every name the materialization holds (07 §7.9a) |
 | `removed_tables` | `{"<table>": "keep" \| "drop"}`: for **each** table whose topic `tables` removes, `keep` it read-only or `drop` it with its data; may also `drop` a kept table. Required for every removed topic's table |
-| `protection` | The whole policy from now on, as for a create, plus `"apply_rules": true` to record the policy in force again so the current rules are applied to every field. Needs `dataset.protect` on every dataset written into — those of tables the same request adds or writes again included — and `409 protection_key_not_configured` when it hashes without a key. Repeating the policy in force without `apply_rules` changes nothing. Not part of the runtime's spec: `spec_version` stays, and nothing restarts. Applied by intake only to the revision the API read (`protection_base_revision`): a redelivery changes nothing, and one overtaken by another edit is refused, the status message saying so |
+| `protection` | The whole policy from now on, as for a create, plus `"apply_rules": true` to record the policy in force again so the current rules are applied to every field, and `"reprotect": true` or `{"purge": bool}` to then mask the rows already written (22 §22.14): the reprotect goes on each table's record and waits for the edit's revision; it needs `materializations.maintain` too (`403` without), and with the policy in force repeated asks only for the reprotect. Needs `dataset.protect` on every dataset written into — those of tables the same request adds or writes again included — and `409 protection_key_not_configured` when it hashes without a key. Repeating the policy in force without `apply_rules` changes nothing. Not part of the runtime's spec: `spec_version` stays, and nothing restarts. Applied by intake only to the revision the API read (`protection_base_revision`): a redelivery changes nothing, and one overtaken by another edit is refused, the status message saying so |
 | At least one of the six | otherwise `400 invalid_request`, `field: "replicas"` |
 | Any other creation setting (`destination_uri`, `storage_size`, …) at its **current** value | Accepted and ignored, so a client can send back what it read |
 | A creation setting at a **different** value | `400 invalid_request`, `"<field> cannot be changed after creation"`, `details.field` set |
@@ -1021,6 +1054,9 @@ A change of protection answers what it does:
                   "revision": 4, "apply_rules": false,
                   "applies_to": "records written from now on, within seconds, without a restart; rows already written keep their values" } }
 ```
+
+With `reprotect`, the answer also carries `"reprotect": {"tables": [...], "purge": true}`, and
+`applies_to` says the rows already written are rewritten once each table records the change.
 
 `spec_version` increments once per request that changes something the runtime runs with - replicas,
 topics or both - and a redelivered request does not increment it twice; a new label leaves it alone,

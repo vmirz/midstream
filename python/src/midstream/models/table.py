@@ -113,7 +113,7 @@ class RunningMaintenance:
 @dataclass(frozen=True, slots=True)
 class ReprotectRequest:
     """Someone asked for a table's rows already written to be masked as its protection masks them now
-    (`reprotect`, handbook 22 §22.15).
+    (`reprotect`, handbook 22 §22.14).
 
     Kept on the table's record and carried by every tick until the maintenance app reports it done,
     so a restart of either loses nothing.

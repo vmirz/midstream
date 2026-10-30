@@ -57,7 +57,7 @@ HTTP ─▶ KasprWebView ─▶ materialization-requests ─▶ request-intake �
                 commit · schema evolution
                          │
              Iceberg tables in GCS ◀── engines via the REST catalog, and the console
-                         │            ◀── maintenance app: compaction · expiry · orphans, every table
+                         │            ◀── maintenance app: compaction · expiry · orphans · reprotect, every table
                          │                 ▲ ticked each minute on <release>-maintenance-requests
                          │            the console ◀── tail app: each watched table's records past its
                          │                 snapshot, from Kafka (ticked on <release>-tail-requests)
@@ -73,8 +73,9 @@ heartbeats ─▶ materialization-status ─▶ runtime-status agent ─┘   �
 - **Data plane** — one dedicated KasprApp per materialization, rendered from Jinja2 templates and
   server-side applied. Every member writes files; the one owning `<rt>-commits` commits them.
 - **Maintenance app** — one KasprApp, `<release>-maintenance`, beside the control plane: it
-  compacts, expires and cleans up every materialization's tables, stopped ones included, so only it
-  is sized for compaction's memory. It keeps no state; the control plane ticks it.
+  compacts, expires and cleans up every materialization's tables, stopped ones included, and masks
+  rows written before a protection change (reprotect), so only it is sized for compaction's memory.
+  It keeps no state; the control plane ticks it.
 - **Tail app** — one KasprApp, `<release>-tail`: for each table someone watches in the console,
   the records past its committed snapshot, read from Kafka and built into rows by the seal's own
   code, served to the console alone. The console shows them beside the snapshot, each record once,
@@ -174,7 +175,8 @@ event and answer **202**; agents persist. Groups (handbook 04):
   detail, stop, resume, update (the label, `replicas`, `autoscaling`, and the topics: `tables` with
   `removed_tables` keeping or dropping each removed topic's table), delete;
   per table `/tables/{table}/schema`, `/tables/{table}/schema/versions[/{id}]`, `/tables/{table}`
-  (the table record); `/maintenance` (run a job now, on one table or all, kept ones included).
+  (the table record); `/maintenance` (run a job now, on one table or all, kept ones included; a
+  `reprotect` goes through request intake onto each table's record); `/protection` (the review).
 - `/catalog/v1/…` — the Iceberg REST catalog: config, a namespace per dataset the caller may read,
   its tables, load, commit (`catalog.write` on the dataset). Commits that would move a table's files
   are refused.
@@ -193,7 +195,7 @@ All control-plane records are `RecordEnvelope`s (`entity_type`, `entity_id`, `ve
 |---|---|
 | `materialization:<id>` | desired state: name, the tables (each a name and its topic) and the kept ones, destination, replicas and whether they are autoscaled, partition granularity |
 | `materialization-status:<id>` | observed state: phase and reason, runtime health and progress (per table), resource observation, consumer lag (per topic) |
-| `materialization-table:<id>:<table>` | each table's record: state (`active`, `retired`, `dropping`, `dropped`), location, UUID, latest snapshot, schema id, totals, committed offsets, maintenance history and running job, last error |
+| `materialization-table:<id>:<table>` | each table's record: state (`active`, `retired`, `dropping`, `dropped`), location, UUID, latest snapshot, schema id, totals, committed offsets, maintenance history and running job, last error, a reprotect asked for and the last plain-text count |
 | `materialization-schema:<id>:<table>` / `materialization-schema-version:<id>:<table>:<n>` | each table's schema projection, current and earlier |
 | `runtime-binding:<id>` | what was applied: app name, template version, spec hash, topics; a drain in progress |
 | `runtime-autoscale:<id>` | autoscaling: the members it gave the runtime past its own count and why, and the last 16 lag measurements |
@@ -212,7 +214,7 @@ the materialization (handbook 06 §6.4).
 | `materialization-requests` | lifecycle requests from the WebViews |
 | `materialization-work` | workflow steps, routed by the agents; delayed work goes through the scheduler topic |
 | `materialization-status` | runtime heartbeats |
-| `materialization-table-events` | `table_committed`, `schema_changed`, `table_error` from committers; `maintenance_started`, `maintenance_completed` and `table_error` from the maintenance app |
+| `materialization-table-events` | `table_committed`, `schema_changed`, `table_error` from committers; `maintenance_started`, `maintenance_completed`, `plaintext_counted` and `table_error` from the maintenance app |
 | `materialization-schema-authority-updates` | runtime settings (its 0.x name kept) |
 | `<release>-maintenance-requests` | the maintenance app's ticks, requests and cancels, keyed `maintenance:<id>:<table>` |
 | `<release>-tail-requests` | the tail app's ticks and cancels, each minute for every table, keyed `tail:<id>:<table>` (64 partitions) |
@@ -326,8 +328,9 @@ the control plane ticks every written and kept table with its settings and when 
 the member owning the table's partition runs one long job at a time by default — compaction in a
 child process then one `replace` commit, with the past partitions of a backfill taken several at a
 time up to 1 GiB and the partition being written left until it settles; orphan cleanup with an age
-guard — and snapshot expiry. Its commits and the committer's both go through the pointer's CAS and
-retry. Jobs report `maintenance_started` and `maintenance_completed`; a drop waits for a running job.
+guard — and snapshot expiry; and a reprotect the table's record asks for, ahead of the scheduled jobs.
+Its commits and the committer's both go through the pointer's CAS and retry. Jobs report
+`maintenance_started` and `maintenance_completed`; a drop waits for a running job.
 
 **Heartbeat**: every member every 30 s — progress per table, health, settings revision and lineage,
 the protection revision it masks each table with and its key's id; the committer's adds a block per
@@ -340,7 +343,12 @@ it ships — says which to mask and how: **hashed** (HMAC-SHA256 with the deploy
 128 bits, joinable), **partial** (`****9848`) or **withheld**. An edit rides the runtime control topic
 at the runtime's next apply, with no restart; the committer records it in each table's
 `materializer.protection` property, and each data file's name says which revision masked it
-(`-r<revision>`). The live tail masks the same way. Rows already written keep their values.
+(`-r<revision>`). The live tail masks the same way. Rows already written keep their values until a
+**reprotect** — asked on the Protection tab, with an edit or through `/maintenance` — has the
+maintenance app rewrite the files holding them plain: which files those are follows, without reading
+them, from each file's name (its lineage, `-r3p1`), each field's per-revision states in the property
+and the manifests' value counts; each pass is one `replace` snapshot keeping no entry of the files it
+removes, and an optional purge expires every older snapshot and deletes the files only they held.
 
 ## 12. The Iceberg tables
 

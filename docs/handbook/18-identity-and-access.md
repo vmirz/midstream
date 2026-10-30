@@ -77,7 +77,7 @@ permission's `scope`, for the console's role editor.
 | `materializations.stop` | deployment | Stop materializations | `materializations.view_details` | |
 | `materializations.resume` | deployment | Resume materializations | `materializations.view_details` | |
 | `materializations.delete` | deployment | Delete materializations (and, unless turned off, their tables) | `materializations.view_details` | yes |
-| `materializations.maintain` | deployment | Run table maintenance (compaction, snapshot expiry, orphan cleanup) now | `materializations.view_details` | |
+| `materializations.maintain` | deployment | Run table maintenance (compaction, snapshot expiry, orphan cleanup) now; a reprotect — masking rows already written — also needs `dataset.protect` on each table's dataset (22 §22.10) | `materializations.view_details` | |
 | `datasets.view` | deployment | See datasets: names, descriptions, owners and table names, locked ones too | — | |
 | `datasets.create` | deployment | Create datasets | `datasets.view` | |
 | `dataset.view_schema` | dataset | View schemas: a dataset's tables' schemas, their versions and what changed | — | |

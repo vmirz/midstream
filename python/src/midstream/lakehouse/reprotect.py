@@ -1,5 +1,5 @@
 """Reprotect: find the data files that hold, in plain text, values a table's protection masks now
-(design §15.3, handbook 22 §22.15).
+(design §15.3, handbook 22 §22.14).
 
 What a file holds is known without opening it:
 

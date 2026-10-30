@@ -156,10 +156,12 @@ summary fields (`added-data-files`, `added-records`, `total-records`, `total-dat
 | `materializer.event-times` | per partition, the latest committed record's Kafka timestamp (ms) |
 | `materializer.valid-through` | the minimum of those: every record before it is in this snapshot, on every partition that has committed — "is my record there yet?" |
 | `materializer.commit-id`, `materializer.committed-at`, `materializer.runtime` | provenance |
-| `materializer.files`, `materializer.records`, `materializer.operation` | what this commit added (`append`, `replace`) |
+| `materializer.files`, `materializer.records`, `materializer.operation` | what this commit added: `append`, `compaction` or `reprotect` |
+| `materializer.reprotect-job`, `materializer.reprotected-files`, `materializer.protection-revision` | a reprotect's: its job id, the files it replaced, and the revision it masked them under (22 §22.14) |
 
-Maintenance snapshots (compaction's `replace`) carry the offsets forward unchanged; a snapshot
-without them (an external writer's) is skipped by walking back to its parent (`committed_offsets`).
+Maintenance snapshots (a compaction's or a reprotect's `replace`) carry the offsets forward unchanged;
+a snapshot without them (an external writer's) is skipped by walking back to its parent
+(`committed_offsets`).
 
 A schema change is a metadata commit without a snapshot (`commit_schema`), and so is a recorded
 protection policy (`commit_protection`: the property alone, asserting the current schema id).
@@ -187,8 +189,10 @@ Names: `p<partition>-o<first offset>-<last offset>-<member>-<seal id>-<n>.parque
 (the seal id makes an upload idempotent: 10 §10.4) and `compact-<job id>-<n>-<random>.parquet` for
 compaction outputs (the random part keeps a re-run from colliding with a failed run's orphan). A file
 whose rows were masked under a protection revision other than 0 ends `-r<revision>.parquet`
-(`files.protection_revision_of`), so which policy masked a file is known from the manifests alone;
-compaction never mixes revisions in one output (22 §22.5).
+(`files.protection_revision_of`), so which policy masked a file is known from the manifests alone.
+A reprotect's output, `reprotect-<job id>-<n>-<random>-r3p1.parquet`, names its whole lineage, newest
+first: masked under revision 3, from rows written under 1 (`files.protection_label_of`). Compaction
+never mixes lineages in one output (22 §22.5).
 
 ## 11.6 Compaction, expiry and orphans
 
@@ -220,6 +224,15 @@ The maintenance app runs these for every table, written or kept, whatever the ru
   deleted. Files
   a compaction replaced stay referenced by the snapshots before it until those expire, so time travel
   to them keeps working.
+- **Reprotect** (22 §22.14) replaces each file holding in plain text what the table masks now by its
+  rewrite, one for one, in one `replace` snapshot (`maintenance.commit_reprotect`) with the same checks
+  as compaction's. Its producer (`_RewriteFiles`) keeps **no `deleted` manifest entry** of the files it
+  removes: a deleted entry keeps the file's statistics, whose column bounds hold the very plain text the
+  job masks, and the current snapshot would carry them on; the removal is still validated and the
+  summary still counts it. With `purge`, once nothing is left to rewrite, `purge_before` expires every
+  snapshot older than the current one (refs excepted, `min_snapshots_to_keep` ignored), deletes the
+  files only those snapshots referenced - data files, manifests and manifest lists, whatever their
+  age, since all were committed once - and then the table's other orphans past `orphan_min_age_hours`.
 
 On the load-test topic, whose 2 years of event time spread every seal across up to ~50 days,
 runtime files average ~3,000 rows before compaction; compaction brings a busy day back to a file or

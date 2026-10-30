@@ -99,8 +99,9 @@ pin.
 ### The maintenance app
 
 One more Kaspr application, `<release>-maintenance` (`charts/midstream/templates/maintenance/`), deployed
-once per environment beside the control plane: compaction, snapshot expiry and orphan cleanup for
-every materialization's tables, running or stopped. It keeps no state: the control plane ticks
+once per environment beside the control plane: compaction, snapshot expiry, orphan cleanup and
+reprotect (masking rows written before a protection change, 22 §22.14) for every materialization's
+tables, running or stopped. It keeps no state: the control plane ticks
 each table every minute on `<release>-maintenance-requests`, keyed by table, so each member
 maintains the tables of its partitions, and reports on `materialization-table-events`. Compaction
 is the memory-hungry job, so this app alone is sized for it, and the runtimes are not (10 §10.10,
@@ -229,8 +230,9 @@ schedule-table-maintenance (every minute, leader) or POST /materializations/{id}
    └─▶ maintenance agent: reads the table records, writes nothing
           └─▶ <release>-maintenance-requests  maintenance_tick / maintenance_request /
               maintenance_cancel, keyed maintenance:<id>:<table>
-                 └─▶ maintenance app: per member, one long job at a time — compaction (child
-                     process, then one replace commit), orphan cleanup; snapshot expiry
+                 └─▶ maintenance app: per member, one long job at a time — compaction or
+                     reprotect (child process, then one replace commit), orphan cleanup;
+                     snapshot expiry
                         └─▶ materialization-table-events  maintenance_started / maintenance_completed
 ```
 

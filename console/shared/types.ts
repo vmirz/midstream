@@ -497,7 +497,7 @@ export interface CpTableSummary {
 }
 
 /**
- * `reprotect` rewrites the files holding in plain text what a table masks now (handbook 22 §22.15):
+ * `reprotect` rewrites the files holding in plain text what a table masks now (handbook 22 §22.14):
  * it needs Choose data protection on each table's dataset too, and takes `purge`.
  */
 export const MAINTENANCE_JOBS = ['compaction', 'expire_snapshots', 'orphan_cleanup', 'reprotect'] as const;
@@ -2404,7 +2404,7 @@ export interface ProtectionPolicyInput {
   /** On an edit: record it again with the current rules, even unchanged. */
   apply_rules?: boolean;
   /**
-   * On an edit: then mask the rows already written (handbook 22 §22.15), purging the older
+   * On an edit: then mask the rows already written (handbook 22 §22.14), purging the older
    * snapshots if asked. Needs Run table maintenance too.
    */
   reprotect?: boolean | { purge: boolean };

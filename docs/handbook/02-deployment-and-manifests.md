@@ -109,7 +109,7 @@ the chart with every file under `ci/` and checks the wiring (13 §13.3).
 | KasprWebView | `groups-{list,detail,create,update,delete}`, `roles-{list,detail,create,update,delete}` | `/groups[/{group_id}]`, `/roles[/{role_id}]` |
 | KasprWebView | `permissions-list`, `audit-list`, `identity-request` | `GET /permissions`, `GET /audit`, `GET /identity/requests/{request_id}` |
 | KasprWebView | `datasets-list`, `datasets-create`, `datasets-detail`, `datasets-update`, `datasets-delete`, `datasets-grants`, `datasets-grant-update`, `datasets-table` | `/datasets`, `/datasets/{dataset}`, its grants and its tables (04 §4.15) |
-| KasprApp | `<release>-maintenance` | **The maintenance app** (`maintenance/app.yaml`): compaction, expiry and orphan cleanup of every materialization's tables (10 §10.10) |
+| KasprApp | `<release>-maintenance` | **The maintenance app** (`maintenance/app.yaml`): compaction, expiry, orphan cleanup and reprotect of every materialization's tables (10 §10.10) |
 | KasprAgent | `maintenance-worker` | the maintenance app's: `<release>-maintenance-requests` → its worker; table events → `materialization-table-events` |
 | KasprTask | `maintenance-step` | the maintenance app's: every 5 s on every member, finishes jobs and starts those due |
 | KasprApp | `<release>-tail` | **The tail app** (`tail/app.yaml`): the newest records of the tables people watch, served to the console before they are committed (19) |
@@ -718,7 +718,7 @@ one task (10 §10.10):
 | Environment variable | Default | Meaning |
 |---|---|---|
 | `MAINTENANCE_APP_NAME` | `<release>-maintenance` | names the app in its commits' snapshot summaries (`materializer.runtime`) and its table events |
-| `MAINTENANCE_MAX_CONCURRENT_JOBS` | `1` | long jobs - compactions, orphan cleanups - one member runs at once, across its tables |
+| `MAINTENANCE_MAX_CONCURRENT_JOBS` | `1` | long jobs - compactions, reprotects, orphan cleanups - one member runs at once, across its tables |
 | `MAINTENANCE_FORGET_AFTER_SECONDS` | `300` | a table no tick has named for this long is forgotten and its job stopped |
 | `RUNTIME_MEMBER_ID` | the pod name | names the member in its events |
 

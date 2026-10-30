@@ -201,7 +201,7 @@ function offsetsText(offsets: Record<string, number> | null): string {
 
 function operationLabel(snapshot: TableSnapshotRow): ReactNode {
   if (snapshot.operation === 'append') return <Badge tone="running">append</Badge>;
-  // Files rewritten to mask what was written in plain text (handbook 22 §22.15).
+  // Files rewritten to mask what was written in plain text (handbook 22 §22.14).
   if (snapshot.materializerOperation === 'reprotect') return <Badge tone="accent">reprotect</Badge>;
   if (snapshot.operation === 'replace') return <Badge tone="accent">compaction</Badge>;
   return <Badge>{snapshot.operation}</Badge>;

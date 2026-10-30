@@ -96,7 +96,7 @@ export function choiceChanges(before: ProtectionChoice, after: ProtectionChoice,
   return changes;
 }
 
-/** A reprotect run's counts in words (handbook 22 §22.15): what it rewrote, masked and purged. */
+/** A reprotect run's counts in words (handbook 22 §22.14): what it rewrote, masked and purged. */
 export function reprotectCounts(run: Pick<CpMaintenanceRun, 'counts'>): string[] {
   const counts = run.counts ?? {};
   const count = (key: string): number => (typeof counts[key] === 'number' ? counts[key] : 0);

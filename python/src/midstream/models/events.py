@@ -226,7 +226,7 @@ class TopicChangeRequest:
 
 @dataclass(frozen=True, slots=True)
 class RequestedReprotect:
-    """A reprotect a request asks for (handbook 22 §22.15): of the tables it names, or every table
+    """A reprotect a request asks for (handbook 22 §22.14): of the tables it names, or every table
     the materialization keeps, and whether to purge the older snapshots once done."""
 
     tables: tuple[str, ...] | None = None

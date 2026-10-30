@@ -31,7 +31,7 @@ All defined as module-level tuples and validated via `_validate_choice`.
 |----------|--------|--------|
 | `LIFECYCLE_PHASES` | `models/materialization.py` | `requested`, `discovering`, `discovered`, `deploying`, `running`, `paused` (legacy: nothing requests it since 0.4.0), `stopped`, `deleting`, `deleted`, `failed`, `degraded` |
 | `RUNTIME_MODES` | `models/materialization.py` | `dedicated`, `shared` |
-| `REQUEST_ACTIONS` | `models/events.py` | `create`, `pause` (legacy, decoded but never produced), `stop`, `resume`, `delete`, `update` |
+| `REQUEST_ACTIONS` | `models/events.py` | `create`, `pause` (legacy, decoded but never produced), `stop`, `resume`, `delete`, `update`, `reprotect` |
 | `WORK_STEPS` | `models/events.py` | `tables_claimed`, `claim_rejected` (the directory's answer to a claim, 07 §7.2a), `start_discovery`, `discover_tables`, `create_table`, `apply_runtime`, `await_runtime_drained`, `delete_runtime`, `cleanup_runtime_kafka`, `drop_table`, `purge_materialization_records`, `observe_runtime`, `sweep_observations`, `purge_deleted_materializations`, `refresh_consumer_lag`, `record_consumer_lag`, `schedule_table_maintenance`, `repair_state` |
 | `TABLE_ACTIONS` | `models/events.py` | `drop`, `keep`: what becomes of a removed topic's table (07 §7.9a) |
 | `CLAIM_PURPOSES`, `CLAIM_STATUSES` | `models/events.py` | `create`, `update`; `applied`, `rejected`: a claim's answer (§5.9) |
@@ -40,8 +40,8 @@ All defined as module-level tuples and validated via `_validate_choice`.
 | `OBSERVATION_MODES` | `models/events.py` | `one_shot`, `sweep` |
 | `RUNTIME_EVENT_PHASES` | `models/events.py` | `running`, `degraded` |
 | `RUNTIME_EVENT_HEALTH` | `models/events.py` | `healthy`, `degraded`, `unknown` |
-| `TABLE_EVENT_KINDS` | `models/table.py` | `schema_changed`, `table_committed`, `maintenance_started`, `maintenance_completed`, `table_error` |
-| `MAINTENANCE_JOBS` | `models/table.py` | `compaction`, `expire_snapshots`, `orphan_cleanup` |
+| `TABLE_EVENT_KINDS` | `models/table.py` | `schema_changed`, `table_committed`, `maintenance_started`, `maintenance_completed`, `table_error`, `plaintext_counted` |
+| `MAINTENANCE_JOBS` | `models/table.py` | `compaction`, `expire_snapshots`, `orphan_cleanup`, `reprotect` |
 | `TABLE_STATES` | `models/table.py` | `active`, `retired`, `dropping`, `dropped` (11 §11.7) |
 | `MAINTENANCE_MESSAGE_KINDS` | `models/maintenance.py` | `maintenance_tick`, `maintenance_request`, `maintenance_cancel` |
 | `MAINTAINED_TABLE_STATES` | `models/maintenance.py` | `active`, `retired` |
@@ -656,6 +656,9 @@ it is read and dropped.
 | `topic_change` | `TopicChangeRequest \| None` | an update's change of topics; omitted when `None` |
 | `claim_request_id` | `str \| None` | the id of the `claim_tables` request intake sends for a create, or an update that adds tables: the API generated it, so the client can wait on it; omitted when `None` |
 | `label` | `str \| None` | an update's new label; omitted when `None` |
+| `reprotect` | `RequestedReprotect \| None` | a `reprotect`, or an `update` whose protection change asks for one: what to rewrite (22 §22.14); omitted when `None` |
+
+`RequestedReprotect`: `tables` (the table names, or `None` for every table kept) and `purge`.
 
 `TopicChangeRequest`: `source_topics` (the topics to read from now on, in order; at least one),
 `table_actions` (`{table: "drop" | "keep"}`, each ∈ `TABLE_ACTIONS`) and `new_tables`: the table each
@@ -768,7 +771,9 @@ On `<release>-maintenance-requests`, keyed `maintenance:<materialization id>:<ta
 | `settings` | `dict` | tick, request: the runtimes' maintenance settings (`MAINTENANCE_SETTING_FIELDS`) as they are now |
 | `last_runs` | `dict[str, str]` | tick: when each job last finished on the table |
 | `running` | `RunningMaintenance \| None` | tick, cancel: the job the table record says runs |
-| `job`, `request_id`, `requested_by` | `str \| None` | request: the job asked for, and by whom; `job` ∈ `MAINTENANCE_JOBS` |
+| `reprotect` | `ReprotectRequest \| None` | tick: the reprotect the table record asks for, until done (22 §22.14) |
+| `protection_revision` | `int \| None` | tick: the protection revision the table's schema projection records; a hint the app checks against the table itself |
+| `job`, `request_id`, `requested_by` | `str \| None` | request: the job asked for, and by whom; `job` ∈ `MAINTENANCE_JOBS` (a `reprotect` comes on the tick instead) |
 | `reason` | `str \| None` | cancel: `table_dropping`, `materialization_deleting` |
 
 ### Live-tail messages (`models/live_tail.py`)
@@ -929,13 +934,20 @@ materialization's records with one prefix scan.
 | `maintenance` | `tuple[MaintenanceRun, ...]` | `()` | the newest 50 finished jobs, newest first |
 | `last_error` | `TableError \| None` | `None` | the open table error, cleared by the next commit. The status names the table: `Table orders: …`; it stays degraded while any written table, or one whose drop is failing, has an open error (`error_holds`) |
 | `state` | `str` | `"active"` | ∈ `TABLE_STATES` (11 §11.7): `active` written; `retired` kept read-only; `dropping`; `dropped` with its files kept |
-| `maintenance_job` | `RunningMaintenance \| None` | `None` | the compaction or orphan cleanup the maintenance app runs on it: set by `maintenance_started`, cleared by the `maintenance_completed` with its `started_at` |
+| `maintenance_job` | `RunningMaintenance \| None` | `None` | the compaction, orphan cleanup or reprotect the maintenance app runs on it: set by `maintenance_started`, cleared by the `maintenance_completed` with its `started_at` |
+| `reprotect` | `ReprotectRequest \| None` | `None` | a reprotect asked for and not done yet: set by request intake, carried by every tick, cleared by the `maintenance_completed` with `done` and its `request_id` (22 §22.14) |
+| `plaintext` | `PlaintextReport \| None` | `None` | what the table holds in plain text that its protection masks now, from the newest `plaintext_counted` |
 
 `MaintenanceRun`: `job`, `completed_at`, `outcome` (`succeeded`, `skipped`, `failed`, `abandoned`,
 `cancelled`), `duration_ms`, `snapshot_id`, `counts`, `message`, `partition` (a compaction's
 partitions, as `2026-10-18` or `2024-10-05 … 2024-11-21 (47 partitions)`), `event_id` (so a
 redelivered event is recorded once), `started_at` (a long job's).
 `RunningMaintenance`: `job`, `started_at`, `partition`, `attempt`, `member_id`.
+`ReprotectRequest`: `request_id`, `requested_at`, `requested_by`, `revision` (the protection revision
+the table must record first: an edit's own, 0 for none) and `purge`.
+`PlaintextReport`: `revision`, `counted_at`, `snapshot_id`, `files`, `rows`, `bytes` (what a reprotect
+would rewrite), `blocked_files` and `blocked` (what it cannot yet, and why), `unknown_files`; an older
+count arriving after a newer one is dropped.
 `TableError`: `reason`, `message`, `occurred_at`.
 
 Events for a table being dropped, or dropped, are ignored, but for the `maintenance_completed` that

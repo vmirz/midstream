@@ -60,7 +60,7 @@ function rowsOf(review: CpProtectionReview, detail: CpDetail | null): ReprotectR
 }
 
 /**
- * Rows already written (handbook 22 §22.15): what each table holds in plain text that it masks now,
+ * Rows already written (handbook 22 §22.14): what each table holds in plain text that it masks now,
  * as the maintenance app last counted it, and the action that masks it - a reprotect of every table,
  * with or without a purge of the older snapshots.
  */

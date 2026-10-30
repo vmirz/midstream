@@ -2,8 +2,8 @@
 
 How a materialization keeps sensitive values out of its tables: the kinds of sensitive data the
 rules recognise by field name, the masks a protected value takes, where masking happens, what each
-table records of it, how a policy is chosen and changed without a restart, the protection key, and
-how to operate it.
+table records of it, how a policy is chosen and changed without a restart, how rows written before a
+change are masked afterwards (`reprotect`), the protection key, and how to operate it.
 
 Source: `protection/` (`catalog.py`, `rules.py`, `mask.py`, `policy.py`, `plan.py`, `secrets.py`),
 `runtime_app/handlers/writer.py` (step 2a), `runtime_app/committer.py` (`_record_protection`,
@@ -12,10 +12,13 @@ Source: `protection/` (`catalog.py`, `rules.py`, `mask.py`, `policy.py`, `plan.p
 (discovery, `_initial_protection_json`), `services/request_intake.py` (`_apply_protection_update`),
 `web/materializations.py` (create, update, `protection_review_view`), `tail_app/ingest.py`
 (`protect`), `tail_app/table_tail.py`, `lakehouse/files.py` (`protection_revision_of`),
-`lakehouse/maintenance.py`, `maintenance_app/compact_worker.py`; chart:
+`lakehouse/maintenance.py` (`commit_reprotect`, `purge_before`), `maintenance_app/compact_worker.py`;
+reprotect: `lakehouse/reprotect.py`, `maintenance_app/reprotect_worker.py`, `maintenance_app/worker.py`
+(`_start_reprotect`, `_count_plaintext`), `services/request_intake.py` (`_ask_reprotect`); chart:
 `charts/midstream/templates/_helpers.tpl` (`midstream.protectionKeyEnv`),
 `webviews/materializations-protection.yaml`; console: `console/src/features/protection/`,
-`console/server/iceberg/schema.ts` (`parseProtection`). Design: `docs/design/data-protection.md`.
+`console/server/iceberg/schema.ts` (`parseProtection`), `console/src/features/protection/ReprotectPanel.tsx`.
+Design: `docs/design/data-protection.md`.
 
 ## 22.1 The model in one paragraph
 
@@ -32,7 +35,9 @@ last four digits) or **withheld** (not stored at all). A deployment-wide default
 default**, is resolved into each new materialization; each may choose otherwise at creation or by
 an edit, which reaches its running runtime within seconds, without a restart. Each table records
 what it protects in the `materializer.protection` property, and each data file says in its name
-which policy revision masked it.
+which policy revision masked it. Rows written before an edit keep their values until a **reprotect**,
+a job of the maintenance app, rewrites the files holding in plain text what the table masks now
+(§22.14).
 
 ## 22.2 Kinds and their rules
 
@@ -158,8 +163,10 @@ value and needs no change.
   revision rolls the partition's open batch first. The seal names each file it writes with the
   batch's revision — `p03-o0000000100-0000000199-<member>-<seal>-0-r2.parquet` — so which policy masked
   a file's rows is known from the manifests alone, forever (`lakehouse/files.py::protection_revision_of`; no suffix
-  is revision 0: written before protection, or by another writer). Compaction never mixes revisions
-  in one output, and names its outputs the same way.
+  is revision 0: written before protection, or by another writer). A file a reprotect rewrote carries
+  its whole **lineage**, newest first: `reprotect-<id>-r3p1.parquet` was masked under revision 3 from
+  rows written under revision 1 (`protection_label_of`, §22.14). Compaction never mixes lineages in
+  one output, and names its outputs the same way.
 
 A member that must hash and has no key — or another key than the deployment's (§22.8) — writes
 nothing: it holds the record unacknowledged, reports itself degraded (`protection_key_missing` or
@@ -178,9 +185,12 @@ unchanged:
   "policy": {"kinds": {"phone": "partial", "national_id": "hash", "secret": "redact"}},
   "key_id": "3f9a1c2e",
   "fields": {
-    "8": {"path": ["ssn"], "kind": "national_id", "mask": "hash", "since": 0},
-    "10": {"path": ["customer", "email"], "kind": "email", "mask": "hash", "since": 0, "until": 3},
-    "12": {"path": ["phone"], "kind": "phone", "mask": "partial", "since": 0}
+    "8": {"path": ["ssn"], "kind": "national_id", "mask": "hash", "since": 0,
+          "states": [[1, "national_id", "hash"]]},
+    "10": {"path": ["customer", "email"], "kind": "email", "mask": "hash", "since": 0, "until": 3,
+           "states": [[1, "email", "hash"], [2, null, null]]},
+    "12": {"path": ["phone"], "kind": "phone", "mask": "partial", "since": 0,
+           "states": [[1, "phone", "partial"]]}
   },
   "history": [
     {"revision": 1, "policy": {"kinds": {"email": "hash", "phone": "partial", "national_id": "hash", "secret": "redact"}},
@@ -193,8 +203,15 @@ unchanged:
 
 `fields` holds every field that is or was protected, by field id, with its physical path; `since` is
 the schema id from which its values were masked, and `until`, when set, the schema id from which they
-are written plain again. `history` keeps the last 100 policies, each with who chose it, the schema
-and the table's sequence number when it was recorded, and the key it hashed with.
+are written plain again. `states` says, revision by revision, what the writers did to the field's
+values — `[revision, kind, mask]`, or `[revision, null, null]` for plain — oldest first; before its
+first state they wrote them plain, or the field did not exist yet. Together with a file's name (§22.5)
+it says, without opening the file, whether the file holds the field's values plain: what a reprotect
+rewrites (§22.14). A field keeps its last 100 states; `known_from`, when set, is the first revision
+they describe in full — a field recorded before states were kept is anchored at the revision of its
+first record in this release, and the revisions before it are unknown. `history` keeps the last 100
+policies, each with who chose it, the schema and the table's sequence number when it was recorded,
+and the key it hashed with.
 
 | When | What the committer does |
 |---|---|
@@ -211,7 +228,8 @@ Protection tab (`apply_rules`).
 **Old rows.** An edit applies to records written from then on. Rows already written keep what they
 were written with: adding a kind leaves old values plain (a string column then holds both, a numeric
 `ssn` forks into `ssn__v2: string`), removing one leaves old values masked, and nothing can turn a hash
-back into the value. The file names say which files hold what.
+back into the value. The file names and `states` say which files hold what, and a reprotect masks the
+plain ones afterwards (§22.14).
 
 The control plane keeps the property on each schema projection (`MaterializationSchema.protection`)
 and annotates each protected field (`fields[].protection: {kind, mask, since_schema_id}`), taking the
@@ -254,8 +272,8 @@ masked and withheld values per table as monotonic totals. `GET /materializations
 
 `protection-key` in the auth Secret (`<release>-auth`, or `auth.existingSecret`; 18 §18.11), at least
 32 characters. The chart gives it, as `PROTECTION_KEY` from `secretKeyRef` with `optional: true`, to
-the control plane, the tail app, the maintenance app (which does not read it yet: the job that masks
-rows already written will) and every runtime pod (`midstream.runtimeSpec`). It is never a setting and
+the control plane, the tail app, the maintenance app (a reprotect hashes with it, §22.14) and every
+runtime pod (`midstream.runtimeSpec`). It is never a setting and
 never leaves the Secret; only its **id** — the first eight hex characters of its SHA-256 — is shown,
 on the Deployment section, in `GET /system/version` (`protection_key_id`), in each table's property,
 and rendered into every runtime's spec as `PROTECTION_KEY_ID`.
@@ -267,6 +285,7 @@ and rendered into every runtime's spec as `PROTECTION_KEY_ID`.
 | A key is added or changed | once the control plane restarts with it, it renders the new id into every runtime's spec, so the sweep re-applies each runtime once, within about two minutes. A pod reads the Secret when it starts, so a changed key reaches a runtime's members with that re-apply's restart; until then they hash with the key they started with |
 | A member started without the expected key | it writes nothing for a table that hashes and reports itself degraded until re-applied with it |
 | The tail app has no key, or another | a table that hashes is answered `503`, `protection_key_missing`, rather than served plain |
+| The maintenance app has no key, or another than the table's | a reprotect that must hash rewrites nothing: each attempt fails, saying so, and the request is given up after `compaction_max_attempts` (§22.14). The API refuses a reprotect of a policy that hashes when the control plane has no key (`409 protection_key_not_configured`) |
 | The key changes | new values hash under the new key and stop joining with old ones; the table's history records the new id. A key is for the lifetime of the lake: back it up with the federation key |
 
 **Across domains.** A token made in one domain reads tables in every domain (handbook 20). Masked
@@ -325,24 +344,34 @@ creation needs nothing beyond creating; any edit of the policy needs `dataset.pr
 dataset written into. Granted through a group, `dataset.protect` holds on every dataset, so a "data
 steward" role works across the deployment.
 
+A **reprotect** (§22.14) rewrites table files: it needs `materializations.maintain` (Run table
+maintenance, held by Operator) **and** `dataset.protect` on the dataset of every table it rewrites —
+every table the materialization keeps, or the one named. Asked with an edit (`protection.reprotect`),
+it needs both besides what the edit needs.
+
 ## 22.11 API
 
 | Request | What it says or takes |
 |---|---|
 | `GET /system/settings` | `protection`: every kind (`id`, `label`, `description`, `default_mask`, `masks`, `partial_example`, `examples`), the masks, `default` (kind → mask), `key_configured`, `key_id` |
 | `POST /materializations` | `protection`: `{"kinds": {kind: mask}}` or `{"kinds": [kind, …]}`; absent, the default. The answer's `protection` is the resolved policy and revision |
-| `PATCH /materializations/{id}` | `protection`: the whole policy, and `apply_rules`. The answer's `protection` says `before`, `after`, `revision` and what it applies to |
+| `PATCH /materializations/{id}` | `protection`: the whole policy, `apply_rules`, and `reprotect` — `true`, or `{"purge": bool}` — to mask the rows already written once each table records the change (§22.14); with the policy in force repeated, `reprotect` alone asks for one. The answer's `protection` says `before`, `after`, `revision` and what it applies to, and `reprotect` the tables and `purge` |
+| `POST /materializations/{id}/maintenance` | `{"job": "reprotect", "table": <name>?, "purge": <bool>?}`: a reprotect of one table, or of every table kept; `purge` defaults to `false`. Answered `202` with `tables` and `purge`; the request goes on each table's record until done (§22.14) |
 | `GET /materializations/{id}` | `materialization.protection`, `protection_revision`, and `protection` (§22.7) |
-| `GET /materializations/{id}/protection` | the **review**: per table the recorded revision and policy, every protected field (`kind`, `mask`, `since_schema_id`, `until_schema_id`, `active`), `would_change` — what the policy with the current rules would protect otherwise — and the history; tables the caller may not see are left out and counted |
+| `GET /materializations/{id}/protection` | the **review**: per table the recorded revision and policy, every protected field (`kind`, `mask`, `since_schema_id`, `until_schema_id`, `active`), `would_change` — what the policy with the current rules would protect otherwise — and the history; and per table, kept ones in `kept`, `plaintext` (what it holds in plain text that it masks now, as last counted), `reprotect` (one asked for, not done yet) and `last_reprotect` (the last run). Tables the caller may not see are left out and counted |
+| `GET …/tables/{t}` | the table's record: `plaintext` and `reprotect` too, and every reprotect run in `maintenance` |
 | `GET …/tables/{t}/schema` | `fields[].protection`, and `protection`: the table's property with the masked and withheld totals |
 | `GET /system/version` | `protection_key_id` |
 
 | Error | When |
 |---|---|
-| `400 invalid_request`, `field: protection…` | not an object; an unknown kind; a mask the kind does not allow (`secret` hashed); `fields` or `tables`, which are reserved for later versions |
-| `403 forbidden`, `permission: dataset.protect` | a policy other than the default, or any edit, on a dataset the caller may not choose protection on |
+| `400 invalid_request`, `field: protection…` | not an object; an unknown kind; a mask the kind does not allow (`secret` hashed); `fields` or `tables`, which are reserved for later versions; a `reprotect` that is neither `true`, `false` nor `{"purge": bool}`; `reprotect` on a create |
+| `400 invalid_request`, `field: purge` | `purge` with another job than `reprotect`, or not a boolean |
+| `403 forbidden`, `permission: dataset.protect` | a policy other than the default, or any edit, on a dataset the caller may not choose protection on; a reprotect of a table in such a dataset |
+| `403 forbidden`, `permission: materializations.maintain` | an edit asking for a reprotect, by someone who may not run table maintenance |
+| `409 conflict`, `table_not_created` | a reprotect of a materialization with no table yet |
 | `403 forbidden`, `permission: settings.manage_protection` | setting or resetting `default_protection` without it |
-| `409 conflict`, `protection_key_not_configured` | a policy that hashes, with no key in the deployment |
+| `409 conflict`, `protection_key_not_configured` | a policy that hashes, with no key in the deployment; a reprotect while the policy in force hashes |
 | tail `503`, `protection_key_missing` | the table hashes and the tail app has no protection key, or another than the deployment's |
 
 ## 22.12 The console
@@ -352,7 +381,9 @@ steward" role works across the deployment.
 | Settings › **Data protection** | *Protected by default*: a row per kind — Off, Hashed, Partial, Withheld — read-only without Manage data protection defaults; without a protection key, a warning above it that nothing can be hashed (§22.9). The Deployment section shows the protection key's id, or that none is configured |
 | Create and edit dialogs | a **Data protection** block: the policy in a line, opening into the same control; locked, with the dataset named, without Choose data protection; a warning when a hashing choice meets a domain with no key; the edit dialog says what changes and that it applies to records written from now on |
 | Detail › Overview | *Data protection*: the kinds in force as chips, and whether the revision has reached every member and table |
-| Detail › **Protection** | the review: the policy and its rollout; what a revision still reaching the tables is about to change; per table, the protected fields — and those written plain again — with their history; the fields a newer release's rules would protect otherwise, with *Apply the current rules* for whoever may choose protection on every dataset |
+| Detail › **Protection** | the review: the policy and its rollout; **Rows already written** — per table, kept ones included, the files and rows holding in plain text what it masks now, those that cannot be rewritten yet and why, a reprotect requested or running, and the last run's outcome and counts — with *Mask rows already written* for whoever may run table maintenance and choose protection on every dataset: a dialog listing each table's count, with *Purge the plain text now*, on by default; what a revision still reaching the tables is about to change; per table, the protected fields — and those written plain again — with their history; the fields a newer release's rules would protect otherwise, with *Apply the current rules* for whoever may choose protection on every dataset |
+| Edit dialog, a changed policy | *Also mask rows already written*, off by default, and under it *Purge the plain text now*, on: the edit's `protection.reprotect` |
+| Detail › Table | a reprotect commit shows as `reprotect` among the snapshots, and once one has been asked for, the Maintenance panel has a *Reprotect* row with its state and last run; the Tables list says *masking rows* while one runs |
 | Detail › Schema, Data | a shield on every protected field and column, saying its kind and mask; the Data tab reads it from the table's own property (`console/server/iceberg/schema.ts::parseProtection`) |
 
 ## 22.13 Operating it
@@ -365,19 +396,111 @@ steward" role works across the deployment.
 | The Data tab says *Live is unavailable*: the live tail cannot mask the table's records | the tail app has no key, or another, and the table hashes | restart the tail app after adding the key; committed rows still show |
 | *Applying revision N* does not end | a member does not report the revision (`members_behind`), or the committer has not recorded it (`tables_behind`) | the runtime's committer log (`runtime_protection_recorded`, or `protection_commit_failed` as a table error); a member stuck on an old revision has not refreshed its schema record |
 | A column people need is masked | a rule matched its name | Choose data protection: drop the kind, or show it partial; existing rows keep their masks |
-| A sensitive column is not masked | no rule matches its name; or a newer release's rules match it and the table recorded it plain, which the Protection tab lists under what the rules would change | *Apply the current rules* on the Protection tab; a name no rule matches waits for per-field choices (§22.14) |
+| A sensitive column is not masked | no rule matches its name; or a newer release's rules match it and the table recorded it plain, which the Protection tab lists under what the rules would change | *Apply the current rules* on the Protection tab; a name no rule matches waits for per-field choices (§22.15) |
+| Rows written before an edit still show the plain values | an edit applies to records written from then on | *Mask rows already written* on the Protection tab, or `protection.reprotect` with the edit (§22.14) |
+| A reprotect says files *cannot be rewritten yet: … has no text field yet* | the field's values are numbers and the table has no text field of the family to hold them masked: the writers create it with the field's first masked value | once a record with the field arrives and commits, ask again |
+| A reprotect fails with `this maintenance app has no protection key`, or `protection_key_mismatch`; after `compaction_max_attempts` failures the table shows `reprotect_failed` | the maintenance app started without the key, or with another than the one the table's hashes were made with | add the key and `kubectl rollout restart statefulset <release>-maintenance-app`, then ask again |
+| Time travel still shows the plain values after a reprotect | it ran without `purge`: the older snapshots keep the files it replaced until they expire — never the newest `min_snapshots_to_keep` — and orphan cleanup deletes them after `orphan_min_age_hours` | ask again with *Purge the plain text now*: with nothing left to rewrite it only purges |
 
 Everything above was run on a test cluster with two domains, the upgrade without a key and the key
 added afterwards included: 13 §13.8k has what was checked, how, and what it found.
 
-## 22.14 Limits, and what comes next
+## 22.14 Masking rows already written: reprotect
+
+An edit masks what is written from then on. A **reprotect** masks what was written before: a job of
+the maintenance app that rewrites the data files holding in plain text values the table's current
+revision masks, with the masks the table records for them, and commits the rewrites in one `replace`
+snapshot. Asked from the Protection tab, with an edit, or through the API (§22.11).
+
+**Which files hold plain text — without opening them.** Three things together:
+
+- a file's name says its **lineage**: the revision its rows were masked under, then each earlier one a
+  reprotect rewrote them from (`-r3p1`: masked under 3, written under 1; §22.5);
+- the table's record says what each revision did to each field (`states`, §22.6), and which policy each
+  revision stood for (`history`);
+- the file's manifest entry counts each field's values (`value_counts`, `null_value_counts`), so a file
+  holding no value of a field is not rewritten for it. A file without statistics is taken to hold every
+  field.
+
+A key's values were masked as the writer's walk masked them: by the state its field had under that
+revision when the key already had a field, otherwise by the rules and that revision's policy. A field
+is **born** under the revision in force when the first schema holding it was committed, so a writer
+still on an older revision, deciding its first values by the rules, is judged the same way. A file
+needs rewriting when it holds values of a key the current revision masks that **every revision of its
+lineage wrote plain**. A value an earlier revision masked stays as it is, whatever the table masks it
+with now: a hash cannot become a partial, nor a partial a hash, as there is no plain text left to mask.
+
+**What the rewrite does to each field** (`lakehouse/reprotect.py::label_rewrite`):
+
+| The field | Its values |
+|---|---|
+| a string, or a list of strings | masked in place, with the table's mask for its kind |
+| a kind the table withholds | nulled |
+| a number or another scalar — a key that forked when masking made its values strings | masked into the family's newest string field of the same list depth and nulled where they were; until the writers have created that string field (with the key's first masked value) the file is **blocked**, and left whole |
+| in lists of lists, or in a path with more than one list | blocked |
+| JSON text: `_unmapped`, and families collapsed to JSON (09 §9.5, §9.8) | walked as the writer walks a record |
+
+A file holding a blocked field is not rewritten at all: rewritten in part, its name would say the
+current revision masked it, and the field's plain values could never be found again. Blocked files are
+counted with their reasons, and a reprotect asked once the cause is gone rewrites them.
+
+**The job** (`maintenance_app/worker.py`, `reprotect_worker.py`):
+
+1. The request goes on the record of each table it names (`ReprotectRequest`: id, who, when, `purge`,
+   and the protection revision to wait for — an edit's own, 0 for a kept table, which no runtime
+   writes). Every maintenance tick carries it until the app reports it done, so it outlives a restart
+   of the control plane or of the app. A newer request replaces one not done yet.
+2. The table's maintenance member runs it as soon as the table records the revision it waits for
+   (checked again every 30 s), before any scheduled job: one job at a time per table, within the app's
+   `max_concurrent_jobs`.
+3. A pass plans the oldest files needing it, lineage by lineage, up to `compaction_max_input_bytes` and
+   2,000 files, and rewrites each in a child process into one output of its own: the same rows in the
+   same order, in the same partition, named `reprotect-<id>-r<current><lineage>.parquet`. The child
+   refuses a plan made at another revision than the table's, and a key other than the one the table's
+   hashes were made with.
+4. The member commits the pass in one `replace` snapshot (`commit_reprotect`) that checks every input is
+   still live and each output holds exactly its input's rows, carries the committed offsets forward
+   unchanged, and says `materializer.operation: reprotect`, `materializer.reprotect-job`,
+   `materializer.reprotected-files` and `materializer.protection-revision`. It keeps **no manifest
+   entry of the files it removes**: their column bounds hold the plain text, and the current snapshot
+   would otherwise carry them on. The runtime's committer keeps appending meanwhile; both commit
+   through the catalog pointer's compare-and-swap.
+5. Pass follows pass until nothing is left to rewrite; then, with `purge`, every snapshot older than the
+   current one is expired, the files only they referenced are deleted whatever their age — they were
+   all committed once, so none is an upload not committed yet — and then the table's other
+   unreferenced files past `orphan_min_age_hours`. Time travel to before the reprotect ends there.
+   Without `purge` the replaced files stay readable through older snapshots until those expire —
+   past `snapshot_retention_hours`, and only beyond the newest `min_snapshots_to_keep`, so on a quiet
+   table that can take long — and orphan cleanup deletes them.
+6. Each pass is reported with `maintenance_completed` (`job: reprotect`, `request_id`, `done`, and
+   `counts`: files rewritten, values masked, withheld and moved, files left, snapshots expired and
+   files deleted); the last one has `done: true`, which clears the request from the record. A failed
+   pass backs off from 5 minutes to 6 hours; after `compaction_max_attempts` failures the request is
+   given up, done, with a `reprotect_failed` table error. A pass that finds its inputs changed by a
+   compaction plans again at once.
+
+A reprotect never touches a file written under the current revision, so asking again finds nothing
+to do — except a purge, which still runs.
+
+**What the tables hold, counted.** The maintenance app counts each table's plain-text backlog — files,
+rows and bytes to rewrite, blocked files and why, files of unknown lineage — from the manifests alone,
+whenever the table records a new revision, its compaction is planned, or a reprotect commits, and
+reports it with a `plaintext_counted` table event when it changed. The control plane keeps the last
+count on the table's record (`plaintext`); the review and the Protection tab show it. The count covers
+the current snapshot only: older snapshots may hold more until they expire or are purged.
+
+**Unknown lineage.** A field recorded before this release kept no per-revision states: its states start
+at the revision the table had then (`known_from`). A file written under an earlier revision — other
+than 0, which is always plain — is of unknown lineage: left as written, and counted (`unknown_files`).
+
+## 22.15 Limits, and what comes next
 
 - **Names only.** A sensitive value under a name no rule matches (`contact`, `note: "call 555-…"`), a
   bare scalar record, the record key and headers are not masked. Value-based detection and masking of
   the record key fit the same walk (design §15.5).
-- **Rows already written** keep their values. A maintenance job of the maintenance app that rewrites
-  the files a newer policy would mask — picked from the revision in their names — is designed
-  (design §15.3), not built; its key is already wired into the maintenance app.
+- **A reprotect masks only what was written plain.** It cannot turn a hash into a partial (or the
+  reverse), unmask a kind a policy dropped, or rewrite fields in lists of lists; files of unknown
+  lineage (§22.14) stay as written. Engines that copied the plain values elsewhere keep them.
 - **Per-field choices** (`protection.fields`) and **per-table policies** (`protection.tables`) are
   reserved in the API and refused in this version (design §15.1, §15.4).
 - **No reveal.** Nobody can read a masked value back; reversible encryption with a reveal permission

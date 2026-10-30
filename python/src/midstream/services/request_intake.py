@@ -14,7 +14,7 @@ given up (`services/table_claims.py`):
   tables leave the catalog as the delete is accepted.
 - **reprotect** puts a `ReprotectRequest` on the tables' records, which every maintenance tick
   carries until the maintenance app reports it done; an update whose protection change asks for it
-  does the same once the change is applied, waiting for the new revision (handbook 22 §22.15).
+  does the same once the change is applied, waiting for the new revision (handbook 22 §22.14).
 """
 
 from __future__ import annotations

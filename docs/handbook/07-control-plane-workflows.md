@@ -1171,9 +1171,9 @@ with the rest of the materialization's.
 
 ## 7.13 Table maintenance ticks
 
-Compaction, snapshot expiry and orphan cleanup are the maintenance app's, a KasprApp of its own that
-maintains every materialization's tables (10 §10.10). The control plane tells it what to do; the app
-keeps nothing of its own.
+Compaction, snapshot expiry, orphan cleanup and reprotect are the maintenance app's, a KasprApp of its
+own that maintains every materialization's tables (10 §10.10). The control plane tells it what to do;
+the app keeps nothing of its own.
 
 - Every minute `schedule-table-maintenance` (`onLeader`) triggers `schedule_table_maintenance` on
   the `maintenance` agent, keyed `materialization:__system__`. It only reads
@@ -1182,13 +1182,20 @@ keeps nothing of its own.
   - a `maintenance_tick` for each table `active` or `retired`, of every materialization not being
     deleted — stopped and paused ones included. It carries the table (`MaintenanceTarget`), the
     runtimes' maintenance settings with the Settings page's overrides (`maintenance_settings`), when
-    each job last finished (`last_runs`, from the record's history) and the job the record says runs;
+    each job last finished (`last_runs`, from the record's history), the job the record says runs,
+    the reprotect the record asks for (`reprotect`) and the protection revision the table's schema
+    projection records (`protection_revision`);
   - a `maintenance_cancel` for each table `dropping`, or of a materialization being deleted.
 - `POST …/maintenance` (04 §4.6.5) builds a `maintenance_request` for each table it names, written or
-  kept, whatever the phase; the WebView sends each, keyed by its table.
-- The app reports on `materialization-table-events`: `maintenance_started` (a compaction or an orphan
-  cleanup), which sets the record's `maintenance_job`, and `maintenance_completed`, which clears it
-  and joins the record's history. A drop waits for `maintenance_job` to clear (§7.10).
+  kept, whatever the phase; the WebView sends each, keyed by its table. A `reprotect` is instead one
+  `reprotect` request event: request intake puts a `ReprotectRequest` on each table's record
+  (`_ask_reprotect`), and so does an `update` whose protection change asks for one, once applied. The
+  ticks carry it until the app reports it done (22 §22.14).
+- The app reports on `materialization-table-events`: `maintenance_started` (a compaction, an orphan
+  cleanup or a reprotect), which sets the record's `maintenance_job`, and `maintenance_completed`,
+  which clears it and joins the record's history — a reprotect's with `done` also clears the record's
+  `reprotect` — and `plaintext_counted`, which sets the record's `plaintext`. A drop waits for
+  `maintenance_job` to clear (§7.10).
 
 ### The tail app's ticks
 

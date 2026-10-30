@@ -1232,6 +1232,8 @@ dataset (Datasets › the dataset › Protection), reading the same endpoint per
 
 ### 15.3 `reprotect`: masking rows written before a policy change
 
+*Built, with the departures in §17; handbook 22 §22.14 describes it as it is.*
+
 A maintenance job of the existing maintenance app, planned like compaction, that rewrites the data
 files holding plaintext a later policy masks.
 
@@ -1326,7 +1328,9 @@ Still to confirm, all details:
 2. **D14**: the one-time re-apply of every runtime when the key is added or changed, in exchange for
    no stale-key state.
 3. **`reprotect`** (§15.3) is designed but not scheduled: ship it in 1.1.0 behind the Protection
-   tab, or as 1.2.0 after the rest has run on a test cluster?
+   tab, or as 1.2.0 after the rest has run on a test cluster? *Decided 2026-10-30: built after the
+   rest ran on a test cluster, with a purge asked each time and a request on its own or with an edit
+   (§17).*
 4. **The `secret` kind's `partial`** keeps nothing (`****`), so that choosing partial for everything
    never shows part of a password. Agreed, or should `secret` refuse `partial` as it refuses `hash`?
 
@@ -1349,7 +1353,15 @@ differences from the sections above, each for the reason given.
 | §5.1: rules | Booleans and nulls are never masked, and a boolean column is never recorded as protected (`has_email` matched the email rule on a test cluster); a plural name matches as its singular when the plural matches nothing; every leaf under a `secret` takes the kind (`inherit_all`); `pincode` left the secret rules | Precision: `mobile: true` stays a boolean; `emails` and `addresses` are common; a secret object's every value is secret; `pincode` is often a postal code |
 | §5.9: the console checks `dataset.protect` on the edit route | The console's route checks `materializations.edit` and calls the control plane as the person, which checks `dataset.protect` — as it does `dataset.write` for a change of topics | One authority; the dialog locks the control from the same permission |
 | — | The Table tab hides `materializer.protection` with the fork map from people who may not see the dataset's schemas | It names the fields and their kinds |
-| §15.3 `reprotect` | Not built | An extension; the key is already wired into the maintenance app, and file names already say which files a newer policy would rewrite |
+| §15.3 `reprotect` | Built on `feature/reprotect` (2026-10-30), with the departures below; handbook 22 §22.14 is the reference | The owner asked for it after the rest had run on a test cluster |
+| §15.3: a file's plain fields from its run revision and the property's `fields` | Each protected field records what the writers did to it under every revision (`FieldProtection.states`, the last 100; `known_from` where a record from before kept none). A field is **born** under the revision in force when the first schema holding it was committed, and a revision before its birth is judged by the rules and that revision's policy, as a lagging writer decided. The manifests' `value_counts`/`null_value_counts` say which fields a file holds values of | `since`/`until` say when a field changed, not what each revision did; after two edits a file's revision alone could not say whether a field was plain in it. Births make a key a lagging writer met first exact. Statistics spare files that hold no value of a field |
+| §15.3: outputs under the current run's sequence number, a rewritten file "in run `R`" | A rewritten file's name carries its whole **lineage**, newest first: `reprotect-<id>-r3p1.parquet` (`lakehouse/files.py::protection_label_of`); compaction groups by the whole lineage | A rewritten file still holds values masked under its older revisions; its lineage is what says which, so a later reprotect neither misses nor re-masks them |
+| §15.3: the rewrite in the compaction child, outputs per partition | Its own child, `maintenance_app/reprotect_worker.py`: one output per input, the same rows in the same order, so the commit checks each output against its input. Values masked before stay as they are; a number field's values move masked into the family's newest string field of the same list depth, and a file waits (**blocked**, left whole) while there is none; fields in lists of lists are blocked | One-for-one keeps the checks exact and the outputs' lineage single. Rewriting a file in part would make its name claim what it does not hold |
+| §15.3: a `replace` commit as compaction's | `_RewriteFiles`: the snapshot keeps no `deleted` manifest entry of the files it removes | A deleted entry keeps the file's column bounds, which hold the very plain text the job masks, in the current snapshot |
+| §15.3: replaced files go with expiry and orphan cleanup; an operator may run them sooner | **`purge`**, asked each time (the owner's choice): once nothing is left to rewrite, every older snapshot is expired and the files only they held deleted, whatever their age; the console's dialogs check it by default, the API defaults to `false` | Time travel would otherwise read the plain text for 72 hours or more; the purge ends time travel to before, so it stays a choice |
+| §15.3: a request through `POST …/maintenance`, from the Protection tab | Also `protection.reprotect` on `PATCH`, and *Also mask rows already written* in the edit dialog (the owner's choice: on request, or after an edit). Either is one `reprotect` request event: request intake puts a `ReprotectRequest` on each table's record, which every tick carries until the app reports it done, waiting for the edit's revision | A one-shot message would be lost with a restarted member, and an edit's revision takes seconds to reach each table |
+| §15.3: the Protection tab shows how many files and rows are affected | The maintenance app counts each table's plain text from the manifests when its revision changes, its compaction is planned or a reprotect commits, and reports it (`plaintext_counted`) when it changed; the record keeps it (`PlaintextReport`), the review shows it | The console reads the review only; counting where the files are planned anyway costs nothing extra |
 
 The four points of detail left in §16 were built as designed: each kind's partial fragment as in
-§5.2, the key's id in every runtime's spec (D14), `reprotect` later, and a secret's partial `****`.
+§5.2, the key's id in every runtime's spec (D14), `reprotect` later — now built, above — and a
+secret's partial `****`.

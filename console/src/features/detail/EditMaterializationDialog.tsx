@@ -88,7 +88,7 @@ export function EditMaterializationDialog({
   const protectionCatalog = defaults?.protection ?? null;
   const currentProtection = useMemo(() => choiceOf(materialization.protection ?? null, protectionCatalog), [materialization.protection, protectionCatalog]);
   const [protection, setProtection] = useState<ProtectionChoice>(currentProtection);
-  // Then mask the rows already written (handbook 22 §22.15), purging the older snapshots unless asked not to.
+  // Then mask the rows already written (handbook 22 §22.14), purging the older snapshots unless asked not to.
   const [reprotect, setReprotect] = useState(false);
   const [purge, setPurge] = useState(true);
   const datasets = useDatasets(open);

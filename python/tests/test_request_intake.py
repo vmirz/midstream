@@ -435,7 +435,7 @@ class ProtectionIntakeTests(unittest.TestCase):
 
 class ReprotectIntakeTests(unittest.TestCase):
     """A reprotect - asked alone, or with an edit - goes on the records of the tables it names, where
-    every maintenance tick carries it until the maintenance app has run it (handbook 22 §22.15)."""
+    every maintenance tick carries it until the maintenance app has run it (handbook 22 §22.14)."""
 
     POLICY = ProtectionPolicy({"email": "hash"})
 
