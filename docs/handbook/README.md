@@ -36,6 +36,7 @@ aspirational design prose.
 | 19 | [The live tail](./19-live-tail.md) | How do a table's newest records reach the console within seconds? How is each shown exactly once with the committed snapshot? What does the tail app hold, which member serves a table, and who may read it? |
 | 20 | [Domains and the shared console](./20-domains-and-the-shared-console.md) | How do several deployments work as one? What does the console's registry say? How does single sign-on reach every domain? How does one access token work everywhere, a statement join domains, and the federated catalog route? |
 | 21 | [Kafka access and ACLs](./21-kafka-access.md) | What must the deployment's Kafka user be allowed to do, on which names? Which ACLs are required and which only for a feature? What breaks without each? How do I grant them with `kafka-acls.sh` or Strimzi? |
+| 22 | [Data protection](./22-data-protection.md) | Which fields are masked, and how? Where does masking happen, and what does each table record of it? How is the default chosen, a policy changed without a restart, and the protection key added on an upgrade? Who may choose? |
 
 ---
 
@@ -46,7 +47,7 @@ aspirational design prose.
 | `/AGENTS.md` | Short always-on agent instructions: commands, project map, guardrails. Read first, kept under 300 lines. |
 | `/docs/source-of-truth.md` | Condensed single-file end-to-end narrative. Good for a one-shot overview; this handbook is the deep reference. |
 | `/console/docs/` | The Midstream Console's own handbook (17 documents), cited here as `console <n>`. |
-| `/docs/design/` | Design specifications: `few-second-freshness.md` (the live tail, built as handbook 19) and `multi-domain.md` (domains and the shared console: any number of control planes under one console with single sign-on; built as handbook 20). |
+| `/docs/design/` | Design specifications: `few-second-freshness.md` (the live tail, built as handbook 19), `multi-domain.md` (domains and the shared console: any number of control planes under one console with single sign-on; built as handbook 20) and `data-protection.md` (masking sensitive values before they are staged; built as handbook 22, with the extensions still to build). |
 
 ---
 
@@ -115,6 +116,9 @@ You rarely need the whole handbook. Load only what the task requires.
 | A runtime shown Unhealthy whose members keep restarting | `12 §12.3` → `08 §8.3` → `12 §12.10` |
 | Creating the Kafka user and its ACLs on a cluster that enforces them | `21` → `02 §2.3` → `/docs/install.md` |
 | An app that will not start, or a table that stays empty, on a cluster with ACLs | `21 §21.5` → `21 §21.7` → `12 §12.9` |
+| Upgrading to data protection: adding the protection key | `22 §22.9` → `22 §22.8` → `/docs/install.md` §8 |
+| A column masked that should not be, or not masked that should | `22 §22.2` → `22 §22.6` → `22 §22.13` |
+| Changing the masking rules or adding a kind | `22 §22.2` → `22 §22.5` → `13 §13.3` |
 
 ---
 
@@ -174,6 +178,12 @@ table; changes to users, groups, roles, datasets, grants and access tokens go `P
 tables, and so do the claims of table names request intake sends. Signing in is answered at once with a signed session token. See
 [18](./18-identity-and-access.md).
 
+Data protection rides on the paths already there: the writer masks sensitive values before it stages
+them, by rules that recognise kinds of data from field names; each materialization's policy, resolved
+from the deployment's default when it is created, reaches its runtime on the runtime control topic at
+every apply, and the committer records it in each table's `materializer.protection` property. See
+[22](./22-data-protection.md).
+
 There is **no standalone HTTP server process** in this repository. The API only exists as
 `KasprWebView` custom resources attached to the control-plane app.
 
@@ -181,7 +191,7 @@ There is **no standalone HTTP server process** in this repository. The API only 
 
 ## Handbook stats
 
-21 documents. Every factual claim is traced to a file in this repository or to a measurement on a
+22 documents. Every factual claim is traced to a file in this repository or to a measurement on a
 test cluster; where the code is ambiguous or a source disagrees, the handbook says so rather than
 guessing. Document 21 also traces into Kaspr, Faust and kaspr-operator, and was checked against a
 broker enforcing its ACLs (§21.9).

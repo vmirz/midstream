@@ -48,14 +48,17 @@ kubectl -n "$NS" create secret generic "$RELEASE-gcs" \
   --from-file=google_application_credentials.json=/path/to/service-account.json
 
 # Sign-in: a signing key for sessions, the service token the console and the tail app use, the
-# federation key access tokens are signed with - the same in every domain, so keep it for §7 - and
+# federation key access tokens are signed with - the same in every domain, so keep it for §7 - the
+# key data protection hashes with - the same in every domain whose masked columns should join - and
 # the first administrator. The password is shown once; the first sign-in replaces it.
 FEDERATION_KEY="$(openssl rand -base64 48)"
+PROTECTION_KEY="$(openssl rand -base64 48)"
 BOOTSTRAP_PASSWORD="$(openssl rand -base64 18)"
 kubectl -n "$NS" create secret generic "$RELEASE-auth" \
   --from-literal=signing-key="$(openssl rand -base64 48)" \
   --from-literal=service-token="$(openssl rand -base64 48)" \
   --from-literal=federation-key="$FEDERATION_KEY" \
+  --from-literal=protection-key="$PROTECTION_KEY" \
   --from-literal=bootstrap-admin-email="$ADMIN_EMAIL" \
   --from-literal=bootstrap-admin-password="$BOOTSTRAP_PASSWORD"
 echo "bootstrap password for $ADMIN_EMAIL: $BOOTSTRAP_PASSWORD"
@@ -63,10 +66,13 @@ unset BOOTSTRAP_PASSWORD
 ```
 
 The auth Secret's keys are read by name (`signing-key`, `service-token`, `federation-key`,
-`bootstrap-admin-email`, `bootstrap-admin-password`, and `previous-signing-key` /
+`protection-key`, `bootstrap-admin-email`, `bootstrap-admin-password`, and `previous-signing-key` /
 `previous-federation-key` when a key is rotated); the chart only needs its name. Without
 `signing-key` nobody can sign in and every request is a guest's; without `federation-key` nobody can
-make an access token for an engine.
+make an access token for an engine; without `protection-key` nothing can be hashed, so a
+materialization created with the default protection — emails, phone numbers and national identifiers
+hashed — is refused (handbook 22). Keep `protection-key` for the lake's lifetime, with the federation
+key: a new one makes new hashes stop matching old ones.
 
 A Kafka listener without authentication needs no Secret: skip the `$RELEASE-kafka` command above and
 set `kaspr.authentication` to `{type: plain}` alone in §3.
@@ -178,7 +184,8 @@ there and its API exposed for the shared console to reach (handbook 20 §20.2):
 
 ```yaml
 # domain-b-values.yaml, installed as its own release with its own namespace and Secrets; its auth
-# Secret holds the same federation-key as every other domain's.
+# Secret holds the same federation-key as every other domain's, and the same protection-key when its
+# masked columns should join theirs.
 domain: {id: domain_b, name: Domain B}
 console: {enabled: false}
 route:
@@ -215,6 +222,20 @@ domains, and whether a password still works there (`auth.passwordSignIn`) — al
 its Settings page. Handbook 20 §20.7 has each provider's registration, step by step.
 
 ## 8. Upgrade and remove
+
+**Upgrading to the release that brings data protection** takes one step first: add `protection-key`
+to the auth Secret, which the new default needs to hash with. Generated here and never printed; with
+`auth.existingSecret`, patch that Secret, and give every domain whose masked columns should join the
+same value:
+
+```bash
+kubectl -n "$NS" patch secret "$RELEASE-auth" --type merge \
+  -p "{\"stringData\":{\"protection-key\":\"$(openssl rand -base64 48)\"}}"
+```
+
+Patched after `helm upgrade` instead, restart the apps to give it to them (`kubectl -n "$NS" rollout
+restart statefulset "$RELEASE-control-plane-app" "$RELEASE-tail-app" "$RELEASE-maintenance-app"`);
+runtimes are re-applied with it by the control plane (handbook 22 §22.9).
 
 ```bash
 helm upgrade "$RELEASE" oci://ghcr.io/vmirz/charts/midstream --version <version> -n "$NS" -f midstream-values.yaml   # re-applies every runtime too

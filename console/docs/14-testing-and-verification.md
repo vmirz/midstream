@@ -47,6 +47,13 @@ python python/tests/console_fixture.py           # writes console/testdata/icebe
 Every run makes new snapshot ids and UUIDs, which some tests name, so commit the table and its
 `expected.json` together and update those tests.
 
+`testdata/protection.json` is a table's `materializer.protection` and rows masked by the control
+plane's own plan, which `server/data/protection.test.ts` reads as the console's reader does:
+
+```bash
+python python/tests/console_fixture.py --protection-only   # writes console/testdata/protection.json alone
+```
+
 ## 14.3 The 0.x harness
 
 Releases 0.1 to 0.14 were verified through three processes: a mock control plane (port 6065)

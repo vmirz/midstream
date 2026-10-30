@@ -185,7 +185,10 @@ status.observed_phase       == "requested"   else ValueError
    topic spread across its partitions, for at most `discovery_sample_seconds` (5) in all (09 §9.6).
 3. Each table's schema 0 is evolved from its topic's samples by the same policy the runtime's
    committer applies later (`lakehouse/schema/policy.py::evolve`), so a topic with several historical
-   shapes starts with its forks in place. One protocol event `control_plane_schema_discovery_completed`
+   shapes starts with its forks in place. The samples are masked first by the materialization's
+   protection policy, with a placeholder key since only the masked values' shapes matter
+   (`SHAPE_ONLY_SECRET`): a national id sampled as a number starts as a string field, and a withheld
+   field is never created (22 §22.5). One protocol event `control_plane_schema_discovery_completed`
    per table, with `table`, `source_topic`, `sampled_records`, `schema_fields`, `forks`,
    `duration_ms`.
 4. Re-read the materialization and its status. If the materialization is now `deleting` or
@@ -281,8 +284,10 @@ table, in the topics' order, that has no record, and queues itself again — sam
    (`ValueError("create_table requires the discovered schema of table <t>")`).
 2. **Create** (`lakehouse/lifecycle.py::create_materializer_table`): metadata version 0 — schema 0
    with explicit field ids, the partition spec, the sort order, the table properties
-   (`materializer.*`, the fork map, snapshot retention, the write and commit properties) — then the
-   pointer, with `if_generation_match=0` (11 §11.7). A pointer of the same materialization means
+   (`materializer.*`, the fork map, `materializer.protection` — schema 0's fields classified by the
+   materialization's policy at its revision, with the key's id (`_initial_protection_json`, 22 §22.6),
+   none for a materialization from before data protection — snapshot retention, the write and commit
+   properties) — then the pointer, with `if_generation_match=0` (11 §11.7). A pointer of the same materialization means
    done; another materialization's pointer at the location fails the step `table_location_in_use`.
 3. **Record**, on the re-read records: the table record (`materialization-table:<id>:<table>`,
    05 §5.12) and the projection with its metadata location; status `phase_reason=table_created`,
@@ -402,13 +407,17 @@ and status.runtime_health.level == "healthy"
 and not heartbeat_is_stale(status.last_heartbeat, now=requested_at)
 ```
 
+It is also true for any apply whose rendered spec hash equals the one the runtime was last applied
+with (`spec_unchanged`) — a change of protection, or a resume of a runtime that runs — on the same
+health conditions: nothing the runtime runs on changes, so there is nothing to wait for.
+
 - **True** → keep `observed_phase=running`, only refresh `desired_phase` and the
   `resource_observation` namespace/app name. A healthy running materialization does not flap to
   `deploying` because of a background drift fix.
 - **False** → `observed_phase=deploying`, `phase_reason=runtime_apply_in_progress`,
   `phase_message="Runtime spec applied; awaiting observation."`, `last_transition_time` bumped.
 
-### Follow-up: up to two outputs
+### Follow-up: up to three outputs
 
 `handlers/workflow_apply.handle_work_event_for_routed_output` yields, in order:
 
@@ -418,7 +427,12 @@ and not heartbeat_is_stale(status.last_heartbeat, now=requested_at)
    to `materialization-schema-authority-updates`, targeted at this materialization, so a runtime that
    was just created, resumed or re-applied runs the current values, and none an earlier
    installation left on the topic (06 §6.7, 17 §17.7).
-2. **Observation follow-up** — `_build_observe_runtime_follow_up(scheduled=True)` produces:
+2. **Protection policy delivery** — `services/protection.py::protection_policy_output_for_apply`
+   sends the materialization's protection policy and revision to the same topic, keyed
+   `protection-policy:<id>`, unless it has none (revision 0, from before data protection). An edit of
+   the policy reaches the runtime this way: it is an apply whose rendered spec is unchanged, so
+   nothing changes in the cluster and nothing restarts (06 §6.7, 22 §22.7).
+3. **Observation follow-up** — `_build_observe_runtime_follow_up(scheduled=True)` produces:
 
 ```python
 MaterializationWorkEvent(
@@ -680,9 +694,10 @@ if desired_hash == binding.last_applied_spec_hash:          return None
 → emit apply_runtime
 ```
 
-The rendered spec holds no schema and no setting (10 §10.1), so what makes the hashes differ is the
-deployment's runtime spec, the replica count, or the package pin — a control-plane upgrade re-applies
-every runtime this way. The replica count is the one the apply renders: the autoscaled count while
+The rendered spec holds no schema, no setting and no protection policy (10 §10.1), so what makes the
+hashes differ is the deployment's runtime spec, the replica count, the package pin, or the protection
+key's id (`PROTECTION_KEY_ID`, rendered only when the control plane holds a key) — a control-plane
+upgrade, or a protection key added or changed, re-applies every runtime this way (22 §22.8). The replica count is the one the apply renders: the autoscaled count while
 autoscaling has the runtime scaled up (§7.12a), so a scale-up is not drift. **Any manual `kubectl edit` of a runtime resource is reverted** within ~2
 minutes, because the desired hash no longer matches `last_applied_spec_hash`… *unless* the edit does
 not change what the control plane renders. In practice, hand-editing runtime resources is futile.
@@ -767,6 +782,14 @@ scales the StatefulSet up from zero, and the phase converges to `running` once t
 heartbeat. `update` (`PATCH`) re-applies with the new `replicas` and leaves the desired phase as it
 was — a stopped materialization stays stopped and resumes at the new count. An update that changes
 the topics is §7.9a.
+
+An update that changes the protection policy is recorded by request intake only if the
+materialization is still at the revision the API read (`protection_base_revision`): the policy and
+`protection_revision + 1` are stored, and an `apply_runtime` is queued as for a replica change. A
+redelivered request finds the policy already in force and changes nothing; one overtaken by another
+edit is not applied, and the status message says so (`_apply_protection_update`). The apply renders
+the same spec, so the cluster is untouched, the status stays `running`, and the policy goes out with
+the apply's deliveries (§7.3, 22 §22.7).
 
 Measured on a test cluster (`materializer-loadtest-orders`, 16 replicas): stop converged in about
 a minute, resume in about four (pods 1 → 5 → 10 → 16 as the HPA doubles them).

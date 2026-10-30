@@ -28,10 +28,10 @@ app name, e.g. `midstream-mat-a0690b63eb78`):
 | Resource | Template | Runs on | Does |
 |---|---|---|---|
 | KasprApp `<rt>` | `kaspr-app.yaml.j2` | — | the members; spec from `CONTROL_PLANE_RUNTIME_APP_SPEC` plus `replicas` |
-| KasprTable `<rt>-state` | `state-table.yaml.j2` | every member (global) | each table's schema, committed offsets, file decisions, totals; live settings (§10.8) |
+| KasprTable `<rt>-state` | `state-table.yaml.j2` | every member (global) | each table's schema, committed offsets, file decisions, totals; live settings and the protection policy (§10.8) |
 | KasprAgent `<rt>-writer` | `writer-agent.yaml.j2` | owners of source partitions | reads every source topic (`input.topic.name: a,b,c`) and stages each record in its topic's table (§10.2); `isolatedPartitions: true` (one actor per topic partition), `noack: true` |
 | KasprAgent `<rt>-committer` | `committer-agent.yaml.j2` | the owner of `<rt>-commits` (1 partition) | commits files and schema changes (§10.6) |
-| KasprAgent `<rt>-settings` | `settings-agent.yaml.j2` | one member | receives live settings (§10.12) |
+| KasprAgent `<rt>-settings` | `settings-agent.yaml.j2` | one member | receives live settings and the protection policy (§10.12) |
 | KasprTask `<rt>-pipeline` | `pipeline-task.yaml.j2` | every member, every `upload_interval` (5 s) | seals, uploads, announces, releases acknowledgements (§10.4) |
 | KasprTask `<rt>-emit-status` | `status-task.yaml.j2` | every member, every `heartbeat_interval` (30 s) | the heartbeat (§10.11) |
 | KasprTask `<rt>-commit-timer` | `commit-timer-task.yaml.j2` | the leader, every `commit_timer_interval` (5 s) | `commit_tick` on `<rt>-commits` |
@@ -50,9 +50,11 @@ table_uuid}]`, in the topics' order — the tables the runtime writes, never the
 `dataset` is its Iceberg namespace, so one runtime writes tables of several datasets),
 `partition_granularity` and the package revision; the agents' init blocks build the table contexts
 once from it (`table_state.table_contexts`). Nothing in the runtime depends on a dataset beyond the
-table's identifier: it writes and commits by location. Neither a schema nor any setting
-is in it, so the spec hash — and with it the runtime — changes only when the deployment, the replica
-count (the autoscaled one while it is scaled), the topics or the package does (07 §7.7). The runtime is rendered only once every table
+table's identifier: it writes and commits by location. Neither a schema, nor any setting,
+nor the protection policy is in it — only the protection key's id, `PROTECTION_KEY_ID`, when the
+control plane holds a key (22 §22.8) — so the spec hash, and with it the runtime, changes only when
+the deployment, the replica count (the autoscaled one while it is scaled), the topics, the package or
+the protection key does (07 §7.7). The runtime is rendered only once every table
 exists, and with no members at all while its topics change (07 §7.9a).
 
 Faust gives partition `i` of every source topic with the same partition count to the same member
@@ -72,6 +74,13 @@ the create dialog's and the topic analysis's `combined` recommendation account f
    offset for its partition — read from the table when the partition's session starts (§10.5).
 2. **Replay guard**: a record at or below the table's committed offset is already in the table; it
    is acknowledged without being written.
+2a. **Protect** (22 §22.5): the value is masked by the table's protection plan — built once per
+   schema view from the table's recorded `materializer.protection` and the policy — so nothing after
+   this step holds a protected value: hashed and partial values become strings, withheld keys are
+   dropped. A value with nothing to mask is the same object, and a table that protects nothing skips
+   the walk. A value under a newer protection revision than the partition's open batch rolls that
+   batch first. A member that must hash and has no protection key, or another than the deployment's,
+   waits here (`PROTECTION_KEY_WAIT_SECONDS`, 15 s), reporting itself degraded, and writes nothing.
 3. **Drift**: the record is checked against the current schema's index (`SchemaView`); whatever the
    schema cannot take yet becomes a `schema_change_request` for the committer, through the outbox
    (09 §9.7). **The record is not held.**
@@ -81,7 +90,7 @@ the create dialog's and the topic analysis's `combined` recommendation account f
 
 A staged line is `{"m": {"p", "o", "t", "k", "h", "a"}, "v": <value>}`: partition, offset, Kafka
 timestamp (ms), key and headers (UTF-8, or `b64:` + base64 when not UTF-8), the time the record was
-read, then the value untouched. Nothing is normalized per record: conforming values to the schema is
+read, then the value as step 2a left it — masked, otherwise untouched. Nothing is normalized per record: conforming values to the schema is
 the seal's work, in a child process, against the schema current at seal time.
 
 Tombstones (null values) are rows with a null payload unless the materialization has
@@ -103,8 +112,9 @@ filesystem on the node's disk, not on the member's persistent volume, so it goes
 | age `>= max_open_file_age_ceiling_seconds` | 600 s — a quiet topic's row is visible within ten minutes |
 | age `>= max_open_file_age_seconds` **and** (`row_count >= min_rows_per_file` or `estimated_bytes >= min_file_size_bytes`) | 120 s, 10,000 rows, 8 MiB |
 
-A schema change deliberately does not roll a batch. A batch whose acknowledgements are *ordered*
-(§10.7) rolls early, at 5,000 rows.
+A schema change deliberately does not roll a batch; a new protection revision does: a batch holds
+rows masked under one revision, which names every file sealed from it (§10.4). A batch whose
+acknowledgements are *ordered* (§10.7) rolls early, at 5,000 rows.
 
 ## 10.4 The batch pipeline: seal, upload, announce
 
@@ -135,7 +145,8 @@ to `seal_schema_wait_seconds` for an evolution first (09 §9.7).
 
 **Upload** (`writer/upload.py`, `upload_worker_count` 4 threads): each file goes to its final object,
 create-only (`if_generation_match=0`). File names carry the seal's id
-(`L/data/ts_day=2026-10-18/p03-o0000000100-0000000199-<member>-<seal>-<n>.parquet`), so an object
+(`L/data/ts_day=2026-10-18/p03-o0000000100-0000000199-<member>-<seal>-<n>[-r<revision>].parquet`,
+the protection revision its rows were masked under when it is not 0, 22 §22.5), so an object
 already there is this very file from an earlier attempt, and a matching size makes the upload done.
 Failures back off from `upload_initial_backoff_seconds` (5 s) to 300 s and never give up.
 
@@ -209,6 +220,16 @@ through it, one event at a time:
 | `schema_change_request` | every member's writer | observations join its table's schema window (09 §9.7) |
 | `commit_tick` | the leader, every 5 s | the clock: commits are due `commit_interval_seconds` (30 s) after the last, sooner at `max_files_per_commit` (500) or `max_bytes_per_commit` (8 GiB) |
 | `wakeup` | the committer itself | ends a schema window without waiting for a tick |
+
+**Protection.** On every event, before any commit, each table whose recorded protection revision is
+older than the policy the settings agent stored (`protection-policy`, §10.8) records it
+(`_record_protection`, 22 §22.7): every field is classified again by the policy and the current rules,
+and the `materializer.protection` property is committed alone — one metadata commit, no snapshot,
+asserting the current schema id — then written to the state table's `schema:<table>` and announced as
+a `schema_changed` event with the same schema id. A failure is a `protection_commit_failed` table
+error, tried again on the next event. A schema change's commit records the fields it adds in the same
+commit (`_protection_with_new_fields`): a new member of a protected family is protected, a new family
+is classified by the rules.
 
 It is not the table's only writer: the maintenance app commits compactions and snapshot expiries to
 the same tables (§10.10). Every append attempt therefore reloads the table first, and a commit that
@@ -364,6 +385,10 @@ the settings key:
 | `file-decisions:<table>` | decisions members act on (overlap, covered, error), bounded by `DECISIONS_LIMIT` 5,000 | committer |
 | `table:<table>` | the table's totals for the heartbeat | committer |
 | `runtime-settings` | live settings and their revision (§10.12) | settings agent |
+| `protection-policy` | the newest protection policy delivered, its revision and who chose it (22 §22.7) | settings agent |
+
+`schema:<table>` carries the table's recorded protection too, and members take the newest record by
+`(schema_id, protection_revision)`: a recorded policy changes the protection and keeps the schema.
 
 Each member's replica is a RocksDB store on its persistent volume (`/var/lib/data/tables`), the only
 thing on it: `storage_size`, `64Mi` by default since 4.0 (`1Gi` before), is that store's room. Its
@@ -447,7 +472,10 @@ expiry with nothing to expire) runs once more after a restart.
   by `_kafka_timestamp, _kafka_partition, _kafka_offset`, and appends it to the partition's open
   output a row group at a time; an output closes at `compaction_target_file_size_bytes` (256 MiB)
   or when its partition ends. So the child holds about the budget plus a row group, and an output
-  is a run of sorted row groups. The member then commits one `replace` snapshot after checking
+  is a run of sorted row groups. Inputs masked under different protection revisions — told apart by
+  their names (`lakehouse/files.py::protection_revision_of`) — never share an output, and each output
+  is named with its inputs' revision (`compact-<unique>-r<revision>.parquet`), so a file's name keeps
+  saying which policy masked its rows (22 §22.5). The member then commits one `replace` snapshot after checking
   every input is still live and, per partition, that the outputs hold exactly the inputs' rows
   inside their time bounds; the snapshot carries the committed offsets forward unchanged, so the
   runtime's exactly-once accounting never notices it.
@@ -494,8 +522,10 @@ Every member's `emit-status` task reports on `materialization-status` every 30 s
 (`build_runtime_heartbeat`): its phase and health, cumulative counters (rows, bytes, files, skipped
 records, `unmapped_values`) in all and per table (`table_counters`), the latest offsets it handled per
 table and partition (`latest_offsets`), each table's schema id (`schema_versions`), skip reasons,
-`files_pending_commit`, the settings revision and lineage it runs, its acknowledgement and pipeline backlog, and
-a performance window (`performance.py`, the last ~30 s).
+`files_pending_commit`, the settings revision and lineage it runs, its acknowledgement and pipeline backlog, the
+protection revision it masks each table with (`protection_revisions`) and the id of the protection key
+it loaded, the values it masked and withheld per table (in `table_counters`), and a performance window
+(`performance.py`, the last ~30 s).
 
 The committer member adds a `tables` block, one entry per table (`committer_table_blocks`):
 `member_id` (itself), the table and its topic, metadata location, current snapshot id and time,
@@ -505,8 +535,9 @@ and duration, pending files, and the stale announcements it has ignored since it
 `maintenance_job` replaces them.)
 
 A member's phase: `waiting_for_table` while it lacks a table's schema; `processing`;
-`waiting_for_source_records`; or degraded — `runtime_reported_degraded` on an error, and
-`commits_stalled` when a file it uploaded has gone uncommitted for 10 commit intervals
+`waiting_for_source_records`; or degraded — `runtime_reported_degraded` on an error, or with
+`health_reason` `protection_key_missing` / `protection_key_mismatch` while a table hashes and the
+member cannot (22 §22.5), and `commits_stalled` when a file it uploaded has gone uncommitted for 10 commit intervals
 (`COMMITS_STALLED_INTERVALS`; 5 minutes at defaults). How the control plane merges members is in 08.
 
 ## 10.12 Live settings and requests
@@ -521,6 +552,11 @@ runtime-scope setting (17 §17.3) is read at its point of
 use through `get_runtime_app_config()`, so changes need no restart. The maintenance settings reach
 the maintenance app with its ticks instead (§10.10). A `maintenance_request` an older control plane
 still sends here is dropped.
+
+`protection_policy` messages, sent at every apply of the runtime (06 §6.7), are stored under
+`protection-policy` when they are newer by revision and addressed to this runtime
+(`protection_state.py::apply_protection_policy_message`); the committer records the policy in every
+table on its next event (§10.6), and the writers follow the tables' schema records.
 
 ## 10.13 Package pinning
 
@@ -554,7 +590,7 @@ members log one structured line per protocol event (`protocol_event {json}`):
 |---|---|
 | writer | `runtime_partition_session_started`, `runtime_schema_change_requested` |
 | pipeline | `runtime_batch_sealed`, `runtime_batch_seal_failed`, `runtime_seal_waiting_for_schema`, `runtime_unmapped_values`, `runtime_batch_upload_failed`, `runtime_file_announced`, `runtime_batch_committed` (its acknowledgements released), `runtime_source_paused_for_upload_backlog`, `runtime_source_resumed_after_upload_backlog` |
-| committer | `runtime_commit_started`, `runtime_commit_completed`, `runtime_commit_failed`, `runtime_file_decision`, `runtime_schema_committed`, `runtime_schema_commit_failed` |
+| committer | `runtime_commit_started`, `runtime_commit_completed`, `runtime_commit_failed`, `runtime_file_decision`, `runtime_schema_committed`, `runtime_schema_commit_failed`, `runtime_protection_recorded` |
 | maintenance app | `maintenance_compaction_started`, `maintenance_compaction_completed`, `maintenance_compaction_failed`, `maintenance_snapshot_expiry_completed`, `maintenance_orphan_cleanup_completed` |
 | other | `runtime_settings_applied`, `runtime_processing_performance_window` |
 
@@ -570,6 +606,8 @@ members log one structured line per protocol event (`protocol_event {json}`):
 | `schema_evolution_failed` / `schema_field_limit` | 09 §9.12 | |
 | `compaction_failed` | a partition failed compaction 5 times | the maintenance app's `maintenance_compaction_failed` lines; ask for compaction again to retry |
 | A table never compacts | the maintenance app is down, or not ticked | its pod and `maintenance-step` logs; the control plane's `schedule_table_maintenance` work (07 §7.13) |
+| Degraded `protection_key_missing` / `protection_key_mismatch`, nothing written | a table hashes and the member's pods lack the deployment's protection key | the member's `masks values with a keyed hash` warnings; 22 §22.13 |
+| `protection_commit_failed` | recording a delivered policy in the table failed | the committer member's `Recording protection revision …` error; tried again on every event |
 
 ## 10.16 Verified on a test cluster
 

@@ -297,13 +297,19 @@ The heartbeat merge summarizes every member that reported within `MEMBER_STATE_F
 member that stopped reporting drops out after two minutes. The runtime's own degraded reasons:
 `commits_stalled` (a member's uploaded files waited ten commit intervals for a commit — the
 committer is not committing), `runtime_data_validation_degraded`, `runtime_infrastructure_degraded`
-(06 §6.5).
+(06 §6.5), and `runtime_reported_degraded` with `health_reason` `protection_key_missing` or
+`protection_key_mismatch`: a table hashes and the member has no protection key, or another than the
+deployment's, so it writes nothing for that table (22 §22.5). The same heartbeats carry the
+protection revision each member masks each table with; `GET /materializations/{id}` derives from
+them, and from the tables' projections, whether a policy has reached every member and table
+(`services/protection.py::protection_state`, 22 §22.7), the way the settings rollout is derived
+(17 §17.7). It is a view, never a phase.
 
 ### Table errors
 
 A third source writes the status: the `table-events` agent (06 §6.6). A `table_error` from the
-committer — `commit_failed`, `schema_evolution_failed`, `schema_field_limit`, `table_unavailable` —
-or from the maintenance app — `compaction_failed` — is stored on the table record and, for a
+committer — `commit_failed`, `schema_evolution_failed`, `schema_field_limit`, `table_unavailable`,
+`protection_commit_failed` — or from the maintenance app — `compaction_failed` — is stored on the table record and, for a
 materialization meant to run, degrades it with the error's reason as its `phase_reason`
 (`degrade_for_table_error`). Only a written table's error holds the status, or a `drop_failed`
 of a table whose drop keeps failing (`MaterializationTable.error_holds`): a kept table is written by

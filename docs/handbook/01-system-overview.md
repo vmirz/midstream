@@ -26,7 +26,9 @@ and the system:
 3. Creates the Iceberg tables under `gs://my-lake/<release>/<materialization id>/`,
    one directory each, partitioned by the day of `_kafka_timestamp`, each with a catalog pointer (11).
 4. Renders and applies **one dedicated Kaspr runtime application** for both into Kubernetes.
-5. That runtime's members consume both topics, stage each record as JSONL in its table's batch,
+5. That runtime's members consume both topics, mask the values of fields that look sensitive —
+   emails, phone numbers and national identifiers hashed, secrets withheld, unless the
+   materialization chose otherwise (22) — stage each record as JSONL in its table's batch,
    seal batches into Parquet files with Iceberg field ids — in a child process, off the consumer's
    event loop — and upload them. **One member, the committer, commits them to the tables**: per
    table, one append per commit interval, whose snapshot summary carries the Kafka offsets it covers.
@@ -303,9 +305,10 @@ members stage, seal, upload; the committer commits; table events keep the table 
    their intake agent.
 2. **All persisted records are wrapped in a `RecordEnvelope`** with `entity_type`, `entity_id`,
    `version`, `updated_at`, `payload`. Readers reject envelopes whose `entity_type` does not match.
-3. **The runtime spec hash is invariant to schema changes and settings overrides.** Schemas live
-   in the table and settings ride the runtime control topic, so neither redeploys anything
-   (`tests/test_runtime_templates.py`, `test_runtime_settings.py`).
+3. **The runtime spec hash is invariant to schema changes, settings overrides and protection
+   policies.** Schemas live in the table, and settings and policies ride the runtime control topic,
+   so none of them redeploys anything (`tests/test_runtime_templates.py`, `test_runtime_settings.py`,
+   `test_workflow.py`).
 4. **Every runtime installs exactly the package the control plane runs.** `installed_package_source()`
    reads how pip installed it: from git, the runtime pins that commit at that repository; from a
    package index, that version. A local install is refused, since no pod could repeat it. Runtimes
@@ -328,6 +331,9 @@ members stage, seal, upload; the committer commits; table events keep the table 
    records past the offsets a snapshot carries, and builds their rows with the seal's own
    `build_row`, so the console shows each record exactly once and in the row the commit will hold
    (`tests/test_tail_exactly_once.py`, `test_tail_parity.py`; 19 §19.2).
+9. **No protected value is staged plain.** The writer and the tail mask before staging; a member that
+   must hash and has no key writes nothing rather than write plain (`test_runtime_protection.py`;
+   22 §22.5).
 
 ## 1.7 What this system is *not*
 
@@ -403,4 +409,5 @@ There is **no linter or formatter configured** in this repository. Do not introd
 - Debugging columns, forks, `_unmapped` → [09 — Schema evolution and forks](./09-schema-evolution-and-forks.md)
 - How records reach the table → [10 — Runtime internals](./10-runtime-internals.md)
 - How the newest records reach the console before they are committed → [19 — The live tail](./19-live-tail.md)
+- Which values are masked, and how → [22 — Data protection](./22-data-protection.md)
 - The table, its files and maintenance → [11 — Iceberg tables and storage](./11-iceberg-tables-and-storage.md)

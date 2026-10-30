@@ -18,9 +18,10 @@ image it was created with until its spec is re-applied: after a control-plane up
 legitimately lag until they are rolled.
 
 `GET /system/version`, public, answers `{"component": "control-plane", "version", "domain": {"id",
-"name"} | null, "federation_key_id"}`: the domain it serves (`DOMAIN_ID`, `DOMAIN_NAME`) and the
-first 8 hex characters of its federation key's SHA-256, which the shared console compares across
-domains (20 §20.4, §20.8).
+"name"} | null, "federation_key_id", "protection_key_id"}`: the domain it serves (`DOMAIN_ID`,
+`DOMAIN_NAME`) and the first 8 hex characters of its federation key's SHA-256, which the shared
+console compares across domains (20 §20.4, §20.8), and of its protection key's, `null` without one:
+domains whose masked columns should join share it (22 §22.8).
 
 `midstream.version.PACKAGE_VERSION` reads the installed distribution metadata, so
 `pyproject.toml` is the single source of truth. Outside an installed context it reports

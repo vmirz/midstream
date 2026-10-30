@@ -83,6 +83,7 @@ permission's `scope`, for the console's role editor.
 | `dataset.view_schema` | dataset | View schemas: a dataset's tables' schemas, their versions and what changed | — | |
 | `dataset.write` | dataset | Add and drop tables: put tables in a dataset, remove or drop its tables, delete materializations that have tables in it | `dataset.view_schema` | |
 | `dataset.manage` | dataset | Manage datasets: the description, who may use it, deleting it once empty | `dataset.view_schema` | |
+| `dataset.protect` | dataset | Choose data protection: mask otherwise than the default for materializations writing into the dataset, change their protection, apply the current rules again ([22](./22-data-protection.md) §22.10) | `dataset.view_schema` | yes |
 | `data.query` | dataset | Query data (rows and SQL in the Data explorer) | `dataset.view_schema` | |
 | `data.export` | dataset | Export data (CSV, JSON, Parquet) | `data.query` | |
 | `catalog.read` | dataset | Connect external tools to the Iceberg catalog, and make access tokens for them | `dataset.view_schema` | |
@@ -90,6 +91,7 @@ permission's `scope`, for the console's role editor.
 | `topics.view` | deployment | Browse Kafka topics | — | |
 | `settings.view` | deployment | View settings | — | |
 | `settings.manage` | deployment | Manage settings | `settings.view` | yes |
+| `settings.manage_protection` | deployment | Manage data protection defaults: change *Protected by default*, besides `settings.manage`, which does not imply it (22 §22.4) | `settings.view` | yes |
 | `audit.view` | deployment | View audit log | — | |
 
 A dataset permission held through a group — the deployment scope — holds on every dataset, those
@@ -114,12 +116,15 @@ to make their own. Custom roles are stored in the table.
 | `status-viewer` | Status Viewer | `materializations.view` |
 | `dataset-reader` | Dataset Reader | `dataset.view_schema`, `data.query`, `data.export`, `catalog.read` |
 | `dataset-writer` | Dataset Writer | Dataset Reader, plus `dataset.write` |
-| `dataset-owner` | Dataset Owner | Dataset Writer, plus `dataset.manage` |
+| `dataset-owner` | Dataset Owner | Dataset Writer, plus `dataset.manage` and `dataset.protect` |
 
 A role whose permissions are all dataset permissions is a **dataset role** (`dataset_role` in
 `GET /roles`): it can be granted on a single dataset (§18.16), as well as held by a group. The three
 built-in dataset roles nest; no built-in dataset role holds `catalog.write` — only Administrator
-does, and a custom role can. The 2.0 role Data Reader is gone: a new dataset gives All Users
+does, and a custom role can. Choosing data protection is the dataset's owners' (Dataset Owner holds
+`dataset.protect`, Dataset Writer does not), and only Administrator holds
+`settings.manage_protection`: a "data steward" role holding both, granted through a group, works
+across the deployment. The 2.0 role Data Reader is gone: a new dataset gives All Users
 Dataset Reader on it instead, so readers lose nothing, and an owner who narrows a dataset really
 narrows it.
 
@@ -578,6 +583,7 @@ every key optional. The Settings page's Deployment section says only whether eac
 | `service-token` | `AUTH_SERVICE_TOKEN` | The console's read-only credential; at least 32 characters; the console's `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN` for this domain (20 §20.2) |
 | `federation-key`, `previous-federation-key` | `AUTH_FEDERATION_KEY`, `AUTH_PREVIOUS_FEDERATION_KEY` | Signs access tokens and their revocations, the **same value in every domain** (§18.15); at least 32 characters. Without it no access token can be made or used |
 | `bootstrap-admin-email`, `bootstrap-admin-password` | `AUTH_BOOTSTRAP_ADMIN_EMAIL`, `…_PASSWORD` | The first administrator (§18.8) |
+| `protection-key` | `PROTECTION_KEY`, on the control plane, the tail and maintenance apps and every runtime | The key data protection hashes with ([22](./22-data-protection.md) §22.8); at least 32 characters. Without it a policy that hashes is refused. The same value in every domain whose masked columns should join; only its id is shown |
 
 A key or token shorter than 32 characters is ignored and logged.
 
@@ -589,6 +595,7 @@ A key or token shorter than 32 characters is ignored and logged.
 kubectl create secret generic materializer-auth -n midstream \
   --from-literal=signing-key="$(openssl rand -base64 48)" \
   --from-literal=service-token="$(openssl rand -base64 48)" \
+  --from-literal=protection-key="$(openssl rand -base64 48)" \
   --from-literal=bootstrap-admin-email=you@example.com \
   --from-literal=bootstrap-admin-password="$(openssl rand -base64 18)"
 ```

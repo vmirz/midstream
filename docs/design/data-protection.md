@@ -1,9 +1,9 @@
 # Data protection: masking sensitive fields before they reach the lake
 
-**Status:** design agreed, nothing built. Written 2026-10-29 against `main` at b4fcbc9 (1.0.0-rc.4)
-and revised the same day with the owner's decisions (§16: every decision is now taken; four points of
-detail remain to confirm). Every claim about current behaviour below was checked against the code
-named beside it.
+**Status:** built (2026-10-30). Written 2026-10-29 against `main` at b4fcbc9 (1.0.0-rc.4) and revised
+the same day with the owner's decisions (§16). Handbook 22 describes what was built; §17 lists where
+the build departs from this design — above all, a data file's protection revision is in its name,
+not in a `sequence_runs` property. The rest is kept as the design that was agreed.
 
 **Audience:** the owner, for review; then the implementer, who should be able to build from this
 without coming back to its author.
@@ -1137,8 +1137,8 @@ kubectl -n "$NS" patch secret "$RELEASE-auth" --type merge \
   -p "{\"stringData\":{\"protection-key\":\"$(openssl rand -base64 48)\"}}"
 
 # 2. Restart the apps that read the Secret at start: the control plane, the tail app and the
-#    maintenance app (their StatefulSets, named after the KasprApps; `kubectl -n "$NS" get statefulset`).
-kubectl -n "$NS" rollout restart statefulset "$RELEASE-control-plane" "$RELEASE-tail" "$RELEASE-maintenance"
+#    maintenance app (kaspr-operator names each app's StatefulSet `<KasprApp>-app`).
+kubectl -n "$NS" rollout restart statefulset "$RELEASE-control-plane-app" "$RELEASE-tail-app" "$RELEASE-maintenance-app"
 
 # 3. Nothing to do for runtimes: the control plane renders the key's id into every runtime's spec,
 #    so the sweep re-applies each of them once, within about two minutes.
@@ -1152,9 +1152,8 @@ to the `create secret` command, and there is no step.
 
 What the operator sees if the step is skipped: the Settings page's Data protection section says the
 key is not configured; a create with the default answers `409 protection_key_not_configured` with the
-message of §5.8; the console's create dialog says so before the attempt. The implementer confirms the
-StatefulSet names kaspr-operator gives the apps and writes the exact command into the release note and
-the install guide.
+message of §5.8; the console's create dialog says so before the attempt. The StatefulSet names above were confirmed
+on a test cluster; the install guide's §8 and handbook 22 §22.9 carry the same commands.
 
 ### 13.2 The release note (handbook 16, a new §16.16)
 
@@ -1167,10 +1166,10 @@ the install guide.
 >
 > | Change | Who must care |
 > |---|---|
-> | **The auth Secret needs a `protection-key`** (at least 32 characters; `openssl rand -base64 48`), read at start by the control plane, the tail app, the maintenance app and every runtime. The default protection hashes emails, phone numbers and national identifiers, and hashing needs the key: until it is set, creating a materialization with the default answers `409 protection_key_not_configured`. Add it and restart the three apps: `kubectl -n <ns> patch secret <release>-auth --type merge -p "{\"stringData\":{\"protection-key\":\"$(openssl rand -base64 48)\"}}"`, then `kubectl -n <ns> rollout restart statefulset <release>-control-plane <release>-tail <release>-maintenance`. Every runtime is then re-applied once by itself. Domains that should join on masked columns across domains share one key, like `federation-key` | every deployer, once |
+> | **The auth Secret needs a `protection-key`** (at least 32 characters; `openssl rand -base64 48`), read at start by the control plane, the tail app, the maintenance app and every runtime. The default protection hashes emails, phone numbers and national identifiers, and hashing needs the key: until it is set, creating a materialization with the default answers `409 protection_key_not_configured`. Add it and restart the three apps: `kubectl -n <ns> patch secret <release>-auth --type merge -p "{\"stringData\":{\"protection-key\":\"$(openssl rand -base64 48)\"}}"`, then `kubectl -n <ns> rollout restart statefulset <release>-control-plane-app <release>-tail-app <release>-maintenance-app`. Every runtime is then re-applied once by itself. Domains that should join on masked columns across domains share one key, like `federation-key` | every deployer, once |
 > | **Protected by default**: Settings › Data protection, `default_protection` (`CONTROL_PLANE_DEFAULT_PROTECTION`), ships as `email=hash,phone=hash,national_id=hash,secret=redact` and applies to materializations **created from now on**; existing ones are untouched (`NONE`). Changing it needs the new permission `settings.manage_protection`, which only Administrator holds; `settings.manage` does not imply it | administrators who want other defaults, or none |
 > | **Per materialization**: `protection` on `POST` and `PATCH /materializations` (`{"kinds": {"email": "hash", "phone": "partial", …}}`); choosing other than the default needs the new dataset permission `dataset.protect` on every dataset the materialization writes into, which Dataset Owner holds. An edit applies live, without a restart, to records written from then on; `GET /materializations/{id}/protection` reviews what each table protects | dataset owners; scripts that create materializations and want no protection (`{"kinds": {}}`) |
-> | **Tables** gain the property `materializer.protection` and every snapshot the summary property `materializer.protection-revision`; compaction keeps each rewritten file's data sequence number | readers of table metadata; nothing changes for queries |
+> | **Tables** gain the property `materializer.protection`, and a data file masked under a protection revision ends `-r<revision>.parquet`; compaction never mixes revisions in one output | readers of table metadata; nothing changes for queries |
 > | The runtime control topic carries a second message kind, `protection_policy`, addressed to one runtime; a 1.0 runtime drops it. No topic is added: no rebalance is needed | none |
 
 ---
@@ -1326,3 +1325,27 @@ Still to confirm, all details:
    tab, or as 1.2.0 after the rest has run on a test cluster?
 4. **The `secret` kind's `partial`** keeps nothing (`****`), so that choosing partial for everything
    never shows part of a password. Agreed, or should `secret` refuse `partial` as it refuses `hash`?
+
+---
+
+## 17. As built: where the implementation departs from this design
+
+Built on `feature/data-protection`, 2026-10-30. Handbook 22 is the reference; these are the
+differences from the sections above, each for the reason given.
+
+| Design | As built | Why |
+|---|---|---|
+| D15, §5.6: `sequence_runs` in the property, one revision per snapshot, compaction grouping by run, explicit data sequence numbers on compacted files, a `materializer.protection-revision` snapshot summary | A data file's revision is in its **name**, `…-r<revision>.parquet` (`lakehouse/files.py::protection_revision_of`; none for revision 0). A batch holds rows of one revision — the writer rolls its open batch when the revision changes — so every file a seal writes has one. Compaction never puts files of two revisions in one output and names each output with its inputs' revision. No per-snapshot grouping, no sequence-number bookkeeping, no summary property | Nothing reads data file names, so the name is free to carry it; the manifests alone still say which policy masked each file, with no grouping in the committer and no bookkeeping in compaction |
+| §5.8: `choice_map` stored as an object; its options in `options` | Stored as **text**, `kind=mask` separated by commas in the catalog's order, a kind alone taking its default mask, empty for none (`protection/catalog.py::normalize_protection_text`); the definition carries `choice_options` and `choice_labels`, and `enum` keeps `options` | Every other setting is a scalar: the settings table, its history and the env var keep one shape |
+| §5.8: an edit is the whole policy | Also `apply_rules: true`, recording the policy in force again with the current rules (the Protection tab's *Apply the current rules*); and intake applies an edit only to the revision the API read (`protection_base_revision`): a redelivery changes nothing, an overtaken edit is refused in the status | The review's action needed an API; without the base revision a delayed request could undo a newer choice |
+| §5.8: an edit is an apply with an unchanged spec | So it is, and that apply now keeps a healthy runtime **running** instead of showing it deploying (`spec_unchanged` in `_should_preserve_running_status_during_reapply`) | Nothing in the cluster changes, so there was nothing to wait for |
+| §5.9: `dataset.protect` on every dataset written into | Also on the datasets of tables the same edit adds or writes again | They are masked by the new policy too |
+| §5.7: `LiveTailTarget` carries `protection` and `protection_revision` | The tail takes the table's protection with its schema — the seed's `?raw=true` schema view and every `schema_changed` event carry the property — the target carries the deployment's `protection_key_id`, and the hints the table's `protection_revision` | One source for the schema and its protection, already ordered by position |
+| §6.6: heartbeat | `protection_revisions` (table → revision) and `protection_key_id`; masked and withheld values in each table's `table_counters`. A member that must hash and cannot reports `runtime_reported_degraded` with `health_reason` `protection_key_missing` or `protection_key_mismatch` | Health reasons are where the console and the control plane already look |
+| §5.1: rules | Booleans and nulls are never masked; a plural name matches as its singular when the plural matches nothing; every leaf under a `secret` takes the kind (`inherit_all`); `pincode` left the secret rules | Precision: `mobile: true` stays a boolean; `emails` and `addresses` are common; a secret object's every value is secret; `pincode` is often a postal code |
+| §5.9: the console checks `dataset.protect` on the edit route | The console's route checks `materializations.edit` and calls the control plane as the person, which checks `dataset.protect` — as it does `dataset.write` for a change of topics | One authority; the dialog locks the control from the same permission |
+| — | The Table tab hides `materializer.protection` with the fork map from people who may not see the dataset's schemas | It names the fields and their kinds |
+| §15.3 `reprotect` | Not built | An extension; the key is already wired into the maintenance app, and file names already say which files a newer policy would rewrite |
+
+The four points of detail left in §16 were built as designed: each kind's partial fragment as in
+§5.2, the key's id in every runtime's spec (D14), `reprotect` later, and a secret's partial `****`.

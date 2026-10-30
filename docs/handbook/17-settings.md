@@ -39,7 +39,8 @@ Consequences worth knowing:
 | The control plane is unreachable | The console keeps the last overrides it read; a console started during the outage runs on its deployment values. Nothing can be saved, because the store is the control plane |
 
 There is no way for a deployment to forbid an override (no "locked" settings). Anyone holding
-`settings.manage` can change any overridable setting; see §17.11.
+`settings.manage` can change any overridable setting but one: *Protected by default* also needs
+`settings.manage_protection`; see §17.11.
 
 ## 17.3 What is overridable
 
@@ -141,6 +142,12 @@ advanced sits behind the section's **Advanced** toggle.
 | `sso_allowed_email_domains` | `…SSO_ALLOWED_EMAIL_DOMAINS` | empty: any | at most 50 email domains | Allowed email domains |
 | `password_sign_in_enabled` | `…PASSWORD_SIGN_IN_ENABLED` | on | — | Password sign-in (danger: off, administrators only) |
 
+**Data protection** — what new materializations mask before they write (22).
+
+| Key | Env var | Default | Bounds | Label |
+|---|---|---|---|---|
+| `default_protection` | `…DEFAULT_PROTECTION` | `email=hash,phone=hash,national_id=hash,secret=redact` | kinds of the catalog, each with a mask it allows | Protected by default — the kinds of sensitive data every new materialization masks, and how; also needs `settings.manage_protection` (22 §22.4) |
+
 **Live tail** — the newest records of a materialization's tables, served from Kafka before they are
 committed ([19 — The live tail](./19-live-tail.md)). The first two are the control plane's own; the
 rest travel with the tail app's ticks, so a change reaches it within a minute (§17.7).
@@ -160,7 +167,15 @@ The Security section's seven are described in [18 — Identity and access](./18-
 §18.11. `default_partition_granularity` is the first `enum` setting: its definition lists `options`,
 and the page shows a select. `sso_allowed_email_domains` is the one `domain_list`: comma- or
 space-separated email domains, stored lowercase and comma-separated (`config.normalize_email_domains`),
-empty for any.
+empty for any. `default_protection` is the one `choice_map`: its definition lists `choice_options` —
+each kind with its label, description and the masks it allows — and `choice_labels`, the masks' names,
+and the page shows a row per kind (Off, Hashed, Partial, Withheld). It is stored as text,
+`kind=mask` separated by commas in the catalog's order, a kind alone taking its default mask, empty
+for none (`protection/catalog.py::normalize_protection_text`). Its definition also names a
+`permission`, `settings.manage_protection`, which setting or resetting it needs besides
+`settings.manage` (`web/settings.py::update_settings`); the page shows the row read-only, saying so,
+to whoever lacks it. It takes effect for the next create and never reaches an existing
+materialization (22 §22.4).
 
 Cross-field rules: the default replica count may not exceed the maximum; the idle timeout may not
 be longer than the maximum session length; the renewal interval must be shorter than the idle
@@ -271,6 +286,7 @@ Reported read-only on the Settings page's **Deployment** section (`DEPLOYMENT_SE
 | `CONTROL_PLANE_RUNTIME_NAME_PREFIX` | Names every runtime and decides which topics a delete removes |
 | `CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION`, `…_RUNTIME_APP_SPEC` | Shape of the rendered runtime; changing it re-applies — and restarts — every runtime. Shown as **Resources per replica**, **Storage class** and **Vertical autoscaling**; a change to the vertical autoscaling alone restarts none (02 §2.10c) |
 | Credentials, `GOOGLE_APPLICATION_CREDENTIALS`, the session signing keys, the console's service token, the bootstrap administrator | Never through a UI. The page says only whether each identity secret is configured |
+| The protection key (`PROTECTION_KEY`, the auth Secret's `protection-key`) | Hashing's key, for the lake's lifetime (22 §22.8). The page shows its id, or that none is configured |
 | The runtime's task intervals (heartbeat, pipeline, commit timer) | Rendered into the runtime's tasks; built in |
 | The maintenance app's job slots and forget window (03 §3.4) | Read from its environment at start; they size its pod |
 
@@ -561,8 +577,10 @@ settings sections read-only to people who may view but not change them, and hide
 people who may do neither. Every override and history entry records `updated_by` as the email of
 the signed-in person who made it.
 
-`settings.manage` covers every setting, the Security section and **Delete object data** included;
-there is no per-section permission. The console's own sections are stored with the control plane
+`settings.manage` covers every setting, the Security section and **Delete object data** included,
+but for *Protected by default*, which also needs **Manage data protection defaults**
+(`settings.manage_protection`, 22 §22.10) — it decides what personal data every new materialization's
+tables hold, and Manage settings does not imply it. There is no per-section permission otherwise. The console's own sections are stored with the control plane
 the same way, so the same permission governs them.
 
 Storage is keyed by scope, so a per-user scope (`user:<id>`) could hold personal preferences

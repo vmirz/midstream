@@ -66,6 +66,7 @@ revision. With no settings table it returns `get_config()` unchanged.
 | `runtime_autoscale_cooldown_seconds` | `CONTROL_PLANE_RUNTIME_AUTOSCALE_COOLDOWN_SECONDS` | `300` | integer, `>= 60`; the least time between two changes of a runtime's members |
 | `default_runtime_storage_size` | `CONTROL_PLANE_DEFAULT_RUNTIME_STORAGE_SIZE` | `64Mi` | a Kubernetes quantity; every new runtime member's persistent volume, which holds only its state table (10 §10.8). A create request cannot choose another. Not the control plane's own volume, which its KasprApp sets (1Gi) |
 | `default_partition_granularity` | `CONTROL_PLANE_DEFAULT_PARTITION_GRANULARITY` | `day` | `hour`, `day`, `month` or `none`; a new materialization's tables' partitioning when its create request names none |
+| `default_protection` | `CONTROL_PLANE_DEFAULT_PROTECTION` | `email=hash,phone=hash,national_id=hash,secret=redact` | kinds of sensitive data and their masks, `kind=mask` separated by commas, a kind alone taking its default mask, empty for none; normalised to the catalog's order, and an unknown kind or a mask its kind does not allow stops the control plane at start, naming the variable. What a create request that names no `protection` gets (22 §22.4) |
 | `max_materialization_topics` | `CONTROL_PLANE_MAX_MATERIALIZATION_TOPICS` | `20` | integer, `>= 1`; the most source topics one create request may name — each a table, all read by one runtime. Reported by `GET /system/settings` as `max_topics` |
 | `destination_cleanup_enabled` | `CONTROL_PLANE_DESTINATION_CLEANUP_ENABLED` | `true` | delete drops the table: every object under its location — data, manifests, metadata, the pointer. Disable to keep the table; the delete chain then ends after the Kafka cleanup |
 | `purge_records_on_delete` | `CONTROL_PLANE_PURGE_RECORDS_ON_DELETE` | `true` | delete removes every control-plane record as its final step; disable to leave them for the retention sweep |
@@ -117,7 +118,9 @@ The identity secrets — `AUTH_SIGNING_KEY`, `…_PREVIOUS_SIGNING_KEY`,
 `ControlPlaneConfig` fields, so no settings view can ever report one. They are read once by
 `identity/secrets.py::get_identity_secrets`; keys and the service token shorter than 32
 characters are ignored and logged. See [18 — Identity and access](./18-identity-and-access.md)
-§18.11.
+§18.11. The protection key, `PROTECTION_KEY`, is not a field either: `protection/secrets.py::get_protection_key`
+reads it once, on the control plane, the tail and maintenance apps and every runtime alike, ignores
+and logs one shorter than 32 characters, and only its id is ever shown (22 §22.8).
 
 ### 3.2.2 Value parsing rules
 
@@ -194,11 +197,12 @@ and so on).
 
 ### 3.2.5 Which fields the Settings page can override
 
-36 fields, listed with their bounds in [17 — Settings](./17-settings.md) §17.3:
+37 fields, listed with their bounds in [17 — Settings](./17-settings.md) §17.3:
 
 | Section | Fields |
 |---|---|
 | Materializations | `default_destination_uri`, `default_runtime_replicas`, `max_runtime_replicas`, `default_runtime_storage_size`, `default_partition_granularity`, `runtime_autoscaling_enabled`, `runtime_autoscale_max_replicas`, `runtime_autoscale_target_minutes`, `runtime_autoscale_min_lag_records`, `runtime_autoscale_cooldown_seconds`, `max_materialization_topics` |
+| Data protection | `default_protection` — which also needs `settings.manage_protection` (22 §22.10) |
 | Deletion | `destination_cleanup_enabled`, `purge_records_on_delete`, `deleted_retention_hours`, `deleted_purge_batch_limit` |
 | Schema | `discovery_sample_records`, `discovery_sample_seconds`, `schema_history_limit` |
 | Catalog | `catalog_api_enabled`, `catalog_metadata_cache_seconds` |
@@ -320,6 +324,8 @@ every child resource and the commits topic from the app name (02 §2.10).
 | `GOOGLE_APPLICATION_CREDENTIALS` | runtime app spec | the GCS client and PyIceberg's FileIO |
 | `K_STREAM_WAIT_EMPTY` | the generated runtime spec, `false` | Kaspr's `stream_wait_empty`: Faust does not wait, on a rebalance or at shutdown, for delivered records to be acknowledged. The writer holds acknowledgements until rows are in the table (10 §10.7), so waiting would stall both; a record left unacknowledged is read again |
 | `K_STORE_ROCKSDB_WRITE_BUFFER_SIZE`, `K_STORE_ROCKSDB_MAX_WRITE_BUFFER_NUMBER` | the generated runtime spec, `4194304` and `2` | Kaspr's RocksDB write buffer for the state table, the app's one store: flushing every 4 MiB keeps its write-ahead log under 8 MiB on a 64Mi volume (10 §10.8). Kaspr's own default is 64 MiB |
+| `PROTECTION_KEY` | the chart's runtime spec, from the auth Secret's `protection-key` (optional) | `protection/secrets.py`: the key the writer hashes with (22 §22.8) |
+| `PROTECTION_KEY_ID` | the generated runtime spec, only when the control plane holds a key | the id of the deployment's key: a member whose key has another id, or none, writes nothing for a table that hashes and reports `protection_key_mismatch` or `protection_key_missing` |
 
 The table's identity — location, namespace, name, partition granularity — reaches the runtime as
 agent arguments in its templates, not as variables. The generated spec's env list is merged with
@@ -364,6 +370,16 @@ change and a package release.
 | `ORPHAN_PASS_LIMIT` (`maintenance_app/worker.py`) | `1000` | files one orphan-cleanup pass deletes |
 | `REPLACE_ATTEMPTS`, `REPLACE_RETRY_SECONDS` (`maintenance_app/worker.py`) | `8`, `1.0` | tries at a replace or an expiry that keeps losing the pointer's CAS to the runtime's appends |
 | `STEP_BUDGET_SECONDS` (`maintenance_app/worker.py`) | `10` | quick maintenance work one step does across tables |
+| `PROTECTION_KEY_WAIT_SECONDS` (`handlers/writer.py`) | `15` | how often a member that must hash and cannot checks its key again (22 §22.5) |
+
+### Data protection — `protection/`
+
+| Constant | Value | Meaning |
+|----------|-------|---------|
+| `KINDS`, `DEFAULT_PROTECTION` (`catalog.py`) | 11 kinds; email, phone, national_id hashed, secret withheld | the kinds the rules recognise and the default as it ships (22 §22.2) |
+| `HASH_HEX_LENGTH`, `PARTIAL_TAIL`, `HIDDEN` (`mask.py`) | `32`, `4`, `****` | a hashed value's hex characters (128 bits); the most significant characters a partial keeps; what hides the rest |
+| `MIN_PROTECTION_KEY_LENGTH` (`secrets.py`) | `32` | a shorter key is ignored and logged |
+| `HISTORY_LIMIT` (`policy.py`) | `100` | policies a table's `materializer.protection` keeps in its history |
 
 ### The maintenance app (`maintenance_app/config.py`)
 
@@ -372,6 +388,7 @@ change and a package release.
 | `MAINTENANCE_APP_NAME` | `<release>-maintenance` | names the app in its commits and table events |
 | `MAINTENANCE_MAX_CONCURRENT_JOBS` | `1` | long jobs one member runs at once, across its tables |
 | `MAINTENANCE_FORGET_AFTER_SECONDS` | `300` (≥ 60) | a table no tick names for this long is forgotten, its job stopped |
+| `PROTECTION_KEY` | none | the auth Secret's `protection-key`; not read yet — the job that masks rows already written will (22 §22.14) |
 
 Read from the app's environment (02 §2.10a); what the jobs do comes with the ticks.
 
@@ -389,6 +406,7 @@ Read from the app's environment (02 §2.10a); what the jobs do comes with the ti
 | `TAIL_SESSION_CHECK_SECONDS` | `5` | how long a session the control plane answered for is trusted (60 s while it cannot be reached) |
 | `TAIL_SERVE_CONCURRENCY`, `…_PEEK_CONCURRENCY` | `4`, `2` | answers and peeks built at once |
 | `TAIL_MEMBER_MAP_REFRESH_SECONDS` | `15` | how often the member map is read again |
+| `PROTECTION_KEY` | none | the auth Secret's `protection-key`: the tail masks what it buffers as the writers do, and answers `503 protection_key_missing` for a table that hashes when it has no key, or another than the deployment's (22 §22.5) |
 | `RUNTIME_MEMBER_ID` | the pod's name | the member's name |
 
 Read once at start (02 §2.10b); the nine `live_tail_*` settings come with every tick (§3.2.1, 17).

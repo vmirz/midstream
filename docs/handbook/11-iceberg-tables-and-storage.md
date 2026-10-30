@@ -51,6 +51,7 @@ gs://my-lake/midstream/mat-5c8ed527453d/finance_invoices/
 ├── data/
 │   ├── ts_day=2026-10-17/
 │   │   ├── p03-o0000000100-0000000199-<member>-<seal>-0.parquet     runtime-written, one Kafka partition
+│   │   ├── p03-o0000000200-0000000299-<member>-<seal>-0-r2.parquet  … masked under protection revision 2
 │   │   └── compact-<job>-<n>-<uuid>.parquet                         a compaction's output
 │   └── ts_day=__null__/                                             rows without a Kafka timestamp
 └── metadata/
@@ -138,6 +139,7 @@ another's back (10 §10.6).
 | `history.expire.max-snapshot-age-ms`, `history.expire.min-snapshots-to-keep` | from the runtime retention settings at creation |
 | `materializer.materialization-id`, `.source-topic`, `.created-by`, `.created-at`, `.package-version`, `.partition-granularity` | provenance; `.source-topic` is this table's topic |
 | `materializer.fork-map` | the fork map (09 §9.5), updated by every schema commit |
+| `materializer.protection` | what the table masks (22 §22.6): the policy and its revision, the protection key's id, every field that is or was protected with its kind, mask and schema ids, and the last 100 policies. Written at creation, by every schema commit that adds fields, and by a property-only commit when a policy is recorded; absent for a table of a materialization from before data protection until an edit gives it one |
 
 The metadata is built directly as `TableMetadataV2` (`new_table_metadata`): PyIceberg's own
 `new_table_metadata` re-assigns field ids, which would move the metadata columns off their fixed ids.
@@ -159,7 +161,8 @@ summary fields (`added-data-files`, `added-records`, `total-records`, `total-dat
 Maintenance snapshots (compaction's `replace`) carry the offsets forward unchanged; a snapshot
 without them (an external writer's) is skipped by walking back to its parent (`committed_offsets`).
 
-A schema change is a metadata commit without a snapshot (`commit_schema`).
+A schema change is a metadata commit without a snapshot (`commit_schema`), and so is a recorded
+protection policy (`commit_protection`: the property alone, asserting the current schema id).
 
 Metadata grows about 0.9 KB per snapshot with 5 partitions' offsets, 1.3 KB with 32 (E11/E2); with
 snapshot expiry at 72 hours and a commit every 30 s that bounds `metadata.json` near 11 MB, read whole
@@ -182,7 +185,10 @@ span, Kafka partition and offsets without opening it (console 07).
 
 Names: `p<partition>-o<first offset>-<last offset>-<member>-<seal id>-<n>.parquet` for runtime files
 (the seal id makes an upload idempotent: 10 §10.4) and `compact-<job id>-<n>-<random>.parquet` for
-compaction outputs (the random part keeps a re-run from colliding with a failed run's orphan).
+compaction outputs (the random part keeps a re-run from colliding with a failed run's orphan). A file
+whose rows were masked under a protection revision other than 0 ends `-r<revision>.parquet`
+(`files.protection_revision_of`), so which policy masked a file is known from the manifests alone;
+compaction never mixes revisions in one output (22 §22.5).
 
 ## 11.6 Compaction, expiry and orphans
 
@@ -324,6 +330,12 @@ SELECT o.status, sum(i.amount) FROM lake.sales.orders o JOIN lake.finance.invoic
 On a test cluster (3.0, DuckDB 2.0): `lake.sales.orders` and `lake.finance.finance_invoices`, written by two
 materializations, joined to the expected 3,005 rows through a reader's token; a token limited to
 `sales` saw only `sales`.
+
+**Masked columns** read like any other: a hashed one holds 32 hex characters, equal for equal values
+across every table of the deployment — and of every domain sharing the protection key — so it still
+joins and counts (`count(distinct email)`); a partial one holds `****9848`-style fragments; a withheld
+one is not there. What a table masks is in its `materializer.protection` property, which the catalog
+returns with the table's metadata (22 §22.6).
 
 PyIceberg:
 

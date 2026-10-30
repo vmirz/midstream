@@ -43,7 +43,8 @@ Outside `/api`: the federated Iceberg REST catalog at `/catalog` and each domain
 | `GET` | `/api/materializations/:id` | `materializations.view_details` | live store | Refreshes if older than 1.5 s |
 | `POST` | `/api/materializations/:id/stop` | `materializations.stop` | control plane | 202 pass-through |
 | `POST` | `/api/materializations/:id/resume` | `materializations.resume` | control plane | 202 pass-through |
-| `PATCH` | `/api/materializations/:id` | `materializations.edit` | control plane | 202; `name`, `replicas`, `autoscaling`, `tables`, `removed_tables` only; a change adding tables answers once their names are claimed |
+| `PATCH` | `/api/materializations/:id` | `materializations.edit`; the control plane checks `dataset.protect` for `protection` | control plane | 202; `name`, `replicas`, `autoscaling`, `tables`, `removed_tables`, `protection` only; a change adding tables answers once their names are claimed |
+| `GET` | `/api/materializations/:id/protection` | `materializations.view_details`; the control plane leaves out tables whose schemas the caller may not see | control plane, as the person | The protection review (control-plane handbook 22 §22.11) |
 | `DELETE` | `/api/materializations/:id` | `materializations.delete` | control plane | 202 pass-through |
 | `GET` | `/api/materializations/:id/tables/:table/schema` | `materializations.view_details`; `dataset.view_schema` on the table's dataset | live store | One table's current projection; the store notices a new `schema_id` |
 | `GET` | `/api/materializations/:id/tables/:table/schema/versions` | as above | control plane | Every schema the table has had |
@@ -288,6 +289,7 @@ Body (Zod-validated):
 | `partition_granularity` | `hour` \| `day` \| `month` \| `none` | no | how the tables are partitioned, fixed with them. Omitted, the control plane's default (`materializationDefaults.partitionGranularity`) |
 | `labels` | object | no | keys 1–253 chars, values ≤ 1024 |
 | `annotations` | object | no | same |
+| `protection` | `{kinds: {<kind>: "hash" \| "partial" \| "redact"}}` or `{kinds: [<kind>…]}` | no | what its writers mask (control-plane handbook 22). Only the shape is checked here; the control plane knows the kinds and the masks each allows. Omitted, the domain's *Protected by default*. Other than the default, the control plane wants `dataset.protect` on every table's dataset (`403`); a choice that hashes in a domain without a protection key is `409 protection_key_not_configured` |
 
 The schema is strict: any other key is a `400`. That includes `destination_uri`, `namespace`,
 `runtime_name` and `storage_size`, which 3.x took. Every materialization gets the deployment's
@@ -405,12 +407,14 @@ id, current snapshot, last commit, `valid_through`, totals, last error), as far 
 The live store reads it with the console's own credential, which may see every dataset's schemas;
 what this route and the stream send is cut down for the caller (`visibleDetail`, `live/store.ts`):
 `schemas` and `schemaErrors` hold only the tables whose datasets they may see the schemas of, and each
-table's `readable` and `queryable` are theirs.
+table's `readable` and `queryable` are theirs. `detail.protection` is the policy's rollout — its
+`state`, revision, the tables and members behind, and each table's masked and withheld totals — and
+`detail.materialization.protection` the policy; neither names a field.
 
 ## 8.8 `POST …/stop`, `POST …/resume`, `PATCH …/:id`, `DELETE …/:id`
 
 All four: 202, control-plane acceptance passed through, `liveStore.wake()` after. Only `PATCH` has
-a body, of at least one of five keys and nothing else (a strict schema: another key is a 400 here,
+a body, of at least one of six keys and nothing else (a strict schema: another key is a 400 here,
 so a setting that cannot change is refused rather than silently dropped):
 
 | Key | Rules |
@@ -420,6 +424,7 @@ so a setting that cannot change is refused rather than silently dropped):
 | `autoscaling` | a boolean; off, a runtime autoscaling has scaled up goes back to `replicas` at once |
 | `tables` | the topics to read from now on, in order, `{source_topic, dataset?, name?}`: a topic it already has a table of needs neither; a new one needs a dataset, as on create (§8.6) |
 | `removed_tables` | `{ "<table>": "keep" \| "drop" }`: what becomes of each table whose topic `tables` removes, and kept tables to drop |
+| `protection` | the whole policy from now on, as on create, and `apply_rules: true` to record the policy in force again with the current rules. The control plane wants `dataset.protect` on every dataset written into, those of tables the same edit adds included; the 202 carries `protection: {before, after, revision, applies_to}`. Delivered to the running runtime: nothing restarts |
 
 The control plane plans a change of topics and refuses one it cannot apply with a `400` naming
 `tables` or `removed_tables` — a removed topic's table with no decision, above all — or a `403`
@@ -910,9 +915,12 @@ the same shape with only `console` set, `rollout` null, and the console's deploy
 domain it serves, the settings home, the console URL and its sign-in providers — in `deployment`.
 
 A `SettingView` (`shared/types.ts`) is the same for every scope: `scope`, `key`, `section`,
-`label`, `description`, `kind` (`integer`, `boolean`, `gcs_uri`, `quantity`, `enum`, `string`),
-`unit`, `minimum`, `maximum`, `options`, `maxLength`, `nullable`, `advanced`, `danger`, `effect`,
-`envVar`, and the provenance: `value`, `source` (`override` / `deployment` / `default`),
+`label`, `description`, `kind` (`integer`, `boolean`, `gcs_uri`, `quantity`, `enum`, `string`,
+`domain_list`, `choice_map`), `unit`, `minimum`, `maximum`, `options`, `choiceOptions` and
+`choiceLabels` (a `choice_map`'s options — each with the choices it allows — and what each choice is
+called), `maxLength`, `nullable`, `advanced`, `danger`, `effect`, `envVar`, `permission` (one more
+permission saving it needs, besides `settings.manage`: `settings.manage_protection` for *Protected by
+default*), and the provenance: `value`, `source` (`override` / `deployment` / `default`),
 `defaultValue`, `deploymentValue`, `deploymentSet`, `updatedAt`, `updatedBy`.
 
 When the control plane cannot be reached, `controlPlane.reachable` is `false` with the reason, its
