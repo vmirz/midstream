@@ -88,6 +88,7 @@ class CompactionTests(unittest.TestCase):
         at: datetime | None = None,
         lake=None,
         protection_revision: int = 0,
+        protection_label: tuple[int, ...] | None = None,
     ) -> None:
         lake = lake or self.lake
         after = committed_offsets(lake.load().metadata).get(partition)
@@ -101,6 +102,7 @@ class CompactionTests(unittest.TestCase):
                     offsets=offsets,
                     times=[moment, moment],
                     protection_revision=protection_revision,
+                    protection_label=protection_label,
                 )
             )
             after = offsets[-1]
@@ -164,6 +166,19 @@ class CompactionTests(unittest.TestCase):
         live = live_data_files(self.lake.load())
         self.assertEqual({1: 1, 2: 1}, {revision: sum(1 for item in live if item.protection_revision == revision) for revision in (1, 2)})
         self.assertTrue(all(item.path.endswith(f"-r{item.protection_revision}.parquet") for item in live))
+        self.assertEqual(8, len(self.rows()))
+
+    def test_files_reprotect_rewrote_compact_apart_from_files_written_under_their_revision(self) -> None:
+        # Rows written under revision 1 and rewritten under 3 are masked otherwise than rows written
+        # under 3: their outputs stay apart, each named with its whole label.
+        for label in ((3, 1), (3,), (3, 1), (3,)):
+            self.commit_files(1, protection_label=label)
+        compaction_plan = plan(self.lake.load())
+        self.assertEqual([(3,), (3,), (3, 1), (3, 1)], [item.protection_label for item in compaction_plan.inputs])
+        _, result = self.compact(compaction_plan)
+        self.assertEqual([[3], [3, 1]], sorted(output["protection_label"] for output in result["outputs"]))
+        live = live_data_files(self.lake.load())
+        self.assertEqual(sorted(["-r3.parquet", "-r3p1.parquet"]), sorted(item.path[item.path.rindex("-r"):] for item in live))
         self.assertEqual(8, len(self.rows()))
 
     def test_files_without_a_revision_compact_as_before(self) -> None:

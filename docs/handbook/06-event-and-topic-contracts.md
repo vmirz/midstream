@@ -181,10 +181,14 @@ the create view decided; a table's dataset and name are fixed for its life, as i
 `claim_request_id` is the id of the `claim_tables` request intake sends (§6.15); `label`, on an
 update, a new label. An event from before 4.3 may carry `live_tail`, on an update or in a create's
 spec; it is read and dropped. `action` ∈ `create`, `stop`, `resume`, `update`, `delete`,
-plus `pause`, which no endpoint produces since 0.4.0 but which still decodes so events already on
-the topic are not poison. `update` is produced by `PATCH /materializations/{id}` and carries the
-new `replicas`, and `autoscaling` when it switches it (null otherwise; on a create, null is on). An
-event from before 4.4 has no `autoscaling`: a create from it gets autoscaling on.
+`reprotect`, plus `pause`, which no endpoint produces since 0.4.0 but which still decodes so events
+already on the topic are not poison. `update` is produced by `PATCH /materializations/{id}` and
+carries the new `replicas`, and `autoscaling` when it switches it (null otherwise; on a create, null is
+on). An event from before 4.4 has no `autoscaling`: a create from it gets autoscaling on.
+`reprotect` is produced by `POST /materializations/{id}/maintenance` with that job, and carries
+`reprotect: {"tables": [...] | null, "purge": bool}`; an `update` whose protection change asks for one
+carries the same (22 §22.14). A control plane before reprotect cannot decode the action: ask for one
+once every control-plane member runs the release.
 
 ### Consumer behavior
 
@@ -210,7 +214,8 @@ event from before 4.4 has no `autoscaling`: a create from it gets autoscaling on
 | `pause` (legacy) | `apply_runtime` | `paused` |
 | `resume` | `apply_runtime` | `running` |
 | `delete` | `delete_runtime` | `deleting` |
-| `update` | `apply_runtime` | unchanged — any phase but `deleting`/`deleted`; intake applies `spec.replicas` and `spec.autoscaling` and keeps the phase |
+| `update` | `apply_runtime` | unchanged — any phase but `deleting`/`deleted`; intake applies `spec.replicas` and `spec.autoscaling` and keeps the phase; with `reprotect`, once the change applies, puts a `ReprotectRequest` on each table's record, waiting for the new protection revision |
+| `reprotect` | none | unchanged — the materialization is left alone; intake puts a `ReprotectRequest` on the record of each table named (or every table kept): a written one waits for the materialization's protection revision, a kept one for none. Dropped while the materialization is being deleted |
 
 Because intake persists *before* validating, the expected-phase check can only fail if something
 else concurrently changed desired state — which is why keying every event on `materialization:<id>`
@@ -512,9 +517,10 @@ which updates the record of the table the event names (`materialization-table:<i
 |---|---|
 | `table_committed` | `snapshot_id`, `sequence_number`, `committed_at`, `files_added`, `records_added`, `bytes_added`, `totals` (`records`, `files`, `bytes`), `offsets` (partition → the last offset in the table, inclusive), `valid_through`, `duration_ms`, `metadata_location`, `schema_id`, `snapshots` |
 | `schema_changed` | `schema_id`, `schema` (Iceberg JSON), `fork_map`, `fields` and `field_count` (the rendered projection, 09 §9.9), `changes` (`added`, `forked`, `collapsed`, `rejected`, each with its path, field id and type), `metadata_location`, `last_column_id`, `rejected_paths`, `duration_ms`, and `protection`, the table's `materializer.protection` property, when it records one. A recorded policy is announced the same way with the same `schema_id` and `changes: []`; its projection replaces the one of the same schema by its protection revision (22 §22.6) |
-| `maintenance_started` | `job` (`compaction`, `orphan_cleanup`), `started_at`, `partition` (compaction), `attempt` — sets the record's `maintenance_job` |
-| `maintenance_completed` | `job` (`compaction`, `expire_snapshots`, `orphan_cleanup`), `outcome` (`succeeded`, `skipped`, `abandoned`, `failed`, `cancelled`), `started_at` (a long job's, clearing the record's `maintenance_job`), `partition` (compaction), `snapshot_id`, `duration_ms`, `message`, `counts` (compaction: `partitions`, `inputs`, `outputs`, `records`, `input_bytes`, `output_bytes`; expiry: `expired`, `remaining`; orphans: `listed`, `deleted`…), and after a compaction's commit `totals`, `metadata_location`, `sequence_number`, `snapshots` |
-| `table_error` | `reason` (`table_unavailable`, `commit_failed`, `schema_evolution_failed`, `schema_field_limit`, `compaction_failed`, `protection_commit_failed`), `message` |
+| `maintenance_started` | `job` (`compaction`, `orphan_cleanup`, `reprotect`), `started_at`, `partition` (compaction), `attempt` — sets the record's `maintenance_job` |
+| `maintenance_completed` | `job` (`compaction`, `expire_snapshots`, `orphan_cleanup`, `reprotect`), `outcome` (`succeeded`, `skipped`, `abandoned`, `failed`, `cancelled`), `started_at` (a long job's, clearing the record's `maintenance_job`), `partition` (compaction), `snapshot_id`, `duration_ms`, `message`, `counts` (compaction: `partitions`, `inputs`, `outputs`, `records`, `input_bytes`, `output_bytes`; expiry: `expired`, `remaining`; orphans: `listed`, `deleted`; reprotect: `inputs`, `outputs`, `records`, `input_bytes`, `output_bytes`, `masked`, `withheld`, `moved`, `files_left`, `blocked_files`, `unknown_files`, `expired_snapshots`, `deleted_files`), and after a compaction's or a reprotect's commit `totals`, `metadata_location`, `sequence_number`, `snapshots`. A reprotect's also has `request_id`, `revision`, `purged`, and `done`: the last pass, or given up, which clears the record's `reprotect` when its `request_id` matches; the last one's counts are the whole request's. An expiry's, and a purge's, carry `metadata_location`, `sequence_number` and `snapshots` too: metadata committed without a snapshot, which the record takes at the same sequence number when its metadata file is newer |
+| `plaintext_counted` | `revision`, `counted_at`, `snapshot_id`, `files`, `rows`, `bytes`, `blocked_files`, `blocked`, `unknown_files`: what the table holds in plain text that its protection masks now, sent by the maintenance app when it changed (22 §22.14) — sets the record's `plaintext` unless an older count |
+| `table_error` | `reason` (`table_unavailable`, `commit_failed`, `schema_evolution_failed`, `schema_field_limit`, `compaction_failed`, `protection_commit_failed`, `reprotect_failed`), `message` |
 
 Every event names its `table` (2.0); one without — from a 1.0 runtime — is logged and dropped, as is
 one for a table the materialization has no record of, or one being dropped or dropped, and every
@@ -867,13 +873,19 @@ a `maintenance_tick` per table `active` or `retired` of every materialization no
               "location": "gs://my-lake/midstream/mat-a1b2c3d4e5f6/orders",
               "source_topic": "orders", "partition_granularity": "day", "state": "active" },
   "issued_at": "2026-10-20T04:11:00Z",
-  "settings": { "compaction_enabled": true, "compaction_interval_minutes": 15, "…": "every MAINTENANCE_SETTING_FIELDS" },
+  "settings": { "compaction_enabled": true, "compaction_interval_minutes": 15, "…": "every MAINTENANCE_SETTING_FIELDS, the batch ages a reprotect waits out included" },
   "last_runs": { "compaction": "2026-10-20T02:38:23.302Z", "orphan_cleanup": "2026-10-20T01:25:17.377Z" },
-  "running": null
+  "running": null,
+  "reprotect": { "request_id": "mnt-3c4d5e6f7a8b", "requested_at": "2026-10-20T04:10:41Z",
+                 "requested_by": "jane@example.com", "revision": 4, "purge": true },
+  "protection_revision": 4
 }
 ```
 
-A request adds `job`, `request_id` and `requested_by`; a cancel adds `reason` (`table_dropping`,
+A tick carries the reprotect the table's record asks for (`reprotect`, absent when none) and the
+protection revision its schema projection records (`protection_revision`), so the app waits for the
+revision a reprotect needs and counts the table's plain text when it changes (22 §22.14). A request
+adds `job`, `request_id` and `requested_by`; a cancel adds `reason` (`table_dropping`,
 `materialization_deleting`) and may carry `running`. A malformed message is logged and dropped.
 
 ## 6.18 `<release>-tail-requests`

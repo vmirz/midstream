@@ -81,7 +81,7 @@ class Conformer:
                 continue
             if family.collapsed:
                 member = family.json_member
-                out[member.name] = _json_text(item)
+                out[member.name] = json_text(item)
                 continue
             for member in self._candidates(struct, family, item):
                 local: dict[str, Any] = {}
@@ -111,7 +111,7 @@ class Conformer:
 
     def _member_value(self, member: Member, value: Any, path: str, unmapped: dict[str, Any]) -> Any:
         if member.json:
-            return _json_text(value)
+            return json_text(value)
         if member.struct is not None:
             if not isinstance(value, dict):
                 return _NO
@@ -141,7 +141,7 @@ class Conformer:
 
     def _element_value(self, element: ElementIndex, value: Any, path: str, unmapped: dict[str, Any]) -> Any:
         if element.json:
-            return _json_text(value)
+            return json_text(value)
         if element.struct is not None:
             if not isinstance(value, dict):
                 return _NO
@@ -214,7 +214,8 @@ def _is_empty(value: Any) -> bool:
     return False
 
 
-def _json_text(value: Any) -> str:
+def json_text(value: Any) -> str:
+    """A collapsed family's value as its JSON field holds it."""
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=False, default=str)
 
 

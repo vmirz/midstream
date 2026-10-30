@@ -53,8 +53,7 @@ spec:
         # Compactions and orphan cleanups one member runs at once, across all its tables.
         - name: MAINTENANCE_MAX_CONCURRENT_JOBS
           value: {{ .Values.maintenance.maxConcurrentJobs | quote }}
-        # Not read yet: the job that masks rows already written (handbook 22) will hash with it, and
-        # needs no second Secret step when it comes.
+        # A reprotect, which masks rows already written, hashes with it (handbook 22 §22.14).
         {{- include "midstream.protectionKeyEnv" . | nindent 8 }}
         {{- include "midstream.gcsEnv" . | nindent 8 }}
         - name: PROTOCOL_LOGGING_ENABLED

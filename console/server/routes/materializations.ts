@@ -63,7 +63,11 @@ const protectionMask = z.enum(['hash', 'partial', 'redact']);
 const protectionPolicy = z.strictObject({
   kinds: z.union([z.array(protectionKind).max(64), z.record(protectionKind, protectionMask)]),
 });
-const protectionEdit = protectionPolicy.extend({ apply_rules: z.boolean().optional() });
+/** An edit's: record it again with the current rules, and then mask the rows already written. */
+const protectionEdit = protectionPolicy.extend({
+  apply_rules: z.boolean().optional(),
+  reprotect: z.union([z.boolean(), z.strictObject({ purge: z.boolean() })]).optional(),
+});
 
 /** One table each, in this order; the control plane bounds how many (Settings › Materializations). */
 function tableRequests(needsDataset: boolean) {

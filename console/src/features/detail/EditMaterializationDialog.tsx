@@ -88,6 +88,9 @@ export function EditMaterializationDialog({
   const protectionCatalog = defaults?.protection ?? null;
   const currentProtection = useMemo(() => choiceOf(materialization.protection ?? null, protectionCatalog), [materialization.protection, protectionCatalog]);
   const [protection, setProtection] = useState<ProtectionChoice>(currentProtection);
+  // Then mask the rows already written (handbook 22 §22.14), purging the older snapshots unless asked not to.
+  const [reprotect, setReprotect] = useState(false);
+  const [purge, setPurge] = useState(true);
   const datasets = useDatasets(open);
   const refreshDatasets = useRefreshDatasets();
   const { can } = useAuth();
@@ -107,6 +110,8 @@ export function EditMaterializationDialog({
       setDropKept(new Set());
       setError(null);
       setProtection(currentProtection);
+      setReprotect(false);
+      setPurge(true);
     }
     // The topics are read when the dialog opens; a change while it is open is not a new edit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -187,6 +192,11 @@ export function EditMaterializationDialog({
         .map((item) => item.name),
     ),
   ];
+  // Rewriting what is already written is table maintenance, of every table it keeps.
+  const mayReprotect =
+    can('materializations.maintain') &&
+    [...materialization.tables, ...(materialization.retired_tables ?? [])].every((spec) => can('dataset.protect', spec.dataset_id));
+  const reprotectAfter = protectionChanged && mayReprotect && protectionLockedBy.length === 0 && reprotect;
   const anyChange =
     labelChanged || replicasChanged || autoscalingChanged || change.changesTopics || droppedKept.length > 0 || protectionChanged;
   const stopped = status.desired_phase === 'stopped';
@@ -218,6 +228,7 @@ export function EditMaterializationDialog({
           autoscaling: autoscalingChanged ? autoscaling : null,
           stopped,
           protection: protectionChanged,
+          reprotect: reprotectAfter,
         }),
       );
       void refreshDatasets();
@@ -261,7 +272,7 @@ export function EditMaterializationDialog({
     for (const spec of change.removed) removed[spec.name] = actions[spec.name] as RemovedTableAction;
     for (const spec of droppedKept) removed[spec.name] = 'drop';
     if (Object.keys(removed).length > 0) body.removed_tables = removed;
-    if (protectionChanged) body.protection = { kinds: protection };
+    if (protectionChanged) body.protection = { kinds: protection, ...(reprotectAfter ? { reprotect: { purge } } : {}) };
     setError(null);
     mutation.mutate(body);
   };
@@ -467,13 +478,51 @@ export function EditMaterializationDialog({
               protectionChanged ? (
                 <>
                   {choiceChanges(currentProtection, protection, protectionCatalog).join('. ')}. Applies to records written
-                  from now on, within seconds, without a restart. Rows already written keep their values.
+                  from now on, within seconds, without a restart. Rows already written keep their values
+                  {mayReprotect && protectionLockedBy.length === 0 ? ' unless masked as well' : ''}.
                 </>
               ) : (
                 'Applies to records written from now on, within seconds, without a restart. Rows already written keep their values.'
               )
             }
           />
+        ) : null}
+
+        {protectionChanged && mayReprotect && protectionLockedBy.length === 0 ? (
+          <div className="space-y-2.5">
+            <label className="flex items-start gap-2.5">
+              <input
+                type="checkbox"
+                checked={reprotect}
+                onChange={(event) => setReprotect(event.target.checked)}
+                className="mt-[3px] size-3.5 shrink-0 cursor-pointer accent-[var(--color-accent)]"
+              />
+              <span className="space-y-1.5">
+                <span className="block text-[13px] font-medium">Also mask rows already written</span>
+                <span className="block text-[12px] text-[var(--color-ink-muted)]">
+                  Once each table records the new policy, the maintenance app rewrites the files holding in plain text what it now
+                  masks. Values masked before stay as they were.
+                </span>
+              </span>
+            </label>
+            {reprotect ? (
+              <label className="ml-6 flex items-start gap-2.5">
+                <input
+                  type="checkbox"
+                  checked={purge}
+                  onChange={(event) => setPurge(event.target.checked)}
+                  className="mt-[3px] size-3.5 shrink-0 cursor-pointer accent-[var(--color-accent)]"
+                />
+                <span className="space-y-1.5">
+                  <span className="block text-[13px] font-medium">Purge the plain text now</span>
+                  <span className="block text-[12px] text-[var(--color-ink-muted)]">
+                    Then expire each table’s older snapshots and delete the files they alone held: time travel to before the
+                    rewrite ends. Without it, the old files stay readable through older snapshots until they expire.
+                  </span>
+                </span>
+              </label>
+            ) : null}
+          </div>
         ) : null}
 
         <div className="space-y-2 rounded-[var(--radius-control)] border border-[var(--color-line)] px-3 py-3">
@@ -570,7 +619,8 @@ function describeAccepted(
     autoscaling,
     stopped,
     protection = false,
-  }: { current: number; replicas: number | null; autoscaling: boolean | null; stopped: boolean; protection?: boolean },
+    reprotect = false,
+  }: { current: number; replicas: number | null; autoscaling: boolean | null; stopped: boolean; protection?: boolean; reprotect?: boolean },
 ): string {
   const parts: string[] = [];
   const change = accepted.topic_change;
@@ -581,7 +631,13 @@ function describeAccepted(
   if (change?.dropped.length) parts.push(`dropping ${list(change.dropped)}`);
   if (replicas !== null && replicas !== current) parts.push(`${current} → ${replicas} replica${replicas === 1 ? '' : 's'}`);
   if (autoscaling !== null) parts.push(autoscaling ? 'autoscaling on' : 'autoscaling off');
-  if (protection) parts.push('new data protection, for records written from now on');
+  if (protection) {
+    parts.push(
+      reprotect
+        ? 'new data protection, for records written from now on and then for the rows already written'
+        : 'new data protection, for records written from now on',
+    );
+  }
   if (accepted.name && accepted.name !== materialization.name) parts.push(`now named ${accepted.name}`);
   const what = parts.length ? parts.join('; ') : 'no change';
   return `${displayName(materialization)}: ${what}${stopped ? ', applied when it is resumed' : ''}. Watch the phase for convergence.`;

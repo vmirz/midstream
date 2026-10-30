@@ -3,7 +3,19 @@ import { describe, it } from 'node:test';
 
 import type { CpProtectionCatalog } from '@shared/types';
 
-import { choiceChanges, choiceOf, describeChoice, fieldProtectionText, hashes, kindLabel, maskName, missingKeyNotice, sameChoice } from './protection.ts';
+import {
+  choiceChanges,
+  choiceOf,
+  describeChoice,
+  fieldProtectionText,
+  hashes,
+  kindLabel,
+  maskName,
+  missingKeyNotice,
+  plaintextTotals,
+  reprotectCounts,
+  sameChoice,
+} from './protection.ts';
 
 const CATALOG: CpProtectionCatalog = {
   kinds: [
@@ -91,5 +103,30 @@ describe('data protection in words', () => {
       'Phone numbers: hashed → partial',
       'Passwords, tokens and keys: now withheld',
     ]);
+  });
+});
+
+describe('reprotect', () => {
+  it('says what a run rewrote, masked and purged, leaving out what it did not do', () => {
+    assert.deepEqual(reprotectCounts({ counts: { inputs: 1, outputs: 1, masked: 1200, withheld: 0, moved: 3, expired_snapshots: 4, deleted_files: 2, files_left: 0 } }), [
+      '1 file rewritten',
+      '1,200 values masked, 3 of them moved to a text field',
+      '4 older snapshots expired',
+      '2 files deleted',
+    ]);
+    assert.deepEqual(reprotectCounts({ counts: {} }), []);
+  });
+
+  it('sums the plain text of the tables counted, each blocked reason once', () => {
+    const report = { revision: 2, counted_at: '2026-10-30T10:00:00Z', snapshot_id: '7', files: 2, rows: 40, bytes: 4096, blocked_files: 1, blocked: ['ip has no text field yet for its masked values; the writers add it with its next value'], unknown_files: 0 };
+    assert.deepEqual(plaintextTotals([report, null, { ...report, files: 1, rows: 5, unknown_files: 3 }, undefined]), {
+      counted: 2,
+      files: 3,
+      rows: 45,
+      bytes: 8192,
+      blockedFiles: 2,
+      blocked: ['ip has no text field yet for its masked values; the writers add it with its next value'],
+      unknownFiles: 3,
+    });
   });
 });

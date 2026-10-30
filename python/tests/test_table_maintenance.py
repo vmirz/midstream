@@ -24,14 +24,15 @@ from midstream.models import (  # noqa: E402
     SettingOverride,
     SettingsDocument,
 )
-from midstream.models.table import MaintenanceRun  # noqa: E402
+from midstream.models.table import MaintenanceRun, ReprotectRequest  # noqa: E402
 from midstream.runtime_app.config import RuntimeAppConfig  # noqa: E402
 from midstream.services.table_maintenance import (  # noqa: E402
     MAINTENANCE_SETTING_FIELDS,
     build_table_maintenance_messages,
     last_runs,
 )
-from midstream.storage import save_materialization, save_materialization_table  # noqa: E402
+from midstream.models import MaterializationSchema  # noqa: E402
+from midstream.storage import save_materialization, save_materialization_schema, save_materialization_table  # noqa: E402
 from midstream.storage.settings import save_settings_document  # noqa: E402
 
 
@@ -136,6 +137,25 @@ class TableMaintenanceScheduleTests(unittest.TestCase):
         self.assertEqual({"compaction": "2026-10-19T11:00:00Z", "orphan_cleanup": "2026-10-19T03:00:00Z"}, tick.last_runs)
         self.assertEqual(running, tick.running)
         self.assertEqual(tick.last_runs, last_runs(record))
+
+    def test_a_tick_carries_the_reprotect_asked_and_the_revision_the_table_recorded(self) -> None:
+        materialization = build_materialization("mat-1", "orders", "payments")
+        save_materialization(self.table, materialization)
+        asked = ReprotectRequest(request_id="req-r", requested_at=ISSUED_AT, requested_by="owner@example.com", revision=3, purge=True)
+        save_materialization_table(self.table, build_table_record(materialization, table="orders", reprotect=asked))
+        save_materialization_table(self.table, build_table_record(materialization, table="payments"))
+        save_materialization_schema(
+            self.table,
+            MaterializationSchema(materialization_id="mat-1", table="orders", schema_id=2, since=ISSUED_AT, protection={"revision": 3, "fields": []}),
+        )
+
+        messages = self.messages()
+
+        orders = messages["mat-1:orders"]
+        self.assertEqual((asked, 3), (orders.reprotect, orders.protection_revision))
+        self.assertEqual(orders, MaintenanceMessage.from_dict(orders.to_dict()))
+        # Before its first schema a table has recorded nothing.
+        self.assertEqual((None, None), (messages["mat-1:payments"].reprotect, messages["mat-1:payments"].protection_revision))
 
     def test_the_scheduled_step_routes_every_message_to_the_maintenance_app(self) -> None:
         self.add(build_materialization("mat-1", "orders", "payments"))

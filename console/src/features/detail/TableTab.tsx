@@ -3,6 +3,7 @@ import { Check, ChevronDown, Copy, Loader2, Play, TriangleAlert } from 'lucide-r
 import { useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
+import { reprotectCounts } from '../protection/protection';
 import { TABLE_PARAM, useSelectedTable } from '../tables/selectedTable';
 import { TablePicker } from '../tables/TablePicker';
 import { PageBody } from '@/components/AppShell';
@@ -184,7 +185,7 @@ function TableFigures({ record, metadata }: { record: CpTable | null; metadata: 
       <StatCard
         label="Last commit"
         value={record?.last_commit_at ? <RelativeTime value={record.last_commit_at} /> : '—'}
-        hint={`${snapshots === null ? '—' : formatExact(snapshots)} snapshots kept${record?.last_commit_duration_ms ? ` · took ${formatDuration(record.last_commit_duration_ms)}` : ''}`}
+        hint={`${snapshots === null ? '—' : formatExact(snapshots)} ${snapshots === 1 ? 'snapshot' : 'snapshots'} kept${record?.last_commit_duration_ms ? ` · took ${formatDuration(record.last_commit_duration_ms)}` : ''}`}
       />
     </div>
   );
@@ -200,6 +201,8 @@ function offsetsText(offsets: Record<string, number> | null): string {
 
 function operationLabel(snapshot: TableSnapshotRow): ReactNode {
   if (snapshot.operation === 'append') return <Badge tone="running">append</Badge>;
+  // Files rewritten to mask what was written in plain text (handbook 22 §22.14).
+  if (snapshot.materializerOperation === 'reprotect') return <Badge tone="accent">reprotect</Badge>;
   if (snapshot.operation === 'replace') return <Badge tone="accent">compaction</Badge>;
   return <Badge>{snapshot.operation}</Badge>;
 }
@@ -326,6 +329,13 @@ const JOBS: Array<{ job: MaintenanceJob; label: string; description: string }> =
   },
 ];
 
+/** Shown once asked for, from the Protection tab, which runs it on every table. */
+const REPROTECT = {
+  job: 'reprotect' as const,
+  label: 'Reprotect',
+  description: 'Rewrites the files holding in plain text what the table masks now. Asked from the Protection tab.',
+};
+
 function MaintenancePanel({
   materializationId,
   table,
@@ -364,6 +374,7 @@ function MaintenancePanel({
   }, [record?.maintenance]);
   // The maintenance app's report; a runtime before 2.0 ran its own and said so on its heartbeat.
   const running = record?.maintenance_job ?? record?.live?.maintenance ?? null;
+  const jobs = latest.has('reprotect') || record?.reprotect || running?.job === 'reprotect' ? [...JOBS, REPROTECT] : JOBS;
 
   return (
     <Panel className="overflow-hidden">
@@ -376,9 +387,10 @@ function MaintenancePanel({
         }
       />
       <ul className="divide-y divide-[var(--color-line)]">
-        {JOBS.map((item) => {
+        {jobs.map((item) => {
           const last = latest.get(item.job) ?? null;
           const active = running?.job === item.job;
+          const asked = item.job === 'reprotect' && !active ? (record?.reprotect ?? null) : null;
           return (
             <li key={item.job} className="flex items-start gap-3 px-5 py-3">
               <div className="min-w-0 flex-1">
@@ -388,6 +400,10 @@ function MaintenancePanel({
                     <Badge tone="pending">
                       <Loader2 className="size-3 animate-spin" />
                       running{running?.partition ? ` · ${running.partition}` : ''}
+                    </Badge>
+                  ) : asked ? (
+                    <Badge tone="pending" title={`Asked by ${asked.requested_by}`}>
+                      requested
                     </Badge>
                   ) : last ? (
                     <OutcomeBadge outcome={last.outcome} />
@@ -415,7 +431,7 @@ function MaintenancePanel({
                   </p>
                 ) : null}
               </div>
-              {canMaintain ? (
+              {canMaintain && item.job !== 'reprotect' ? (
                 <Button
                   size="sm"
                   variant="secondary"
@@ -460,6 +476,8 @@ function countsText(run: CpMaintenanceRun): string {
   } else if (run.job === 'orphan_cleanup') {
     if (count('deleted') !== undefined) parts.push(`${formatExact(count('deleted'))} files deleted`);
     if (count('listed') !== undefined) parts.push(`${formatExact(count('listed'))} listed`);
+  } else if (run.job === 'reprotect') {
+    parts.push(...reprotectCounts(run));
   }
   return parts.join(' · ');
 }

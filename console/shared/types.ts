@@ -496,8 +496,41 @@ export interface CpTableSummary {
   queryable?: boolean;
 }
 
-export const MAINTENANCE_JOBS = ['compaction', 'expire_snapshots', 'orphan_cleanup'] as const;
+/**
+ * `reprotect` rewrites the files holding in plain text what a table masks now (handbook 22 §22.14):
+ * it needs Choose data protection on each table's dataset too, and takes `purge`.
+ */
+export const MAINTENANCE_JOBS = ['compaction', 'expire_snapshots', 'orphan_cleanup', 'reprotect'] as const;
 export type MaintenanceJob = (typeof MAINTENANCE_JOBS)[number];
+
+/** What a table holds in plain text that its protection masks now, as the maintenance app last counted it. */
+export interface CpPlaintextReport {
+  /** The protection revision it counted against. */
+  revision: number;
+  counted_at: string;
+  /** The snapshot it counted, as decimal text. */
+  snapshot_id: string | null;
+  /** Files a reprotect would rewrite, their rows and bytes. */
+  files: number;
+  rows: number;
+  bytes: number;
+  /** Files it cannot rewrite yet, and why. */
+  blocked_files: number;
+  blocked: string[];
+  /** Files written under revisions whose masking the table's record no longer says. */
+  unknown_files: number;
+}
+
+/** A reprotect asked for and not done yet: every tick carries it until the maintenance app has run it. */
+export interface CpReprotectRequest {
+  request_id: string;
+  requested_at: string;
+  requested_by: string;
+  /** The protection revision it waits for the table to record; 0 for none. */
+  revision: number;
+  /** Whether to expire every older snapshot and delete the files it replaced once done. */
+  purge: boolean;
+}
 
 export interface CpMaintenanceRun {
   job: MaintenanceJob | string;
@@ -525,6 +558,10 @@ export interface CpTable extends CpTableSummary {
   created_at: string;
   updated_at: string;
   live: CpLiveTable | null;
+  /** A reprotect asked for and not done yet. */
+  reprotect?: CpReprotectRequest | null;
+  /** What it holds in plain text that its protection masks now, as last counted. */
+  plaintext?: CpPlaintextReport | null;
 }
 
 /** One snapshot of a table, as the Table tab lists it. */
@@ -533,8 +570,10 @@ export interface TableSnapshotRow {
   parentSnapshotId: string | null;
   sequenceNumber: number;
   committedAt: string;
-  /** `append` for the runtime's commits, `replace` for a compaction; another engine may write others. */
+  /** `append` for the runtime's commits, `replace` for a compaction or a reprotect; another engine may write others. */
   operation: string;
+  /** What the materializer's commit did - `append`, `compaction` or `reprotect` - when it says. */
+  materializerOperation: string | null;
   schemaId: number | null;
   addedFiles: number | null;
   addedRecords: number | null;
@@ -622,6 +661,8 @@ export interface CpMaintenanceAccepted {
   table: string | null;
   /** Every table it was asked for (2.0 on). */
   tables?: string[];
+  /** A reprotect's: whether it purges once done. */
+  purge?: boolean;
   accepted_at: string;
 }
 
@@ -2362,6 +2403,11 @@ export interface ProtectionPolicyInput {
   kinds: Record<string, ProtectionMask> | string[];
   /** On an edit: record it again with the current rules, even unchanged. */
   apply_rules?: boolean;
+  /**
+   * On an edit: then mask the rows already written (handbook 22 §22.14), purging the older
+   * snapshots if asked. Needs Run table maintenance too.
+   */
+  reprotect?: boolean | { purge: boolean };
 }
 
 export interface CpProtectionKind {
@@ -2467,12 +2513,28 @@ export interface CpProtectionReviewTable {
   fields: CpProtectionField[];
   would_change: CpProtectionReviewItem[];
   history: CpProtectionChange[];
+  /** What it holds in plain text that it masks now; absent from control planes before reprotect. */
+  plaintext?: CpPlaintextReport | null;
+  reprotect?: CpReprotectRequest | null;
+  last_reprotect?: CpMaintenanceRun | null;
+}
+
+/** A kept table's rows written in plain text, which a reprotect rewrites too. */
+export interface CpKeptTableProtection {
+  table: string;
+  dataset: string;
+  dataset_id: string;
+  plaintext: CpPlaintextReport | null;
+  reprotect: CpReprotectRequest | null;
+  last_reprotect: CpMaintenanceRun | null;
 }
 
 /** `GET /materializations/{id}/protection`: the protection review. */
 export interface CpProtectionReview extends CpProtectionSummary {
   materialization_id: string;
   review: CpProtectionReviewTable[];
+  /** Kept tables, which no runtime writes; absent from control planes before reprotect. */
+  kept?: CpKeptTableProtection[];
   /** Tables in datasets whose schemas the caller may not see, left out. */
   hidden_tables: number;
 }

@@ -17,7 +17,7 @@ from midstream.models import (
     ResourceObservation,
     RuntimeHealth,
 )
-from midstream.models import TopicChangeRequest
+from midstream.models import RequestedReprotect, TopicChangeRequest
 from midstream.services import IntakeResult, process_request_event
 from midstream.services.workflow import is_live_drop
 from midstream.storage import (
@@ -431,6 +431,89 @@ class ProtectionIntakeTests(unittest.TestCase):
         process_request_event(self.table, replace(self._edit(self.POLICY, base=2), spec=replace(self._edit(self.POLICY, base=2).spec, protection=None, replicas=8)), config=self.config)
         materialization = get_materialization(self.table, "mat-1")
         self.assertEqual((self.POLICY, 2, 8), (materialization.protection, materialization.protection_revision, materialization.replicas))
+
+
+class ReprotectIntakeTests(unittest.TestCase):
+    """A reprotect - asked alone, or with an edit - goes on the records of the tables it names, where
+    every maintenance tick carries it until the maintenance app has run it (handbook 22 §22.14)."""
+
+    POLICY = ProtectionPolicy({"email": "hash"})
+
+    def setUp(self) -> None:
+        self.config = ControlPlaneConfig()
+        self.table = FakeTable()
+        materialization = replace(
+            build_materialization("mat-1", desired_phase="running"),
+            retired_tables=(PAYMENTS,),
+            protection=self.POLICY,
+            protection_revision=2,
+            replicas=4,
+        )
+        save_materialization(self.table, materialization)
+        save_materialization_status(self.table, build_status("mat-1", desired_phase="running", observed_phase="running"))
+        save_materialization_table(self.table, build_table_record(materialization, table="orders"))
+        save_materialization_table(self.table, build_table_record(materialization, table="payments", state="retired"))
+
+    def _reprotect(self, *, tables: tuple[str, ...] | None = None, purge: bool = False, request_id: str = "req-reprotect") -> MaterializationRequestEvent:
+        return replace(
+            build_request_event("mat-1", action="reprotect"),
+            request_id=request_id,
+            reprotect=RequestedReprotect(tables=tables, purge=purge),
+        )
+
+    def _asked(self, name: str):
+        return get_materialization_table(self.table, "mat-1", name).reprotect
+
+    def test_a_reprotect_goes_on_the_record_of_every_table_kept(self) -> None:
+        result = process_request_event(self.table, self._reprotect(purge=True), config=self.config, work_id="work-reprotect")
+
+        self.assertEqual([], steps(result))
+        orders = self._asked("orders")
+        self.assertEqual(("req-reprotect", "alice@example.com", 2, True), (orders.request_id, orders.requested_by, orders.revision, orders.purge))
+        # A kept table, which no runtime writes, waits for no revision.
+        self.assertEqual(0, self._asked("payments").revision)
+        # The materialization itself is left as it was.
+        materialization = get_materialization(self.table, "mat-1")
+        self.assertEqual((2, 1, "running"), (materialization.protection_revision, materialization.spec_version, materialization.desired_phase))
+
+    def test_a_reprotect_may_name_one_table_and_a_newer_one_replaces_it(self) -> None:
+        process_request_event(self.table, self._reprotect(tables=("payments",)), config=self.config)
+        self.assertIsNone(self._asked("orders"))
+        process_request_event(self.table, self._reprotect(tables=("payments",), purge=True, request_id="req-again"), config=self.config)
+        self.assertEqual(("req-again", True), (self._asked("payments").request_id, self._asked("payments").purge))
+
+    def test_a_reprotect_of_a_materialization_being_deleted_is_dropped(self) -> None:
+        save_materialization(self.table, replace(get_materialization(self.table, "mat-1"), desired_phase="deleting"))
+        process_request_event(self.table, self._reprotect(), config=self.config)
+        self.assertEqual((None, None), (self._asked("orders"), self._asked("payments")))
+
+    def test_an_edit_that_asks_for_a_reprotect_waits_for_its_own_revision(self) -> None:
+        event = build_request_event("mat-1", action="update")
+        edit = replace(
+            event,
+            submitted_by="owner@example.com",
+            spec=replace(event.spec, replicas=4, protection=ProtectionPolicy({"email": "partial"}), protection_base_revision=2),
+            reprotect=RequestedReprotect(purge=True),
+        )
+        process_request_event(self.table, edit, config=self.config)
+        self.assertEqual(3, get_materialization(self.table, "mat-1").protection_revision)
+        self.assertEqual((3, True, "owner@example.com"), (self._asked("orders").revision, self._asked("orders").purge, self._asked("orders").requested_by))
+
+    def test_an_edit_refused_as_overtaken_asks_for_no_reprotect(self) -> None:
+        event = build_request_event("mat-1", action="update")
+        stale = replace(
+            event,
+            spec=replace(event.spec, replicas=4, protection=ProtectionPolicy({}), protection_base_revision=1),
+            reprotect=RequestedReprotect(),
+        )
+        with self.assertLogs("midstream.services.request_intake", level="WARNING"):
+            process_request_event(self.table, stale, config=self.config)
+        self.assertEqual((None, None), (self._asked("orders"), self._asked("payments")))
+
+    def test_the_request_event_round_trips_its_reprotect(self) -> None:
+        event = self._reprotect(tables=("orders",), purge=True)
+        self.assertEqual(event, MaterializationRequestEvent.from_dict(event.to_dict()))
+        self.assertNotIn("reprotect", build_request_event("mat-1", action="update").to_dict())
 
 
 class TopicChangeIntakeTests(unittest.TestCase):

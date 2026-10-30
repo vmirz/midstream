@@ -174,6 +174,11 @@ from where it stopped ([11 §11.7](./11-iceberg-tables-and-storage.md)).
 **Label** — A materialization's name: free text, not unique, of no meaning in SQL or storage, and
 its id when none was given; it can be changed at any time ([04 §4.5.1](./04-http-api-reference.md)).
 
+**Lineage (of a data file)** — The protection revisions a file's rows went through, newest first,
+in its name: `-r3` masked under revision 3 when written; `-r3p1` written under 1 and masked again
+under 3 by a reprotect. What the file holds in plain text follows from it and the table's record
+([22 §22.14](./22-data-protection.md)).
+
 **Lineage (of runtime settings)** — The history a runtime-settings revision belongs to:
 `<UTC time>-<random>`, begun when the control plane first starts on settings without one. Runtimes
 keep the newest settings by lineage, then revision, so a control plane installed afresh is
@@ -194,13 +199,13 @@ each record shows exactly once; the deployment's `live_tail_enabled` turns it of
 ([19](./19-live-tail.md)).
 
 **Maintenance app** — The `<release>-maintenance` KasprApp, one per environment: compaction,
-snapshot expiry and orphan cleanup for every materialization's tables, stopped ones and kept ones
-included, sized for compaction so the runtimes need not be
+snapshot expiry, orphan cleanup and reprotect for every materialization's tables, stopped ones and kept
+ones included, sized for compaction so the runtimes need not be
 ([10 §10.10](./10-runtime-internals.md)).
 
 **Maintenance tick** — The control plane's message to the maintenance app, each minute, for each
-maintained table: where it is, the maintenance settings, when each job last ran
-([07 §7.13](./07-control-plane-workflows.md)).
+maintained table: where it is, the maintenance settings, when each job last ran, and a reprotect its
+record asks for ([07 §7.13](./07-control-plane-workflows.md)).
 
 **Locked (dataset)** — A dataset the person cannot read: they see its name, description, owners and
 tables' names, never its schemas or rows; the REST catalog does not list it for them
@@ -263,6 +268,10 @@ or — for what concerns a dataset's tables, such as `data.query` — one datase
 `commits_stalled`, `table_missing`, `source_topic_missing`. A `phase_reason` that is literally a
 phase name means no real status exists yet.
 
+**Plain-text count** — What a table holds in plain text that its protection masks now — files, rows,
+bytes, and what cannot be rewritten yet — counted by the maintenance app from the manifests and kept on
+the table record as `plaintext` ([22 §22.14](./22-data-protection.md)).
+
 **Protected by default** — The `default_protection` setting: the policy a create that names none
 gets, resolved when it is accepted, so changing it never touches an existing materialization. Ships
 as emails, phone numbers and national identifiers hashed, secrets withheld.
@@ -274,6 +283,15 @@ shared by the domains whose masked columns should join; only its id is ever show
 **Protection revision** — A materialization's policy's number: 1 at creation, one more per edit. Each
 table records the revision it masks under, each member reports the one it masks with, and each data
 file's name ends `-r<revision>` when it is not 0.
+
+**Purge (reprotect)** — A reprotect's option: once nothing is left to rewrite, expire every older
+snapshot and delete the files only they held, so the plain text leaves the bucket at once; time travel
+to before the reprotect ends ([22 §22.14](./22-data-protection.md)).
+
+**Reprotect** — The maintenance app's job that masks rows written before a policy change: it rewrites
+the files holding in plain text what the table masks now, one for one, in one `replace` snapshot per
+pass. Asked from the Protection tab, with an edit, or by `POST …/maintenance {"job": "reprotect"}`
+([22 §22.14](./22-data-protection.md)).
 
 **Principal** — Who made a request: a signed-in `user`, a `guest`, the console's `service`
 credential, or an access `token`. Every WebView resolves it first, with `authorize(...)`.
@@ -467,6 +485,12 @@ The materialization hashes emails: the default does. Equal emails hash alike, so
 email)` and joins on it still work; the value itself cannot be read back. Choosing otherwise needs
 *Choose data protection* on the table's dataset, and applies to records written from then on
 ([22](./22-data-protection.md)).
+
+**I masked a field, but its older rows still show the value.**
+An edit masks what is written from then on. *Mask rows already written* on the Protection tab — or
+*Also mask rows already written* in the edit dialog — has the maintenance app rewrite the files
+holding it; with *Purge the plain text now* the older snapshots, through which time travel would
+still read it, go too ([22 §22.14](./22-data-protection.md)).
 
 **Are there duplicate rows?**
 No: delivery into the table is exactly once. Re-read records are refused by the committer as

@@ -5,7 +5,7 @@ autoscaling has it catching up (07 §7.12a) — that read the materialization's 
 them to the materialization's Iceberg tables — one per topic. Exactly one member — the **committer** —
 writes to the tables; every member writes files. This document follows a record from its topic into
 a committed snapshot of its table, and covers acknowledgement, sessions, backpressure, the
-committer and the heartbeat. Table maintenance - compaction, snapshot expiry, orphan cleanup - is not
+committer and the heartbeat. Table maintenance - compaction, snapshot expiry, orphan cleanup, reprotect - is not
 the runtime's: the maintenance app, a KasprApp of its own, does it for every materialization (§10.10).
 
 **More topics, the same work at once.** A runtime reading ten topics seals and uploads no more at a
@@ -426,7 +426,7 @@ member staged but no commit covered is read again by whoever owns the partition 
 
 ## 10.10 Maintenance: the maintenance app
 
-Compaction, snapshot expiry and orphan cleanup run in the **maintenance app**, a KasprApp of its own
+Compaction, snapshot expiry, orphan cleanup and reprotect run in the **maintenance app**, a KasprApp of its own
 (`<release>-maintenance`, `charts/midstream/templates/maintenance/`, `maintenance_app/`) that maintains every
 materialization's tables - written and kept ones, stopped and paused materializations included.
 Compaction's memory (about 1.3 GiB for a 30-day backlog's child process, E13) is then this app's to
@@ -434,8 +434,8 @@ size, not every runtime member's. It keeps no records of its own:
 
 - The control plane ticks each table every minute, and cancels jobs on tables on their way out
   (07 §7.13). A tick carries the table's location, the runtimes' maintenance settings with the
-  Settings page's overrides, when each job last finished (from the record's history) and the job the
-  record says runs.
+  Settings page's overrides, when each job last finished (from the record's history), the job the
+  record says runs, a reprotect the record asks for, and the protection revision the table records.
 - `maintenance-worker` (agent, on `<release>-maintenance-requests`, 6 partitions, keyed by table)
   hands each message to the member's `MaintenanceWorker` and answers at once. Each table one member
   maintains has a `TableMaintenance`: its target, settings, schedule and failures.
@@ -443,12 +443,14 @@ size, not every runtime member's. It keeps no records of its own:
   results, commits a finished compaction, stops one past its time - and then, while a job slot is
   free, starts the next job: a table someone asked for first, then the tables in rotation from where
   the last step stopped. A member runs `MAINTENANCE_MAX_CONCURRENT_JOBS` (1) long jobs
-  - a compaction child or an orphan cleanup - at once across its tables. Quick work (a snapshot
+  - a compaction or reprotect child, or an orphan cleanup - at once across its tables. Quick work (a snapshot
   expiry, a compaction plan that finds nothing) takes no slot, so a step goes on to the next table
   until the slots are full, every table has been visited, or `STEP_BUDGET_SECONDS` (10) of quick
   work has gone by.
 
-Per table, in priority order (`_next_job`): what someone asked for; compaction every
+Per table, in priority order (`_next_job`): what someone asked for; a reprotect the record asks for,
+once the table records the revision it waits for, pass after pass until nothing is left to rewrite
+(22 §22.14); compaction every
 `compaction_interval_minutes` (15); snapshot expiry every `snapshot_expiry_interval_minutes` (60);
 orphan cleanup every `orphan_cleanup_interval_hours` (24); and, while the last compaction plan left
 work behind (the backlog), another compaction at the next step. When a job last ran comes from the
@@ -472,10 +474,10 @@ expiry with nothing to expire) runs once more after a restart.
   by `_kafka_timestamp, _kafka_partition, _kafka_offset`, and appends it to the partition's open
   output a row group at a time; an output closes at `compaction_target_file_size_bytes` (256 MiB)
   or when its partition ends. So the child holds about the budget plus a row group, and an output
-  is a run of sorted row groups. Inputs masked under different protection revisions — told apart by
-  their names (`lakehouse/files.py::protection_revision_of`) — never share an output, and each output
-  is named with its inputs' revision (`compact-<unique>-r<revision>.parquet`), so a file's name keeps
-  saying which policy masked its rows (22 §22.5). The member then commits one `replace` snapshot after checking
+  is a run of sorted row groups. Inputs of different protection lineages — told apart by their names
+  (`lakehouse/files.py::protection_label_of`) — never share an output, and each output is named with
+  its inputs' lineage (`compact-<unique>-r<revision>.parquet`, `…-r3p1.parquet` for rows a reprotect
+  rewrote), so a file's name keeps saying which policies masked its rows (22 §22.5). The member then commits one `replace` snapshot after checking
   every input is still live and, per partition, that the outputs hold exactly the inputs' rows
   inside their time bounds; the snapshot carries the committed offsets forward unchanged, so the
   runtime's exactly-once accounting never notices it.
@@ -497,6 +499,17 @@ expiry with nothing to expire) runs once more after a restart.
 - **Snapshot expiry** removes snapshots older than `snapshot_retention_hours` (72), keeping at least
   `min_snapshots_to_keep` (20) and, beyond `snapshot_keep_all_minutes` (60), one an hour. It is one
   metadata commit and deletes no files (E7).
+- **Reprotect** (22 §22.14) rewrites the files holding in plain text what the table masks now, each
+  into one output of its own with the same rows in the same order, in a child process
+  (`maintenance_app/reprotect_worker.py`) bounded like a compaction's, and commits each pass in one
+  `replace` snapshot that keeps no manifest entry of the files it removes - their column bounds hold
+  the plain text. It is done only once nothing is left to rewrite and the batch ceiling
+  (`max_open_file_age_ceiling_seconds`, which the ticks carry for it) plus two minutes has passed since
+  the table recorded its revision, so batches still open under the older revision have committed. With
+  `purge`, every older snapshot is then expired and the files only they held are deleted. A failed pass backs off like a partition's compaction and is given up after
+  `compaction_max_attempts`, with a `reprotect_failed` table error. The member also counts each
+  table's plain text from the manifests when the table records a new revision, its compaction is
+  planned or a reprotect commits, and reports it with `plaintext_counted` when it changed.
 - **Orphan cleanup** lists the table's `data/` and `metadata/` and deletes what no retained snapshot
   references and is older than `orphan_min_age_hours` (24) — never a file of unknown age — at most
   `ORPHAN_PASS_LIMIT` (1,000) per pass. The app cannot see the files a runtime uploaded and has not
@@ -504,7 +517,7 @@ expiry with nothing to expire) runs once more after a restart.
   and a file that waited for its commit longer than that - a day's stall, by default - is resealed
   by its member when the committer finds it missing (§10.6).
 
-**Reporting.** A compaction or an orphan cleanup reports `maintenance_started` (`job`, `started_at`,
+**Reporting.** A compaction, an orphan cleanup or a reprotect reports `maintenance_started` (`job`, `started_at`,
 `partition`, `attempt`), which sets the table record's `maintenance_job` - what the console shows as
 running and what a drop waits for (07 §7.10). Every job reports a `maintenance_completed` table event
 naming its table (`job`, `outcome` ∈ `succeeded`, `skipped`, `failed`, `abandoned`, `cancelled`,
@@ -514,7 +527,8 @@ always reports, `skipped` with the reason when there was nothing to do. The even
 member runs any more - this member's predecessor's, or one that has run longer than any job can -
 is answered with `maintenance_completed` `abandoned`, so the record lets go of it. Log events:
 `maintenance_compaction_started`, `maintenance_compaction_completed`, `maintenance_compaction_failed`,
-`maintenance_snapshot_expiry_completed`, `maintenance_orphan_cleanup_completed`.
+`maintenance_snapshot_expiry_completed`, `maintenance_orphan_cleanup_completed`,
+`maintenance_reprotect_started`, `maintenance_reprotect_completed`, `maintenance_reprotect_failed`.
 
 ## 10.11 The heartbeat
 
@@ -591,7 +605,7 @@ members log one structured line per protocol event (`protocol_event {json}`):
 | writer | `runtime_partition_session_started`, `runtime_schema_change_requested` |
 | pipeline | `runtime_batch_sealed`, `runtime_batch_seal_failed`, `runtime_seal_waiting_for_schema`, `runtime_unmapped_values`, `runtime_batch_upload_failed`, `runtime_file_announced`, `runtime_batch_committed` (its acknowledgements released), `runtime_source_paused_for_upload_backlog`, `runtime_source_resumed_after_upload_backlog` |
 | committer | `runtime_commit_started`, `runtime_commit_completed`, `runtime_commit_failed`, `runtime_file_decision`, `runtime_schema_committed`, `runtime_schema_commit_failed`, `runtime_protection_recorded` |
-| maintenance app | `maintenance_compaction_started`, `maintenance_compaction_completed`, `maintenance_compaction_failed`, `maintenance_snapshot_expiry_completed`, `maintenance_orphan_cleanup_completed` |
+| maintenance app | `maintenance_compaction_started`, `maintenance_compaction_completed`, `maintenance_compaction_failed`, `maintenance_snapshot_expiry_completed`, `maintenance_orphan_cleanup_completed`, `maintenance_reprotect_started`, `maintenance_reprotect_completed`, `maintenance_reprotect_failed` |
 | other | `runtime_settings_applied`, `runtime_processing_performance_window` |
 
 ## 10.15 Failure modes

@@ -43,7 +43,7 @@ Outside `/api`: the federated Iceberg REST catalog at `/catalog` and each domain
 | `GET` | `/api/materializations/:id` | `materializations.view_details` | live store | Refreshes if older than 1.5 s |
 | `POST` | `/api/materializations/:id/stop` | `materializations.stop` | control plane | 202 pass-through |
 | `POST` | `/api/materializations/:id/resume` | `materializations.resume` | control plane | 202 pass-through |
-| `PATCH` | `/api/materializations/:id` | `materializations.edit`; the control plane checks `dataset.protect` for `protection` | control plane | 202; `name`, `replicas`, `autoscaling`, `tables`, `removed_tables`, `protection` only; a change adding tables answers once their names are claimed |
+| `PATCH` | `/api/materializations/:id` | `materializations.edit`; the control plane checks `dataset.protect` for `protection`, and `materializations.maintain` for `protection.reprotect` | control plane | 202; `name`, `replicas`, `autoscaling`, `tables`, `removed_tables`, `protection` only; a change adding tables answers once their names are claimed |
 | `GET` | `/api/materializations/:id/protection` | `materializations.view_details`; the control plane leaves out tables whose schemas the caller may not see | control plane, as the person | The protection review (control-plane handbook 22 §22.11) |
 | `DELETE` | `/api/materializations/:id` | `materializations.delete` | control plane | 202 pass-through |
 | `GET` | `/api/materializations/:id/tables/:table/schema` | `materializations.view_details`; `dataset.view_schema` on the table's dataset | live store | One table's current projection; the store notices a new `schema_id` |
@@ -53,7 +53,7 @@ Outside `/api`: the federated Iceberg REST catalog at `/catalog` and each domain
 | `GET` | `/api/materializations/:id/tables/:table/head` | `data.query` on the table's dataset | tail app | The newest records on the topic, committed or not, in the table's columns (§8.17a) |
 | `GET` | `/api/materializations/:id/tables/:table/schema/timeline` | as above | the table | When each field first and last held a value, by Kafka timestamp, from the manifests (§8.12a) |
 | `GET` | `/api/materializations/:id/tables/:table` | `materializations.view_details` | control plane + the table | The Table tab for one table: record, snapshots, partitions, connection |
-| `POST` | `/api/materializations/:id/maintenance` | `materializations.maintain` | control plane | 202 pass-through: the maintenance app runs a job now, on one `table` or on all, kept ones included |
+| `POST` | `/api/materializations/:id/maintenance` | `materializations.maintain`; for a `reprotect` the control plane also checks `dataset.protect` on each table's dataset | control plane, as the person | 202 pass-through: the maintenance app runs a job now, on one `table` or on all, kept ones included |
 | `GET` | `/api/catalog/connection` | `catalog.read` on a dataset | control plane | Where engines reach the REST catalog |
 | `GET` | `/api/datasets`, `/api/datasets/:dataset` | `datasets.view` | control plane | Every dataset, locked ones marked; one with its tables (§8.28) |
 | `POST` | `/api/datasets` | `datasets.create` | control plane | Waits for it to apply; `201` |
@@ -1162,9 +1162,13 @@ freshness rule (06 §6.2), answering from a read up to five minutes old while it
 record may already show a newer commit.
 
 `POST /api/materializations/:id/maintenance` (`materializations.maintain`) asks the maintenance app
-to run a job now. Body `{ "job": "compaction" | "expire_snapshots" | "orphan_cleanup", "table": <name|null> }`,
-nothing else: on that table, written or kept, or with no `table` on every table, kept ones included.
-The Table tab sends the table it shows. `202` passes the control plane's acceptance through:
+to run a job now. Body `{ "job": "compaction" | "expire_snapshots" | "orphan_cleanup" | "reprotect", "table": <name|null>, "purge": <bool> }`,
+nothing else, `purge` only with `reprotect` (`400` otherwise): on that table, written or kept, or with no
+`table` on every table, kept ones included. The Table tab sends the table it shows; the Protection
+tab's *Mask rows already written* sends `reprotect` with no table and the dialog's *Purge the plain
+text now*. A reprotect also needs `dataset.protect` on each table's dataset, which the control plane
+checks as the person (control-plane handbook 22 §22.14). `202` passes the control plane's acceptance
+through:
 
 ```json
 { "materialization_id": "mat-d89c130365f6", "request_id": "mnt-…", "job": "compaction",

@@ -11,8 +11,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-TABLE_EVENT_KINDS = ("schema_changed", "table_committed", "maintenance_started", "maintenance_completed", "table_error")
-MAINTENANCE_JOBS = ("compaction", "expire_snapshots", "orphan_cleanup")
+TABLE_EVENT_KINDS = (
+    "schema_changed",
+    "table_committed",
+    "maintenance_started",
+    "maintenance_completed",
+    "table_error",
+    "plaintext_counted",
+)
+MAINTENANCE_JOBS = ("compaction", "expire_snapshots", "orphan_cleanup", "reprotect")
 MAINTENANCE_HISTORY_LIMIT = 50
 
 
@@ -104,6 +111,94 @@ class RunningMaintenance:
 
 
 @dataclass(frozen=True, slots=True)
+class ReprotectRequest:
+    """Someone asked for a table's rows already written to be masked as its protection masks them now
+    (`reprotect`, handbook 22 §22.14).
+
+    Kept on the table's record and carried by every tick until the maintenance app reports it done,
+    so a restart of either loses nothing.
+    """
+
+    request_id: str
+    requested_at: str
+    requested_by: str | None = None
+    #: The protection revision the table must have recorded first - an edit's, which takes seconds
+    #: to reach it; 0 for none.
+    revision: int = 0
+    #: Once done, expire the older snapshots and delete the files only they referenced.
+    purge: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "request_id": self.request_id,
+            "requested_at": self.requested_at,
+            "requested_by": self.requested_by,
+            "revision": self.revision,
+            "purge": self.purge,
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any] | None) -> "ReprotectRequest | None":
+        if not isinstance(value, dict) or not value.get("request_id"):
+            return None
+        return cls(
+            request_id=str(value["request_id"]),
+            requested_at=str(value.get("requested_at") or ""),
+            requested_by=value.get("requested_by"),
+            revision=int(value.get("revision") or 0),
+            purge=bool(value.get("purge", False)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PlaintextReport:
+    """What a table holds in plain text that its protection revision masks, as the maintenance app
+    last counted it from the table's manifests (`lakehouse/reprotect.py::plan_reprotect`)."""
+
+    revision: int
+    counted_at: str
+    snapshot_id: int | None = None
+    #: Files a reprotect would rewrite, their rows and bytes.
+    files: int = 0
+    rows: int = 0
+    bytes: int = 0
+    #: Files it cannot rewrite yet, and why.
+    blocked_files: int = 0
+    blocked: tuple[str, ...] = ()
+    #: Files whose masking under some earlier revision the record no longer says.
+    unknown_files: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "revision": self.revision,
+            "counted_at": self.counted_at,
+            "snapshot_id": self.snapshot_id,
+            "files": self.files,
+            "rows": self.rows,
+            "bytes": self.bytes,
+            "blocked_files": self.blocked_files,
+            "blocked": list(self.blocked),
+            "unknown_files": self.unknown_files,
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any] | None) -> "PlaintextReport | None":
+        if not isinstance(value, dict) or value.get("revision") is None:
+            return None
+        return cls(
+            revision=int(value["revision"]),
+            counted_at=str(value.get("counted_at") or ""),
+            snapshot_id=value.get("snapshot_id"),
+            files=int(value.get("files") or 0),
+            rows=int(value.get("rows") or 0),
+            bytes=int(value.get("bytes") or 0),
+            blocked_files=int(value.get("blocked_files") or 0),
+            blocked=tuple(str(item) for item in value.get("blocked") or ()),
+            unknown_files=int(value.get("unknown_files") or 0),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class TableError:
     reason: str
     message: str
@@ -164,6 +259,10 @@ class MaterializationTable:
     #: The maintenance job running on it now, if any: set when the maintenance app starts one, and
     #: cleared when it reports the job done - or abandoned, after the app restarted.
     maintenance_job: RunningMaintenance | None = None
+    #: A reprotect asked for and not done yet.
+    reprotect: ReprotectRequest | None = None
+    #: What the table holds in plain text that its protection masks, as last counted.
+    plaintext: PlaintextReport | None = None
 
     def __post_init__(self) -> None:
         for name in ("materialization_id", "dataset", "dataset_id", "name", "source_topic", "location", "table_uuid", "created_at", "updated_at"):
@@ -221,6 +320,8 @@ class MaterializationTable:
             "last_error": None if self.last_error is None else self.last_error.to_dict(),
             "state": self.state,
             "maintenance_job": None if self.maintenance_job is None else self.maintenance_job.to_dict(),
+            "reprotect": None if self.reprotect is None else self.reprotect.to_dict(),
+            "plaintext": None if self.plaintext is None else self.plaintext.to_dict(),
         }
 
     @classmethod
@@ -250,6 +351,8 @@ class MaterializationTable:
             last_error=TableError.from_dict(value.get("last_error")),
             state=value.get("state") or "active",
             maintenance_job=RunningMaintenance.from_dict(value.get("maintenance_job")),
+            reprotect=ReprotectRequest.from_dict(value.get("reprotect")),
+            plaintext=PlaintextReport.from_dict(value.get("plaintext")),
         )
 
 

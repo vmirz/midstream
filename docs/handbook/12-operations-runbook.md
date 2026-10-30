@@ -462,6 +462,7 @@ successful commit clears it, unless another table still has an error (08 §8.5).
 | `drop_failed` | a table being dropped could not be, after its retries (07 §7.9a); it stays `dropping`. Fix the cause (bucket permissions, say), then resume the materialization: the apply drops it again |
 | `table_unavailable` | the committer could not load the table: as `waiting_for_table` above |
 | `protection_commit_failed` | the committer could not record a delivered protection policy in the table; it tries again on every event. Its member's log has `Recording protection revision …`; the writers keep the policy the table records meanwhile (22 §22.13) |
+| `reprotect_failed` | a reprotect failed `compaction_max_attempts` times and was given up; the table's maintenance history has each attempt's error, the maintenance app's log `maintenance_reprotect_failed`. Fix the cause — most often the maintenance app's protection key — then ask again (*Mask rows already written*, or `POST …/maintenance {"job":"reprotect"}`); the next commit clears the error from the status meanwhile |
 
 ### `degraded` / `runtime_reported_degraded`, health reason `protection_key_missing` or `protection_key_mismatch`
 
@@ -822,6 +823,24 @@ apart at most, and the result lands in the table record's `maintenance` history 
 tab shows it, and the running job meanwhile). A requested compaction ignores the hot-partition delay,
 and one with nothing to do reports `skipped` with the reason. On a test cluster, a requested compaction of 9
 files took 6.6 s, and its result was in the record 3 s after that.
+
+### Mask rows written before a protection change
+
+An edit masks records written from then on; the rows written before keep their plain values. The
+Protection tab counts them per table and masks them with *Mask rows already written*; through the API
+(it needs Run table maintenance and Choose data protection on each table's dataset; 22 §22.14):
+
+```bash
+curl -s -X POST localhost:6065/materializations/$MAT/maintenance -H "$AUTH" \
+     -H 'content-type: application/json' -d '{"job":"reprotect","purge":true}'
+```
+
+The request goes on each table's record and every tick carries it until the maintenance app has
+rewritten every file holding the plain text — pass after pass, a gigabyte each — and, with `purge`,
+expired every older snapshot and deleted the files only they held. Follow it on the Protection tab, in
+the table's maintenance history (`job: reprotect`, `done: true` on the last pass), or in the app's log
+(`maintenance_reprotect_*`). Without `purge`, time travel reads the old values until snapshot expiry
+and orphan cleanup take the old files; ask again with `purge` to remove them at once.
 
 ### Give an engine read access
 
@@ -1207,6 +1226,8 @@ event and a protocol event in the app's log (`kubectl logs -n $NS <maintenance p
 | Files under `data/` no snapshot lists | uploads no commit took, or a compaction that died before its commit | orphan cleanup deletes them once older than `orphan_min_age_hours` (24) |
 | No maintenance at all, history empty for hours | the maintenance app is down, or receives no ticks | its pod; `maintenance-step` errors in its log; the control plane's `schedule_table_maintenance` work, and the `midstream-maintenance-requests` topic's offsets |
 | A job shown running for hours | the member that ran it went away without reporting | the next tick reports it `abandoned` once it has run longer than `compaction_timeout_minutes` + 10, or at once when the same member restarted |
+| A reprotect stays *requested* | it waits for the table to record the edit's protection revision (the committer does on its next commit, seconds); for the batches still open under the older revision, up to the batch ceiling (600 s) and two minutes after that; or for an earlier failure's backoff | the Protection tab's rollout; the history's last attempt; `maintenance_reprotect_failed` in the app's log |
+| A reprotect leaves files *that cannot be rewritten yet* | a number field's plain values wait for the family's text field, which the writers create with the first masked value; fields in lists of lists are never rewritten | ask again once such a record has been committed (22 §22.13) |
 
 Compaction is safe to interrupt anywhere: its outputs are only files until one `replace` commit
 names them, and that commit checks every input is still live and the row counts match per partition

@@ -188,8 +188,9 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
         "materializations.maintain",
         "materializations",
         "Run table maintenance",
-        "Start a materialization table's maintenance now: compaction, snapshot expiry or orphan "
-        "file cleanup. Runtimes also run it on their own schedule.",
+        "Start a materialization table's maintenance now: compaction, snapshot expiry, orphan file "
+        "cleanup, or - with Choose data protection on its dataset - masking the rows already written "
+        "(reprotect). The maintenance app also runs the first three on its own schedule.",
         implies=("materializations.view_details",),
     ),
     PermissionDefinition(

@@ -14,7 +14,7 @@ const HEARTBEAT_MS = 20_000;
 /** How often the merged fleet stream checks, in each domain, that its caller may still see it. */
 const ACCESS_CHECK_MS = 30_000;
 /** Updates from several domains within this long go out as one frame. */
-const MERGE_DELAY_MS = 100;
+export const MERGE_DELAY_MS = 100;
 
 /**
  * Open a server-sent-events channel.

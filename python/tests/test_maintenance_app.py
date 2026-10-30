@@ -16,7 +16,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from lakehouse_support import LOCATION, MATERIALIZATION_ID, NAMESPACE  # noqa: E402
-from runtime_support import RuntimeHarness, run  # noqa: E402
+from runtime_support import PROTECTION_KEY, RuntimeHarness, run  # noqa: E402
 
 from midstream.lakehouse.maintenance import live_data_files  # noqa: E402
 from midstream.lakehouse.offsets import committed_offsets  # noqa: E402
@@ -29,9 +29,14 @@ from midstream.maintenance_app.worker import (  # noqa: E402
     TableMaintenance,
     compact_in_process,
     job_settings,
+    reprotect_in_process,
     reset_worker,
 )
-from midstream.models import MaintenanceMessage, MaintenanceTarget, RunningMaintenance  # noqa: E402
+from midstream.lakehouse.files import protection_label_of  # noqa: E402
+from midstream.models import MaintenanceMessage, MaintenanceTarget, ReprotectRequest, RunningMaintenance  # noqa: E402
+from midstream.protection.mask import hash_text  # noqa: E402
+from midstream.protection.policy import ProtectionPolicy  # noqa: E402
+from midstream.runtime_app.handlers.runtime_settings import handle_control_message  # noqa: E402
 from midstream.services.table_maintenance import maintenance_settings  # noqa: E402
 
 TOPICS = ("orders", "payments")
@@ -400,6 +405,9 @@ class ExpiryAndOrphanTests(MaintenanceAppTestCase):
         self.assertEqual(2, expired["counts"]["expired"])
         self.assertEqual(1, len(self.runtime.table().metadata.snapshots))
         self.assertEqual(9, len(self.runtime.rows()))
+        # Metadata without a snapshot: the report says it, so the table's record can take it.
+        table = self.runtime.table()
+        self.assertEqual((table.metadata_location, 1, table.current_snapshot().sequence_number), (expired["metadata_location"], expired["snapshots"], expired["sequence_number"]))
 
     def test_requested_expiry_with_nothing_old_enough_is_skipped(self) -> None:
         async def scenario():
@@ -629,6 +637,181 @@ class SharedSlotTests(MaintenanceAppTestCase):
             return busy
 
         self.assertEqual(sorted(TOPICS), sorted(run(scenario())))
+
+
+def h(value: str) -> str:
+    return hash_text(PROTECTION_KEY.encode(), value)
+
+
+class ReprotectTests(unittest.TestCase):
+    """A reprotect the table's record asks for, run by the maintenance app on a runtime's table."""
+
+    def setUp(self) -> None:
+        self.runtime = RuntimeHarness(
+            {"order_id": "O-0", "email": "seed@example.com", "phone": "555-0000"},
+            protection_policy=ProtectionPolicy({"email": "hash"}),
+            orphan_cleanup_enabled=False,
+            compaction_enabled=False,
+            compaction_max_attempts=2,
+        )
+        self.addCleanup(self.runtime.close)
+        self.maintenance = MaintenanceHarness(self.runtime)
+        self.addCleanup(self.maintenance.worker.stop)
+        for name, runner in (("compactor", compact_in_process), ("reprotector", reprotect_in_process)):
+            patcher = patch.object(TableMaintenance, name, staticmethod(runner))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        # As if every batch open under an older revision had long been sealed: tests of the wait for
+        # them move the clock themselves.
+        self.clock = patch("midstream.maintenance_app.worker._wall_clock", lambda: time.time() + 3600)
+        self.clock.start()
+        self.addCleanup(self.clock.stop)
+
+    async def write(self, start: int, count: int) -> None:
+        for offset in range(start, start + count):
+            await self.runtime.write({"order_id": f"O-{offset}", "email": f"u{offset}@example.com", "phone": f"540-948-{offset:04d}"}, offset=offset)
+        await self.runtime.cycle()
+
+    async def edit(self, policy: ProtectionPolicy, revision: int) -> None:
+        handle_control_message(
+            {
+                "kind": "protection_policy",
+                "materialization_id": MATERIALIZATION_ID,
+                "revision": revision,
+                "policy": policy.to_dict(),
+                "changed_by": "owner@example.com",
+                "published_at": now_text(),
+            },
+            self.runtime.state_table,
+            materialization_id=MATERIALIZATION_ID,
+        )
+        await self.runtime.deliver([])
+
+    def asked(self, *, revision: int = 2, purge: bool = False, request_id: str = "rp-1") -> ReprotectRequest:
+        return ReprotectRequest(request_id=request_id, requested_at=now_text(), requested_by="owner@example.com", revision=revision, purge=purge)
+
+    async def phones_written_plain(self) -> None:
+        await self.write(0, 3)
+        await self.edit(ProtectionPolicy({"email": "hash", "phone": "hash"}), 2)
+
+    def test_the_rows_written_plain_are_masked_once_the_table_records_the_revision(self) -> None:
+        async def scenario():
+            await self.phones_written_plain()
+            waiting = await self.maintenance.tick(reprotect=self.asked(), protection_revision=1)
+            started = await self.maintenance.tick(reprotect=self.asked(), protection_revision=2)
+            return waiting, started, await self.maintenance.settle()
+
+        waiting, started, settled = run(scenario())
+        self.assertFalse([event for event in waiting if event["kind"] == "maintenance_started"], "the table has not recorded revision 2 yet")
+        self.assertIn("reprotect", [event["payload"]["job"] for event in started if event["kind"] == "maintenance_started"])
+        # Counted once, at the first tick naming a revision; the same count is not sent again.
+        counted = [event["payload"] for event in waiting + started if event["kind"] == "plaintext_counted"]
+        self.assertEqual([(2, 1)], [(item["revision"], item["files"]) for item in counted])
+        (done,) = completed(settled)
+        self.assertEqual(("reprotect", "succeeded", True, "rp-1"), (done["job"], done["outcome"], done["done"], done["request_id"]))
+        self.assertEqual(3, done["counts"]["masked"])
+        self.assertEqual(0, done["counts"]["files_left"])
+        self.assertEqual([h(f"540-948-{offset:04d}") for offset in range(3)], [row["phone"] for row in self.runtime.rows()])
+        self.assertEqual([h(f"u{offset}@example.com") for offset in range(3)], [row["email"] for row in self.runtime.rows()])
+        labels = {protection_label_of(task.file.file_path) for task in self.runtime.table().scan().plan_files()}
+        self.assertEqual({(2, 1)}, labels)
+        recount = [event["payload"] for event in settled if event["kind"] == "plaintext_counted"]
+        self.assertEqual(0, recount[-1]["files"])
+        # The ticks carry the request until the record is cleared: it is not run again.
+        again = run(self.maintenance.tick(reprotect=self.asked(), protection_revision=2))
+        self.assertFalse([event for event in again if event["kind"] == "maintenance_started"])
+
+    def test_a_purge_leaves_only_the_snapshot_holding_no_plain_text(self) -> None:
+        async def scenario():
+            await self.phones_written_plain()
+            await self.maintenance.tick(reprotect=self.asked(purge=True), protection_revision=2)
+            return await self.maintenance.settle()
+
+        (done,) = completed(run(scenario()))
+        self.assertTrue(done["purged"])
+        self.assertGreater(done["counts"]["expired_snapshots"], 0)
+        self.assertGreater(done["counts"]["deleted_files"], 0)
+        table = self.runtime.table()
+        self.assertEqual([table.metadata.current_snapshot_id], [item.snapshot_id for item in table.metadata.snapshots])
+        self.assertEqual((table.metadata_location, 1), (done["metadata_location"], done["snapshots"]), "the record takes the purged metadata")
+
+    def test_nothing_to_rewrite_is_said_and_the_request_done(self) -> None:
+        async def scenario():
+            await self.write(0, 2)
+            await self.edit(ProtectionPolicy({"email": "partial"}), 2)
+            return await self.maintenance.tick(reprotect=self.asked(), protection_revision=2)
+
+        (done,) = completed(run(scenario()))
+        self.assertEqual(("skipped", True), (done["outcome"], done["done"]))
+        self.assertIn("No file holds", done["message"])
+
+    def test_a_purge_asked_once_every_file_is_rewritten_still_removes_the_older_snapshots(self) -> None:
+        async def scenario():
+            await self.phones_written_plain()
+            await self.maintenance.tick(reprotect=self.asked(), protection_revision=2)
+            await self.maintenance.settle()
+            return await self.maintenance.tick(reprotect=self.asked(purge=True, request_id="rp-2"), protection_revision=2)
+
+        (purged,) = [event for event in completed(run(scenario())) if event["request_id"] == "rp-2"]
+        self.assertEqual(("succeeded", True, True), (purged["outcome"], purged["done"], purged["purged"]))
+        self.assertIn("older snapshot(s) expired", purged["message"])
+        self.assertGreater(purged["counts"]["deleted_files"], 0)
+        table = self.runtime.table()
+        self.assertEqual([table.metadata.current_snapshot_id], [item.snapshot_id for item in table.metadata.snapshots])
+
+    def test_a_reprotect_right_after_an_edit_waits_for_the_batches_open_under_the_older_revision(self) -> None:
+        async def scenario():
+            await self.phones_written_plain()
+            # The edit was recorded a moment ago: a batch still open under revision 1 may commit later.
+            with patch("midstream.maintenance_app.worker._wall_clock", time.time):
+                await self.maintenance.tick(reprotect=self.asked(), protection_revision=2)
+                rewritten = await self.maintenance.settle()
+                waiting = self.maintenance.table().reprotect_wait_until
+                late = await self.maintenance.tick(reprotect=self.asked(), protection_revision=2)
+            # The ceiling has passed: nothing is left, and it is done.
+            self.maintenance.table().reprotect_wait_until = 0.0
+            finished = await self.maintenance.tick(reprotect=self.asked(), protection_revision=2)
+            return rewritten, waiting, late, finished
+
+        rewritten, waiting, late, finished = run(scenario())
+        (first,) = completed(rewritten)
+        self.assertEqual(("succeeded", False), (first["outcome"], first["done"]), "rewritten, but not done while batches may come")
+        self.assertGreater(waiting, time.monotonic())
+        self.assertEqual([], completed(late), "it looks again only once the wait is over")
+        (done,) = completed(finished)
+        self.assertEqual(("succeeded", True, "rp-1"), (done["outcome"], done["done"], done["request_id"]))
+        # The last report says what the whole request rewrote, the first pass included.
+        self.assertEqual((first["counts"]["inputs"], first["counts"]["masked"]), (done["counts"]["inputs"], done["counts"]["masked"]))
+        self.assertIn("any more", done["message"])
+
+    def test_without_the_tables_key_it_fails_then_gives_up(self) -> None:
+        async def scenario():
+            await self.phones_written_plain()
+            with patch.dict(os.environ, {"PROTECTION_KEY": ""}):
+                await self.maintenance.tick(reprotect=self.asked(), protection_revision=2)
+                first = await self.maintenance.settle()
+                self.maintenance.table().reprotect_failure.next_at = 0.0
+                await self.maintenance.tick(reprotect=self.asked(), protection_revision=2)
+                second = await self.maintenance.settle()
+            return first, second
+
+        first, second = run(scenario())
+        (failed,) = completed(first)
+        self.assertEqual(("failed", False), (failed["outcome"], failed["done"]))
+        self.assertIn("protection key", failed["message"])
+        (given_up,) = completed(second)
+        self.assertEqual(("failed", True), (given_up["outcome"], given_up["done"]))
+        self.assertIn("reprotect_failed", [event["payload"].get("reason") for event in second if event["kind"] == "table_error"])
+        self.assertEqual("540-948-0000", self.runtime.rows()[0]["phone"], "nothing was written plain or half-masked")
+
+    def test_a_new_revision_is_counted_without_being_asked(self) -> None:
+        async def scenario():
+            await self.phones_written_plain()
+            return await self.maintenance.tick(protection_revision=2)
+
+        counted = [event["payload"] for event in run(scenario()) if event["kind"] == "plaintext_counted"]
+        self.assertEqual(1, len(counted))
+        self.assertEqual((2, 1, 3), (counted[0]["revision"], counted[0]["files"], counted[0]["rows"]))
 
 
 class HandlerTests(unittest.TestCase):

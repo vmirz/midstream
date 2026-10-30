@@ -535,7 +535,7 @@ does not do. The API's schema `since` is the commit time, not the data's (04 §4
 
 ### The maintenance app runs one long job at a time per member
 
-A member runs `MAINTENANCE_MAX_CONCURRENT_JOBS` compactions or orphan cleanups at once
+A member runs `MAINTENANCE_MAX_CONCURRENT_JOBS` compactions, reprotects or orphan cleanups at once
 (1 by default), visiting its tables in turn, and a compaction may take up to
 `compaction_timeout_minutes`. Many tables with a backlog each, on one member, wait for each
 other: each gets a job in turn, not a job an interval. Snapshot expiry takes no slot. More replicas
@@ -768,8 +768,8 @@ Before "fixing" any of these, read the linked section.
 15. Iceberg v3 once PyIceberg writes it: `_unmapped` as a `variant` (§14.1).
 16. Other object stores behind the FileIO and the pointer's conditional write (§14.1).
 17. Avro and Protobuf topics.
-18. Data protection's extensions: the maintenance app's job that masks rows already written,
-    per-field choices and per-table policies, value-based detection and the record key (§14.19).
+18. Data protection's extensions: per-field choices and per-table policies, value-based detection
+    and the record key (§14.19).
 
 ## 14.13 What 1.0 resolved or retired
 
@@ -864,13 +864,18 @@ Handbook 19 has the model; these are its limits as built in 4.1.
 
 ## 14.19 Data protection: open items
 
-Designed in `docs/design/data-protection.md` §15, not built; each fits what is there (22 §22.14).
+Designed in `docs/design/data-protection.md` §15, not built; each fits what is there (22 §22.15).
+Masking rows already written is built: the maintenance app's `reprotect` (22 §22.14).
 
-- **Rows already written keep their values.** Adding a kind masks new records only; the older rows
-  of the field stay plain, and a numeric field's masked values fork into a string column. A job of
-  the maintenance app that rewrites the files whose names carry an older protection revision than
-  the table's — the revision is already in every file's name, and compaction already keeps
-  revisions apart — would close it; the app already holds the key.
+- **A reprotect masks only plain text.** A value an older revision masked keeps that mask — a hash
+  cannot become a partial — and a kind a policy dropped stays masked in the rows written before. Fields
+  in lists of lists are not rewritten, and a file holding the plain values of a number field waits
+  until the writers have created the family's text field (one masked value arriving does it).
+- **Files of unknown lineage.** A table protected before reprotect kept no per-field states for its
+  earlier revisions: files written under them (other than revision 0) are counted, not rewritten.
+- **Without a purge, the plain text outlives the rewrite** in older snapshots until they expire, and
+  snapshot expiry always keeps the newest `min_snapshots_to_keep` (20): on a quiet table that can be
+  long. The purge ends time travel to before the reprotect.
 - **No per-field choice.** A field the rules miss cannot be protected, nor one they match left plain,
   except by changing the kinds of the whole materialization. `protection.fields` is reserved in the
   API and refused.

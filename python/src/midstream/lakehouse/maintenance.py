@@ -22,7 +22,7 @@ from pyiceberg.table.snapshots import Operation, Summary
 from pyiceberg.table.update.snapshot import ExpireSnapshots, _OverwriteFiles
 
 from midstream.lakehouse.catalog import commit_once
-from midstream.lakehouse.files import partition_text_of, protection_revision_of
+from midstream.lakehouse.files import partition_text_of, protection_label_of, protection_revision_of
 from midstream.lakehouse.gcs import parse_gcs_uri
 from midstream.lakehouse.offsets import (
     COMMIT_ID_PROPERTY,
@@ -65,6 +65,19 @@ class _ReplaceFiles(_OverwriteFiles):
         return Summary(operation=operation, **summary.additional_properties)
 
 
+class _RewriteFiles(_ReplaceFiles):
+    """A `replace` snapshot that keeps no entry of the files it removes.
+
+    A snapshot records the files it deletes, with their statistics, in a manifest of its own; for
+    `reprotect` those statistics - each column's bounds - hold the plain text it masks, and the
+    table's current snapshot would keep them. The removal is still checked; only the record goes.
+    """
+
+    def _deleted_entries(self):
+        super()._deleted_entries()
+        return []
+
+
 class CompactionInputGone(RuntimeError):
     """An input of a compaction is no longer in the table: expired, or compacted already."""
 
@@ -86,15 +99,28 @@ class LiveFile:
     added_at_ms: int | None
     timestamp_min: int | None
     timestamp_max: int | None
+    #: The field ids the file has a non-null value of, from its statistics; None when it has none,
+    #: so anything may be in it. A field the file has no column of has no statistic, and no value.
+    valued_fields: frozenset[int] | None = None
+
+    def holds(self, field_id: int) -> bool:
+        """Whether the file may hold a non-null value of the field."""
+        return self.valued_fields is None or field_id in self.valued_fields
 
     @property
     def protection_revision(self) -> int:
-        """The protection revision its rows were masked under, from its name (`lakehouse/files.py`).
-
-        Compaction never puts two revisions in one output, so every file stays attributable to the
-        policy it was written under (design §5.6).
-        """
+        """The protection revision its rows are masked under now, from its name (`lakehouse/files.py`)."""
         return protection_revision_of(self.path)
+
+    @property
+    def protection_label(self) -> tuple[int, ...]:
+        """Its protection label: the revision its rows are masked under, then each earlier one
+        `reprotect` rewrote them from (`protection_label_of`).
+
+        Compaction never puts two labels in one output, so every file stays attributable to the
+        policies its rows were masked under (design §5.6).
+        """
+        return protection_label_of(self.path)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -107,6 +133,7 @@ class LiveFile:
             "added_at_ms": self.added_at_ms,
             "timestamp_min": self.timestamp_min,
             "timestamp_max": self.timestamp_max,
+            "valued_fields": None if self.valued_fields is None else sorted(self.valued_fields),
         }
 
     @classmethod
@@ -121,6 +148,7 @@ class LiveFile:
             added_at_ms=value.get("added_at_ms"),
             timestamp_min=value.get("timestamp_min"),
             timestamp_max=value.get("timestamp_max"),
+            valued_fields=None if value.get("valued_fields") is None else frozenset(int(item) for item in value["valued_fields"]),
         )
 
 
@@ -205,9 +233,19 @@ def live_data_files(table: Table) -> list[LiveFile]:
                     added_at_ms=None if added is None else added.timestamp_ms,
                     timestamp_min=_timestamp_bound(data_file.lower_bounds),
                     timestamp_max=_timestamp_bound(data_file.upper_bounds),
+                    valued_fields=_valued_fields(data_file),
                 )
             )
     return files
+
+
+def _valued_fields(data_file: DataFile) -> frozenset[int] | None:
+    """The fields a data file has non-null values of, from its value and null counts; None without counts."""
+    counts = data_file.value_counts or {}
+    if not counts:
+        return None
+    nulls = data_file.null_value_counts or {}
+    return frozenset(int(field_id) for field_id, count in counts.items() if count > nulls.get(field_id, 0))
 
 
 def small_file_count(files: Iterable[LiveFile], *, small_file_bytes: int) -> int:
@@ -263,9 +301,9 @@ def plan_compaction(
                 for item in _settled_files(by_partition[key], granularity=granularity, now_ms=now_ms, hot_ms=hot_ms)
                 if item.file_size < small_file_bytes
             ),
-            # A partition's files of one protection revision together, so the worker writes each
-            # revision's rows into outputs of their own.
-            key=lambda item: (item.protection_revision, item.timestamp_min or 0, item.path),
+            # A partition's files of one protection label together, so the worker writes each
+            # label's rows into outputs of their own.
+            key=lambda item: (item.protection_label, item.timestamp_min or 0, item.path),
         )
         if len(small) < min_input_files:
             continue
@@ -384,6 +422,114 @@ def commit_compaction(
             replace.append_data_file(data_file)
     commit_once(transaction)
     return table.metadata.current_snapshot_id
+
+
+def commit_reprotect(table: Table, plan: Any, rewritten: list[tuple[LiveFile, DataFile]], *, runtime: str) -> int:
+    """Replace each of a reprotect plan's inputs by its rewrite in one `replace` snapshot; return its id.
+
+    Checks first that every input is still live and that each rewrite holds exactly its input's rows,
+    in its partition; raises `CompactionInputGone` or `CompactionMismatch` otherwise. The snapshot
+    carries the committed offsets forward unchanged, and keeps no entry of the files it removes
+    (`_RewriteFiles`).
+    """
+    live = {item.file_path: item for item in _current_data_files(table)}
+    missing = [item.path for item, _ in rewritten if item.path not in live]
+    if missing:
+        raise CompactionInputGone(f"{len(missing)} input(s) are no longer in the table, e.g. {missing[0]}")
+    for item, data_file in rewritten:
+        if int(data_file.record_count) != item.record_count:
+            raise CompactionMismatch(f"the rewrite of {item.path} holds {data_file.record_count} rows, the file {item.record_count}")
+        if _partition_values(data_file.partition) != tuple(item.partition):
+            raise CompactionMismatch(f"the rewrite of {item.path} is in another partition")
+    offsets = committed_offsets(table.metadata)
+    records = sum(int(data_file.record_count) for _, data_file in rewritten)
+    properties = {
+        **offsets.summary_properties(),
+        COMMIT_ID_PROPERTY: uuid.uuid4().hex,
+        COMMITTED_AT_PROPERTY: utc_now(),
+        FILES_PROPERTY: str(len(rewritten)),
+        RECORDS_PROPERTY: str(records),
+        RUNTIME_PROPERTY: runtime,
+        OPERATION_PROPERTY: "reprotect",
+        "materializer.reprotect-job": plan.job_id,
+        "materializer.reprotected-files": str(len(rewritten)),
+        "materializer.protection-revision": str(plan.revision),
+    }
+    transaction = table.transaction()
+    producer = _RewriteFiles(
+        operation=Operation.REPLACE,
+        transaction=transaction,
+        io=table.io,
+        snapshot_properties=properties,
+    )
+    with producer as replace:
+        for item, data_file in rewritten:
+            replace.delete_data_file(live[item.path])
+            replace.append_data_file(data_file)
+    commit_once(transaction)
+    return table.metadata.current_snapshot_id
+
+
+@dataclass(frozen=True, slots=True)
+class PurgeResult:
+    """What a purge did: the snapshots it expired, the files it deleted, those it could not."""
+
+    expired: int = 0
+    deleted: int = 0
+    failed: int = 0
+
+
+def purge_before(
+    load: Any,
+    snapshot_id: int,
+    *,
+    client: Any,
+    now: datetime,
+    orphan_min_age_hours: int,
+    delete: Any,
+) -> PurgeResult:
+    """Expire every snapshot older than `snapshot_id` and delete every file only they referenced,
+    then the table's other unreferenced files past the orphan age guard.
+
+    What `reprotect` asks for with `purge`: the files it replaced hold plain text, and so do the
+    manifests that list them - their bounds - which only the older snapshots still reference. Those
+    were committed once, so none is an upload not committed yet, and they go whatever their age.
+    `load` loads the table; `delete` deletes one object by its URI.
+    """
+    table = load()
+    snapshot = table.metadata.snapshot_by_id(snapshot_id)
+    if snapshot is None:
+        return PurgeResult()
+    protected = {ref.snapshot_id for ref in table.metadata.refs.values()}
+    if table.metadata.current_snapshot_id is not None:
+        protected.add(table.metadata.current_snapshot_id)
+    older = [
+        item.snapshot_id
+        for item in table.metadata.snapshots
+        if item.sequence_number is not None
+        and snapshot.sequence_number is not None
+        and item.sequence_number < snapshot.sequence_number
+        and item.snapshot_id not in protected
+    ]
+    before = referenced_files(table)
+    expired = expire_snapshots(table, older)
+    table = load()
+    after = referenced_files(table)
+    deleted = failed = 0
+    for uri in sorted(before - after):
+        try:
+            delete(uri)
+            deleted += 1
+        except Exception:  # noqa: BLE001 - orphan cleanup deletes it later
+            failed += 1
+    scan = find_orphans(client, table.location(), after, now=now, min_age_hours=orphan_min_age_hours)
+    for uri in scan.candidates:
+        try:
+            delete(uri)
+            deleted += 1
+        except Exception:  # noqa: BLE001 - the next orphan cleanup tries again
+            failed += 1
+    return PurgeResult(expired=expired, deleted=deleted, failed=failed)
 
 
 def _check_partitions(
@@ -604,12 +750,15 @@ __all__ = [
     "CompactionPlan",
     "LiveFile",
     "OrphanScan",
+    "PurgeResult",
     "commit_compaction",
+    "commit_reprotect",
     "expire_snapshots",
     "find_orphans",
     "live_data_files",
     "plan_compaction",
     "plan_expiry",
+    "purge_before",
     "referenced_files",
     "small_file_count",
 ]
