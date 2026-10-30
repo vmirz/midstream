@@ -25,6 +25,20 @@ Every name derives from the release: one namespace can hold several installation
 {{- default (printf "%s-auth" (include "midstream.fullname" .)) .Values.auth.existingSecret -}}
 {{- end -}}
 
+{{/*
+The protection key data protection hashes with (handbook 22), from the auth Secret: the control plane,
+the tail app, the maintenance app and every runtime read it. Optional, so a deployment without it runs:
+creates that would hash are refused until it is added.
+*/}}
+{{- define "midstream.protectionKeyEnv" -}}
+- name: PROTECTION_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "midstream.authSecret" . }}
+      key: protection-key
+      optional: true
+{{- end -}}
+
 {{/* The control plane's and the tail app's web Services, as kaspr-operator names them. */}}
 {{- define "midstream.controlPlaneUrl" -}}
 http://{{ include "midstream.controlPlane" . }}-app-api:{{ .Values.controlPlane.webPort }}
@@ -423,6 +437,7 @@ template:
           fieldRef:
             fieldPath: metadata.name
       {{- include "midstream.gcsEnv" . | nindent 6 }}
+      {{- include "midstream.protectionKeyEnv" . | nindent 6 }}
       - name: PROTOCOL_LOGGING_ENABLED
         value: {{ .Values.controlPlane.runtime.protocolLogging | quote }}
       {{- with .Values.controlPlane.runtime.extraEnv }}

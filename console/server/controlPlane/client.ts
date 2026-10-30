@@ -38,6 +38,8 @@ import type {
   SettingValue,
   TableRequest,
   CpTokenRevocation,
+  CpProtectionReview,
+  ProtectionPolicyInput,
 } from '../../shared/types.ts';
 
 export interface CreateMaterializationInput {
@@ -55,6 +57,8 @@ export interface CreateMaterializationInput {
   partition_granularity?: PartitionGranularity;
   labels?: Record<string, string>;
   annotations?: Record<string, string>;
+  /** Omitted, the domain's Protected by default (handbook 22). */
+  protection?: ProtectionPolicyInput;
 }
 
 /** The settings that can change after creation (`MaterializationUpdate`). */
@@ -272,6 +276,12 @@ export class ControlPlaneClient {
       `${tablePath(materializationId, table)}/schema/versions/${encodeURIComponent(schemaId)}`,
       { signal },
     );
+  }
+
+  /** The protection review: per table, what is masked, since when, and what the current rules would change. */
+  protection(caller: Caller, materializationId: string, signal?: AbortSignal): Promise<CpProtectionReview> {
+    const id = assertSafeIdentifier(materializationId);
+    return this.request<CpProtectionReview>(caller, `/materializations/${encodeURIComponent(id)}/protection`, { signal });
   }
 
   /** The control plane's record of one of the materialization's Iceberg tables. */

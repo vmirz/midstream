@@ -269,7 +269,7 @@ features/
     actions.ts                              useLifecycleActions + phase predicates
   detail/
     DetailPage.tsx                          Header, actions, tab shell, stop and delete confirmations
-    EditMaterializationDialog.tsx           Changes the topics and the replica count: each removed topic's table kept or dropped, kept tables dropped; shows what is fixed at creation
+    EditMaterializationDialog.tsx           Changes the topics, the replica count and the data protection: each removed topic's table kept or dropped, kept tables dropped; shows what is fixed at creation
     topicChange.ts                          No React: what a choice of topics does to the tables (planTopicChange), and keepOrder
     TablesPanel.tsx                         The Overview's tables: written, kept, being dropped; what runs on each
     TableTab.tsx                            One table: figures, snapshots, maintenance and Run now, partitions, properties, Connect
@@ -300,6 +300,12 @@ features/
     RowDrawer.tsx                           Single-row detail, including hidden columns
     columns.ts                              Column grouping, default visibility, labels, older names
     viewState.ts                            Read/write the view in the query string
+  protection/
+    protection.ts                           No React: choices and policies, their text, what changes between two (tested)
+    ProtectionControl.tsx                   A row per kind with its masks; the create and edit dialogs' and the Settings page's control
+    ProtectionField.tsx                     The dialogs' block: the choice in a line, locked per dataset, the no-key warning
+    ProtectionSummary.tsx                   Chips, the rollout badge, the shield on protected fields and columns
+    ProtectionTab.tsx                       The Detail tab: policy and rollout, what is about to change, per-table fields and history
   auth/
     SignInPage.tsx                          Email and password, the providers the control plane offers
     AccessGate.tsx                          SessionGate, RequirePermission, AccessDenied, SignInPrompt

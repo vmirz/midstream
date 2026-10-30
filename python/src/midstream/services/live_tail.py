@@ -30,7 +30,8 @@ from midstream.models import (
     Materialization,
     MaterializationTable,
 )
-from midstream.storage import iter_materializations, list_materialization_tables
+from midstream.protection.secrets import get_protection_key
+from midstream.storage import iter_materializations, list_materialization_tables, resolve_materialization_schema
 from midstream.storage.table import TableProtocol
 
 #: The control-plane settings that steer the tail app, which every tick carries.
@@ -64,15 +65,22 @@ def live_tail_target(materialization: Materialization, record: MaterializationTa
         partition_granularity=record.partition_granularity,
         table_uuid=record.table_uuid,
         skip_tombstones=materialization.skip_tombstones,
+        protection_key_id=_protection_key_id(),
     )
 
 
-def live_tail_hints(record: MaterializationTable) -> LiveTailHints:
+def _protection_key_id() -> str | None:
+    key = get_protection_key()
+    return None if key is None else key.key_id
+
+
+def live_tail_hints(record: MaterializationTable, *, protection_revision: int | None = None) -> LiveTailHints:
     """What the table's record knows: never ahead of the table, at most an event behind it."""
     return LiveTailHints(
         offsets={str(partition): int(offset) for partition, offset in record.offsets.items()},
         schema_id=record.schema_id,
         metadata_location=record.metadata_location,
+        protection_revision=protection_revision,
     )
 
 
@@ -93,7 +101,7 @@ def build_live_tail_messages(
     messages: list[LiveTailMessage] = []
     for materialization in iter_materializations(table):
         for record in list_materialization_tables(table, materialization.materialization_id):
-            messages.extend(_messages_for(materialization, record, settings=settings, issued_at=issued_at))
+            messages.extend(_messages_for(materialization, record, settings=settings, issued_at=issued_at, state=table))
     return messages
 
 
@@ -116,6 +124,7 @@ def _messages_for(
     *,
     settings: dict[str, Any],
     issued_at: str,
+    state: TableProtocol | None = None,
 ) -> Iterator[LiveTailMessage]:
     if record.state == "dropped":
         # Out of the catalog for good: it was cancelled while it was dropped.
@@ -125,12 +134,16 @@ def _messages_for(
     if reason is not None:
         yield LiveTailMessage(kind="tail_cancel", target=target, issued_at=issued_at, reason=reason)
         return
+    protection_revision = None
+    if state is not None and materialization.protection_revision > 0:
+        projection = resolve_materialization_schema(state, materialization.materialization_id, record.name)
+        protection_revision = None if projection is None else projection.protection_revision
     yield LiveTailMessage(
         kind="tail_tick",
         target=target,
         issued_at=issued_at,
         settings=settings,
-        hints=live_tail_hints(record),
+        hints=live_tail_hints(record, protection_revision=protection_revision),
     )
 
 

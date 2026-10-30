@@ -158,6 +158,8 @@ class SettingsCatalogTests(unittest.TestCase):
             "gcs_uri": ("gs://lake/root/", "gs://lake/root"),
             "quantity": ("4Gi", "4Gi"),
             "domain_list": ("Example.com, @corp.example.org", "example.com,corp.example.org"),
+            # Kinds alone take their default mask, and the stored text is in the catalog's order.
+            "choice_map": ("secret, phone=partial", "phone=partial,secret=redact"),
         }
         config_fields = {item.name for item in fields(ControlPlaneConfig)}
         for definition in CONTROL_PLANE_SETTINGS:
@@ -664,6 +666,42 @@ class SettingsViewTests(unittest.TestCase):
         self.assertEqual(deployment["materialization_work_topic"]["value"], "materialization-work")
         self.assertIn("settings_requests_topic", deployment)
         self.assertNotIn("rollout", view)
+
+    def test_the_protection_default_is_reported_with_its_choices_and_its_permission(self) -> None:
+        view = settings_scope_view(self.settings, "control-plane", config=self.config, environ=self.environ)
+        setting = next(item for item in view["settings"] if item["key"] == "default_protection")
+        self.assertEqual(("choice_map", "protection", "settings.manage_protection"), (setting["kind"], setting["section"], setting["permission"]))
+        self.assertEqual("email=hash,phone=hash,national_id=hash,secret=redact", setting["value"])
+        self.assertEqual("default", setting["source"])
+        secret = next(item for item in setting["choice_options"] if item["value"] == "secret")
+        self.assertEqual(["partial", "redact"], secret["choices"])
+        self.assertEqual({"hash": "Hashed", "partial": "Partial", "redact": "Withheld"}, setting["choice_labels"])
+        deployment = {item["key"]: item["value"] for item in view["deployment"]}
+        self.assertIn("protection_key", deployment)
+
+    def test_changing_the_protection_default_needs_its_own_permission(self) -> None:
+        from midstream.identity.principals import Grants, Principal
+
+        def principal(*permissions: str) -> Principal:
+            return Principal(kind="user", grants=Grants(group_ids=(), role_ids=(), permissions=frozenset(permissions)), user_id="usr-1", email="ops@example.com")
+
+        body = {"values": {"default_protection": "email=partial"}}
+        with self.assertRaises(WebError) as raised:
+            self.accept("control-plane", body, principal=principal("settings.manage", "settings.view"))
+        self.assertEqual((403, "settings.manage_protection"), (raised.exception.status_code, raised.exception.details["permission"]))
+        with self.assertRaises(WebError):
+            self.accept("control-plane", {"reset": ["default_protection"]}, principal=principal("settings.manage", "settings.view"))
+        # Other settings need only settings.manage, as before.
+        self.accept("control-plane", {"values": {"deleted_retention_hours": 3}}, principal=principal("settings.manage"))
+        accepted = self.accept("control-plane", body, principal=principal("settings.manage", "settings.manage_protection"))
+        self.assertEqual({"default_protection": "email=partial"}, accepted.request_event.values)
+
+    def test_an_invalid_protection_default_is_refused_naming_it(self) -> None:
+        for value in ("email=encrypt", "nope", "secret=hash", 5):
+            with self.subTest(value=value):
+                with self.assertRaises(WebError) as raised:
+                    self.accept("control-plane", {"values": {"default_protection": value}})
+                self.assertEqual("default_protection", raised.exception.details["field"])
 
     def test_runtime_view_reports_runtime_deployment_and_rollout(self) -> None:
         view = settings_scope_view(self.settings, "runtime", control_plane_table=self.state, config=self.config, now="2026-10-08T10:00:00Z")

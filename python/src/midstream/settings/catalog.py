@@ -22,11 +22,19 @@ from midstream.config import (
     normalize_destination_uri,
     normalize_email_domains,
 )
+from midstream.protection.catalog import (
+    MASK_LABELS,
+    ProtectionTextError,
+    kind_options as protection_kind_options,
+    normalize_protection_text,
+)
 from midstream.runtime_app.live_settings import LIVE_SETTING_ENV_VARS
 from midstream.scale import InvalidScaleError, normalize_storage_size
 
-#: Value kinds a catalog setting can have. The console renders a control for each.
-SETTING_KINDS = ("boolean", "integer", "gcs_uri", "quantity", "enum", "domain_list")
+#: Value kinds a catalog setting can have. The console renders a control for each. A `choice_map`
+#: maps some of its `choice_options` each to one of the choices that option allows, stored as text
+#: (`email=hash,phone=partial`), the way a `domain_list` is.
+SETTING_KINDS = ("boolean", "integer", "gcs_uri", "quantity", "enum", "domain_list", "choice_map")
 
 
 
@@ -45,7 +53,9 @@ class SettingDefinition:
     `key` is also the field of `ControlPlaneConfig` (scope `control-plane`) or `RuntimeAppConfig`
     (scope `runtime`) that the setting configures. `section` names the Settings page it is shown
     on. `effect` says when a change takes effect, where that is not immediately. An `enum` setting
-    takes one of its `options`.
+    takes one of its `options`; a `choice_map` maps some of its `choice_options` - each
+    `{value, label, description, choices}` - to one of their choices, which `choice_labels` names.
+    A setting with a `permission` needs it besides `settings.manage` to be changed.
     """
 
     key: str
@@ -63,12 +73,17 @@ class SettingDefinition:
     danger: bool = False
     effect: str | None = None
     options: tuple[str, ...] | None = None
+    choice_options: tuple[dict[str, Any], ...] | None = None
+    choice_labels: dict[str, str] | None = None
+    permission: str | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in SETTING_KINDS:
             raise ValueError(f"kind must be one of: {', '.join(SETTING_KINDS)}")
         if (self.kind == "enum") != bool(self.options):
             raise ValueError("an enum setting needs options, and only an enum setting has them")
+        if (self.kind == "choice_map") != bool(self.choice_options):
+            raise ValueError("a choice_map setting needs choice_options, and only a choice_map has them")
 
     def describe(self) -> dict[str, Any]:
         """The definition as the settings API reports it."""
@@ -87,6 +102,9 @@ class SettingDefinition:
             "danger": self.danger,
             "effect": self.effect,
             "options": list(self.options) if self.options else None,
+            "choice_options": [dict(item) for item in self.choice_options] if self.choice_options else None,
+            "choice_labels": dict(self.choice_labels) if self.choice_labels else None,
+            "permission": self.permission,
             "env_var": self.env_var,
         }
 
@@ -264,6 +282,24 @@ CONTROL_PLANE_SETTINGS: tuple[SettingDefinition, ...] = (
             "say: by the hour, day or month of each record's Kafka timestamp, or not at all. Day "
             "suits most topics; hour suits topics that write many gigabytes an hour, and month "
             "topics that write a few megabytes a day. Fixed once a materialization is created."
+        ),
+        effect="new materializations",
+    ),
+    _cp(
+        "default_protection",
+        section="protection",
+        label="Protected by default",
+        kind="choice_map",
+        nullable=True,
+        choice_options=protection_kind_options(),
+        choice_labels=dict(MASK_LABELS),
+        permission="settings.manage_protection",
+        description=(
+            "The kinds of sensitive data every new materialization masks before writing them, and "
+            "how: hashed (equal values stay equal, so joins and counts work), partial (a readable "
+            "fragment such as the last four digits) or withheld (not stored). Fields are recognised "
+            "by their names. A materialization may choose otherwise when it is created or edited; "
+            "materializations that exist keep their own choice."
         ),
         effect="new materializations",
     ),
@@ -1257,6 +1293,16 @@ DEPLOYMENT_SETTINGS: tuple[DeploymentSetting, ...] = (
         "the others; set from a Secret. Shown by its id, the start of its SHA-256.",
     ),
     DeploymentSetting(
+        "protection_key",
+        "control-plane",
+        "Protection key",
+        "PROTECTION_KEY",
+        "What data protection's hashed values are keyed with (handbook 22); set from the auth "
+        "Secret's protection-key, the same in every domain whose masked columns should join. "
+        "Without it nothing can be hashed, so creates that would hash are refused. Shown by its "
+        "id, the start of its SHA-256.",
+    ),
+    DeploymentSetting(
         "domain",
         "control-plane",
         "Domain",
@@ -1402,6 +1448,15 @@ def coerce_setting_value(definition: SettingDefinition, raw: Any) -> Any:
         try:
             return normalize_email_domains(raw)
         except ValueError as error:
+            raise SettingValueError(f"{definition.label}: {error}", key=key) from error
+    if definition.kind == "choice_map":
+        if raw is None:
+            return ""
+        if not isinstance(raw, str):
+            raise SettingValueError(f"{definition.label} must be choices such as email=hash,phone=partial", key=key)
+        try:
+            return normalize_protection_text(raw)
+        except ProtectionTextError as error:
             raise SettingValueError(f"{definition.label}: {error}", key=key) from error
     if definition.kind == "quantity":
         if raw in (None, ""):

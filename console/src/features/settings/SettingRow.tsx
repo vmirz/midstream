@@ -6,7 +6,10 @@ import { Badge, FIELD_BASE, Select } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
 import type { SettingView } from '@shared/types';
 
+import { ProtectionControl } from '../protection/ProtectionControl';
 import {
+  choiceMapOf,
+  choiceMapText,
   draftChanges,
   draftError,
   fallbackSource,
@@ -73,6 +76,7 @@ export function SettingRow({
   readOnly,
   serverError,
   onDraft,
+  lockedReason = null,
 }: {
   setting: SettingView;
   draft: Draft | undefined;
@@ -80,6 +84,8 @@ export function SettingRow({
   /** A problem the server reported with this setting on the last save. */
   serverError: string | null;
   onDraft: (draft: Draft | undefined) => void;
+  /** Why this one setting cannot be changed by this person, when the rest can (its own permission). */
+  lockedReason?: string | null;
 }): ReactNode {
   const input = draft && !draft.reset ? draft.input : initialInput(setting);
   const pendingReset = draft?.reset === true;
@@ -90,6 +96,23 @@ export function SettingRow({
   const id = `setting-${setting.scope}-${setting.key}`;
 
   const control = (() => {
+    if (setting.kind === 'choice_map') {
+      const options = (setting.choiceOptions ?? []).map((option) => ({ ...option }));
+      const text = pendingReset ? String(fallbackValue(setting) ?? '') : String(input);
+      return (
+        <ProtectionControl
+          idPrefix={id}
+          options={options}
+          labels={setting.choiceLabels ?? null}
+          value={choiceMapOf(text)}
+          disabled={readOnly}
+          onChange={(map) => {
+            const next = choiceMapText(map, options);
+            onDraft(next === String(setting.value ?? '') ? undefined : { reset: false, input: next });
+          }}
+        />
+      );
+    }
     if (setting.kind === 'boolean') {
       const checked = pendingReset ? fallbackValue(setting) === true : input === true;
       return (
@@ -154,8 +177,15 @@ export function SettingRow({
     );
   })();
 
+  const wideControl = setting.kind === 'choice_map';
   return (
-    <div className={cn('grid gap-3 px-5 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:gap-8', changed && 'bg-[var(--color-accent-soft)]/40')}>
+    <div
+      className={cn(
+        'grid gap-3 px-5 py-4',
+        !wideControl && 'md:grid-cols-[minmax(0,1fr)_auto] md:gap-8',
+        changed && 'bg-[var(--color-accent-soft)]/40',
+      )}
+    >
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <label htmlFor={setting.kind === 'boolean' ? undefined : id} className="text-[13px] font-medium">
@@ -172,6 +202,7 @@ export function SettingRow({
         {setting.description ? (
           <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-[var(--color-ink-muted)]">{setting.description}</p>
         ) : null}
+        {lockedReason ? <p className="mt-1 text-[12px] text-[var(--color-phase-paused)]">{lockedReason}</p> : null}
         <SettingMeta
           id={`${id}-meta`}
           setting={setting}
@@ -182,7 +213,7 @@ export function SettingRow({
           hasDraft={draft !== undefined}
         />
       </div>
-      <div className="flex flex-col items-start gap-1 md:items-end">
+      <div className={cn('flex flex-col items-start gap-1', !wideControl && 'md:items-end')}>
         {control}
         {error ? (
           <span role="alert" className="text-[12px] text-[var(--color-phase-failed)]">

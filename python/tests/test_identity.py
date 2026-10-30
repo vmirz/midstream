@@ -259,7 +259,16 @@ class PermissionCatalogTests(unittest.TestCase):
             for implied in definition.implies:
                 self.assertEqual(definition.scope, by_key[implied].scope, f"{definition.key} implies {implied}")
         self.assertEqual(
-            {"dataset.view_schema", "data.query", "data.export", "catalog.read", "catalog.write", "dataset.write", "dataset.manage"},
+            {
+                "dataset.view_schema",
+                "data.query",
+                "data.export",
+                "catalog.read",
+                "catalog.write",
+                "dataset.write",
+                "dataset.manage",
+                "dataset.protect",
+            },
             DATASET_PERMISSION_KEYS,
         )
         self.assertNotIn("materializations.view_schema", PERMISSION_KEYS)
@@ -274,7 +283,9 @@ class PermissionCatalogTests(unittest.TestCase):
         reader, writer, owner = (expand_permissions(roles[role_id].permissions) for role_id in ("dataset-reader", "dataset-writer", "dataset-owner"))
         self.assertEqual({"dataset.view_schema", "data.query", "data.export", "catalog.read"}, reader)
         self.assertEqual(reader | {"dataset.write"}, writer)
-        self.assertEqual(writer | {"dataset.manage"}, owner)
+        # The owner decides how materializations writing into the dataset mask sensitive data; a
+        # writer does not (design D9).
+        self.assertEqual(writer | {"dataset.manage", "dataset.protect"}, owner)
         # Committing from outside the runtime can rewrite its data: no built-in dataset role may.
         self.assertNotIn("catalog.write", owner)
 
@@ -307,6 +318,14 @@ class PermissionCatalogTests(unittest.TestCase):
         admin = grants_for_groups(table, ["admin"])
         self.assertTrue(admin.all_permissions)
         self.assertEqual(admin.permissions, PERMISSION_KEYS)
+        # Only administrators change the data protection defaults: managing settings does not.
+        holders = [
+            role.role_id
+            for role in BUILT_IN_ROLES
+            if "settings.manage_protection" in expand_permissions(role.permissions)
+        ]
+        self.assertEqual(["administrator"], holders)
+        self.assertNotIn("settings.manage_protection", expand_permissions(["settings.manage"]))
 
 
 class PasswordTests(unittest.TestCase):

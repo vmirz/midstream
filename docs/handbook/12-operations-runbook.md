@@ -135,6 +135,26 @@ likely to fall behind — each member requests what the runtime spec says, its C
 VPA — or lower *Autoscaling maximum replicas*, or turn *Autoscale runtimes* off, before the upgrade
 (Settings › Materializations, or `CONTROL_PLANE_RUNTIME_AUTOSCAL…` in the manifest).
 
+### Upgrading to data protection: the protection key
+
+The release that brings data protection masks emails, phone numbers and national identifiers with a
+keyed hash by default, and hashing needs `protection-key` in the auth Secret, which no installation
+has yet. Add it — best before `helm upgrade`, which then starts every app with it (22 §22.9):
+
+```bash
+kubectl -n "$NS" patch secret "$RELEASE-auth" --type merge \
+  -p "{\"stringData\":{\"protection-key\":\"$(openssl rand -base64 48)\"}}"
+```
+
+Added after the upgrade, it reaches the apps once they restart
+(`kubectl -n "$NS" rollout restart statefulset "$RELEASE-control-plane-app" "$RELEASE-tail-app" "$RELEASE-maintenance-app"`);
+runtimes need nothing, as the control plane renders the key's id into their specs and the sweep
+re-applies each once. Until then existing materializations run on unchanged — they protect nothing
+until an edit chooses otherwise — and a create that takes the default is refused with
+`409 protection_key_not_configured`. Domains whose masked columns should join share one key:
+generate it once and patch the same value into each (22 §22.9) - the command above, run in each
+domain, would give each its own. Their `GET /system/version` then reports the same `protection_key_id`.
+
 ### Upgrading to a release that adds topics
 
 The control plane uses static group membership, so the restart that deploys a release does not
@@ -441,6 +461,16 @@ successful commit clears it, unless another table still has an error (08 §8.5).
 | `compaction_failed` | a partition failed compaction five times and is paused; the maintenance history has the error, the maintenance app's log `maintenance_compaction_failed`. Fix the cause, then **Run now** on the Table tab, or `POST …/maintenance {"job":"compaction"}`, to retry |
 | `drop_failed` | a table being dropped could not be, after its retries (07 §7.9a); it stays `dropping`. Fix the cause (bucket permissions, say), then resume the materialization: the apply drops it again |
 | `table_unavailable` | the committer could not load the table: as `waiting_for_table` above |
+| `protection_commit_failed` | the committer could not record a delivered protection policy in the table; it tries again on every event. Its member's log has `Recording protection revision …`; the writers keep the policy the table records meanwhile (22 §22.13) |
+
+### `degraded` / `runtime_reported_degraded`, health reason `protection_key_missing` or `protection_key_mismatch`
+
+A table masks values with a keyed hash and the member has no protection key, or another than the
+control plane's: it writes nothing for that table, holding its records unacknowledged, and checks
+again every 15 s. Missing: add `protection-key` to the auth Secret and restart the control plane — it
+renders the key's id into the runtime's spec, and the sweep re-applies the runtime with it within two
+minutes. Mismatch: the runtime was applied before the key changed, or the apps read different
+Secrets; wait for the sweep, then check that every app reads the same Secret (22 §22.8).
 
 ### `degraded` / `runtime_data_validation_degraded`
 
@@ -921,7 +951,7 @@ kafka-console-consumer --bootstrap-server $BROKERS --topic $RT-commits --max-mes
 | Symptom | Likely cause | Action |
 |---------|--------------|--------|
 | `400 name is required` on create | Missing/blank required field | Send `name`, `source_topics` (and `destination_uri` without a default) |
-| `409` on create | Not currently emitted by any path | Check the WebView error contract |
+| `409` on create | `destination_not_configured`, `table_name_taken`, or `protection_key_not_configured`: the policy hashes and the deployment has no protection key | Configure the destination; choose another name; add the protection key (22 §22.9), or choose partial or withheld |
 | Create returns 202, nothing happens | `request-intake` agent down, or requests topic missing | Check agent + topic |
 | `400 invalid_request`, `reason: source_topic_missing`, on create or on adding a topic | Kafka does not list the topic: a typo, a topic not created yet, or one the Kafka user may not describe | Create the topic or grant Read on it ([21 §21.7](./21-kafka-access.md)), then send the request again |
 | `503 unavailable` on create or on adding a topic, "Kafka cannot be asked about the topics right now" | Kafka did not answer the topic check within 10 s | Check the brokers; send the request again |

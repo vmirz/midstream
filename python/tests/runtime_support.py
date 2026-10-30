@@ -29,6 +29,7 @@ from lakehouse_support import MATERIALIZATION_ID, MATERIALIZATION_LOCATION, NAME
 from table_records import table_specs  # noqa: E402
 
 from midstream.lakehouse.gcs import set_shared_storage_client  # noqa: E402
+from midstream.protection.secrets import get_expected_key_id, get_protection_key  # noqa: E402
 from midstream.runtime_app import acks, flow  # noqa: E402
 from midstream.runtime_app.committer import (  # noqa: E402
     _COMMITTERS,
@@ -42,6 +43,7 @@ from midstream.runtime_app.live_settings import reset_runtime_settings  # noqa: 
 from midstream.runtime_app.outbox import outbox  # noqa: E402
 from midstream.runtime_app.performance import reset_runtime_performance  # noqa: E402
 from midstream.runtime_app.pipeline import batch_pipeline, seal_in_process  # noqa: E402
+from midstream.runtime_app.protection_state import reset_protection_state  # noqa: E402
 from midstream.runtime_app.state import reset_runtime_state  # noqa: E402
 from midstream.runtime_app.table_state import reset_table_state, table_contexts  # noqa: E402
 
@@ -50,6 +52,8 @@ RUNTIME_APP = "kaspr-mat-a1b2c3d4e5f6"
 COMMITS_TOPIC = f"{RUNTIME_APP}-commits"
 MEMBER_ID = "member-0"
 BASE_TIMESTAMP = datetime(2026, 10, 18, 10, 0, tzinfo=UTC)
+#: The protection key a harness's runtime hashes with, unless a test gives another or none.
+PROTECTION_KEY = "test-protection-key-of-at-least-32-characters"
 
 #: Every module that reads the runtime's configuration at its point of use.
 CONFIG_READERS = (
@@ -198,9 +202,18 @@ class RuntimeHarness:
         partitions=(0,),
         topics=(TOPIC,),
         seeds_by_topic: dict[str, tuple[dict, ...]] | None = None,
+        protection_policy=None,
+        protection_revision: int = 1,
+        protection_key: str | None = PROTECTION_KEY,
+        expected_key_id: str | None = None,
         **config: Any,
     ) -> None:
-        """`seed_records` give every table's schema 0; `seeds_by_topic` a topic's own instead."""
+        """`seed_records` give every table's schema 0; `seeds_by_topic` a topic's own instead.
+
+        With `protection_policy`, every table is created protected by it at `protection_revision`.
+        The member's environment has `protection_key` (none when None) and, when given,
+        `expected_key_id` as the id the deployment expects.
+        """
         seeds = seed_records or ({"order_id": "O-0", "amount": 1},)
         self.store = FakeGcs()
         self.specs = table_specs(*topics)
@@ -213,6 +226,8 @@ class RuntimeHarness:
                 identifier=(NAMESPACE, spec.name),
                 source_topic=spec.source_topic,
                 store=self.store,
+                protection_policy=protection_policy,
+                protection_revision=protection_revision,
             )
             for spec in self.specs
         }
@@ -234,7 +249,15 @@ class RuntimeHarness:
         self._stack = ExitStack()
         for module in CONFIG_READERS:
             self._stack.enter_context(patch(f"{module}.get_runtime_app_config", side_effect=lambda: self.config))
-        self._stack.enter_context(patch.dict(os.environ, {"RUNTIME_MEMBER_ID": MEMBER_ID}))
+        environment = {"RUNTIME_MEMBER_ID": MEMBER_ID}
+        if protection_key is not None:
+            environment["PROTECTION_KEY"] = protection_key
+        if expected_key_id is not None:
+            environment["PROTECTION_KEY_ID"] = expected_key_id
+        self._stack.enter_context(patch.dict(os.environ, environment))
+        for name in ("PROTECTION_KEY", "PROTECTION_KEY_ID"):
+            if name not in environment:
+                self._stack.enter_context(patch.dict(os.environ, {name: ""}))
         reset_everything()
         set_shared_storage_client(self.lake.client)
         batch_pipeline.sealer = seal_in_process
@@ -393,6 +416,9 @@ class RuntimeHarness:
 
 def reset_member() -> None:
     """Forget what a member's process holds: everything but its committer."""
+    reset_protection_state()
+    get_protection_key.cache_clear()
+    get_expected_key_id.cache_clear()
     reset_runtime_state()
     reset_runtime_performance()
     reset_table_state()

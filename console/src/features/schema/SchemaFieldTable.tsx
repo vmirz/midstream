@@ -1,8 +1,11 @@
 import type { ReactNode } from 'react';
 
+import { ProtectedMark } from '../protection/ProtectionSummary';
+import { fieldProtectionText } from '../protection/protection';
 import { formatSpan, fromTheStart, stoppedArriving } from './timeline';
 import { Badge } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
+import { useMaterializationDefaults } from '@/lib/defaults';
 import type { CpSchemaField, SchemaTimeline } from '@shared/types';
 
 /** Iceberg types by family, so a column of them reads at a glance. */
@@ -68,6 +71,7 @@ export function fieldDates(field: CpSchemaField, timeline: SchemaTimeline | null
 }
 
 export function SchemaFieldTable({ fields, timeline = null }: { fields: CpSchemaField[]; timeline?: SchemaTimeline | null }): ReactNode {
+  const catalog = useMaterializationDefaults().defaults?.protection ?? null;
   return (
     <div className="overflow-x-auto">
       <div
@@ -92,12 +96,16 @@ export function SchemaFieldTable({ fields, timeline = null }: { fields: CpSchema
           const parts = [
             note ? `written to ${note}` : null,
             (field.since_schema_id ?? 0) > 0 ? `since schema ${field.since_schema_id}` : null,
+            field.protection ? `masked: ${fieldProtectionText(field.protection, catalog)}` : null,
             dates,
           ].filter((part): part is string => part !== null);
           return (
             <li key={field.field_id} className={cn(GRID, 'px-5 py-2.5', field.state === 'superseded' && 'opacity-55')}>
               <span className="flex min-w-0 flex-col">
-                <FieldName name={field.name} />
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <FieldName name={field.name} />
+                  <ProtectedMark protection={field.protection} />
+                </span>
                 {parts.length > 0 ? (
                   <span className="numeric truncate text-[11px] text-[var(--color-ink-faint)]" title={`${parts.join(' · ')}${dates ? ' (UTC)' : ''}`}>
                     {parts.join(' · ')}

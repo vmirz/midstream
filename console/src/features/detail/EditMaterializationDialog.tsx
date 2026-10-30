@@ -25,6 +25,8 @@ import {
 } from '../datasets/tableDrafts';
 import { useDatasets, useRefreshDatasets } from '../datasets/useDatasets';
 import { TopicPicker, assignableMembers } from '../materializations/TopicPicker';
+import { ProtectionField } from '../protection/ProtectionField';
+import { choiceChanges, choiceOf, sameChoice, type ProtectionChoice } from '../protection/protection';
 import { keepOrder, planTopicChange } from './topicChange';
 import type {
   ConsoleAutoscaling,
@@ -82,6 +84,10 @@ export function EditMaterializationDialog({
   const [dropKept, setDropKept] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<{ field: string | null; message: string } | null>(null);
   const { defaults, datasetRules, tableRules, labelMaxLength, maxTopics, autoscaling: autoscalingPolicy } = useMaterializationDefaults();
+  // Data protection (handbook 22): absent from control planes before 1.1, which offer none.
+  const protectionCatalog = defaults?.protection ?? null;
+  const currentProtection = useMemo(() => choiceOf(materialization.protection ?? null, protectionCatalog), [materialization.protection, protectionCatalog]);
+  const [protection, setProtection] = useState<ProtectionChoice>(currentProtection);
   const datasets = useDatasets(open);
   const refreshDatasets = useRefreshDatasets();
   const { can } = useAuth();
@@ -100,6 +106,7 @@ export function EditMaterializationDialog({
       setActions({});
       setDropKept(new Set());
       setError(null);
+      setProtection(currentProtection);
     }
     // The topics are read when the dialog opens; a change while it is open is not a new edit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -166,7 +173,22 @@ export function EditMaterializationDialog({
   const autoscalingChanged = currentAutoscaling !== undefined && autoscaling !== currentAutoscaling;
   const undecided = change.removed.filter((spec) => !actions[spec.name]);
   const droppedKept = change.stillKept.filter((spec) => dropKept.has(spec.name));
-  const anyChange = labelChanged || replicasChanged || autoscalingChanged || change.changesTopics || droppedKept.length > 0;
+  const protectionChanged = protectionCatalog !== null && !sameChoice(protection, currentProtection);
+  // Choosing how it masks needs Choose data protection on every dataset it writes into, those of the
+  // topics this edit adds or writes again included: the new policy masks their tables too.
+  const datasetIdOf = (name: string): string | null => datasets.data?.datasets.find((item) => item.name === name)?.dataset_id ?? null;
+  const protectionLockedBy = [
+    ...new Set(
+      [
+        ...[...materialization.tables, ...change.resumed].map((spec) => ({ id: spec.dataset_id, name: spec.dataset })),
+        ...drafts.filter((draft) => draft.dataset).map((draft) => ({ id: datasetIdOf(draft.dataset), name: draft.dataset })),
+      ]
+        .filter((item) => item.id !== null && !can('dataset.protect', item.id))
+        .map((item) => item.name),
+    ),
+  ];
+  const anyChange =
+    labelChanged || replicasChanged || autoscalingChanged || change.changesTopics || droppedKept.length > 0 || protectionChanged;
   const stopped = status.desired_phase === 'stopped';
   // Each table added, written again, removed or dropped is in a dataset the person must be able to write.
   const affected = [...change.resumed, ...change.removed, ...droppedKept];
@@ -182,6 +204,7 @@ export function EditMaterializationDialog({
     !anyChange ||
     draftsBlocked ||
     unwritable.length > 0 ||
+    (protectionChanged && protectionLockedBy.length > 0) ||
     (pending !== null && (change.changesTopics || droppedKept.length > 0));
 
   const mutation = useMutation({
@@ -189,7 +212,13 @@ export function EditMaterializationDialog({
     onSuccess: (accepted) => {
       toast.success(
         'Change requested',
-        describeAccepted(materialization, accepted, { current, replicas: parsed, autoscaling: autoscalingChanged ? autoscaling : null, stopped }),
+        describeAccepted(materialization, accepted, {
+          current,
+          replicas: parsed,
+          autoscaling: autoscalingChanged ? autoscaling : null,
+          stopped,
+          protection: protectionChanged,
+        }),
       );
       void refreshDatasets();
       onClose();
@@ -232,6 +261,7 @@ export function EditMaterializationDialog({
     for (const spec of change.removed) removed[spec.name] = actions[spec.name] as RemovedTableAction;
     for (const spec of droppedKept) removed[spec.name] = 'drop';
     if (Object.keys(removed).length > 0) body.removed_tables = removed;
+    if (protectionChanged) body.protection = { kinds: protection };
     setError(null);
     mutation.mutate(body);
   };
@@ -421,6 +451,31 @@ export function EditMaterializationDialog({
           </label>
         ) : null}
 
+        {protectionCatalog ? (
+          <ProtectionField
+            idPrefix="edit-protection"
+            catalog={protectionCatalog}
+            value={protection}
+            defaultChoice={currentProtection}
+            baselineTag="current"
+            resetLabel="Keep the current protection"
+            lockedBy={protectionLockedBy}
+            error={error?.field?.startsWith('protection') ? error.message : null}
+            onChange={setProtection}
+            startOpen={protectionChanged}
+            note={
+              protectionChanged ? (
+                <>
+                  {choiceChanges(currentProtection, protection, protectionCatalog).join('. ')}. Applies to records written
+                  from now on, within seconds, without a restart. Rows already written keep their values.
+                </>
+              ) : (
+                'Applies to records written from now on, within seconds, without a restart. Rows already written keep their values.'
+              )
+            }
+          />
+        ) : null}
+
         <div className="space-y-2 rounded-[var(--radius-control)] border border-[var(--color-line)] px-3 py-3">
           <p className="text-[12px] text-[var(--color-ink-muted)]">Fixed when the materialization was created:</p>
           <dl className="grid gap-3 sm:grid-cols-2">
@@ -514,7 +569,8 @@ function describeAccepted(
     replicas,
     autoscaling,
     stopped,
-  }: { current: number; replicas: number | null; autoscaling: boolean | null; stopped: boolean },
+    protection = false,
+  }: { current: number; replicas: number | null; autoscaling: boolean | null; stopped: boolean; protection?: boolean },
 ): string {
   const parts: string[] = [];
   const change = accepted.topic_change;
@@ -525,6 +581,7 @@ function describeAccepted(
   if (change?.dropped.length) parts.push(`dropping ${list(change.dropped)}`);
   if (replicas !== null && replicas !== current) parts.push(`${current} → ${replicas} replica${replicas === 1 ? '' : 's'}`);
   if (autoscaling !== null) parts.push(autoscaling ? 'autoscaling on' : 'autoscaling off');
+  if (protection) parts.push('new data protection, for records written from now on');
   if (accepted.name && accepted.name !== materialization.name) parts.push(`now named ${accepted.name}`);
   const what = parts.length ? parts.join('; ') : 'no change';
   return `${displayName(materialization)}: ${what}${stopped ? ', applied when it is resumed' : ''}. Watch the phase for convergence.`;

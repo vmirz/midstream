@@ -157,8 +157,10 @@ first minutes of running bring no churn (spec §8.8):
   partition) so neither does its memory, and a topic stops being read once it has its sample;
 - partitions are read from the cluster's metadata (`consumer._client.fetch_all_metadata()`), never
   by subscribing, so a broker that auto-creates topics never creates a missing one;
-- the samples go through `evolve(build_schema(), ForkMap(), …, schema_id=0)` — the very policy the
-  committer applies later;
+- the samples are masked by the materialization's protection policy, as the writers will mask the
+  records (22 §22.5) — with a placeholder key, since only the masked values' shapes matter — then go
+  through `evolve(build_schema(), ForkMap(), …, schema_id=0)`, the very policy the committer applies
+  later: a hashed `ssn` sampled as a number starts as a string, and a withheld `password` gets no field;
 - connecting is bounded by 60 s (`CONNECT_TIMEOUT_SECONDS`): a cluster that never answers fails the
   step rather than passing for an empty topic;
 - a topic the metadata does not list — it does not exist, or the Kafka user may not describe it —
@@ -194,8 +196,11 @@ Everything below happens per table: a record is checked against its own table's 
 names its table, the committer keeps a window per table, and the state table holds each table's
 schema under `schema:<table>`.
 
-1. **Drift** (`runtime_app/schema/drift.py`): for every record, one walk against an index built once
-   per schema id finds the values no member of their family accepts. Each becomes an observation
+1. **Drift** (`runtime_app/schema/drift.py`): for every record, masked first (22 §22.5) so drift sees
+   the types masked values have, one walk against an index built once per schema id finds the values
+   no member of their family accepts. A kind added to the policy later turns a field's new values
+   into strings: a numeric `ssn` forks into `ssn__v2: string`, and the old rows keep their numbers in
+   the first member — the fork map and the table's `materializer.protection` say which is which. Each becomes an observation
    `(logical path, type)` in a `schema_change_request` for the committer, naming the table; the same
    observation is requested again at most every 10 s per table (`REQUEST_DEDUPE_SECONDS`). Paths the schema has already
    rejected (§9.8) are not requested again. **The record is staged as it is** — 1.0 writers never

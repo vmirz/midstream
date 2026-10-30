@@ -84,6 +84,21 @@ class DomainIdentityTests(unittest.TestCase):
             reference = env[name]["valueFrom"]["secretKeyRef"]
             self.assertEqual((reference["name"], reference["key"], reference["optional"]), ("midstream-auth", key, True))
 
+    def test_every_app_and_runtime_reads_the_protection_key_from_the_auth_secret(self) -> None:
+        # The control plane checks it and renders its id into runtimes; runtimes and the tail app hash
+        # with it; the maintenance app will (handbook 22). Optional, so a deployment without it runs.
+        apps = {item["metadata"]["name"]: item for item in documents("KasprApp", DEFAULT)}
+        for name in ("midstream-control-plane", "midstream-tail", "midstream-maintenance"):
+            with self.subTest(app=name):
+                reference = env_of(apps[name])["PROTECTION_KEY"]["valueFrom"]["secretKeyRef"]
+                self.assertEqual((reference["name"], reference["key"], reference["optional"]), ("midstream-auth", "protection-key", True))
+        import yaml
+
+        runtime_spec = yaml.safe_load(env_of(apps["midstream-control-plane"])["CONTROL_PLANE_RUNTIME_APP_SPEC"]["value"])
+        runtime_env = {item["name"]: item for item in runtime_spec["template"]["kasprContainer"]["env"]}
+        reference = runtime_env["PROTECTION_KEY"]["valueFrom"]["secretKeyRef"]
+        self.assertEqual((reference["name"], reference["key"], reference["optional"]), ("midstream-auth", "protection-key", True))
+
     def test_a_domain_accepts_the_consoles_clients_unless_it_names_its_own(self) -> None:
         env = env_of(next(item for item in documents("KasprApp", DEFAULT) if item["metadata"]["name"] == "midstream-control-plane"))
         self.assertEqual(env["AUTH_SSO_ENTRA_TENANT_ID"]["value"], "00000000-0000-0000-0000-000000000000")

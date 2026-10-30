@@ -279,8 +279,10 @@ the retention sweep after `deleted_retention_hours`).
 
 ## 11. Inside a runtime
 
-**Writer** (handbook 10 §10.2): every member stages each record as a JSONL line in its partition's
-open batch — never waiting on anything. It detects values the schema cannot take and asks the
+**Writer** (handbook 10 §10.2): every member masks each record's sensitive values by its table's
+protection plan, then stages it as a JSONL line in its partition's open batch — never waiting on
+anything but a missing protection key, without which it writes nothing rather than write plain
+(handbook 22). It detects values the schema cannot take and asks the
 committer for an evolution (shapes only, no values). Batches roll at 250,000 rows, 256 MiB, or after
 120 s once reasonably full and 600 s in any case. A partition of each topic is its own batch stream;
 the member's seal and upload slots, and its upload backlog, are shared by every table, so output stays
@@ -327,8 +329,18 @@ time up to 1 GiB and the partition being written left until it settles; orphan c
 guard — and snapshot expiry. Its commits and the committer's both go through the pointer's CAS and
 retry. Jobs report `maintenance_started` and `maintenance_completed`; a drop waits for a running job.
 
-**Heartbeat**: every member every 30 s — progress per table, health, settings revision and lineage; the
-committer's adds a block per table (snapshot, totals, files pending).
+**Heartbeat**: every member every 30 s — progress per table, health, settings revision and lineage,
+the protection revision it masks each table with and its key's id; the committer's adds a block per
+table (snapshot, totals, files pending).
+
+**Data protection** (handbook 22): rules recognise kinds of sensitive data from field names (`email`,
+`phone`, `national_id`, `secret`, …); each materialization's policy — resolved from the deployment's
+*Protected by default* at creation, `email`, `phone` and `national_id` hashed and `secret` withheld as
+it ships — says which to mask and how: **hashed** (HMAC-SHA256 with the deployment's `protection-key`,
+128 bits, joinable), **partial** (`****9848`) or **withheld**. An edit rides the runtime control topic
+at the runtime's next apply, with no restart; the committer records it in each table's
+`materializer.protection` property, and each data file's name says which revision masked it
+(`-r<revision>`). The live tail masks the same way. Rows already written keep their values.
 
 ## 12. The Iceberg tables
 
@@ -354,8 +366,9 @@ groups, roles, sessions, access tokens, datasets, their grants and the claims of
 the `directory` table, written only by `identity-intake`, one request at a time on one partition.
 Permissions are per action (for example `materializations.create`, `data.query`, `catalog.read`),
 granted through roles held by groups; those about a dataset's tables (`dataset.view_schema`,
-`data.query`, `data.export`, `catalog.read`, `catalog.write`, `dataset.write`, `dataset.manage`) are
-also granted on single datasets, as Dataset Reader, Writer or Owner (handbook 18). The console signs
+`data.query`, `data.export`, `catalog.read`, `catalog.write`, `dataset.write`, `dataset.manage`,
+`dataset.protect`) are also granted on single datasets, as Dataset Reader, Writer or Owner (handbook
+18). The console signs
 people in with an HttpOnly cookie, checks the same permissions on its own routes — per dataset — and
 cuts its shared live views down to what each person may see.
 

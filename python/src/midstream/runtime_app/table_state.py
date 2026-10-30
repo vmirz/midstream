@@ -12,6 +12,7 @@ writes tables; tasks and the pipeline only read them); `<table>` is the table's 
 | `file-decisions:<table>` | what the committer decided about announced files its members must act on |
 | `table:<table>` | table totals for the heartbeat |
 | `runtime-settings` | live settings (`live_settings.py`, written by the settings agent) |
+| `protection-policy` | the materialization's newest protection policy (`protection_state.py`, written by the settings agent) |
 
 A fresh runtime's state table is empty until its committer has handled a first event, so a member
 that finds no schema for a table there loads it from the table itself, once, off the event loop.
@@ -30,12 +31,15 @@ from typing import Any
 from pyiceberg.schema import Schema
 from pyiceberg.table import Table
 
-from midstream.lakehouse.commits import FileDecision, fork_map_of
+from midstream.lakehouse.commits import FileDecision, fork_map_of, protection_json_of
 from midstream.lakehouse.lifecycle import schema_from_json, schema_to_json, table_catalog
 from midstream.lakehouse.offsets import CommittedOffsets, committed_offsets
 from midstream.lakehouse.schema.forkmap import ForkMap
 from midstream.lakehouse.schema.index import SchemaIndex, build_index
 from midstream.lakehouse.tables import TableIdentity, partition_granularity_of
+from midstream.protection.plan import ProtectionPlan
+from midstream.protection.policy import TableProtection
+from midstream.protection.secrets import get_protection_key
 from midstream.runtime_app.schema.drift import DriftDetector
 
 LOGGER = logging.getLogger(__name__)
@@ -104,9 +108,23 @@ class SchemaRecord:
     updated_at: str | None = None
     #: The UUID of the table it was read from (`same_incarnation`).
     table_uuid: str | None = None
+    #: The table's `materializer.protection` property, parsed: what the writers mask (design §5.6).
+    #: Empty for a table that records none.
+    protection: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def protection_revision(self) -> int:
+        revision = self.protection.get("revision") if isinstance(self.protection, dict) else None
+        return int(revision) if isinstance(revision, int) and not isinstance(revision, bool) else 0
+
+    @property
+    def position(self) -> tuple[int, int]:
+        """Which of two records is newer: by schema, then by protection revision - a policy the
+        committer records changes the protection and keeps the schema."""
+        return (self.schema_id, self.protection_revision)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_id": self.schema_id,
             "schema": self.schema,
             "fork_map": self.fork_map,
@@ -116,9 +134,13 @@ class SchemaRecord:
             "updated_at": self.updated_at,
             "table_uuid": self.table_uuid,
         }
+        if self.protection:
+            payload["protection"] = self.protection
+        return payload
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "SchemaRecord":
+        protection = value.get("protection")
         return cls(
             schema_id=int(value["schema_id"]),
             schema=dict(value["schema"]),
@@ -128,10 +150,12 @@ class SchemaRecord:
             rejected_paths=tuple(tuple(item) for item in value.get("rejected_paths") or ()),
             updated_at=value.get("updated_at"),
             table_uuid=value.get("table_uuid"),
+            protection=dict(protection) if isinstance(protection, dict) else {},
         )
 
     @classmethod
     def from_table(cls, table: Table, *, rejected_paths=(), updated_at: str | None = None) -> "SchemaRecord":
+        stored = protection_json_of(table.metadata)
         return cls(
             schema_id=table.schema().schema_id,
             schema=schema_to_json(table.schema()),
@@ -141,11 +165,13 @@ class SchemaRecord:
             rejected_paths=tuple(tuple(item) for item in rejected_paths),
             updated_at=updated_at or _utc_now(),
             table_uuid=table_uuid_of(table),
+            protection={} if not stored else TableProtection.from_json(stored).to_dict(),
         )
 
 
 class SchemaView:
-    """One schema ready for the hot path: parsed, indexed by record key, with its drift detector."""
+    """One schema ready for the hot path: parsed, indexed by record key, with its drift detector
+    and its protection plan."""
 
     def __init__(self, record: SchemaRecord) -> None:
         self.record = record
@@ -153,10 +179,24 @@ class SchemaView:
         self.fork_map = ForkMap.from_dict(record.fork_map)
         self.index: SchemaIndex = build_index(self.schema, self.fork_map, last_column_id=record.last_column_id)
         self.drift = DriftDetector(self.index, rejected_paths=record.rejected_paths)
+        self.protection = TableProtection.from_dict(record.protection)
+        self._plan: ProtectionPlan | None = None
 
     @property
     def schema_id(self) -> int:
         return self.record.schema_id
+
+    @property
+    def plan(self) -> ProtectionPlan:
+        """What the writer masks each record with (design §5.4); built on first use.
+
+        It is given this process's protection key; whether that key may hash - the one the
+        deployment expects - is the writer's to check before it masks (`protection/secrets.py`).
+        """
+        if self._plan is None:
+            key = get_protection_key()
+            self._plan = ProtectionPlan(self.protection, self.index, secret=None if key is None else key.secret)
+        return self._plan
 
 
 def table_contexts(
@@ -281,9 +321,9 @@ def current_view(state_table: Any, table: str) -> SchemaView | None:
     candidates = [record for record in (read_schema_record(state_table, table), loaded) if record is not None]
     if not candidates:
         return None
-    newest = max(candidates, key=lambda record: record.schema_id)
+    newest = max(candidates, key=lambda record: record.position)
     cached = _VIEWS.get(table)
-    if cached is not None and cached.schema_id == newest.schema_id and cached.record.table_uuid == newest.table_uuid:
+    if cached is not None and cached.record.position == newest.position and cached.record.table_uuid == newest.table_uuid:
         return cached
     view = SchemaView(newest)
     _VIEWS[table] = view

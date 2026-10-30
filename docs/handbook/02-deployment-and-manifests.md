@@ -27,7 +27,7 @@ charts/midstream/
     maintenance/                app.yaml, maintenance-worker.yaml (agent), maintenance-step.yaml (task)
     tail/                       app.yaml, tail-worker.yaml (agent), tail-step.yaml (task); off with tail.enabled=false
     agents/   tasks/   tables/  the control plane's 8 agents, 8 tasks and 4 tables
-    webviews/                   73 views: the HTTP API, the REST catalog, the tail app's four
+    webviews/                   74 views: the HTTP API, the REST catalog, the tail app's four
     console/deployment.yaml     the console: Deployment, Service, its domains' ConfigMap, optional PersistentVolumeClaim;
                                 off with console.enabled=false
     route.yaml                  HTTPRoutes (route.enabled) or Ingresses (ingress.enabled): the domain's API, the console,
@@ -85,6 +85,7 @@ the chart with every file under `ci/` and checks the wiring (13 §13.3).
 | KasprWebView | `materializations-list` | `GET /materializations` |
 | KasprWebView | `materializations-create` | `POST /materializations` |
 | KasprWebView | `materializations-detail` | `GET /materializations/{materialization_id}` |
+| KasprWebView | `materializations-protection` | `GET /materializations/{materialization_id}/protection` (the protection review, 22 §22.11) |
 | KasprWebView | `materializations-schema` | `GET /materializations/{materialization_id}/tables/{table_name}/schema` |
 | KasprWebView | `materializations-stop` | `POST /materializations/{materialization_id}/stop` |
 | KasprWebView | `materializations-resume` | `POST /materializations/{materialization_id}/resume` |
@@ -191,7 +192,7 @@ through the runtime spec, with the control plane pinning the exact revision (10 
 |-------|---------|--------|----------|
 | `kaspr.authentication.passwordSecret` | none, required | `password` | the Kafka user's password, for every app and runtime |
 | `gcs.credentialsSecret` | none: application default credentials | `google_application_credentials.json` (`gcs.credentialsKey`), mounted at `/app/gcp` and named by `GOOGLE_APPLICATION_CREDENTIALS` | GCS access for the apps, the runtimes and the console |
-| `auth.existingSecret` | `<release>-auth` | `signing-key`, `previous-signing-key`, `service-token`, `bootstrap-admin-email`, `bootstrap-admin-password`, each `optional: true` | session signing, the console's and the tail app's service token, the first administrator ([18](./18-identity-and-access.md) §18.11) |
+| `auth.existingSecret` | `<release>-auth` | `signing-key`, `previous-signing-key`, `service-token`, `bootstrap-admin-email`, `bootstrap-admin-password`, `federation-key`, `previous-federation-key`, `protection-key`, each `optional: true` | session signing, the console's and the tail app's service token, the first administrator ([18](./18-identity-and-access.md) §18.11); access tokens every domain honours ([20](./20-domains-and-the-shared-console.md)); the key data protection hashes with, given to the control plane, the tail and maintenance apps and every runtime ([22](./22-data-protection.md) §22.8) |
 | `console.hmacSecret` | none | `CONSOLE_GCS_HMAC_KEY_ID`, `CONSOLE_GCS_HMAC_SECRET` | the console's direct `gs://` scans |
 | `package.index.credentialsSecret` | none | `username`, `password` | a private package index |
 
@@ -200,7 +201,9 @@ name only; `docs/install.md` creates them.
 
 Every `auth` key is optional so that a deployment without the Secret still starts. Without
 `signing-key`, though, nobody can sign in and every request is a guest's; create the Secret before
-the first install ([18](./18-identity-and-access.md) §18.12).
+the first install ([18](./18-identity-and-access.md) §18.12). Without `protection-key` nothing can be
+hashed: a create or an edit whose policy hashes is refused, and the shipped default hashes — add it
+before upgrading an existing deployment ([22](./22-data-protection.md) §22.9).
 
 ### Scheduling constraints
 
@@ -245,6 +248,8 @@ template:
         value: /app/gcp/google_application_credentials.json
       - name: PROTOCOL_LOGGING_ENABLED
         value: "true"
+      - name: PROTECTION_KEY       # the auth Secret's protection-key, optional (22 §22.8)
+        valueFrom: { secretKeyRef: { name: <release>-auth, key: protection-key, optional: true } }
     volumeMounts: [ { name: gcp-credentials, mountPath: /app/gcp, readOnly: true } ]
 ```
 
@@ -263,7 +268,10 @@ Two important differences from the control plane itself:
 
 The control plane adds `K_STREAM_WAIT_EMPTY=false`, `K_STORE_ROCKSDB_WRITE_BUFFER_SIZE=4194304` and
 `K_STORE_ROCKSDB_MAX_WRITE_BUFFER_NUMBER=2` to every runtime, merged by name with this env list
-([03 §3.3.4](./03-configuration-reference.md)); a variable the list sets itself wins.
+([03 §3.3.4](./03-configuration-reference.md)); a variable the list sets itself wins. When it holds
+a protection key it also adds `PROTECTION_KEY_ID`, the key's id, so a member can tell that the key it
+loaded is the deployment's, and adding or changing the key changes every runtime's spec: the sweep
+re-applies each runtime once (22 §22.8).
 
 > **Kaspr versions.** The writer agent sets `noack: true`, which needs Kaspr 0.11.26 and
 > kaspr-operator 0.19.1 or later. An older operator's CRD drops the field silently, and records
@@ -294,7 +302,8 @@ The control plane adds `K_STREAM_WAIT_EMPTY=false`, `K_STORE_ROCKSDB_WRITE_BUFFE
 | `CONTROL_PLANE_DELETED_RETENTION_HOURS`, `…_DEFAULT_RUNTIME_STORAGE_SIZE`, `…_DEFAULT_RUNTIME_REPLICAS` | retention of deleted records; a new runtime's volume per member (`64Mi`: it holds only the state table, 10 §10.8) and default replicas. The control plane's own volume is its KasprApp's `storage` (1Gi), the maintenance app's likewise |
 | `CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC` | `<release>-settings-requests` |
 | `CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC` | `<release>-identity-requests` |
-| `AUTH_SIGNING_KEY`, `…_PREVIOUS_SIGNING_KEY`, `…_SERVICE_TOKEN`, `…_BOOTSTRAP_ADMIN_EMAIL`, `…_BOOTSTRAP_ADMIN_PASSWORD` | from the `<release>-auth` Secret |
+| `AUTH_SIGNING_KEY`, `…_PREVIOUS_SIGNING_KEY`, `…_SERVICE_TOKEN`, `…_BOOTSTRAP_ADMIN_EMAIL`, `…_BOOTSTRAP_ADMIN_PASSWORD`, `…_FEDERATION_KEY`, `…_PREVIOUS_FEDERATION_KEY` | from the `<release>-auth` Secret |
+| `PROTECTION_KEY` | the `<release>-auth` Secret's `protection-key`, optional; also on the tail and maintenance apps (22 §22.8) |
 | `PROTOCOL_LOGGING_ENABLED` | `"true"` |
 
 Notably **absent** from the chart (code defaults apply):

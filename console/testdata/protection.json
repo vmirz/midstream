@@ -1,0 +1,162 @@
+{
+ "expected": {
+  "phone": {
+   "kind": "phone",
+   "mask": "partial"
+  },
+  "phone.number": {
+   "kind": "phone",
+   "mask": "partial"
+  },
+  "ssn": {
+   "kind": "national_id",
+   "mask": "hash"
+  }
+ },
+ "fork_map": {
+  "fields": {
+   "15": {
+    "fork_of": null,
+    "fork_version": 1,
+    "path": [
+     "phone"
+    ],
+    "state": "superseded"
+   },
+   "16": {
+    "fork_of": 15,
+    "fork_version": 2,
+    "path": [
+     "phone__v2"
+    ],
+    "state": "current"
+   }
+  }
+ },
+ "protection_property": "{\"fields\":{\"11\":{\"kind\":\"national_id\",\"mask\":\"hash\",\"path\":[\"ssn\"],\"since\":0},\"13\":{\"kind\":\"email\",\"mask\":\"hash\",\"path\":[\"customer\",\"email\"],\"since\":0,\"until\":0},\"15\":{\"kind\":\"phone\",\"mask\":\"partial\",\"path\":[\"phone\"],\"since\":0},\"17\":{\"kind\":\"phone\",\"mask\":\"partial\",\"path\":[\"phone__v2\",\"number\"],\"since\":0}},\"history\":[{\"at\":\"2026-10-29T00:00:00Z\",\"by\":\"fixture@example.com\",\"key_id\":null,\"policy\":{\"kinds\":{\"email\":\"hash\",\"national_id\":\"hash\",\"phone\":\"partial\",\"secret\":\"redact\"}},\"revision\":1,\"schema_id\":0,\"sequence_number\":0},{\"at\":null,\"by\":null,\"key_id\":null,\"policy\":{\"kinds\":{\"national_id\":\"hash\",\"phone\":\"partial\",\"secret\":\"redact\"}},\"revision\":2,\"schema_id\":0,\"sequence_number\":null}],\"key_id\":null,\"policy\":{\"kinds\":{\"national_id\":\"hash\",\"phone\":\"partial\",\"secret\":\"redact\"}},\"revision\":2,\"version\":1}",
+ "schema": {
+  "fields": [
+   {
+    "doc": "Kafka record timestamp; null when Kafka reports none",
+    "id": 1,
+    "name": "_kafka_timestamp",
+    "required": false,
+    "type": "timestamptz"
+   },
+   {
+    "doc": "Kafka partition",
+    "id": 2,
+    "name": "_kafka_partition",
+    "required": true,
+    "type": "int"
+   },
+   {
+    "doc": "Kafka offset",
+    "id": 3,
+    "name": "_kafka_offset",
+    "required": true,
+    "type": "long"
+   },
+   {
+    "doc": "Kafka record key, UTF-8; base64 prefixed 'b64:' when not UTF-8",
+    "id": 4,
+    "name": "_kafka_key",
+    "required": false,
+    "type": "string"
+   },
+   {
+    "doc": "Kafka record headers; values UTF-8, base64 prefixed 'b64:' when not UTF-8",
+    "id": 5,
+    "name": "_kafka_headers",
+    "required": false,
+    "type": {
+     "key": "string",
+     "key-id": 8,
+     "type": "map",
+     "value": "string",
+     "value-id": 9,
+     "value-required": false
+    }
+   },
+   {
+    "doc": "When the materializer read the record",
+    "id": 6,
+    "name": "_materialized_at",
+    "required": true,
+    "type": "timestamptz"
+   },
+   {
+    "doc": "JSON object of the values no column could take; null otherwise",
+    "id": 7,
+    "name": "_unmapped",
+    "required": false,
+    "type": "string"
+   },
+   {
+    "id": 10,
+    "name": "order_id",
+    "required": false,
+    "type": "string"
+   },
+   {
+    "id": 11,
+    "name": "ssn",
+    "required": false,
+    "type": "string"
+   },
+   {
+    "id": 12,
+    "name": "customer",
+    "required": false,
+    "type": {
+     "fields": [
+      {
+       "id": 13,
+       "name": "email",
+       "required": false,
+       "type": "string"
+      },
+      {
+       "id": 14,
+       "name": "tier",
+       "required": false,
+       "type": "string"
+      }
+     ],
+     "type": "struct"
+    }
+   },
+   {
+    "id": 15,
+    "name": "phone",
+    "required": false,
+    "type": "string"
+   },
+   {
+    "id": 16,
+    "name": "phone__v2",
+    "required": false,
+    "type": {
+     "fields": [
+      {
+       "id": 17,
+       "name": "number",
+       "required": false,
+       "type": "string"
+      },
+      {
+       "id": 18,
+       "name": "type",
+       "required": false,
+       "type": "string"
+      }
+     ],
+     "type": "struct"
+    }
+   }
+  ],
+  "identifier-field-ids": [],
+  "schema-id": 0,
+  "type": "struct"
+ }
+}

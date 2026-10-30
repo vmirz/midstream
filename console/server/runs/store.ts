@@ -168,7 +168,7 @@ export async function startRun(input: StartRunInput): Promise<Run> {
       table: selected.name,
     });
     assertReadable(catalog);
-    const columns = logicalColumns(catalog.schema, catalog.forkMap);
+    const columns = logicalColumns(catalog.schema, catalog.forkMap, catalog.protection);
     // The run echoes its request back, so it carries the filters as applied: a link that still
     // names `payload.status` gets a run, and a request, about `status`.
     const request = { ...input.request, table: selected.name, filters: resolveFilters(input.request.filters ?? [], columns) };
@@ -205,7 +205,7 @@ export async function startRun(input: StartRunInput): Promise<Run> {
         datasetId: table.datasetId,
         name: table.name,
         catalog,
-        columns: logicalColumns(catalog.schema, catalog.forkMap),
+        columns: logicalColumns(catalog.schema, catalog.forkMap, catalog.protection),
         tail: tail === null ? null : table.tail,
       };
     }),
@@ -223,7 +223,7 @@ export async function startRun(input: StartRunInput): Promise<Run> {
         datasetId: selected.datasetId,
         name: selected.name,
         catalog,
-        columns: logicalColumns(catalog.schema, catalog.forkMap),
+        columns: logicalColumns(catalog.schema, catalog.forkMap, catalog.protection),
         tail: null,
       };
     })());
@@ -383,7 +383,7 @@ export async function validateStatement(input: { sources: RunTableSource[]; sql:
         name: table.name,
         sources: [],
         schema: catalog.schema,
-        columns: logicalColumns(catalog.schema, catalog.forkMap),
+        columns: logicalColumns(catalog.schema, catalog.forkMap, catalog.protection),
       };
     }),
   );

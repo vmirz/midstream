@@ -56,6 +56,8 @@ import type {
   TimeRange,
   TopicCatalogResponse,
   SsoOutcome,
+  CpProtectionReview,
+  ProtectionPolicyInput,
 } from '@shared/types';
 
 type SessionListener = () => void;
@@ -140,6 +142,8 @@ export interface CreateMaterializationInput {
   partition_granularity?: PartitionGranularity;
   labels?: Record<string, string>;
   annotations?: Record<string, string>;
+  /** Omitted, the domain's Protected by default (handbook 22). */
+  protection?: ProtectionPolicyInput;
 }
 
 /** `<domain API>/materializations/<id>/tables/<table>`. */
@@ -215,6 +219,8 @@ export function domainApi(domain: string) {
       request<CpAccepted>(`${base}/materializations`, { method: 'POST', body: JSON.stringify(input) }),
     stop: (id: string) =>
       request<CpAccepted>(`${base}/materializations/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
+    /** The protection review: per table, what is masked, since when, and what the current rules would change. */
+    protection: (id: string) => request<CpProtectionReview>(`${base}/materializations/${encodeURIComponent(id)}/protection`),
     /** Change what can change after creation: the label, the runtime's replica count, and its topics. */
     update: (id: string, input: MaterializationUpdate) =>
       request<CpAccepted>(`${base}/materializations/${encodeURIComponent(id)}`, {

@@ -13,6 +13,11 @@ table goes through it, one event at a time, so the runtime never conflicts with 
   are committed once `commit_interval_seconds` have passed since the last commit, sooner at
   `max_files_per_commit` or `max_bytes_per_commit`.
 
+It also owns each table's `materializer.protection` property (design §5.6): it records the protection
+policy the control plane delivers - every field classified again, in one metadata commit - and
+records the fields each schema change adds, in the schema's own commit. The writers mask by what the
+table records.
+
 Table maintenance - compaction, snapshot expiry, orphan cleanup - is not the runtime's: the
 maintenance app does it for every materialization (`maintenance_app/`), committing through the same
 pointer, so a commit here that loses to one of its commits refreshes and decides again.
@@ -58,18 +63,25 @@ from midstream.lakehouse.commits import (
     PendingFiles,
     Seal,
     commit_append,
+    commit_protection,
     commit_schema,
     fork_map_of,
     plan_append,
+    protection_json_of,
     table_totals,
 )
 from midstream.lakehouse.gcs import delete_object
 from midstream.lakehouse.offsets import CommittedOffsets, committed_offsets
+from midstream.lakehouse.schema.index import build_index
 from midstream.lakehouse.schema.policy import Evolution, evolve, limits_of
 from midstream.lakehouse.schema.render import render_schema
+from midstream.protection.plan import record_new_fields, record_policy
+from midstream.protection.policy import TableProtection
+from midstream.protection.secrets import get_expected_key_id, get_protection_key
 from midstream.protocol_logging import log_protocol_event
 from midstream.runtime_app.config import RuntimeAppConfig, get_runtime_app_config
 from midstream.runtime_app.performance import record_commit_processing
+from midstream.runtime_app.protection_state import DeliveredPolicy, read_delivered_policy
 from midstream.runtime_app.table_state import (
     SchemaRecord,
     TableContext,
@@ -145,6 +157,8 @@ class Committer:
         #: Announcements ignored as an older session of their member's process, since this one started.
         self.stale_announcements = 0
         self._stale_logged_at: dict[tuple[str, int], float] = {}
+        #: The table's protection, parsed, with the metadata location it was read from.
+        self._protection: tuple[str | None, TableProtection] | None = None
 
     # -- shared with the runtime's other tables --------------------------------------------------
 
@@ -272,6 +286,7 @@ class Committer:
             or stored.get("schema_id") != schema_id
             or stored.get("metadata_location") is None
             or stored.get("table_uuid") != uuid_
+            or _stored_protection_revision(stored) != self.protection().revision
         ):
             state_table[schema_key(name)] = SchemaRecord.from_table(table, rejected_paths=sorted(self.rejected_paths)).to_dict()
         snapshot_id = table.metadata.current_snapshot_id
@@ -307,6 +322,113 @@ class Committer:
             "pending_files": len(self.pending),
             "stale_announcements": self.stale_announcements,
         }
+
+    # -- protection ------------------------------------------------------------------------------
+
+    def protection(self) -> TableProtection:
+        """The table's recorded protection, parsed once per metadata version."""
+        table = self.table
+        if table is None:
+            return TableProtection()
+        location = table.metadata_location
+        if self._protection is None or self._protection[0] != location:
+            self._protection = (location, TableProtection.from_json(protection_json_of(table.metadata)))
+        return self._protection[1]
+
+    async def _record_protection(self, state_table: Any, *, config: RuntimeAppConfig) -> list[dict[str, Any]]:
+        """Record the delivered protection policy in the table when it is newer than the table's.
+
+        Every field is classified again by the new policy and the current rules, and the property
+        committed in one metadata commit (design §5.6). The writers follow once the new schema record
+        reaches them through the state table, and cut their open batches there.
+        """
+        delivered = read_delivered_policy(state_table)
+        if delivered is None or self.table is None or delivered.revision <= self.protection().revision:
+            return []
+        async with self.lock:
+            started = time.monotonic()
+            try:
+                table, protection = await asyncio.get_running_loop().run_in_executor(
+                    self.pool, self._protection_cycle, delivered
+                )
+            except Exception as error:
+                LOGGER.exception(
+                    "Recording protection revision %s of %s table %s failed",
+                    delivered.revision,
+                    self.context.materialization_id,
+                    self.context.name,
+                )
+                return self._table_error("protection_commit_failed", f"Recording the protection policy failed: {error}")
+        self.table = table
+        self._protection = None
+        state_table[schema_key(self.context.name)] = SchemaRecord.from_table(table, rejected_paths=sorted(self.rejected_paths)).to_dict()
+        duration_ms = int((time.monotonic() - started) * 1000)
+        log_protocol_event(
+            LOGGER,
+            enabled=config.protocol_logging_enabled,
+            event="runtime_protection_recorded",
+            materialization_id=self.context.materialization_id,
+            table=self.context.name,
+            revision=protection.revision,
+            policy=protection.policy.to_dict(),
+            protected_fields=len(protection.active_fields()),
+            duration_ms=duration_ms,
+        )
+        LOGGER.info(
+            "Recorded protection revision %s in %s table %s: %s field(s) protected",
+            protection.revision,
+            self.context.materialization_id,
+            self.context.name,
+            len(protection.active_fields()),
+        )
+        return [self._schema_changed_event(table, changes=[], duration_ms=duration_ms)]
+
+    def _protection_cycle(self, delivered: DeliveredPolicy) -> tuple[Table, TableProtection]:
+        last_error: BaseException | None = None
+        for _ in range(COMMIT_ATTEMPTS):
+            table = self._load()
+            recorded = TableProtection.from_json(protection_json_of(table.metadata))
+            if recorded.revision >= delivered.revision:
+                return table, recorded
+            index = build_index(table.schema(), fork_map_of(table.metadata), last_column_id=table.metadata.last_column_id)
+            protection = record_policy(
+                recorded,
+                index,
+                delivered.policy,
+                revision=delivered.revision,
+                at=_utc_now(),
+                by=delivered.changed_by,
+                key_id=_hashing_key_id(),
+                sequence_number=table.metadata.last_sequence_number,
+                reason=delivered.reason,
+            )
+            try:
+                commit_protection(table, protection.to_json(), schema_id=index.schema_id)
+            except CommitFailedException as error:
+                last_error = error
+                time.sleep(COMMIT_SPACING_SECONDS)
+                continue
+            return self._load(), protection
+        raise RuntimeError(f"the protection commit kept losing to other commits: {last_error}")
+
+    def _schema_changed_event(self, table: Table, *, changes: list[dict[str, Any]], duration_ms: int, requests: int | None = None) -> dict[str, Any]:
+        rendered = render_schema(table.schema(), fork_map_of(table.metadata), schemas=table.metadata.schemas)
+        protection = TableProtection.from_json(protection_json_of(table.metadata))
+        payload = {
+            "schema_id": table.schema().schema_id,
+            "schema": SchemaRecord.from_table(table).schema,
+            "fork_map": fork_map_of(table.metadata).to_dict(),
+            "fields": rendered["fields"],
+            "field_count": rendered["field_count"],
+            "changes": changes,
+            "metadata_location": table.metadata_location,
+            "last_column_id": table.metadata.last_column_id,
+            "rejected_paths": [list(item) for item in sorted(self.rejected_paths)],
+            "duration_ms": duration_ms,
+        }
+        if protection_json_of(table.metadata) is not None:
+            payload["protection"] = protection.to_dict()
+        return self._event("schema_changed", payload)
 
     # -- schema ----------------------------------------------------------------------------------
 
@@ -349,7 +471,6 @@ class Committer:
             return outputs
         state_table[schema_key(self.context.name)] = SchemaRecord.from_table(table, rejected_paths=sorted(self.rejected_paths)).to_dict()
         duration_ms = int((time.monotonic() - started) * 1000)
-        rendered = render_schema(table.schema(), fork_map_of(table.metadata), schemas=table.metadata.schemas)
         log_protocol_event(
             LOGGER,
             enabled=config.protocol_logging_enabled,
@@ -362,21 +483,7 @@ class Committer:
             duration_ms=duration_ms,
         )
         outputs.append(
-            self._event(
-                "schema_changed",
-                {
-                    "schema_id": table.schema().schema_id,
-                    "schema": SchemaRecord.from_table(table).schema,
-                    "fork_map": fork_map_of(table.metadata).to_dict(),
-                    "fields": rendered["fields"],
-                    "field_count": rendered["field_count"],
-                    "changes": [change.to_dict() for change in evolution.changes],
-                    "metadata_location": table.metadata_location,
-                    "last_column_id": table.metadata.last_column_id,
-                    "rejected_paths": [list(item) for item in sorted(self.rejected_paths)],
-                    "duration_ms": duration_ms,
-                },
-            )
+            self._schema_changed_event(table, changes=[change.to_dict() for change in evolution.changes], duration_ms=duration_ms)
         )
         return outputs
 
@@ -385,23 +492,40 @@ class Committer:
         last_error: BaseException | None = None
         for _ in range(COMMIT_ATTEMPTS):
             table = self._load()
+            fork_map = fork_map_of(table.metadata)
             evolution = evolve(
                 table.schema(),
-                fork_map_of(table.metadata),
+                fork_map,
                 observations,
                 limits=limits,
                 last_column_id=table.metadata.last_column_id,
             )
             if not evolution.changed:
                 return table, evolution
+            protection_json = self._protection_with_new_fields(table, fork_map, evolution)
             try:
-                commit_schema(table, evolution)
+                commit_schema(table, evolution, protection_json=protection_json)
             except CommitFailedException as error:
                 last_error = error
                 time.sleep(COMMIT_SPACING_SECONDS)
                 continue
             return self._load(), evolution
         raise RuntimeError(f"the schema commit kept losing to other commits: {last_error}")
+
+    @staticmethod
+    def _protection_with_new_fields(table: Table, fork_map, evolution: Evolution) -> str | None:
+        """The table's protection with the fields `evolution` adds recorded; None when it records
+        nothing and nothing changes (a table without protection keeps no property)."""
+        stored = protection_json_of(table.metadata)
+        recorded = TableProtection.from_json(stored)
+        if stored is None and recorded.policy.empty:
+            return None
+        before = build_index(table.schema(), fork_map, last_column_id=table.metadata.last_column_id)
+        after = build_index(evolution.schema, evolution.fork_map, last_column_id=evolution.last_column_id)
+        updated = record_new_fields(recorded, before, after)
+        if updated is recorded:
+            return None
+        return updated.to_json()
 
     # -- appends ---------------------------------------------------------------------------------
 
@@ -749,6 +873,8 @@ class RuntimeCommitter:
             if await committer._ensure_loaded(outputs):
                 outputs.extend(committer._publish_state(state_table))
                 ready.append(committer)
+        for committer in ready:
+            outputs.extend(await committer._record_protection(state_table, config=config))
         now = time.monotonic()
         for committer in ready:
             due_in = committer.schema_window_due_in(now, config=config)
@@ -869,6 +995,21 @@ def committer_table_blocks(materialization_id: str) -> dict[str, dict[str, Any]]
 
 def build_commit_tick(*, materialization_id: str) -> dict[str, Any]:
     return {"kind": "commit_tick", "materialization_id": materialization_id, "sent_at": _utc_now()}
+
+
+def _stored_protection_revision(stored: dict[str, Any]) -> int:
+    protection = stored.get("protection")
+    revision = protection.get("revision") if isinstance(protection, dict) else None
+    return revision if isinstance(revision, int) and not isinstance(revision, bool) else 0
+
+
+def _hashing_key_id() -> str | None:
+    """The id of the key the members hash with: the one the deployment expects, else this process's."""
+    expected = get_expected_key_id()
+    if expected is not None:
+        return expected
+    key = get_protection_key()
+    return None if key is None else key.key_id
 
 
 def _shared_client():

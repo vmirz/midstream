@@ -40,6 +40,7 @@ from midstream.models import (  # noqa: E402
     RunningMaintenance,
     RuntimeHealth,
 )
+from midstream.protection.policy import ProtectionPolicy, TableProtection  # noqa: E402
 from midstream.runtime_app.config import RuntimeAppConfig  # noqa: E402
 from midstream.schema import StubDiscoveryService  # noqa: E402
 from midstream.services import process_work_event, process_work_event_async  # noqa: E402
@@ -393,6 +394,93 @@ class DiscoveryTests(WorkflowTestCase):
         self.assertIsNone(get_materialization_schema(self.table, MATERIALIZATION_ID, "orders"))
 
 
+class ProtectionDiscoveryTests(WorkflowTestCase):
+    """Discovery masks its samples and table creation records what the table protects (design §5.5)."""
+
+    POLICY = ProtectionPolicy({"email": "hash", "phone": "partial", "national_id": "hash", "secret": "redact"})
+    PROTECTED_SAMPLE = [
+        {"order_id": "O-1", "ssn": 123456789, "phone": "540-948-9848", "password": "pw", "customer": {"email": "a@example.com"}},
+        {"order_id": "O-2", "ssn": 987654321, "phone": 5409489848, "password": "pw2"},
+    ]
+
+    def setUp(self) -> None:
+        super().setUp()
+        save_materialization(self.table, build_materialization(protection=self.POLICY, protection_revision=1))
+        self.discovery = StubDiscoveryService(self.PROTECTED_SAMPLE)
+
+    def test_schema_zero_holds_the_masked_types(self) -> None:
+        self.process(work("start_discovery"))
+        projection = get_materialization_schema(self.table, MATERIALIZATION_ID, "orders")
+        fields = {item["name"]: item["type"] for item in projection.fields}
+        # A national id sampled as a number is a string field: its hashes are strings.
+        self.assertEqual("string", fields["ssn"])
+        self.assertEqual("string", fields["phone"])
+        self.assertNotIn("password", fields)
+        self.assertNotIn("phone__v2", fields)
+
+    def test_a_new_table_records_its_protected_fields_in_metadata_v0(self) -> None:
+        self.create()
+        table = self.catalog().load_table(("shop", "orders"))
+        protection = TableProtection.from_json(table.metadata.properties.get("materializer.protection"))
+        self.assertEqual(1, protection.revision)
+        self.assertEqual(self.POLICY, protection.policy)
+        self.assertEqual(
+            {("ssn",): ("national_id", "hash"), ("phone",): ("phone", "partial"), ("customer", "email"): ("email", "hash")},
+            {item.path: (item.kind, item.mask) for item in protection.active_fields().values()},
+        )
+        self.assertEqual("jane@example.com", protection.history[0].by)
+        projection = get_materialization_schema(self.table, MATERIALIZATION_ID, "orders")
+        self.assertEqual(1, projection.protection_revision)
+        annotated = {item["name"]: item.get("protection") for item in projection.fields}
+        self.assertEqual({"kind": "national_id", "mask": "hash", "since_schema_id": 0}, annotated["ssn"])
+        self.assertEqual({"kind": "email", "mask": "hash", "since_schema_id": 0}, annotated["customer.email"])
+        self.assertIsNone(annotated["order_id"])
+
+    def routed_apply(self) -> list[dict]:
+        """Discovery and the tables, then the routed outputs of the runtime's apply."""
+        follow_up = self.process(work("start_discovery"))
+        follow_up = self.process(follow_up)
+        self.assertEqual("apply_runtime", follow_up.step)
+        return list(
+            handle_work_event_for_routed_output(
+                follow_up.to_dict(),
+                self.table,
+                self.discovery,
+                kaspr_app_client=self.kaspr,
+                object_store_client=self.client,
+                config=self.config,
+            )
+        )
+
+    def test_every_apply_delivers_the_policy_to_its_runtime(self) -> None:
+        routed = self.routed_apply()
+        (delivery,) = [item for item in routed if item["route"] == "topic" and item["value"].get("kind") == "protection_policy"]
+        self.assertEqual(self.config.schema_authority_updates_topic, delivery["topic"])
+        self.assertEqual(f"protection-policy:{MATERIALIZATION_ID}", delivery["key"])
+        self.assertEqual(
+            {"kind": "protection_policy", "materialization_id": MATERIALIZATION_ID, "revision": 1, "policy": self.POLICY.to_dict()},
+            {key: delivery["value"][key] for key in ("kind", "materialization_id", "revision", "policy")},
+        )
+        # The runtime's spec carries no policy: an edit changes no resource, and restarts nothing.
+        app = next(resource for resource in self.kaspr.applied if resource["kind"] == "KasprApp")
+        self.assertNotIn("protection", str(app))
+
+    def test_a_materialization_created_before_data_protection_records_nothing(self) -> None:
+        save_materialization(self.table, build_materialization())
+        self.create()
+        table = self.catalog().load_table(("shop", "orders"))
+        self.assertNotIn("materializer.protection", table.metadata.properties)
+        projection = get_materialization_schema(self.table, MATERIALIZATION_ID, "orders")
+        fields = {item["name"]: item["type"] for item in projection.fields}
+        self.assertEqual("long", fields["ssn"])
+        self.assertIn("password", fields)
+
+    def test_an_apply_of_one_created_before_data_protection_delivers_nothing(self) -> None:
+        save_materialization(self.table, build_materialization())
+        routed = self.routed_apply()
+        self.assertEqual([], [item for item in routed if item["route"] == "topic" and item["value"].get("kind") == "protection_policy"])
+
+
 class TableCreationTests(WorkflowTestCase):
     def test_the_table_is_created_with_schema_0_and_recorded(self) -> None:
         follow_up = self.process(self.process(work("start_discovery")))
@@ -531,6 +619,24 @@ class RuntimeApplyTests(WorkflowTestCase):
         )
         self.assertEqual(["orders"], binding.source_topics)
         self.assertEqual("runtime_apply_in_progress", self.status().phase_reason)
+
+    def test_an_apply_of_the_spec_a_healthy_runtime_runs_keeps_it_running(self) -> None:
+        # A change of protection is such an apply: delivered with it, and nothing restarts.
+        self.create()
+        healthy = replace(
+            self.status(),
+            observed_phase="running",
+            phase_reason="processing",
+            runtime_health=RuntimeHealth(level="healthy"),
+            last_heartbeat="2026-07-12T00:09:50Z",
+        )
+        save_materialization_status(self.table, healthy)
+        self.process(work("apply_runtime", work_id="work-apply-edit", requested_at="2026-07-12T00:10:00Z"))
+        self.assertEqual(("running", "processing"), (self.status().observed_phase, self.status().phase_reason))
+
+        save_materialization(self.table, replace(get_materialization(self.table, MATERIALIZATION_ID), replicas=3))
+        self.process(work("apply_runtime", work_id="work-apply-scale", requested_at="2026-07-12T00:10:20Z"))
+        self.assertEqual(("deploying", "runtime_apply_in_progress"), (self.status().observed_phase, self.status().phase_reason))
 
     def test_one_runtime_reads_every_topic(self) -> None:
         self.two_topics(orders=SAMPLE, payments=[])

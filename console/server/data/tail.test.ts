@@ -165,6 +165,7 @@ describe('fetching a tail', () => {
       [refuse(409, 'tail_unavailable', { partitions: { '0': 'behind_retention' } }), { kind: 'unavailable', reason: 'unavailable_for_snapshot' }],
       [refuse(503, 'tail_not_ready', { state: 'catching_up' }), { kind: 'unavailable', reason: 'not_ready', state: 'catching_up' }],
       [refuse(503, 'topic_unavailable'), { kind: 'unavailable', reason: 'topic_unavailable' }],
+      [refuse(503, 'protection_key_missing'), { kind: 'unavailable', reason: 'protection_key_missing', status: 503 }],
       [refuse(503, 'tail_owner_unreachable'), { kind: 'unavailable', reason: 'unreachable' }],
       [refuse(503, 'control_plane_unreachable'), { kind: 'unavailable', reason: 'unreachable' }],
       [refuse(401, 'session_ended'), { kind: 'unavailable', reason: 'forbidden', status: 401 }],

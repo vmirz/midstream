@@ -127,6 +127,10 @@ export interface CpMemberProgress {
   files_pending_commit?: number;
   /** Live runtime-settings revision this member runs; absent from runtimes that predate them. */
   settings_revision?: number;
+  /** The protection revision this member masks each table with (handbook 22). */
+  protection_revisions?: Record<string, number>;
+  /** The id of the protection key this member loaded. */
+  protection_key_id?: string;
 }
 
 /** Records skipped for one reason, cumulative since creation, with the latest occurrence. */
@@ -159,6 +163,9 @@ export interface CpRuntimeProgress {
   /** Values that went to each table's `_unmapped`, and when one last did. */
   cumulative_unmapped_by_table?: Record<string, number>;
   unmapped_last_seen_by_table?: Record<string, string>;
+  /** Values masked and withheld before staging, per table (handbook 22). */
+  cumulative_protected_by_table?: Record<string, number>;
+  cumulative_withheld_by_table?: Record<string, number>;
   /** Each table as the committer member last reported it, by table name. */
   tables?: Record<string, CpLiveTable>;
   /** Last heartbeat from each runtime member, keyed by member id. */
@@ -336,6 +343,10 @@ export interface CpMaterialization {
   datasets: string[];
   /** A change of topics waiting for its new tables' names; at most one at a time. */
   pending_topic_change?: CpPendingTopicChange | null;
+  /** Which kinds of sensitive data its runtime masks, and how (handbook 22). Absent before 1.1. */
+  protection?: ProtectionPolicy;
+  /** The policy's revision: 1 at creation, one more per edit; 0 for one created before 1.1. */
+  protection_revision?: number;
 }
 
 export interface CpStatus {
@@ -402,6 +413,8 @@ export interface CpDetail {
    * any being dropped or dropped.
    */
   tables: CpTableSummary[];
+  /** Its data protection and how far it has reached (handbook 22). Absent before 1.1. */
+  protection?: CpProtectionSummary;
 }
 
 /** Every table a materialization has in its datasets: the ones its runtime writes, then the kept ones. */
@@ -430,6 +443,11 @@ export interface MaterializationUpdate {
   tables?: TableRequest[];
   /** For each table whose topic is removed, `drop` or `keep`; may also `drop` a kept table. */
   removed_tables?: Record<string, RemovedTableAction>;
+  /**
+   * The whole protection policy from now on (handbook 22); `apply_rules` records it again with the
+   * current rules even unchanged. Needs Choose data protection on every dataset written into.
+   */
+  protection?: ProtectionPolicyInput;
 }
 
 /** What an accepted change of topics does to the tables, as the control plane planned it. */
@@ -651,6 +669,8 @@ export interface CpSchemaField {
   fork_of?: number | null;
   since_schema_id?: number | null;
   doc?: string | null;
+  /** How the field's values are masked, when they are (handbook 22). */
+  protection?: CpFieldProtection;
 }
 
 export interface CpSchemaChange {
@@ -678,6 +698,8 @@ export interface CpSchema {
   changes: CpSchemaChange[];
   /** Values that went to `_unmapped`; only on the current schema. */
   unmapped?: { total_values: number; last_seen_at: string | null };
+  /** The table's `materializer.protection` as of this schema; null when it records none (handbook 22). */
+  protection?: CpTableProtection | null;
 }
 
 export interface CpSchemaVersionRef {
@@ -892,6 +914,8 @@ export interface QueryColumn {
    * text; nested JSON decodes it into the value it encodes.
    */
   json?: boolean;
+  /** How the column's values are masked (handbook 22): a keyed hash, a partial form, or withheld. */
+  protection?: { kind: string; mask: string };
 }
 
 export type FilterOperator =
@@ -1074,8 +1098,9 @@ export interface RunTail {
   /**
    * Why the tail is `unavailable` or `off`: `not_ready` (warming up), `rebalancing`,
    * `unavailable_for_snapshot` (the snapshot is older than the tail keeps), `not_tailed` (the tail
-   * app does not follow the table yet), `topic_unavailable`, `unreachable`, `timeout`, `forbidden`,
-   * `unreadable`; `materialization`, `console`, `control_plane`, `stopped` or `not_configured` when off.
+   * app does not follow the table yet), `topic_unavailable`, `protection_key_missing` (the table
+   * hashes and the tail app cannot), `unreachable`, `timeout`, `forbidden`, `unreadable`;
+   * `materialization`, `console`, `control_plane`, `stopped` or `not_configured` when off.
    */
   reason?: string | null;
   /** What the tail said, for a tooltip. */
@@ -1303,6 +1328,8 @@ export interface CpSystemSettings {
   autoscaling_enabled?: boolean;
   autoscale_max_replicas?: number;
   autoscale_target_minutes?: number;
+  /** Data protection: every kind and mask, the default a create gets, and the key. Absent before 1.1. */
+  protection?: CpProtectionCatalog;
 }
 
 /** The control plane's defaults for a new materialization, as the create and edit dialogs show them. */
@@ -1323,6 +1350,8 @@ export interface MaterializationDefaults {
   reservedNamespaceNames: string[];
   /** The most topics one materialization reads. */
   maxTopics: number;
+  /** What data protection offers, and the policy a create gets; null before 1.1 (handbook 22). */
+  protection: CpProtectionCatalog | null;
 }
 
 /** How the control plane scales runtimes that are far behind their topics (Settings › Materializations). */
@@ -1452,7 +1481,16 @@ export interface SearchResults {
 export const SETTINGS_SCOPES = ['control-plane', 'runtime', 'console'] as const;
 export type SettingsScope = (typeof SETTINGS_SCOPES)[number];
 /** `domain_list`: email domains, comma-separated, such as `example.com,corp.example.org`; empty for any. */
-export type SettingKind = 'boolean' | 'integer' | 'gcs_uri' | 'quantity' | 'enum' | 'string' | 'domain_list';
+/** `choice_map`: some of `choice_options`, each with one of its choices, as text: `email=hash,phone=partial`. */
+export type SettingKind = 'boolean' | 'integer' | 'gcs_uri' | 'quantity' | 'enum' | 'string' | 'domain_list' | 'choice_map';
+
+/** One option of a `choice_map` setting: a kind of sensitive data, say, and the masks it allows. */
+export interface SettingChoiceOption {
+  value: string;
+  label: string;
+  description: string;
+  choices: string[];
+}
 export type SettingUnit =
   | 'ms'
   | 'seconds'
@@ -1494,6 +1532,11 @@ export interface CpSetting {
   env_var: string | null;
   /** The values an `enum` setting takes; null for every other kind. */
   options?: string[] | null;
+  /** A `choice_map` setting's options, and what each choice is called. */
+  choice_options?: SettingChoiceOption[] | null;
+  choice_labels?: Record<string, string> | null;
+  /** Needed besides Manage settings to change it; absent or null for none. */
+  permission?: string | null;
   value: SettingValue;
   source: SettingSource;
   default_value: SettingValue;
@@ -1607,6 +1650,11 @@ export interface SettingView {
   minimum: number | null;
   maximum: number | null;
   options: string[] | null;
+  /** A `choice_map` setting's options, and what each choice is called. */
+  choiceOptions?: SettingChoiceOption[] | null;
+  choiceLabels?: Record<string, string> | null;
+  /** Needed besides Manage settings to change it (the data protection default's). */
+  permission?: string | null;
   maxLength: number | null;
   nullable: boolean;
   advanced: boolean;
@@ -2296,4 +2344,135 @@ export interface CpDatasetGrantList {
 export interface DatasetChangeResult extends IdentityChangeResult {
   /** The dataset's name. */
   name?: string;
+}
+
+/* ---------------------------------------------------------------- Data protection (handbook 22) */
+
+/** What a protected value becomes: a keyed hash, a partial form behind `****`, or nothing at all. */
+export const PROTECTION_MASKS = ['hash', 'partial', 'redact'] as const;
+export type ProtectionMask = (typeof PROTECTION_MASKS)[number];
+
+/** Which kinds of sensitive data are masked, each with its mask. */
+export interface ProtectionPolicy {
+  kinds: Record<string, ProtectionMask>;
+}
+
+/** A policy as a create or edit sends it: the kinds and masks, or the kinds alone for their defaults. */
+export interface ProtectionPolicyInput {
+  kinds: Record<string, ProtectionMask> | string[];
+  /** On an edit: record it again with the current rules, even unchanged. */
+  apply_rules?: boolean;
+}
+
+export interface CpProtectionKind {
+  id: string;
+  label: string;
+  description: string;
+  default_mask: ProtectionMask;
+  masks: ProtectionMask[];
+  partial_example: { value: string; partial: string };
+  examples: string[];
+}
+
+/** What data protection offers in a domain (`GET /system/settings`). */
+export interface CpProtectionCatalog {
+  kinds: CpProtectionKind[];
+  masks: { id: ProtectionMask; label: string; description: string }[];
+  /** The policy a create gets when it names none: the effective Protected by default setting. */
+  default: Record<string, ProtectionMask>;
+  /** Without a key nothing can be hashed, and a policy that hashes is refused. */
+  key_configured: boolean;
+  key_id: string | null;
+}
+
+/** How one field's values are masked. */
+export interface CpFieldProtection {
+  kind: string;
+  mask: ProtectionMask;
+  since_schema_id: number;
+}
+
+/** One policy a table took on. */
+export interface CpProtectionChange {
+  revision: number;
+  policy: ProtectionPolicy;
+  at: string | null;
+  by: string | null;
+  schema_id: number | null;
+  sequence_number: number | null;
+  key_id: string | null;
+  reason?: string | null;
+}
+
+/** A table's `materializer.protection` property. */
+export interface CpTableProtection {
+  version: number;
+  revision: number;
+  policy: ProtectionPolicy;
+  key_id: string | null;
+  fields: Record<string, { path: string[]; kind: string; mask: ProtectionMask; since: number; until?: number }>;
+  history: CpProtectionChange[];
+  protected_values?: number;
+  withheld_values?: number;
+}
+
+/** How far a policy has reached: every member and table on it, or not yet. */
+export type ProtectionState = 'current' | 'applying' | 'stopped' | 'not_reporting';
+
+/** A materialization's data protection on its detail. */
+export interface CpProtectionSummary {
+  policy: ProtectionPolicy;
+  revision: number;
+  changed_by: string | null;
+  /** `apply_rules` when the same policy was recorded again with the current rules. */
+  reason: string | null;
+  state: ProtectionState;
+  tables_behind: string[];
+  members_behind: string[];
+  members_reporting: number;
+  freshness_seconds: number;
+  tables: Record<string, { recorded_revision: number | null; protected_values: number; withheld_values: number }>;
+}
+
+export interface CpProtectionField {
+  field_id: number;
+  path: string[];
+  name: string;
+  kind: string;
+  mask: ProtectionMask;
+  since_schema_id: number;
+  until_schema_id: number | null;
+  active: boolean;
+}
+
+/** A field the current rules would protect otherwise than the table records. */
+export interface CpProtectionReviewItem {
+  field_id: number;
+  path: string[];
+  name: string;
+  current: { kind: string; mask: ProtectionMask } | null;
+  proposed: { kind: string; mask: ProtectionMask } | null;
+}
+
+export interface CpProtectionReviewTable {
+  table: string;
+  dataset: string;
+  dataset_id: string;
+  /** False until the table exists. */
+  created: boolean;
+  schema_id?: number;
+  recorded_revision?: number;
+  recorded_policy?: ProtectionPolicy;
+  key_id?: string | null;
+  fields: CpProtectionField[];
+  would_change: CpProtectionReviewItem[];
+  history: CpProtectionChange[];
+}
+
+/** `GET /materializations/{id}/protection`: the protection review. */
+export interface CpProtectionReview extends CpProtectionSummary {
+  materialization_id: string;
+  review: CpProtectionReviewTable[];
+  /** Tables in datasets whose schemas the caller may not see, left out. */
+  hidden_tables: number;
 }

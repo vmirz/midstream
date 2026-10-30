@@ -11,6 +11,8 @@ from typing import Any
 
 import yaml
 
+from midstream.protection.catalog import DEFAULT_PROTECTION_TEXT, ProtectionTextError, normalize_protection_text
+
 ALLOWED_LIST_LIMITS = ("10", "30", "100", "all")
 DEFAULT_LIST_LIMIT = "30"
 # Where a pod finds its own namespace; the deployment can name another for the runtimes.
@@ -208,6 +210,9 @@ class ControlPlaneConfig:
     schema_history_limit: int = SCHEMA_HISTORY_LIMIT
     storage_prefix: str = STORAGE_PREFIX
     default_partition_granularity: str = DEFAULT_PARTITION_GRANULARITY
+    #: The kinds of sensitive data a new materialization masks, and how, when its create request
+    #: does not say (handbook 22): `email=hash,phone=hash,national_id=hash,secret=redact`.
+    default_protection: str = DEFAULT_PROTECTION_TEXT
     discovery_sample_records: int = DISCOVERY_SAMPLE_RECORDS
     discovery_sample_seconds: int = DISCOVERY_SAMPLE_SECONDS
     catalog_api_enabled: bool = CATALOG_API_ENABLED
@@ -397,6 +402,10 @@ def get_config() -> ControlPlaneConfig:
             "CONTROL_PLANE_DEFAULT_PARTITION_GRANULARITY",
             DEFAULT_PARTITION_GRANULARITY,
         ).strip(),
+        default_protection=_parse_protection_env(
+            os.getenv("CONTROL_PLANE_DEFAULT_PROTECTION"),
+            name="CONTROL_PLANE_DEFAULT_PROTECTION",
+        ),
         discovery_sample_records=_parse_int_env(
             os.getenv("CONTROL_PLANE_DISCOVERY_SAMPLE_RECORDS"),
             default=DISCOVERY_SAMPLE_RECORDS,
@@ -674,6 +683,15 @@ def _parse_choice_env(raw_value: str | None, *, default: str, choices: tuple[str
     if value not in choices:
         raise ValueError(f"{name} must be one of: {', '.join(choices)}")
     return value
+
+
+def _parse_protection_env(raw_value: str | None, *, name: str) -> str:
+    if raw_value is None:
+        return DEFAULT_PROTECTION_TEXT
+    try:
+        return normalize_protection_text(raw_value)
+    except ProtectionTextError as error:
+        raise ValueError(f"{name}: {error}") from error
 
 
 def _parse_email_domains_env(raw_value: str | None, *, name: str) -> str:

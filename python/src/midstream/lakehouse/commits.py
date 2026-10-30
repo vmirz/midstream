@@ -55,7 +55,7 @@ from midstream.lakehouse.offsets import (
 from midstream.lakehouse.pointer import utc_now
 from midstream.lakehouse.schema.forkmap import ForkMap
 from midstream.lakehouse.schema.policy import Evolution
-from midstream.lakehouse.tables import PROPERTY_FORK_MAP, partition_granularity_of
+from midstream.lakehouse.tables import PROPERTY_FORK_MAP, PROPERTY_PROTECTION, partition_granularity_of
 
 LOGGER = logging.getLogger(__name__)
 
@@ -523,18 +523,26 @@ def commit_append(
 
 
 class _ReplaceSchema(UpdateTableMetadata["_ReplaceSchema"]):
-    """Stage an evolved schema, made current, with its fork map, guarded against a moved schema."""
+    """Stage an evolved schema, made current, with its fork map, guarded against a moved schema.
 
-    def __init__(self, transaction, evolution: Evolution) -> None:
+    With `protection_json`, the table's protection property is set in the same commit: the fields
+    the evolution added are recorded as protected from the schema that adds them (design §5.6).
+    """
+
+    def __init__(self, transaction, evolution: Evolution, protection_json: str | None = None) -> None:
         super().__init__(transaction)
         self._evolution = evolution
+        self._protection_json = protection_json
 
     def _commit(self):
         metadata = self._transaction.table_metadata
+        properties = {PROPERTY_FORK_MAP: self._evolution.fork_map.to_json()}
+        if self._protection_json is not None:
+            properties[PROPERTY_PROTECTION] = self._protection_json
         updates = (
             AddSchemaUpdate(schema_=self._evolution.schema),
             SetCurrentSchemaUpdate(schema_id=-1),
-            SetPropertiesUpdate(updates={PROPERTY_FORK_MAP: self._evolution.fork_map.to_json()}),
+            SetPropertiesUpdate(updates=properties),
         )
         requirements = (
             AssertCurrentSchemaId(current_schema_id=metadata.current_schema_id),
@@ -543,17 +551,48 @@ class _ReplaceSchema(UpdateTableMetadata["_ReplaceSchema"]):
         return updates, requirements
 
 
-def commit_schema(table: Table, evolution: Evolution) -> None:
-    """Commit an evolved schema and its fork map (one metadata commit, no snapshot)."""
+def commit_schema(table: Table, evolution: Evolution, *, protection_json: str | None = None) -> None:
+    """Commit an evolved schema and its fork map (one metadata commit, no snapshot), and the
+    table's protection when it changed with it."""
     if not evolution.changed:
         raise ValueError("nothing to commit: the evolution changed nothing")
     transaction = table.transaction()
-    _ReplaceSchema(transaction, evolution).commit()
+    _ReplaceSchema(transaction, evolution, protection_json).commit()
+    commit_once(transaction)
+
+
+class _SetProtection(UpdateTableMetadata["_SetProtection"]):
+    """Stage the table's protection property, guarded against a schema that moved since it was classified."""
+
+    def __init__(self, transaction, protection_json: str, schema_id: int) -> None:
+        super().__init__(transaction)
+        self._protection_json = protection_json
+        self._schema_id = schema_id
+
+    def _commit(self):
+        updates = (SetPropertiesUpdate(updates={PROPERTY_PROTECTION: self._protection_json}),)
+        requirements = (AssertCurrentSchemaId(current_schema_id=self._schema_id),)
+        return updates, requirements
+
+
+def commit_protection(table: Table, protection_json: str, *, schema_id: int) -> None:
+    """Commit the table's protection property alone (one metadata commit, no snapshot).
+
+    `schema_id` is the schema the fields were classified against: a schema committed in between
+    makes the commit fail, and the caller classifies again.
+    """
+    transaction = table.transaction()
+    _SetProtection(transaction, protection_json, schema_id).commit()
     commit_once(transaction)
 
 
 def fork_map_of(table_metadata) -> ForkMap:
     return ForkMap.from_json(table_metadata.properties.get(PROPERTY_FORK_MAP))
+
+
+def protection_json_of(table_metadata) -> str | None:
+    """The table's protection property as stored; None when the table records none."""
+    return table_metadata.properties.get(PROPERTY_PROTECTION)
 
 
 def table_totals(table: Table) -> dict[str, int]:

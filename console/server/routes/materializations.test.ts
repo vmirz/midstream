@@ -152,3 +152,33 @@ describe('update materialization schema', () => {
     assert.throws(() => updateMaterializationSchema.parse({ removed_tables: { payments: 'archive' } }));
   });
 });
+
+describe('data protection on create and edit', () => {
+  it('passes a policy through, as kinds with masks or as kinds alone', () => {
+    const chosen = { kinds: { email: 'hash', phone: 'partial', secret: 'redact' } };
+    assert.deepEqual(createMaterializationSchema.parse({ ...base, protection: chosen }).protection, chosen);
+    assert.deepEqual(createMaterializationSchema.parse({ ...base, protection: { kinds: ['email', 'secret'] } }).protection, {
+      kinds: ['email', 'secret'],
+    });
+    assert.deepEqual(createMaterializationSchema.parse({ ...base, protection: { kinds: {} } }).protection, { kinds: {} });
+  });
+
+  it('leaves the policy out when the create names none, so the domain’s default applies', () => {
+    assert.equal('protection' in createMaterializationSchema.parse(base), false);
+  });
+
+  it('refuses a mask that is not one, and what a create may not ask', () => {
+    assert.throws(() => createMaterializationSchema.parse({ ...base, protection: { kinds: { email: 'encrypt' } } }));
+    assert.throws(() => createMaterializationSchema.parse({ ...base, protection: { kinds: { 'Not A Kind': 'hash' } } }));
+    assert.throws(() => createMaterializationSchema.parse({ ...base, protection: { kinds: {}, fields: {} } }));
+    assert.throws(() => createMaterializationSchema.parse({ ...base, protection: { kinds: {}, apply_rules: true } }));
+  });
+
+  it('takes a new policy as an edit, and a request to apply the current rules', () => {
+    assert.deepEqual(updateMaterializationSchema.parse({ protection: { kinds: { phone: 'partial' } } }), { protection: { kinds: { phone: 'partial' } } });
+    assert.deepEqual(updateMaterializationSchema.parse({ protection: { kinds: ['email'], apply_rules: true } }), {
+      protection: { kinds: ['email'], apply_rules: true },
+    });
+    assert.throws(() => updateMaterializationSchema.parse({ protection: { kinds: {}, apply_rules: 'yes' } }));
+  });
+});

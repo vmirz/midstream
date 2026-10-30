@@ -18,7 +18,7 @@
 import { badRequest } from '../errors.ts';
 import { quoteIdentifier, quoteLiteral } from './sql.ts';
 import { METADATA_COLUMNS, PAYLOAD_ROOT, isMetadataColumn } from '../../shared/fieldPaths.ts';
-import { buildIndex, isMetadataFieldId, logicalName, type ElementIndex, type ForkMap, type StructIndex } from '../iceberg/schema.ts';
+import { buildIndex, isMetadataFieldId, logicalName, type ElementIndex, type FieldProtection, type ForkMap, type ProtectionMap, type StructIndex } from '../iceberg/schema.ts';
 import type { IcebergSchema, IcebergType } from '../iceberg/metadata.ts';
 import type { BrowseFilter, QueryColumn, TimeRange } from '../../shared/types.ts';
 
@@ -53,6 +53,8 @@ export interface LogicalColumn {
   jsonText: boolean;
   /** Whether the schema still writes it, as opposed to a field only superseded forks hold. */
   current: boolean;
+  /** How its values are masked (handbook 22), when a field carrying it is protected. */
+  protection?: FieldProtection;
 }
 
 export const TIMESTAMP_COLUMN = '_kafka_timestamp';
@@ -222,7 +224,7 @@ function typeDepth(type: string): number {
 }
 
 /** The logical columns of a schema: payload fields in schema order, then the Kafka metadata. */
-export function logicalColumns(schema: IcebergSchema | null, forkMap: ForkMap = new Map()): LogicalColumn[] {
+export function logicalColumns(schema: IcebergSchema | null, forkMap: ForkMap = new Map(), protection: ProtectionMap = new Map()): LogicalColumn[] {
   if (!schema) return metadataColumns(null);
   const leaves: Leaf[] = [];
   walkStruct(buildIndex(schema, forkMap), ROOT, leaves);
@@ -247,7 +249,10 @@ export function logicalColumns(schema: IcebergSchema | null, forkMap: ForkMap = 
   const payload: LogicalColumn[] = [];
   for (const [name, group] of shaped) {
     const forks = group.map((leaf) => leaf.fork).sort((a, b) => b.fieldId - a.fieldId);
-    payload.push(fold(isMetadataColumn(name) ? `${PAYLOAD_ROOT}${name}` : name, forks, group.some((leaf) => leaf.current)));
+    const column = fold(isMetadataColumn(name) ? `${PAYLOAD_ROOT}${name}` : name, forks, group.some((leaf) => leaf.current));
+    // The newest protected fork says how the column is masked: a type fork of a protected field is.
+    const masked = forks.map((fork) => protection.get(fork.fieldId)).find((entry) => entry !== undefined);
+    payload.push(masked ? { ...column, protection: masked } : column);
   }
   // A field only superseded forks hold still has history worth showing; it sorts after the fields
   // the schema currently writes.
@@ -323,7 +328,12 @@ const DEFAULT_METADATA_TYPES: Record<(typeof METADATA_COLUMNS)[number], string> 
 };
 
 export function toQueryColumns(columns: LogicalColumn[]): QueryColumn[] {
-  return columns.map((column) => ({ name: column.name, type: column.type, ...(column.jsonText ? { json: true } : {}) }));
+  return columns.map((column) => ({
+    name: column.name,
+    type: column.type,
+    ...(column.jsonText ? { json: true } : {}),
+    ...(column.protection ? { protection: column.protection } : {}),
+  }));
 }
 
 /**

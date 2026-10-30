@@ -40,6 +40,37 @@ export interface ForkEntry {
 export type ForkMap = ReadonlyMap<number, ForkEntry>;
 
 export const FORK_MAP_PROPERTY = 'materializer.fork-map';
+/** What the table masks (handbook 22): its policy and, by field id, each protected field. */
+export const PROTECTION_PROPERTY = 'materializer.protection';
+
+/** How a field's values are masked. */
+export interface FieldProtection {
+  kind: string;
+  mask: string;
+}
+
+/** The table's protected fields by field id: those masked now, not those written plain again. */
+export type ProtectionMap = Map<number, FieldProtection>;
+
+export function parseProtection(text: string | undefined | null): ProtectionMap {
+  const map: ProtectionMap = new Map();
+  if (!text) return map;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return map;
+  }
+  const fields = (raw as { fields?: Record<string, Record<string, unknown>> } | null)?.fields ?? {};
+  for (const [id, entry] of Object.entries(fields)) {
+    const fieldId = Number(id);
+    if (!Number.isInteger(fieldId) || !entry || typeof entry !== 'object') continue;
+    if (entry.until !== undefined && entry.until !== null) continue;
+    if (typeof entry.kind !== 'string' || typeof entry.mask !== 'string') continue;
+    map.set(fieldId, { kind: entry.kind, mask: entry.mask });
+  }
+  return map;
+}
 
 export function parseForkMap(text: string | undefined | null): ForkMap {
   const map = new Map<number, ForkEntry>();

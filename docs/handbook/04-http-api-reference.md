@@ -28,8 +28,9 @@ is no session.
 | Method | Path | WebView | Needs | Success | Persists? | Emits? |
 |--------|------|---------|-------|---------|-----------|--------|
 | `GET` | `/materializations` | `materializations-list` | `materializations.view` | 200 | no | no |
-| `POST` | `/materializations` | `materializations-create` | `materializations.create`, and `dataset.write` on each table's dataset | **202** | **no** | `materialization-requests` |
+| `POST` | `/materializations` | `materializations-create` | `materializations.create`, and `dataset.write` on each table's dataset; `dataset.protect` on each too when its `protection` is not the default | **202** | **no** | `materialization-requests` |
 | `GET` | `/materializations/{materialization_id}` | `materializations-detail` | `materializations.view_details` | 200 | no | no |
+| `GET` | `/materializations/{materialization_id}/protection` | `materializations-protection` | `materializations.view_details`; tables in datasets without `dataset.view_schema` are left out | 200 | no | no |
 | `GET` | `/materializations/{materialization_id}/tables/{table_name}/schema` | `materializations-schema` | `materializations.view_details`, and `dataset.view_schema` on the table's dataset | 200 | no | no |
 | `GET` | `/materializations/{materialization_id}/tables/{table_name}/schema/versions` | `materializations-schema-versions` | as above | 200 | no | no |
 | `GET` | `/materializations/{materialization_id}/tables/{table_name}/schema/versions/{schema_id}` | `materializations-schema-version` | as above | 200 | no | no |
@@ -37,7 +38,7 @@ is no session.
 | `POST` | `/materializations/{materialization_id}/maintenance` | `materializations-maintenance` | `materializations.maintain` | **202** | **no** | `<release>-maintenance-requests`, one message per table |
 | `POST` | `/materializations/{materialization_id}/stop` | `materializations-stop` | `materializations.stop` | **202** | **no** | `materialization-requests` |
 | `POST` | `/materializations/{materialization_id}/resume` | `materializations-resume` | `materializations.resume` | **202** | **no** | `materialization-requests` |
-| `PATCH` | `/materializations/{materialization_id}` | `materializations-update` | `materializations.edit`, and `dataset.write` on each dataset a change of topics touches | **202** | **no** | `materialization-requests` |
+| `PATCH` | `/materializations/{materialization_id}` | `materializations-update` | `materializations.edit`, and `dataset.write` on each dataset a change of topics touches; `dataset.protect` on each dataset written into when it changes `protection` | **202** | **no** | `materialization-requests` |
 | `DELETE` | `/materializations/{materialization_id}` | `materializations-delete` | `materializations.delete`, and `dataset.write` on each dataset it has tables in | **202** | **no** | `materialization-requests` |
 | `GET` | `/datasets` | `datasets-list` | `datasets.view` | 200 | no | no |
 | `POST` | `/datasets` | `datasets-create` | `datasets.create` | **202** | **no** | `<release>-identity-requests` |
@@ -51,7 +52,7 @@ is no session.
 | `GET` | `/system/version` | `system-version` | — (public) | 200 | no | no |
 | `GET` | `/system/settings` | `system-settings` | `materializations.view` | 200 | no | no |
 | `GET` | `/settings/{scope}` | `settings-read` | `settings.view` | 200 | no | no |
-| `PATCH` | `/settings/{scope}` | `settings-update` | `settings.manage` | **202** | **no** | `<release>-settings-requests` |
+| `PATCH` | `/settings/{scope}` | `settings-update` | `settings.manage`, and `settings.manage_protection` to set or reset `default_protection` | **202** | **no** | `<release>-settings-requests` |
 | `GET` | `/settings/{scope}/history` | `settings-history` | `settings.view` | 200 | no | no |
 | `POST` | `/auth/login` | `auth-login` | — | 200 | no | `<release>-identity-requests` |
 | `POST` | `/auth/refresh` | `auth-refresh` | session | 200 | no | `<release>-identity-requests` |
@@ -220,6 +221,7 @@ Create a new materialization.
 | `live_tail` | boolean | no | — | Not a choice: every materialization has a live tail (19), and only the deployment's `live_tail_enabled` turns it off, for all of them. `true`, which a 4.1 console may send, changes nothing; anything else is `400`, `field: "live_tail"` |
 | `labels` | object | no | `{}` | Must be an object |
 | `annotations` | object | no | `{}` | Must be an object |
+| `protection` | object | no | `default_protection` | The kinds of sensitive data its writers mask, and how (22 §22.4): `{"kinds": {"email": "hash", "phone": "partial"}}`, or `{"kinds": ["email", "phone"]}` for each kind's default mask; `{"kinds": {}}` masks nothing. Resolved when accepted: a later change of the default does not reach it. Other than the default, it needs `dataset.protect` on every table's dataset. Can change later (§4.8.1) |
 
 A request does **not** choose where its tables go, where its runtime runs or what storage it gets:
 `destination_uri`, `namespace`, `runtime_name` and `storage_size` are the deployment's, and a body
@@ -248,7 +250,8 @@ Full request:
   "replicas": 16,
   "partition_granularity": "day",
   "labels": { "team": "data-platform" },
-  "annotations": { "owner": "data-eng@example.com" }
+  "annotations": { "owner": "data-eng@example.com" },
+  "protection": { "kinds": { "email": "hash", "phone": "partial", "secret": "redact" } }
 }
 ```
 
@@ -271,9 +274,13 @@ Full request:
     { "name": "orders_v2", "source_topic": "orders.v2", "dataset": "sales", "dataset_id": "ds-5c1e…" }
   ],
   "claim_request_id": "idr-3e8f0a1b2c4d",
-  "claim_status_url": "/identity/requests/idr-3e8f0a1b2c4d"
+  "claim_status_url": "/identity/requests/idr-3e8f0a1b2c4d",
+  "protection": { "policy": { "kinds": { "email": "hash", "phone": "partial", "secret": "redact" } }, "revision": 1 }
 }
 ```
+
+`protection` is the policy the materialization was created with, resolved from the default when the
+request named none, and its revision.
 
 `desired_phase` is always `"running"` for create; `observed_phase` is `"requested"`, and
 `phase_reason` `"claiming_tables"` until the directory has claimed the tables' names. `tables` is
@@ -312,7 +319,10 @@ Topic `materialization-requests`, key `materialization:mat-a1b2c3d4e5f6`:
     "autoscaling": true,
     "partition_granularity": "day",
     "labels": {},
-    "annotations": {}
+    "annotations": {},
+    "protection": { "kinds": { "email": "hash", "phone": "partial", "secret": "redact" } },
+    "apply_protection_rules": false,
+    "protection_base_revision": null
   },
   "submitted_by_id": "usr-3f9c2a1b7d4e",
   "claim_request_id": "idr-3e8f0a1b2c4d"
@@ -349,14 +359,23 @@ generated from the id and length-bounded. Request intake records that name as th
    `invalid_request("skip_tombstones must be a boolean", field="skip_tombstones")`; so must
    `autoscaling` (`field="autoscaling"`).
 10. `partition_granularity` must be `hour`, `day`, `month` or `none`, and `replicas` is validated
-    (`scale.py`) → `invalid_request(..., field=...)`.
+    (`scale.py`) → `invalid_request(..., field=...)`. `protection`, when given, must be an object
+    with `kinds` only, known kinds and masks each kind allows (`fields` and `tables` are reserved:
+    `"protection.fields is not supported in this version"`) → `invalid_request(...,
+    field="protection.kinds.<kind>")`; absent, the default is resolved.
 11. `MaterializationRequestSpec.__post_init__` runs; a `ValueError` is converted to
-    `invalid_request` with a best-effort `field` inferred by substring-matching the message.
+    `invalid_request` with a best-effort `field` inferred by substring-matching the message. A
+    resolved policy other than the default needs `dataset.protect` on every table's dataset →
+    `403 forbidden` (`permission: dataset.protect`, `dataset`).
 12. The claim of the tables' names is previewed against the directory, with the agent's own checks
     (18 §18.16): the caller may not add tables to a dataset → `403 forbidden`
     (`permission: dataset.write`); a `<dataset>.<name>` is taken → `409 conflict`
     (`reason: table_name_taken`, `materialization_id` of the holder). Each names its row in
     `details.field`, `index`, `dataset`, `table` and `source_topic`.
+12a. A policy that hashes, in a deployment with no protection key → `409 conflict`,
+    `reason: protection_key_not_configured`, saying to add `protection-key` to the auth Secret or
+    choose partial or withheld (22 §22.8). Checked after the permissions, so whoever may not create
+    the materialization learns that first.
 13. Kafka is asked for every topic (`require_listed_topics`), awaited, for at most 10 s: one read of
     every topic in the cluster, naming none, so a missing topic is not created by asking. A topic
     it does not list — it does not exist, or the deployment's Kafka user may not describe it (21
@@ -446,7 +465,24 @@ overruled; 3.x let a request choose them (16 §16.8). An update may still repeat
     "replicas": 4,
     "autoscaling": true,
     "partition_granularity": "day",
-    "live_tail": true
+    "live_tail": true,
+    "protection": { "kinds": { "email": "hash", "phone": "partial", "secret": "redact" } },
+    "protection_revision": 2
+  },
+  "protection": {
+    "policy": { "kinds": { "email": "hash", "phone": "partial", "secret": "redact" } },
+    "revision": 2,
+    "changed_by": "jane@example.com",
+    "reason": null,
+    "state": "current",
+    "tables_behind": [],
+    "members_behind": [],
+    "members_reporting": 4,
+    "freshness_seconds": 120,
+    "tables": {
+      "orders": { "recorded_revision": 2, "protected_values": 304002, "withheld_values": 0 },
+      "payments": { "recorded_revision": 2, "protected_values": 51870, "withheld_values": 1203 }
+    }
   },
   "autoscale": {
     "enabled": true,
@@ -544,6 +580,14 @@ overruled; 3.x let a request choose them (16 §16.8). An update may still repeat
   while there is no telling (no drain yet, or too few measurements); `lag` and `measured_at` the last
   measurement it read. `enabled` is the materialization's own `autoscaling`: the deployment's switch is
   `GET /system/settings`' `autoscaling_enabled`. Present since 4.4.
+- `materialization.protection` is the policy its writers mask with and `protection_revision` its
+  revision: 1 at creation, one more per edit, 0 for a materialization from before data protection that
+  no edit gave one. `protection` says how far the revision has reached (22 §22.7): `state` is
+  `current` once every member heard from in the last `freshness_seconds` masks with it and every table
+  records it, `applying` while a table (`tables_behind`) or a member (`members_behind`) is behind,
+  `stopped`, or `not_reporting`; per table, the revision it records and the values its writers masked
+  and withheld, as monotonic totals. `reason` is `apply_rules` when the last edit recorded the same
+  policy again with the current rules.
 - `pending_topic_change`, while an edit adding topics waits for their names (§4.8.1):
   `{request_id, claim_request_id, submitted_at, added}`.
 - `materialization.source_topics` and `tables` are what the runtime should read; while a change of
@@ -637,9 +681,16 @@ the dataset.
   "changes": [
     { "kind": "forked", "path": ["total"], "field_id": 31, "physical_path": ["total__v2"], "type": "string" }
   ],
-  "unmapped": { "total_values": 0, "last_seen_at": null }
+  "unmapped": { "total_values": 0, "last_seen_at": null },
+  "protection": { "version": 1, "revision": 2, "policy": { "kinds": { "email": "hash" } }, "key_id": "3f9a1c2e",
+                  "fields": { "22": { "path": ["email"], "kind": "email", "mask": "hash", "since": 0 } }, "history": [ "…" ],
+                  "protected_values": 304002, "withheld_values": 0 }
 }
 ```
+
+A protected field carries `protection: {"kind", "mask", "since_schema_id"}`; `protection` is the
+table's `materializer.protection` property as of this schema (22 §22.6), with the values its writers
+masked and withheld, or `null` for a table that records none.
 
 ### Semantics
 
@@ -784,6 +835,50 @@ with the reason. Asking for compaction also retries partitions it had given up o
 
 ---
 
+## 4.6.6 `GET /materializations/{materialization_id}/protection`
+
+The protection review (22 §22.11): the materialization's policy and how far it has reached — the
+detail's `protection` (§4.6) — and, per table, what it records: every field that is or was protected,
+and what the policy with the current rules would protect otherwise. Tables in datasets on which the
+caller may not see schemas (`dataset.view_schema`) are left out and counted in `hidden_tables`.
+
+```json
+{
+  "materialization_id": "mat-a1b2c3d4e5f6",
+  "policy": { "kinds": { "email": "hash", "ip_address": "partial" } },
+  "revision": 4, "changed_by": "jane@example.com", "reason": null,
+  "state": "applying", "tables_behind": ["orders"], "members_behind": [], "members_reporting": 4, "freshness_seconds": 120,
+  "tables": { "orders": { "recorded_revision": 3, "protected_values": 304002, "withheld_values": 0 } },
+  "review": [
+    {
+      "table": "orders", "dataset": "sales", "dataset_id": "ds-5c1e…",
+      "created": true, "schema_id": 3, "recorded_revision": 3,
+      "recorded_policy": { "kinds": { "email": "hash" } }, "key_id": "3f9a1c2e",
+      "fields": [
+        { "field_id": 22, "path": ["email"], "name": "email", "kind": "email", "mask": "hash",
+          "since_schema_id": 0, "until_schema_id": null, "active": true }
+      ],
+      "would_change": [
+        { "field_id": 40, "path": ["ip"], "name": "ip", "current": null, "proposed": { "kind": "ip_address", "mask": "partial" } }
+      ],
+      "history": [ { "revision": 3, "policy": { "kinds": { "email": "hash" } },
+                     "at": "2026-11-20T15:12:41Z", "by": "jane@example.com", "schema_id": 3, "sequence_number": 412, "key_id": "3f9a1c2e" } ]
+    }
+  ],
+  "hidden_tables": 0
+}
+```
+
+`would_change` is what recording the materialization's policy with today's rules would change in the
+table: while an edit is applying, as here, what the edit is about to do (revision 4 adds
+`ip_address`, which the table has not recorded yet); once every table records the policy, only what
+a newer release's rules match that the table recorded otherwise — what *Apply the current rules*,
+`PATCH` with the policy in force and `apply_rules: true` (§4.8.1), would do. A table not created yet
+has `created: false` and empty lists. Read from the control plane's schema projections; it never
+opens a table.
+
+---
+
 ## 4.7 `POST /materializations/{id}/stop`
 
 Sets `desired_phase = "stopped"` and emits `action = "stop"` → work step `apply_runtime`, which
@@ -854,8 +949,9 @@ being deleted.
 ## 4.8.1 `PATCH /materializations/{id}`
 
 Change what can change after creation - the label, the runtime's `replicas` and whether it is
-autoscaled, and the topics it reads - and re-apply its runtime when the topics or replicas change, or
-when turning autoscaling off takes members away. Emits `action = "update"`. The
+autoscaled, the topics it reads, and its data protection - and re-apply its runtime when the topics or
+replicas change, or when turning autoscaling off takes members away; a change of protection is
+delivered to the running runtime without a restart (22 §22.7). Emits `action = "update"`. The
 desired phase is not touched: a stopped materialization stays stopped and runs with the new settings
 once resumed. The destination and everything else stay as created.
 
@@ -874,7 +970,8 @@ curl -sS -X PATCH localhost:6065/materializations/mat-a1b2c3d4e5f6 \
 | `autoscaling` | A boolean. Turned off while the runtime is scaled up, the runtime goes back to `replicas` at once; turned on, the next lag measurements decide. Not part of the runtime's spec: `spec_version` stays |
 | `tables` | The topics to read from now on, in order, each `{source_topic, dataset?, name?}`, at most `max_materialization_topics`. A topic already read, or kept a table of, keeps its table: it may only repeat its dataset and name, and to put it in another dataset its table must be dropped first. Any other topic needs a `dataset`, and gets a new table there named `name` or after the topic, apart from every name the materialization holds (07 §7.9a) |
 | `removed_tables` | `{"<table>": "keep" \| "drop"}`: for **each** table whose topic `tables` removes, `keep` it read-only or `drop` it with its data; may also `drop` a kept table. Required for every removed topic's table |
-| At least one of the five | otherwise `400 invalid_request`, `field: "replicas"` |
+| `protection` | The whole policy from now on, as for a create, plus `"apply_rules": true` to record the policy in force again so the current rules are applied to every field. Needs `dataset.protect` on every dataset written into — those of tables the same request adds or writes again included — and `409 protection_key_not_configured` when it hashes without a key. Repeating the policy in force without `apply_rules` changes nothing. Not part of the runtime's spec: `spec_version` stays, and nothing restarts. Applied by intake only to the revision the API read (`protection_base_revision`): a redelivery changes nothing, and one overtaken by another edit is refused, the status message saying so |
+| At least one of the six | otherwise `400 invalid_request`, `field: "replicas"` |
 | Any other creation setting (`destination_uri`, `storage_size`, …) at its **current** value | Accepted and ignored, so a client can send back what it read |
 | A creation setting at a **different** value | `400 invalid_request`, `"<field> cannot be changed after creation"`, `details.field` set |
 | Anything else | `400 invalid_request`, `"<field> is not a setting that can be changed"` |
@@ -916,9 +1013,18 @@ and, for a change of topics, what it does to each table:
   "claim_request_id": "idr-…", "claim_status_url": "/identity/requests/idr-…" }
 ```
 
+A change of protection answers what it does:
+
+```json
+{ "protection": { "before": { "kinds": { "email": "hash", "secret": "redact" } },
+                  "after": { "kinds": { "email": "partial", "phone": "hash", "secret": "redact" } },
+                  "revision": 4, "apply_rules": false,
+                  "applies_to": "records written from now on, within seconds, without a restart; rows already written keep their values" } }
+```
+
 `spec_version` increments once per request that changes something the runtime runs with - replicas,
 topics or both - and a redelivered request does not increment it twice; a new label leaves it alone,
-as does turning autoscaling on or off.
+as does turning autoscaling on or off, or a change of protection.
 The answer carries `name` as it now is, and `live_tail: true`. A change of topics holds the runtime at zero
 members until its consumer group has emptied, about two minutes, then starts it again; new topics are
 sampled and their tables created first (07 §7.9a). Repeating the topics as they are changes nothing.
@@ -1138,7 +1244,17 @@ than guessing.
   "dataset_name_max_length": 63,
   "table_name_max_length": 63,
   "reserved_names": ["all", "alter", "analyse", "…"],
-  "reserved_namespace_names": ["information_schema", "main", "…"]
+  "reserved_namespace_names": ["information_schema", "main", "…"],
+  "protection": {
+    "kinds": [ { "id": "email", "label": "Email addresses", "description": "Fields named like email, email_address, contact_email",
+                 "default_mask": "hash", "masks": ["hash", "partial", "redact"],
+                 "partial_example": { "value": "jane.doe@example.com", "partial": "****@example.com" },
+                 "examples": ["email", "email_address", "billing_email"] }, "…" ],
+    "masks": [ { "id": "hash", "label": "Hashed", "description": "…" }, "…" ],
+    "default": { "email": "hash", "phone": "hash", "national_id": "hash", "secret": "redact" },
+    "key_configured": true,
+    "key_id": "3f9a1c2e"
+  }
 }
 ```
 
@@ -1152,6 +1268,9 @@ when it does (19). `live_tail_default` is always `true`, for a 4.1 console's cre
 `autoscaling_enabled` says whether the control plane scales runtimes that are far behind at all,
 `autoscale_max_replicas` the most members it gives one, and `autoscale_target_minutes` the catch-up
 time it scales for (07 §7.12a); a create may turn autoscaling off for its own materialization (§4.5).
+`protection` describes data protection (22): every kind with the masks it allows and what its partial
+keeps, the masks, `default` — the effective `default_protection` a create gets — and whether a
+protection key is configured, with its id; without one a policy that hashes is refused.
 
 The values are the **effective** ones: an override chosen on the console's Settings page wins
 over the environment variable (§4.9.3).
@@ -1331,7 +1450,7 @@ class WebError(Exception):
 | `invalid_request(msg, field_name=...)` | `invalid_request` | `400` | `{"field": <name>}` or `{}`; a topic Kafka does not list adds `reason: source_topic_missing` and `source_topics` (§4.5) |
 | `not_found(msg, resource=..., identifier=...)` | `not_found` | `404` | `{"resource": ..., "id": ...}` |
 | `already_exists(msg, resource=..., identifier=..., field_name=...)` | `already_exists` | `409` | `{"resource": ..., "id": ...}`, plus `"field"` when given |
-| `conflict(msg, reason=...)` | `conflict` | `409` | `{"reason": ...}` — the materialization's state does not allow the request, or (`settings_changed`) the settings changed since the client read them |
+| `conflict(msg, reason=...)` | `conflict` | `409` | `{"reason": ...}` — the materialization's state does not allow the request, or (`settings_changed`) the settings changed since the client read them, or (`protection_key_not_configured`) a policy hashes and the deployment has no protection key |
 | `unavailable(msg, reason=...)` | `unavailable` | `503` | `{"reason": ...}` |
 | `unauthenticated(msg, reason=...)` | `unauthenticated` | `401` | `{"reason": ...}`: `sign_in_required` (a guest asked for more than guests may do), `invalid_session`, `session_expired`, `session_ended`, `account_deactivated`, `sign_in_unavailable`, `invalid_credentials` |
 | `forbidden(msg, reason=..., permission=...)` | `forbidden` | `403` | `{"reason": "forbidden", "permission": <key>}` when a signed-in person lacks a permission; `{"reason": "password_change_required"}` until they replace a password someone else chose; also directory changes the agent would refuse for lack of access |

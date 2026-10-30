@@ -7,6 +7,8 @@ from typing import Any
 
 from midstream.config import ControlPlaneConfig, domain_identity_from_environment
 from midstream.identity.secrets import IdentitySecrets, get_identity_secrets
+from midstream.protection.catalog import catalog_payload, parse_protection_text
+from midstream.protection.secrets import ProtectionKey, get_protection_key
 from midstream.settings import resolve_config
 from midstream.storage.table import TableProtocol
 from midstream.table_names import (
@@ -25,6 +27,7 @@ def version_view(
     *,
     config: ControlPlaneConfig | None = None,
     secrets: IdentitySecrets | None = None,
+    protection_key: ProtectionKey | None = None,
 ) -> dict[str, Any]:
     """Report the running control-plane version, and which domain it is.
 
@@ -33,7 +36,9 @@ def version_view(
     own version through status events, so the console can show when the two have drifted apart.
     The shared console checks `domain` against its registry, and compares `federation_key_id` - the
     first 8 hex characters of the federation key's SHA-256, never the key - across domains, since
-    every domain must share the key that signs access tokens (handbook 20).
+    every domain must share the key that signs access tokens (handbook 20). `protection_key_id` is
+    the same for the key data protection hashes with: domains whose masked columns should join
+    share it (handbook 22).
     """
     if config is None:
         domain_id, domain_name = domain_identity_from_environment(os.environ)
@@ -41,11 +46,13 @@ def version_view(
         domain_id, domain_name = config.domain_id, config.domain_name
     identity_secrets = get_identity_secrets() if secrets is None else secrets
     federation_key = identity_secrets.current_federation_key
+    key = get_protection_key() if protection_key is None else protection_key
     return {
         "component": COMPONENT,
         "version": PACKAGE_VERSION,
         "domain": None if domain_id is None else {"id": domain_id, "name": domain_name or domain_id},
         "federation_key_id": None if federation_key is None else federation_key.key_id,
+        "protection_key_id": None if key is None else key.key_id,
     }
 
 
@@ -65,9 +72,12 @@ def settings_view(
     whether this deployment tails tables at all - every materialization's (handbook 19).
     `live_tail_default` is always true, for a 4.1 console's create dialog. `autoscaling_enabled` says
     whether the control plane scales runtimes that are far behind at all; a create may turn it off
-    for its own materialization, and it is on unless it does.
+    for its own materialization, and it is on unless it does. `protection` describes data protection
+    (handbook 22): every kind and mask, the policy a create gets when it names none (`default`), and
+    whether a protection key is configured - without one a policy that hashes is refused.
     """
     cfg = resolve_config(settings_table) if config is None else config
+    key = get_protection_key()
     return {
         "default_destination_uri": cfg.default_destination_uri,
         "default_namespace": cfg.default_namespace,
@@ -89,4 +99,10 @@ def settings_view(
         # take DuckDB's own namespaces either.
         "reserved_names": sorted(RESERVED_TABLE_NAMES),
         "reserved_namespace_names": sorted(DUCKDB_CATALOG_NAMES),
+        "protection": {
+            **catalog_payload(),
+            "default": parse_protection_text(cfg.default_protection),
+            "key_configured": key is not None,
+            "key_id": None if key is None else key.key_id,
+        },
     }

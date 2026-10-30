@@ -106,6 +106,14 @@ as the projection does — record keys, fork families (`total`, `total__v2`), JS
 (`total__json`), list elements as `items[].sku`. A test compares its projection of the fixture
 table with the control plane's, field for field (`iceberg.test.ts`).
 
+The same metadata says what the table masks: `materializer.protection` (control-plane handbook 22
+§22.6), which `parseProtection` reads into a map from field id to its kind and mask — fields protected now
+only, not those written plain again. Each logical column a run returns carries
+`protection: {kind, mask}` when the field behind it is protected, so the Data tab marks it from the
+table itself, whatever the materialization's policy says now. A property this console cannot read is
+treated as nothing protected (`server/data/protection.test.ts`, against `testdata/protection.json`,
+which the control plane's own code writes).
+
 ### The logical columns
 
 `data/logical.ts::logicalColumns` turns the schema into the columns people see:
@@ -184,7 +192,7 @@ the table itself:
 | Part | From |
 |---|---|
 | `record` | the control plane: state (written, kept, being dropped), location, totals, offsets, maintenance history and the job running now, last error |
-| `metadata` | the table: the newest 200 snapshots with their operation and summary, partitions with files, bytes, records and small files (`compactionDue` once a partition has `compaction_min_input_files` of them that the maintenance app's planner would take now: what is still being written waits for the hot partition delay, `server/iceberg/compaction.ts`), totals, the partition spec and sort order as text, properties — without the fork map and `schema.*` for someone who may not see the dataset's schemas |
+| `metadata` | the table: the newest 200 snapshots with their operation and summary, partitions with files, bytes, records and small files (`compactionDue` once a partition has `compaction_min_input_files` of them that the maintenance app's planner would take now: what is still being written waits for the hot partition delay, `server/iceberg/compaction.ts`), totals, the partition spec and sort order as text, properties — without the fork map, `materializer.protection` and `schema.*` for someone who may not see the dataset's schemas |
 | `metadataError` | why the table could not be read, when it could not |
 | `connection` | the catalog URI for the Connect panel, whose snippets name the table `lake.<dataset>.<table>`; the panel shows only for someone with `catalog.read` on the table's dataset |
 

@@ -1,3 +1,5 @@
+import { ProtectedMark } from '../protection/ProtectionSummary';
+import { fieldProtectionText } from '../protection/protection';
 import { ChevronDown, ChevronUp, Copy, Filter, X } from 'lucide-react';
 import { useEffect, useMemo, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -7,6 +9,7 @@ import { readJsonShape } from './jsonShape';
 import { Button } from '@/components/ui/primitives';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/cn';
+import { useMaterializationDefaults } from '@/lib/defaults';
 import { formatCell, formatInstant, isInstantType, localZone } from '@/lib/format';
 import { rowNester } from '@shared/fieldPaths';
 import type { BrowseFilter, QueryColumn } from '@shared/types';
@@ -37,6 +40,7 @@ export function RowDrawer({
   onStep: (delta: number) => void;
   onFilter: (filter: BrowseFilter) => void;
 }): ReactNode {
+  const catalog = useMaterializationDefaults().defaults?.protection ?? null;
   const toast = useToast();
   const groups = useMemo(() => groupColumns(columns, schemaOrder), [columns, schemaOrder]);
   const zone = useMemo(() => localZone(), []);
@@ -133,10 +137,11 @@ export function RowDrawer({
                       className="group grid grid-cols-[minmax(0,180px)_minmax(0,1fr)] items-start gap-3 border-b border-[var(--color-line)] px-4 py-2 last:border-b-0 hover:bg-[var(--color-raised)]"
                     >
                       <dt
-                        className="numeric truncate pt-px text-[11px] text-[var(--color-ink-muted)]"
-                        title={`${column.name} · ${column.type}`}
+                        className="numeric flex min-w-0 items-center gap-1 pt-px text-[11px] text-[var(--color-ink-muted)]"
+                        title={`${column.name} · ${column.type}${column.protection ? ` · masked: ${fieldProtectionText(column.protection, catalog)}` : ''}`}
                       >
-                        {column.name}
+                        <span className="truncate">{column.name}</span>
+                        <ProtectedMark protection={column.protection} />
                       </dt>
                       <dd className="flex min-w-0 items-start gap-1">
                         <span

@@ -146,6 +146,7 @@ Empty states differentiate "No matches" (with **Clear filters**) from "No materi
 |-------|----------|-------|
 | Source topics | yes | One or more of the cluster's topics, up to the control plane's `max_materialization_topics` (20); see [Topic picker](#topic-picker). Each becomes a table, in the dataset chosen on its row (see [Tables](#tables-dataset-and-name)). Focused when the dialog opens. Fixed once created |
 | Name | no | A label for people: free text, at most 128 characters, not unique, changeable at any time with **Edit**. Left empty, the materialization goes by its id. It names no table: SQL reads `<dataset>.<table>`, as the line under the topics shows with the first table |
+| Data protection | no | Beside the name, not behind Advanced: the policy in a line — *Email addresses hashed · Phone numbers hashed · … · default* — opening into a row per kind of sensitive data with **Off**, **Hashed**, **Partial** and **Withheld** (only the masks the kind allows: a secret is never hashed), each kind's examples and what its partial keeps. Pre-set from the domain's *Protected by default*; **Use the default** returns to it. Choosing otherwise needs *Choose data protection* on every dataset the tables go in: without it the control is locked, naming the datasets, and a changed choice blocks **Create**. A choice that hashes in a domain with no protection key says the control plane will refuse it (control-plane handbook [22](../../docs/handbook/22-data-protection.md)) |
 | **Advanced settings** | | Collapsed; its summary reads *Partitioning, replicas, autoscaling, labels, tombstones*. Opens on its own when the control plane rejects one of its fields. It begins with where the tables go and what each member gets — *Its tables are created under the deployment's destination, `gs://my-lake`, and each runtime member gets `64Mi` of storage* — which the dialog does not ask for |
 | Partitioning | no | **By day** (the default, from `default_partition_granularity`), **By hour**, **By month** or **Not partitioned**: how the tables are partitioned by each record's Kafka timestamp. Fixed for the tables' life |
 | Replicas | no | Placeholder shows the default; checked against the control plane's maximum. The members share every topic's partitions; the picker says how many of them the topics can keep busy. Can be changed later with **Edit** |
@@ -274,6 +275,14 @@ would outnumber what the topics can keep busy — topics with as many partitions
 32 and 8 partitions keep at most 40 busy ("2 would have none to read"); on a stopped materialization
 it says the count applies on resume.
 
+**Data protection** is the create dialog's block, starting from the policy in force (*· current*;
+**Keep the current protection** returns to it). Changed, it says what changes — *Phone numbers:
+hashed → partial* — and that it applies to records written from now on, within seconds, without a
+restart, while rows already written keep their values. It needs *Choose data protection* on every
+dataset the materialization writes into, those of topics the edit adds or writes again included;
+otherwise the block is locked, naming them, and a changed choice blocks **Save**. A protection-only
+edit restarts nothing and leaves the materialization **Running**.
+
 **Autoscale** is a checkbox, as on create; changing it alone is a valid change, and leaves the
 runtime as it is unless it takes members away. Its hint says what it does now: *Running 12 members
 while it catches up. Turned off, it goes back to 4 at once.* while scaled up, or that autoscaling is
@@ -301,10 +310,10 @@ If the control plane is unreachable and no detail has ever been fetched, the pag
 
 ### Tabs
 
-URL segments: `` (Overview), `schema`, `data`, `table`, `runtime`. The Schema, Data and Table tabs
+URL segments: `` (Overview), `schema`, `data`, `table`, `protection`, `runtime`. The Schema, Data and Table tabs
 show one table at a time, named by `?table=` (the first table when absent) and chosen with the
 table picker each shows when there are two or more; switching tabs keeps `?table=`. Every tab needs
-`materializations.view_details`; beyond it, **Schema** needs `dataset.view_schema` and **Data**
+`materializations.view_details`; beyond it, **Schema** and **Protection** need `dataset.view_schema` and **Data**
 `data.query`, each on at least one of the tables' datasets. Those tabs choose among the tables the
 person may use there: the others are in the picker, *· locked*, and never shown — a `?table=` naming
 one opens the first allowed instead. A tab someone may not open is not shown, and a link to it opens
@@ -376,8 +385,11 @@ to a batch per partition plus a commit interval, and its lag falls in steps as c
 autoscaling has it scaled up), **Autoscaling** (**On · up to 16**, **Off**, or **Off for every
 materialization**; absent before 4.4), storage per replica, `namespace`,
 `runtime_mode`, `resolved_runtime_name`, `created_by`, `created_at`, `resource_profile`,
-`spec_version`, **Tombstones** (**Ignored** or **Kept as rows**) and **Partitioned by** (day, hour,
-month or nothing), then label and annotation chips when non-empty.
+`spec_version`, **Tombstones** (**Ignored** or **Kept as rows**), **Partitioned by** (day, hour,
+month or nothing) and **Data protection** — the kinds in force as chips, *Email addresses · hashed*,
+or *None: values are written as they arrive*, with how far the policy has reached: **In force ·
+revision 2**, **Applying revision 3** (its tooltip naming the tables and members behind), **Applies
+on resume** or **No member reporting** — then label and annotation chips when non-empty.
 
 ---
 
@@ -449,6 +461,9 @@ Payload fields first, in schema order with each fork family together, then the K
 | Required | `required` when the field is |
 | State | `current`, `superseded` (a newer fork took over), `collapsed` |
 | Id | The Iceberg field id |
+
+A protected field carries a shield beside its name, its tooltip saying its kind, its mask and the
+schema it was protected from (*Masked · Email addresses · hashed since schema 0*).
 
 **Tree** nests the same fields by path. A filter matches name or type; **Hide superseded** hides the
 older members of each family, rendered at 55% opacity otherwise.
@@ -644,7 +659,9 @@ first, then the fields; the other metadata is a click away. Fields follow schema
 their logical names; a forked field appears once with its whole history folded in. Only the
 runtime's own columns count as Kafka metadata (`_kafka_*`, `_materialized_at`, `_unmapped`), so a
 field such as `_id` stays with the fields. A column's type reads compactly — `STRUCT`, `MAP`, `LIST`
-— before the scalar types.
+— before the scalar types. A masked column carries a shield, its tooltip saying its kind and mask,
+read from the table's own `materializer.protection` (06), so it is right whatever the materialization's
+policy says now.
 
 Expanding a column profiles it over the run's rows — distinct count, null share, top values, range —
 under the 8-second stats budget, labelled `partial` when it ran out of time. A top value filters to it.
@@ -705,7 +722,7 @@ otherwise runs the view again.
 
 Every field of one row on one vertical axis, grouped like the rail and including hidden columns, with
 per-field copy, filter-to-this-value, whole-row JSON copy (in the JSON layout chosen under
-**Export…**), and `↑`/`↓` (or `j`/`k`) to step rows. A timestamp shows its local time with the UTC
+**Export…**), and `↑`/`↓` (or `j`/`k`) to step rows. A masked field carries the rail's shield. A timestamp shows its local time with the UTC
 value beneath it.
 
 ---
@@ -749,7 +766,7 @@ its permission — on the console's page, in the settings home; on a domain's, i
 | Console | System | Deployment | `settings.view` in the settings home |
 | Console | System | Change history | `settings.view` in any domain |
 | Domain | Access | Users, Groups, Roles, Security, Sign-in, Audit log | `users.view`, `groups.view`, `roles.view`, `settings.view`, `settings.view`, `audit.view` |
-| Domain | Platform | Materializations, Deletion & retention, Schema evolution, Runtimes, Commits, Live tail, Compaction & retention, Iceberg catalog, Background jobs | `settings.view` |
+| Domain | Platform | Materializations, Data protection, Deletion & retention, Schema evolution, Runtimes, Commits, Live tail, Compaction & retention, Iceberg catalog, Background jobs | `settings.view` |
 | Domain | System | Topics & Kafka, Diagnostics, Deployment, Change history | `settings.view` |
 
 Without `settings.manage` the settings sections are read-only: no save bar, no Reset. A domain's
@@ -765,6 +782,17 @@ tokens with (*differs* when it is not the one most domains share, with a warning
 whether it is the settings home, whether you are signed in there — **Sign in** when not — and
 **Open**.
 
+**Data protection** holds *Protected by default*: a row per kind of sensitive data, **Off**,
+**Hashed**, **Partial** or **Withheld**, what every new materialization masks unless it chooses
+otherwise. Saving it also needs *Manage data protection defaults*: without it the row is read-only,
+saying so, while the rest of the page may still be saved. A change applies to materializations
+created from then on, never to existing ones. While the domain has no protection key, a warning
+above the rows says so: nothing can be hashed, so a create that keeps a default that hashes is
+refused until the key is added (control-plane handbook
+[22](../../docs/handbook/22-data-protection.md) §22.9). The
+domain's **Deployment** section shows the protection key's id, or *not configured: nothing can be
+hashed*.
+
 A section with unsaved edits carries a dot (a `•` in the picker). Settings marked advanced sit in a
 collapsed **Advanced** panel, which opens by itself when one of them has an edit.
 
@@ -776,7 +804,7 @@ collapsed **Advanced** panel, which opens by itself when one of them has an edit
 | Description | What it controls and, where useful, when to change it. Only where the label is not enough |
 | Provenance | *Default*, *Set by the deployment `ENV_VAR`*, or *Changed by jane · 5 minutes ago · deployment value 16 replicas* |
 | Effect | What a change applies to, when that is not "at once": *Applies to new materializations* |
-| Control | A number field with its unit, a switch, a text field, or a select for an `enum` setting such as **Default partitioning** (its `options`). Large numbers keep thousands separators, and a readable equivalent shows under the field (`= 15 min`, `= 8 MiB`) |
+| Control | A number field with its unit, a switch, a text field, a select for an `enum` setting such as **Default partitioning** (its `options`), or a row of choices per option for a `choice_map` such as **Protected by default**. Large numbers keep thousands separators, and a readable equivalent shows under the field (`= 15 min`, `= 8 MiB`) |
 | Reset / Undo | **Reset** returns an override to the deployment value or default (named in its tooltip). **Undo** drops an unsaved edit |
 
 ### Saving
@@ -936,11 +964,27 @@ topic and the dataset, a link to the dataset's page.
 | Snapshots | The newest 200: when committed, the operation (append, a compaction's replace, …), files and rows added, the offsets reached. The current one's row opens the Data tab, for someone who may query the table's dataset; the Data tab reads the latest data only, so older rows do not |
 | Maintenance | **Compaction**, **Snapshot expiry** and **Orphan cleanup**: each job's last run — when, its outcome, its partitions, `32 files → 1`, bytes, snapshots expired and kept, orphans deleted of those listed, how long it took; a skipped run's note in muted text and a failure's in amber; the job running now. The maintenance app runs them on its own schedule, whether or not the runtime runs, kept tables included. **Run now** (`materializations.maintain`) asks it to run one on this table next; the panel follows the result |
 | Files by partition | Every partition, newest first — `2026-10-23`, `2026-10-23-14` or `2026-10` by the table's partitioning: files, bytes, records and small files, with a mark (*compact*) on a partition the next compaction takes, by the maintenance app's own rule: what is still being written waits for the hot partition delay (06 §6.5); **Files / Bytes** switches the bars. Rows without a timestamp read *no timestamp* |
-| Properties | Identifier, location, metadata file, format version, schema id, partition spec, sort order, current snapshot, table UUID, and the table properties — without the fork map and `schema.*` for someone who may not see the dataset's schemas |
+| Properties | Identifier, location, metadata file, format version, schema id, partition spec, sort order, current snapshot, table UUID, and the table properties — without the fork map, `materializer.protection` and `schema.*` for someone who may not see the dataset's schemas |
 | Connect | With `catalog.read` on the table's dataset: snippets for **DuckDB**, **PyIceberg**, **Spark**, **Trino** and **By path** (DuckDB's `iceberg_scan` on the location), filled with this deployment's catalog URI and `lake.<dataset>.<table>`, each with **Copy**; a link to make an access token |
 
 The tab reads the table itself, so it works while the runtime is stopped. A table that cannot be read
 shows why (*The table could not be read*), and one not created yet says so.
+
+## 11.10a Detail → Protection
+
+What the materialization masks, and what each of its tables records of it
+(`features/protection/ProtectionTab.tsx`; data from `GET /api/materializations/:id/protection`, the
+control plane's review, refreshed every 15 s). Shown to people who may see schemas on at least one of
+the tables' datasets; tables in the others are left out, and counted at the foot.
+
+| Panel | Shows |
+|---|---|
+| Data protection | The policy as chips, its revision (*None: created before data protection* at 0), who chose it — *· current rules applied* after *Apply the current rules* — the members masking with it (`3 of 4`) and the tables recording it, with **In force**, **Applying revision N**, **Applies on resume** or **No member reporting**. A change applies to records written from then on; rows already written keep their values |
+| *N fields revision R is about to protect otherwise* | While a table has not recorded the current revision yet: what recording it will change, field by field, `plain → Email addresses hashed`. No action: each table records it on its next commit |
+| *N fields the current rules would protect otherwise* | Fields a newer release's rules match that their table recorded otherwise. **Apply the current rules** — for someone who may edit the materialization and choose protection on every dataset it writes into — records the policy again, revision + 1, so the rules apply from then on |
+| One per table, `sales.orders` | Its protected fields — name, kind, mask, the schema it was protected from — and those written plain again (*Plain since schema 4*), the values masked and withheld so far, the revision it records (**Recording revision N** while behind), and its history of policies: revision, when, by whom, at which schema |
+
+Choosing another policy is the **Edit** dialog's (§11.4).
 
 ## 11.11 Datasets (`/datasets`, `/datasets/:name[/:tab]`)
 

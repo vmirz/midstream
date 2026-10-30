@@ -24,7 +24,7 @@ import { readAll, withConnection } from './duckdb.ts';
 import { logicalColumns, readParquet, selectList, toQueryColumns } from './logical.ts';
 import type { UserCaller } from '../controlPlane/client.ts';
 import type { IcebergSchema } from '../iceberg/metadata.ts';
-import type { ForkMap } from '../iceberg/schema.ts';
+import type { ForkMap, ProtectionMap } from '../iceberg/schema.ts';
 import type { QueryColumn, RunTailState } from '../../shared/types.ts';
 
 /** Records past `after`, as one Parquet file, and what the tail app's headers say of them. */
@@ -195,10 +195,10 @@ export async function fetchHead(
  */
 export async function readPeek(
   bytes: Buffer,
-  table: { schema: IcebergSchema | null; forkMap: ForkMap },
+  table: { schema: IcebergSchema | null; forkMap: ForkMap; protection?: ProtectionMap },
   limit: number,
 ): Promise<{ rows: Record<string, unknown>[]; columns: QueryColumn[] }> {
-  const columns = logicalColumns(table.schema, table.forkMap);
+  const columns = logicalColumns(table.schema, table.forkMap, table.protection);
   if (table.schema === null || bytes.length === 0) return { rows: [], columns: toQueryColumns(columns) };
   const directory = join(config.runDir, 'peeks');
   const path = join(directory, `${randomUUID()}.parquet`);
@@ -324,6 +324,8 @@ export function refusal(status: number, body: Buffer): TailBacklogged | TailUnav
   if (status === 503 && reason === 'tail_not_ready') return { ...unavailableOutcome('not_ready', message, status), state: state ?? 'seeding' };
   if (status === 503 && reason === 'topic_unavailable') return unavailableOutcome('topic_unavailable', message, status);
   if (status === 503 && reason === 'peek_failed') return unavailableOutcome('peek_failed', message, status);
+  // The table hashes and the tail app has no protection key, or another: never served plain (handbook 22).
+  if (status === 503 && reason === 'protection_key_missing') return unavailableOutcome('protection_key_missing', message, status);
   if (status === 401 || status === 403) return unavailableOutcome('forbidden', message, status);
   if (status === 400) return unavailableOutcome('rejected', message, status);
   return unavailableOutcome('unreachable', message, status);

@@ -363,6 +363,11 @@ from its **own** domain's tail app with the person's session there. A run's `tab
 domain, dataset and materialization; the status line names the domains a statement read; exporting
 needs `data.export` on every table it read, in each one's domain.
 
+**Masked columns across domains.** A hashed column joins another domain's only when both domains hash
+with the same protection key (22 §22.8): `GET /system/version` reports each domain's
+`protection_key_id`, which the deployer compares. Like the federation key, sharing it is the
+installer's choice — generate one and patch it into each domain's auth Secret.
+
 **The Data tab** writes full names into the statement it starts from, completes the materialization's
 own tables with their columns and every other domain's tables by name, and keeps Live for the
 domain's own table; a statement spanning domains has *Auto re-run* only.

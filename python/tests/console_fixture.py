@@ -344,10 +344,58 @@ def copy_table(lake: LakeFixture, target: Path, location: str) -> dict:
     return expected
 
 
+#: Where the protection fixture goes: beside the tables, read by `console/server/data/protection.test.ts`.
+PROTECTION_FIXTURE = REPO / "console" / "testdata" / "protection.json"
+
+
+def write_protection_fixture(path: Path = PROTECTION_FIXTURE) -> dict:
+    """A protected table's schema, fork map and `materializer.protection` property, as the control
+    plane writes them (handbook 22): what the console's reader of the property is tested against.
+
+    Discovery masks its samples before inferring schema 0, so `ssn` - sampled as a number - is a string
+    field, `password` is no field at all, and `phone` forks into a struct whose `number` inherits the
+    kind. The policy hashes emails and national identifiers, shortens phone numbers, withholds secrets.
+    """
+    from midstream.lakehouse.schema.index import build_index
+    from midstream.protection.plan import SHAPE_ONLY_SECRET, ProtectionPlan, initial_protection, record_policy
+    from midstream.protection.policy import ProtectionPolicy
+    from midstream.lakehouse.tables import build_schema
+
+    policy = ProtectionPolicy({"email": "hash", "phone": "partial", "national_id": "hash", "secret": "redact"})
+    samples = [
+        {"order_id": "O-1", "ssn": 123456789, "password": "pw", "customer": {"email": "a@example.com", "tier": "gold"}, "phone": "540-948-9848"},
+        {"order_id": "O-2", "ssn": "123-45-6789", "customer": {"email": "b@example.com", "tier": "silver"}, "phone": {"number": "555-0100", "type": "mobile"}},
+    ]
+    plan = ProtectionPlan.for_policy(policy, secret=SHAPE_ONLY_SECRET)
+    evolution = evolve(build_schema(), ForkMap(), [((), infer(plan.protect(sample))) for sample in samples], schema_id=0)
+    index = build_index(evolution.schema, evolution.fork_map, last_column_id=evolution.last_column_id)
+    protection = initial_protection(index, policy, revision=1, at="2026-10-29T00:00:00Z", by="fixture@example.com")
+    # A second revision stops masking emails: their field is written plain again, which the reader skips.
+    protection = record_policy(protection, index, ProtectionPolicy({"phone": "partial", "national_id": "hash", "secret": "redact"}), revision=2)
+    fixture = {
+        "schema": schema_to_json(evolution.schema),
+        "fork_map": evolution.fork_map.to_dict(),
+        "protection_property": protection.to_json(),
+        "expected": {
+            ".".join(member.logical_path): {"kind": entry.kind, "mask": entry.mask}
+            for field_id, entry in protection.active_fields().items()
+            for member in [index.members[field_id]]
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(fixture, indent=1, sort_keys=True) + "\n")
+    return fixture
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, default=REPO / "console" / "testdata" / "iceberg")
-    expected = write_fixture(parser.parse_args().out)
+    parser.add_argument("--protection-only", action="store_true", help="write only the protection fixture")
+    args = parser.parse_args()
+    write_protection_fixture()
+    if args.protection_only:
+        return
+    expected = write_fixture(args.out)
     print(json.dumps({key: expected[key] for key in ("metadata_location", "current_snapshot_id", "rows", "offsets")}, indent=1, default=str))
 
 

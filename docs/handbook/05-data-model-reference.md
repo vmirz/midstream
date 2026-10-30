@@ -207,6 +207,9 @@ schema migration of the envelope itself, not for optimistic concurrency.
 | `spec_version` | `int` | `1` | `>= 1`; incremented once per update that changes replicas, topics or both |
 | `retired_tables` | `tuple[TableSpec, ...]` | `()` | tables kept read-only after their topics were removed: in their datasets and the catalog, maintained, not written. Adding a kept table's topic back writes it again |
 | `pending_topic_change` | `PendingTopicChange \| None` | `None` | an edit that adds tables, waiting for the directory to claim their names: `request_id`, `claim_request_id`, `submitted_at`, and `plan`, the `TopicChangePlan` it applies as is once claimed (07 §7.9b). At most one |
+| `protection` | `ProtectionPolicy` | nothing | the kinds of sensitive data its writers mask and how, `{"kinds": {kind: mask}}` (22 §22.4): resolved from `default_protection` at creation, replaced by an edit. Absent in records before data protection, read as nothing |
+| `protection_revision` | `int` | `0` | `>= 0`; 1 at creation, one more per edit that changes the policy or applies the rules again; 0 for a materialization from before data protection that no edit gave a policy. Delivered to the runtime with the policy, recorded by each table |
+| `protection_changed_by`, `protection_reason` | `str \| None` | `None` | who chose the policy in force; `apply_rules` when the last edit recorded the same policy again with the current rules |
 
 `TableSpec` is `{name, source_topic, dataset, dataset_id}`: the table's name, the topic it holds, and
 the dataset it is in — SQL reads it as `qualified_name`, `<dataset>.<name>`. Neither the dataset nor
@@ -298,6 +301,12 @@ restores the newest archived one if a changelog replay rolled the current one ba
 | `changes` | `list[dict]` | `[]` | what changed from the previous schema: `added`, `forked`, `collapsed`, `rejected` |
 | `last_column_id` | `int \| None` | `None` | the table's `last-column-id` |
 | `rejected_paths` | `list[list[str]]` | `[]` | logical paths refused at the field limit; writers stop asking for them |
+| `protection` | `dict` | `{}` | the table's `materializer.protection` property as of this schema (22 §22.6); empty when it records none. `protection_revision` reads its revision |
+
+A policy the committer records changes the property and keeps the schema id, so two projections are
+ordered by `position`, `(schema_id, protection_revision)`: an older one never replaces a newer one,
+and a recorded policy replaces the projection of the same schema. Each protected field's entry
+carries `protection: {kind, mask, since_schema_id}` (`services/schema_projection.py::annotate_protection`).
 
 Two entries of a projection — `total`, a number that later arrived as a string and forked:
 
@@ -438,6 +447,7 @@ Always emits all three keys.
 | `cumulative_rows_written`, `cumulative_bytes_written`, `cumulative_files_written`, `cumulative_records_skipped`, `cumulative_unmapped_values` | `int \| None` | `None` | monotonic totals across member restarts, every table together |
 | `unmapped_last_seen_at` | `str \| None` | `None` | when a member last reported values going to `_unmapped` |
 | `cumulative_unmapped_by_table`, `unmapped_last_seen_by_table` | `dict[str,int]`, `dict[str,str]` | `{}` | the same per table, from the members' `table_counters` — what each table's schema view reports |
+| `cumulative_protected_by_table`, `cumulative_withheld_by_table` | `dict[str,int]` | `{}` | values the writers masked and withheld per table, monotonic across member restarts (22 §22.7) |
 | `member_progress` | `dict[str, MemberProgress]` | `{}` | keyed by runtime member id |
 | `skip_reasons` | `dict[str, SkipReasonTotal]` | `{}` | skipped records by category |
 | `tables` | `dict[str, dict]` | `{}` | each table's heartbeat block as the committer member last sent it (06 §6.5), by table name; `table(name)` reads one |
@@ -461,6 +471,9 @@ member's previous reading is what keeps the totals monotonic.
 | `settings_lineage` | `str \| None` | `None`; the lineage of those settings, `""` when they have none, `None` from runtimes older than 4.1 |
 | `skip_counts` | `dict[str,int]` | `{}` |
 | `table_unmapped` | `dict[str,int]` | `{}`; this member's `_unmapped` counter per table, so per-table totals stay monotonic too |
+| `table_protected`, `table_withheld` | `dict[str,int]` | `{}`; this member's masked and withheld counters per table, for the same reason |
+| `protection_revisions` | `dict[str,int]` | `{}`; the protection revision this member masks each table with — what the rollout state compares (22 §22.7) |
+| `protection_key_id` | `str \| None` | `None`; the id of the protection key the member loaded |
 
 ### `ResourceCondition`
 
@@ -620,6 +633,9 @@ Published on Kafka topics. Full topic-level details in
 | `partition_granularity` | `str \| None` | `None` | ∈ `PARTITION_GRANULARITIES`; `None` takes `default_partition_granularity` |
 | `labels` | `dict[str,str]` | `{}` | — |
 | `annotations` | `dict[str,str]` | `{}` | — |
+| `protection` | `ProtectionPolicy \| None` | `None` | on a create, the policy the API resolved — the default when the request named none; `None` only from a control plane before data protection, which intake reads as nothing protected, revision 0. On an update, the policy from now on, or `None` to leave it |
+| `apply_protection_rules` | `bool` | `False` | on an update: record the policy again with the current rules, even when it is the one in force |
+| `protection_base_revision` | `int \| None` | `None` | on an update that sets `protection`: the revision the API read. Intake applies the policy only to that revision (07 §7.9) |
 
 Emits all keys. Since 4.0 a request chooses none of `destination_uri`, `runtime_name`, `namespace` and
 `storage_size`: the API fills them in from the deployment (04 §4.5.2), so the event says what the
@@ -717,7 +733,9 @@ new topic gets, in the dataset the request chose, under the name it chose or der
 | `unmapped_values` | `int \| None` | `None` | values the member's seals wrote to `_unmapped` |
 | `files_pending_commit` | `int \| None` | `None` | files uploaded and not yet committed |
 | `tables` | `dict[str, dict] \| None` | `None` | the committer member's block for each table, by name (06 §6.5) |
-| `table_counters` | `dict[str, dict[str,int]]` | `{}` | this member's own counters per table: rows, bytes and files written, values unmapped |
+| `table_counters` | `dict[str, dict[str,int]]` | `{}` | this member's own counters per table: rows, bytes and files written, values unmapped, and values masked and withheld (`protected_values`, `withheld_values`) |
+| `protection_revisions` | `dict[str,int]` | `{}` | the protection revision this member masks each table with, its schema view's; empty when no table records one, and from runtimes before data protection |
+| `protection_key_id` | `str \| None` | `None` | the id of the protection key the member loaded. A member that must hash and cannot reports `health: degraded` with `health_reason` `protection_key_missing` or `protection_key_mismatch` (22 §22.5) |
 
 The heartbeat carries more than the model keeps — `latest_committed_offsets`, the upload backlog,
 `performance` — for logs and the console's member view; `from_dict` ignores what it does not hold.
@@ -761,10 +779,10 @@ for the tail app (06 §6.18, 19).
 | Field | Type | Notes |
 |---|---|---|
 | `kind` | `str` | ∈ `LIVE_TAIL_MESSAGE_KINDS`: `tail_tick`, `tail_cancel` |
-| `target` | `LiveTailTarget` | `materialization_id`, `dataset`, `dataset_id`, `table`, `location`, `source_topic`, `partition_granularity`, `table_uuid`, `skip_tombstones` |
+| `target` | `LiveTailTarget` | `materialization_id`, `dataset`, `dataset_id`, `table`, `location`, `source_topic`, `partition_granularity`, `table_uuid`, `skip_tombstones`, `protection_key_id` — the id of the deployment's protection key, so a tail with another key, or none, serves no table that hashes (22 §22.5) |
 | `issued_at` | `str` | required |
 | `settings` | `dict` | tick: the live-tail settings as resolved that minute (`LIVE_TAIL_SETTING_FIELDS`, `services/live_tail.py`) |
-| `hints` | `LiveTailHints \| None` | tick: the table record's `offsets` (partition as text → last offset in the table), `schema_id`, `metadata_location` - never ahead of the table, at most an event behind |
+| `hints` | `LiveTailHints \| None` | tick: the table record's `offsets` (partition as text → last offset in the table), `schema_id`, `metadata_location`, `protection_revision` - never ahead of the table, at most an event behind; a newer protection revision than the tail holds is a recorded policy it missed |
 | `reason` | `str \| None` | cancel, required: ∈ `LIVE_TAIL_CANCEL_REASONS` - `table_dropping`, `table_retired`, `materialization_deleting`, `materialization_stopped`, and `live_tail_off`, which only a control plane before 4.3 sends |
 
 ## 5.10 Runtime-local models
@@ -864,12 +882,17 @@ The committer's models, in its process only:
 
 ## 5.11 The runtime's state table (`<rt>-state`)
 
-One global Kaspr table per runtime, one partition, written only by the committer agent (Kaspr
-writes a table only from within a stream event) and read by every member. Its keys are in 10 §10.8,
+One global Kaspr table per runtime, one partition, written only by its agents — the committer, and
+the settings agent for the keys delivered on the runtime control topic (Kaspr writes a table only from
+within a stream event) — and read by every member. Its keys are in 10 §10.8,
 one set per table: `table:<table>` (totals and the metadata location), `schema:<table>`
 (`SchemaRecord`: the schema, fork map and rejected paths every member conforms to, and the
 `table_uuid` it came from), `committed-offsets:<table>` (with its `table_uuid`),
-`file-decisions:<table>`; and `runtime-settings` (§5.13). Members ignore a `schema:` or
+`file-decisions:<table>`; and `runtime-settings` (§5.13) and `protection-policy` — the newest
+policy delivered to the runtime, `DeliveredPolicy` (`runtime_app/protection_state.py`: `revision`,
+`policy`, `changed_by`, `published_at`, `applied_at`, `reason`), which the committer records into every table (22 §22.7).
+`SchemaRecord` also carries the table's recorded protection, and members take the newest by
+`(schema_id, protection_revision)`. Members ignore a `schema:` or
 `committed-offsets:` entry of another table under the same name (10 §10.8, *Incarnations*). Everything else a member holds — open batches, the ack ledger, its
 pipeline — is process memory, rebuilt from the topic and the table after a restart (10 §10.9).
 

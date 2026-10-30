@@ -36,11 +36,12 @@ import time
 from typing import Any
 
 from midstream.models import LiveTailHints, LiveTailTarget
+from midstream.protection.secrets import get_protection_key, key_problem
 from midstream.protocol_logging import log_protocol_event
 from midstream.tail_app.buffer import Selection, TableBuffer, Unavailable
 from midstream.tail_app.config import TailSettings
 from midstream.tail_app.consumer import TP, Need
-from midstream.tail_app.ingest import UNDECODABLE, TailSchema, build, decode_value, epoch_ms, stage
+from midstream.tail_app.ingest import UNDECODABLE, TailSchema, build, decode_value, epoch_ms, protect, stage
 from midstream.tail_app.serve import rebuild, rows_batch
 
 LOGGER = logging.getLogger(__name__)
@@ -180,12 +181,44 @@ class TableTail:
             self._signal()
 
     def install_schema(self, schema: TailSchema) -> bool:
-        """A newer schema of the table: rows built under the older one are built again when served."""
-        if self.schema is not None and schema.schema_id <= self.schema.schema_id:
+        """A newer schema of the table: rows built under the older one are built again when served.
+
+        Newer by schema, then by protection revision. A newer protection revision - a policy the
+        committer recorded - cannot be applied to what the buffer holds, as its lines were masked under
+        the older one: the uncommitted records are read again, from the committed offsets (handbook 22).
+        A table that hashes while this member may not is let go of rather than served plain.
+        """
+        if self.schema is not None and schema.position <= self.schema.position:
             return False
+        protection_changed = self.schema is not None and schema.protection_revision != self.schema.protection_revision
         self.schema = schema
         self.counters.reconforms += 1
+        if self.refuse_unprotectable():
+            return True
+        if protection_changed and self.active:
+            self._start_buffer()
         self._signal()
+        return True
+
+    def protection_problem(self) -> str | None:
+        """Why this member may not mask the table's records as its writers do, or None."""
+        schema = self.schema
+        if schema is None or not schema.plan.hashes:
+            return None
+        return key_problem(get_protection_key(), self.target.protection_key_id)
+
+    def refuse_unprotectable(self) -> bool:
+        """Make the table unavailable when its records must be hashed and this member may not hash."""
+        problem = self.protection_problem()
+        if problem is None:
+            return False
+        self.reset("unavailable", reason=problem)
+        self.last_error = (
+            "the table masks values with a keyed hash, and this member has no protection key"
+            if problem == "protection_key_missing"
+            else "the table masks values with a keyed hash, and this member has another protection key than the deployment's"
+        )
+        LOGGER.warning("The tail of %s is unavailable: %s", self.key, self.last_error)
         return True
 
     # -- activation ------------------------------------------------------------------------------
@@ -246,7 +279,7 @@ class TableTail:
         if self.state != "seeding":
             return
         self._seed_failures = 0
-        self.schema = schema if self.schema is None or schema.schema_id >= self.schema.schema_id else self.schema
+        self.schema = schema if self.schema is None or schema.position >= self.schema.position else self.schema
         self.seed_source = source
         self.counters.seeds += 1
         if committed:
@@ -256,6 +289,8 @@ class TableTail:
         self.progress = {partition: PartitionProgress(head=ends.get(partition)) for partition in self.partitions}
         self._beginnings = dict(beginnings)
         self.activated_at = self.activated_at or self._clock()
+        if self.refuse_unprotectable():
+            return
         log_protocol_event(
             LOGGER,
             enabled=self.settings.protocol_logging_enabled,
@@ -349,7 +384,12 @@ class TableTail:
                 self.counters.tombstones_skipped += 1
                 self.buffer.skip(partition, offset=offset)
             else:
-                line = stage(record, value, materialization_id=self.target.materialization_id, source_topic=self.target.source_topic)
+                line = stage(
+                    record,
+                    protect(value, schema),
+                    materialization_id=self.target.materialization_id,
+                    source_topic=self.target.source_topic,
+                )
                 row = build(line, schema, default_partition=partition)
                 moment = row.built.moment
                 self.buffer.append(

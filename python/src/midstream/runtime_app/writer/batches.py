@@ -46,6 +46,7 @@ def create_open_batch(
     table: str,
     after_offset: int,
     session_generation: int | None,
+    protection_revision: int = 0,
 ) -> RuntimeBatchState:
     """A new open batch of `table` starting at `source_record`, continuing its partition after `after_offset`.
 
@@ -72,6 +73,7 @@ def create_open_batch(
         session_generation=session_generation,
         created_at=source_record.observed_at,
         updated_at=source_record.observed_at,
+        protection_revision=protection_revision,
     )
 
 

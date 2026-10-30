@@ -2,6 +2,7 @@ import { ArrowDown, ArrowUp, Maximize2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { ColumnLabelText } from '@/features/data/ColumnLabelText';
+import { ProtectedMark } from '@/features/protection/ProtectionSummary';
 import { labelFor, type ColumnLabel } from '@/features/data/columns';
 import { cn } from '@/lib/cn';
 import { displayCell, isInstantType, localZone } from '@/lib/format';
@@ -226,6 +227,7 @@ export function DataGrid({
                   ) : (
                     <span className="truncate">{column.name}</span>
                   )}
+                  <ProtectedMark protection={column.protection} />
                   {isInstantType(column.type) ? (
                     <span className="shrink-0 font-normal text-[var(--color-ink-faint)]">{zone.label}</span>
                   ) : null}

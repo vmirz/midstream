@@ -26,6 +26,9 @@ from midstream.lakehouse.rows import BuiltRow, build_row
 from midstream.lakehouse.schema.conform import Conformer
 from midstream.lakehouse.schema.forkmap import ForkMap
 from midstream.lakehouse.schema.index import build_index
+from midstream.protection.plan import ProtectionPlan
+from midstream.protection.policy import TableProtection
+from midstream.protection.secrets import get_protection_key
 from midstream.runtime_app.models import RuntimeSourceRecordMetadata
 from midstream.runtime_app.schema.drift import DriftDetector
 from midstream.runtime_app.writer.batches import staged_line
@@ -55,7 +58,8 @@ def epoch_ms(moment: datetime | None) -> int | None:
 
 
 class TailSchema:
-    """One schema of a table, ready to build rows with: what a seal conforms with, and its drift rule."""
+    """One schema of a table, ready to build rows with: what a seal conforms with, its drift rule,
+    and what the writers mask records with (handbook 22)."""
 
     def __init__(
         self,
@@ -65,6 +69,7 @@ class TailSchema:
         fork_map: dict[str, Any],
         last_column_id: int | None = None,
         rejected_paths: list[list[str]] | tuple[tuple[str, ...], ...] = (),
+        protection: dict[str, Any] | None = None,
     ) -> None:
         self.schema_id = int(schema_id)
         self.iceberg_schema = dict(iceberg_schema)
@@ -75,6 +80,20 @@ class TailSchema:
         self.arrow_schema = arrow_schema(self.schema)
         self.drift = DriftDetector(self.index, rejected_paths=tuple(tuple(path) for path in rejected_paths))
         self.rejected_paths = tuple(tuple(path) for path in rejected_paths)
+        # The table's recorded protection: the writers mask each record with the plan it makes, before
+        # staging, so the tail does the same, before its own staging.
+        self.protection = TableProtection.from_dict(protection or {})
+        key = get_protection_key()
+        self.plan = ProtectionPlan(self.protection, self.index, secret=None if key is None else key.secret)
+
+    @property
+    def protection_revision(self) -> int:
+        return self.protection.revision
+
+    @property
+    def position(self) -> tuple[int, int]:
+        """Which of two schemas is newer: by schema, then by protection revision."""
+        return (self.schema_id, self.protection.revision)
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +115,12 @@ def decode_value(raw: bytes | None) -> Any:
         return json.loads(text)
     except (UnicodeDecodeError, ValueError):
         return UNDECODABLE
+
+
+def protect(value: Any, schema: TailSchema) -> Any:
+    """`value` masked as the table's writers mask it before staging (handbook 22): the tail's buffer
+    then holds only what the table will hold."""
+    return value if schema.plan.empty else schema.plan.protect(value)
 
 
 def stage(record: Any, value: Any, *, materialization_id: str, source_topic: str, observed_at: str | None = None) -> bytes:

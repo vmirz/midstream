@@ -62,6 +62,36 @@ export function parseEmailDomains(text: string): { ok: true; value: string } | {
 }
 const QUANTITY = /^\d+(Ki|Mi|Gi|Ti|K|M|G|T)?$/;
 
+/** A `choice_map` setting's text as a map: `email=hash,secret=redact` → `{email: 'hash', secret: 'redact'}`. */
+export function choiceMapOf(text: string | null | undefined): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const part of String(text ?? '').split(',')) {
+    const [option, choice] = part.split('=').map((piece) => piece.trim());
+    if (option) map[option] = choice ?? '';
+  }
+  return map;
+}
+
+/** A map as a `choice_map` setting stores it: in the options' order, empty for none. */
+export function choiceMapText(map: Record<string, string>, options: { value: string }[]): string {
+  return options
+    .filter((option) => map[option.value])
+    .map((option) => `${option.value}=${map[option.value]}`)
+    .join(',');
+}
+
+/** A `choice_map` edit checked as the control plane checks it, in its stored form. */
+export function parseChoiceMap(setting: Pick<SettingView, 'choiceOptions' | 'label'>, input: string): Parsed {
+  const options = setting.choiceOptions ?? [];
+  const map = choiceMapOf(input);
+  for (const [option, choice] of Object.entries(map)) {
+    const known = options.find((item) => item.value === option);
+    if (!known) return { ok: false, error: `${option} is not one of the choices` };
+    if (!known.choices.includes(choice)) return { ok: false, error: `${known.label} cannot be ${choice || 'left without a choice'}` };
+  }
+  return { ok: true, value: choiceMapText(map, options) };
+}
+
 export type Parsed = { ok: true; value: SettingValue } | { ok: false; error: string };
 
 /** The value an edit stands for, checked the way the server checks it. */
@@ -106,6 +136,8 @@ export function parseInput(setting: SettingView, input: string | boolean): Parse
     }
     case 'domain_list':
       return parseEmailDomains(String(input));
+    case 'choice_map':
+      return parseChoiceMap(setting, String(input));
     case 'string': {
       const text = String(input).trim();
       if (!text) return { ok: false, error: `${label} cannot be empty` };
@@ -244,11 +276,24 @@ export function unitLabel(setting: SettingView): string | null {
 }
 
 /** A value as prose: what a setting is, or would be, set to. */
-export function formatValue(setting: Pick<SettingView, 'kind' | 'unit'>, value: SettingValue): string {
+export function formatValue(
+  setting: Pick<SettingView, 'kind' | 'unit'> & Partial<Pick<SettingView, 'choiceOptions' | 'choiceLabels'>>,
+  value: SettingValue,
+): string {
   if (value === null || value === undefined || value === '') {
-    return setting.kind === 'gcs_uri' ? 'None' : setting.kind === 'domain_list' ? 'Any' : '—';
+    return setting.kind === 'gcs_uri' || setting.kind === 'choice_map' ? 'None' : setting.kind === 'domain_list' ? 'Any' : '—';
   }
   if (setting.kind === 'domain_list') return String(value).split(',').join(', ');
+  if (setting.kind === 'choice_map') {
+    const options = setting.choiceOptions ?? [];
+    const labels = setting.choiceLabels ?? {};
+    return Object.entries(choiceMapOf(String(value)))
+      .map(([option, choice]) => {
+        const label = options.find((item) => item.value === option)?.label ?? option;
+        return `${label}: ${(labels[choice] ?? choice).toLowerCase()}`;
+      })
+      .join(' · ');
+  }
   if (typeof value === 'boolean') return value ? 'On' : 'Off';
   if (typeof value === 'number') {
     if (setting.unit === 'ms') return humanizeMs(value);

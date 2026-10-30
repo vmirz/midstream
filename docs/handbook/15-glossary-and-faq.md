@@ -101,6 +101,10 @@ tables), Dataset Owner (and managing the dataset and its access) ([18 §18.3](./
 **Deployment value** — What a setting is set to by the deployment's environment variable, as opposed
 to an override or the built-in default. A reset returns a setting to it ([17](./17-settings.md)).
 
+**Data protection** — Masking sensitive values before they are staged, so no table, file, staging
+disk or live tail holds them: the writer recognises **kinds** of sensitive data from field names and
+masks each as the materialization's **policy** says ([22](./22-data-protection.md)).
+
 **Desired phase** — What the operator asked for (`running`, `stopped`, `deleting`, `deleted`;
 `paused` on records from before 0.4.0). Contrast with observed phase.
 
@@ -137,11 +141,20 @@ request to the owner, once (`X-Tail-Forwarded-By`), and returns its answer uncha
 **Group** — A set of people and the roles they hold through it. Built in: Guest (everyone), All
 Users (everyone signed in), Viewer, Editor, Admin; administrators add their own.
 
+**Hashed / Partial / Withheld** — The three masks (`hash`, `partial`, `redact`): a keyed hash, the
+first 128 bits of HMAC-SHA256 in hex, equal for equal values so joins and counts work; `****` with a
+readable fragment such as the last four digits; nothing stored at all ([22 §22.3](./22-data-protection.md)).
+
 **Guest** — A caller without a session. Holds what the Guest group grants: by default the
 materialization list and status.
 
 **Head peek** — The newest records on a table's topic, committed or not, built as rows: what the
 Data tab shows while the table is backlogged. Never part of a run ([19 §19.9](./19-live-tail.md)).
+
+**Kind (of sensitive data)** — One of the catalog's eleven: `email`, `phone`, `person_name`,
+`national_id`, `card_number`, `bank_account`, `address`, `ip_address`, `date_of_birth`, `device_id`,
+`secret`; each with the name rules that recognise it, its default mask and the masks it allows
+([22 §22.2](./22-data-protection.md)).
 
 **Hot partition** — The partition live traffic still writes — today, or this hour — which compaction
 leaves alone until no commit has added to it for `compaction_hot_partition_delay_minutes` (60). In
@@ -250,6 +263,18 @@ or — for what concerns a dataset's tables, such as `data.query` — one datase
 `commits_stalled`, `table_missing`, `source_topic_missing`. A `phase_reason` that is literally a
 phase name means no real status exists yet.
 
+**Protected by default** — The `default_protection` setting: the policy a create that names none
+gets, resolved when it is accepted, so changing it never touches an existing materialization. Ships
+as emails, phone numbers and national identifiers hashed, secrets withheld.
+
+**Protection key** — `protection-key` in the auth Secret, the key hashing uses: one per deployment,
+shared by the domains whose masked columns should join; only its id is ever shown
+([22 §22.8](./22-data-protection.md)).
+
+**Protection revision** — A materialization's policy's number: 1 at creation, one more per edit. Each
+table records the revision it masks under, each member reports the one it masks with, and each data
+file's name ends `-r<revision>` when it is not 0.
+
 **Principal** — Who made a request: a signed-in `user`, a `guest`, the console's `service`
 credential, or an access `token`. Every WebView resolves it first, with `authorize(...)`.
 
@@ -280,7 +305,7 @@ that reads every source topic into its table. Named `<prefix>-<materialization_i
 uploads, backlog and commits are bounded for all its tables together (10).
 
 **Runtime control topic** — `materialization-schema-authority-updates`, kept from 0.x: runtime
-settings, consumed by every runtime's settings agent ([06 §6.7](./06-event-and-topic-contracts.md)).
+settings and protection policies, consumed by every runtime's settings agent ([06 §6.7](./06-event-and-topic-contracts.md)).
 
 **Scope (settings)** — `control-plane`, `runtime` or `console`: one document each in the `settings`
 table, with its own revision and history.
@@ -436,6 +461,12 @@ No. The committer commits it to the table, and members read it from the state ta
 next seal.
 
 ## 15.4 FAQ — runtime and data
+
+**Why is my `email` column 32 hex characters?**
+The materialization hashes emails: the default does. Equal emails hash alike, so `count(distinct
+email)` and joins on it still work; the value itself cannot be read back. Choosing otherwise needs
+*Choose data protection* on the table's dataset, and applies to records written from then on
+([22](./22-data-protection.md)).
 
 **Are there duplicate rows?**
 No: delivery into the table is exactly once. Re-read records are refused by the committer as

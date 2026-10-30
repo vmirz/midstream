@@ -5,6 +5,7 @@ import asyncio
 from collections.abc import Iterable
 from dataclasses import replace
 import unittest
+from unittest.mock import patch
 
 from midstream.config import ControlPlaneConfig
 from midstream.lakehouse.schema.forkmap import ForkMap
@@ -57,6 +58,8 @@ from midstream.web import (
     update_materialization_async,
 )
 from midstream.web.errors import error_response
+from midstream.web.materializations import protection_review_view
+from midstream.protection.policy import ProtectionPolicy
 from midstream.identity.principals import Principal, grants_for_user
 from midstream.models import Dataset, DatasetGrant, PendingTopicChange, TableClaim, TopicChangePlan, User
 from midstream.storage.identity import (
@@ -72,6 +75,7 @@ from midstream.services.settings import apply_settings_change
 from midstream.models import SettingOverride, SettingsChangeRequest
 from midstream.storage.settings import get_settings_document, save_settings_document
 from midstream import config as control_plane_config
+from midstream.protection.secrets import get_protection_key
 
 
 class FakeTable:
@@ -1803,11 +1807,247 @@ class WebMutationTests(unittest.TestCase):
 
 
 
+class WebProtectionTests(unittest.TestCase):
+    """Data protection on create and edit: the default, other choices, who may make them, and the key
+    (design §5.8, §5.9). Jane owns dataset shop and writes to finance."""
+
+    DEFAULT = {"email": "hash", "phone": "hash", "national_id": "hash", "secret": "redact"}
+
+    def setUp(self) -> None:
+        self.table = FakeTable()
+        self.directory = build_directory()
+        self.config = ControlPlaneConfig(default_destination_uri="gs://lake", default_namespace="midstream")
+
+    def _create(self, body: dict, *, config: ControlPlaneConfig | None = None, principal: Principal | None = None):
+        return create_materialization(
+            self.table,
+            body,
+            submitted_by="jane@example.com",
+            submitted_by_id=JANE,
+            principal=principal or principal_of(self.directory),
+            directory_table=self.directory,
+            materialization_id="mat-1",
+            request_id="req-1",
+            claim_request_id="idr-claim000001",
+            accepted_at=NOW,
+            config=config or self.config,
+        )
+
+    def _refused(self, body: dict, **kwargs) -> WebError:
+        with self.assertRaises(WebError) as raised:
+            self._create(body, **kwargs)
+        return raised.exception
+
+    def test_a_create_that_names_no_protection_takes_the_deployment_default(self) -> None:
+        acceptance = self._create({"tables": tables("orders", dataset="finance")})
+        self.assertEqual(self.DEFAULT, dict(acceptance.materialization.protection.kinds))
+        self.assertEqual(1, acceptance.materialization.protection_revision)
+        self.assertEqual("jane@example.com", acceptance.materialization.protection_changed_by)
+        self.assertEqual(self.DEFAULT, dict(acceptance.request_event.spec.protection.kinds))
+        self.assertEqual({"policy": {"kinds": self.DEFAULT}, "revision": 1}, acceptance.response["protection"])
+
+    def test_the_default_is_the_effective_setting_at_acceptance(self) -> None:
+        config = replace(self.config, default_protection="phone=partial")
+        acceptance = self._create({"tables": tables("orders", dataset="finance")}, config=config)
+        self.assertEqual({"phone": "partial"}, dict(acceptance.materialization.protection.kinds))
+
+    def test_a_create_may_choose_other_protection_where_it_owns_the_dataset(self) -> None:
+        for body, expected in (
+            ({"kinds": ["email", "secret"]}, {"email": "hash", "secret": "redact"}),
+            ({"kinds": {"phone": "partial", "address": "hash"}}, {"phone": "partial", "address": "hash"}),
+            ({"kinds": {}}, {}),
+        ):
+            with self.subTest(body=body):
+                self.table = FakeTable()
+                acceptance = self._create({"tables": tables("orders"), "protection": body})
+                self.assertEqual(expected, dict(acceptance.materialization.protection.kinds))
+
+    def test_choosing_other_protection_needs_choose_data_protection_on_every_dataset(self) -> None:
+        error = self._refused({"tables": [*tables("orders"), *tables("payments", dataset="finance")], "protection": {"kinds": []}})
+        self.assertEqual((403, "forbidden"), (error.status_code, error.code))
+        self.assertEqual(("dataset.protect", "finance"), (error.details["permission"], error.details["dataset"]))
+        # The default itself, spelled out, is no decision.
+        acceptance = self._create({"tables": tables("orders", dataset="finance"), "protection": {"kinds": self.DEFAULT}})
+        self.assertEqual(self.DEFAULT, dict(acceptance.materialization.protection.kinds))
+
+    def test_an_invalid_policy_is_refused_naming_the_field(self) -> None:
+        for protection, field in (
+            ("email", "protection"),
+            ({"kinds": ["email", "nope"]}, "protection.kinds.1"),
+            ({"kinds": {"secret": "hash"}}, "protection.kinds.secret"),
+            ({"kinds": {}, "fields": {"a": "hash"}}, "protection.fields"),
+            ({"kinds": {}, "apply_rules": True}, "protection.apply_rules"),
+        ):
+            with self.subTest(protection=protection):
+                error = self._refused({"tables": tables("orders"), "protection": protection})
+                self.assertEqual((400, field), (error.status_code, error.details["field"]))
+
+    def test_a_policy_that_hashes_needs_a_protection_key(self) -> None:
+        with patch.dict(os.environ, {"PROTECTION_KEY": ""}):
+            get_protection_key.cache_clear()
+            try:
+                error = self._refused({"tables": tables("orders", dataset="finance")})
+                partial = self._create({"tables": tables("orders"), "protection": {"kinds": {"phone": "partial", "secret": "redact"}}})
+            finally:
+                get_protection_key.cache_clear()
+        self.assertEqual((409, "protection_key_not_configured"), (error.status_code, error.details["reason"]))
+        self.assertIn("protection-key", error.message)
+        self.assertEqual({"phone": "partial", "secret": "redact"}, dict(partial.materialization.protection.kinds))
+
+
+class WebProtectionEditTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.table = FakeTable()
+        self.directory = build_directory()
+        materialization = replace(
+            build_materialization("mat-1", "orders", "payments"),
+            protection=ProtectionPolicy({"email": "hash", "secret": "redact"}),
+            protection_revision=3,
+        )
+        save_materialization(self.table, materialization)
+        for name in materialization.table_names:
+            save_materialization_table(self.table, build_table_record(materialization, table=name))
+        save_materialization_status(self.table, build_status("mat-1"))
+        self.config = ControlPlaneConfig()
+
+    def _update(self, body: object, *, principal: Principal | None = None):
+        return update_materialization(
+            self.table,
+            "mat-1",
+            body,
+            submitted_by="owner@example.com",
+            submitted_by_id=JANE,
+            principal=principal or principal_of(self.directory),
+            directory_table=self.directory,
+            request_id="req-update",
+            accepted_at="2026-07-12T00:06:00Z",
+            config=self.config,
+        )
+
+    def test_an_edit_replaces_the_policy_from_the_revision_it_read(self) -> None:
+        acceptance = self._update({"protection": {"kinds": {"email": "partial", "phone": "hash", "secret": "redact"}}})
+        spec = acceptance.request_event.spec
+        self.assertEqual({"email": "partial", "phone": "hash", "secret": "redact"}, dict(spec.protection.kinds))
+        self.assertEqual(3, spec.protection_base_revision)
+        self.assertFalse(spec.apply_protection_rules)
+        self.assertEqual(4, acceptance.materialization.protection_revision)
+        # Not part of the runtime's spec: it is delivered, and nothing restarts.
+        self.assertEqual(1, acceptance.materialization.spec_version)
+        protection = acceptance.response["protection"]
+        self.assertEqual({"kinds": {"email": "hash", "secret": "redact"}}, protection["before"])
+        self.assertEqual(4, protection["revision"])
+        self.assertIn("without a restart", protection["applies_to"])
+
+    def test_repeating_the_policy_changes_nothing_unless_it_asks_to_apply_the_rules(self) -> None:
+        same = self._update({"protection": {"kinds": {"email": "hash", "secret": "redact"}}, "name": "renamed"})
+        self.assertIsNone(same.request_event.spec.protection)
+        self.assertNotIn("protection", same.response)
+        rules = self._update({"protection": {"kinds": {"email": "hash", "secret": "redact"}, "apply_rules": True}})
+        self.assertTrue(rules.request_event.spec.apply_protection_rules)
+        self.assertEqual("apply_rules", rules.materialization.protection_reason)
+
+    def test_an_edit_needs_choose_data_protection_on_every_dataset_it_writes(self) -> None:
+        materialization = get_materialization(self.table, "mat-1")
+        moved = replace(materialization.table("payments"), dataset="finance", dataset_id=FINANCE)
+        save_materialization(self.table, replace(materialization, tables=(materialization.table("orders"), moved)))
+        with self.assertRaises(WebError) as raised:
+            self._update({"protection": {"kinds": []}})
+        self.assertEqual((403, "dataset.protect", "finance"), (raised.exception.status_code, raised.exception.details["permission"], raised.exception.details["dataset"]))
+
+    def test_an_edit_that_also_adds_a_topic_needs_choose_data_protection_on_its_dataset(self) -> None:
+        # Jane owns shop and only writes to finance: the new policy would mask the finance table too.
+        body = {"tables": [*tables("orders", "payments"), *tables("refunds", dataset="finance")]}
+        added = self._update(body)
+        self.assertEqual(("orders", "payments", "refunds"), added.materialization.table_names)
+        with self.assertRaises(WebError) as raised:
+            self._update({**body, "protection": {"kinds": []}})
+        self.assertEqual((403, "dataset.protect", "finance"), (raised.exception.status_code, raised.exception.details["permission"], raised.exception.details["dataset"]))
+
+    def test_an_edit_that_hashes_needs_the_key(self) -> None:
+        with patch.dict(os.environ, {"PROTECTION_KEY": ""}):
+            get_protection_key.cache_clear()
+            try:
+                with self.assertRaises(WebError) as raised:
+                    self._update({"protection": {"kinds": {"phone": "hash"}}})
+                partial = self._update({"protection": {"kinds": {"phone": "partial"}}})
+            finally:
+                get_protection_key.cache_clear()
+        self.assertEqual("protection_key_not_configured", raised.exception.details["reason"])
+        self.assertEqual({"phone": "partial"}, dict(partial.request_event.spec.protection.kinds))
+
+    def test_a_materialization_without_a_runtime_yet_cannot_change_its_protection(self) -> None:
+        del self.table.values["materialization-table:mat-1:payments"]
+        with self.assertRaises(WebError) as raised:
+            self._update({"protection": {"kinds": []}})
+        self.assertEqual("runtime_not_deployed", raised.exception.details["reason"])
+
+    def test_the_detail_says_what_is_protected_and_how_far_it_reached(self) -> None:
+        detail = get_materialization_detail(self.table, "mat-1", principal=principal_of(self.directory))
+        self.assertEqual({"kinds": {"email": "hash", "secret": "redact"}}, detail["materialization"]["protection"])
+        protection = detail["protection"]
+        self.assertEqual(3, protection["revision"])
+        self.assertEqual("not_reporting", protection["state"])
+        self.assertEqual({"orders", "payments"}, set(protection["tables"]))
+
+    def test_the_review_lists_each_tables_protected_fields_and_what_the_rules_would_change(self) -> None:
+        from midstream.services.schema_projection import build_schema_projection
+        from midstream.storage import save_materialization_schema
+        from midstream.protection.plan import initial_protection
+        from midstream.lakehouse.schema.index import build_index
+
+        evolution = evolve(build_schema(), ForkMap(), [((), infer({"email": "h" * 32, "ip": "1.2.3.4"}))], schema_id=0)
+        index = build_index(evolution.schema, evolution.fork_map, last_column_id=evolution.last_column_id)
+        recorded = initial_protection(index, ProtectionPolicy({"email": "hash"}), revision=3, by="alice@example.com")
+        projection = build_schema_projection(
+            "mat-1", "orders", evolution.schema, evolution.fork_map, since=NOW, protection=recorded.to_dict()
+        )
+        save_materialization_schema(self.table, projection, config=self.config)
+        self._save_policy(ProtectionPolicy({"email": "hash", "ip_address": "partial"}))
+        review = protection_review_view(self.table, "mat-1", principal=principal_of(self.directory))
+        orders = next(item for item in review["review"] if item["table"] == "orders")
+        self.assertEqual(3, orders["recorded_revision"])
+        self.assertEqual([("email", "email", "hash", True)], [(item["name"], item["kind"], item["mask"], item["active"]) for item in orders["fields"]])
+        self.assertEqual(
+            [{"field_id": orders["would_change"][0]["field_id"], "path": ["ip"], "name": "ip", "current": None, "proposed": {"kind": "ip_address", "mask": "partial"}}],
+            orders["would_change"],
+        )
+        payments = next(item for item in review["review"] if item["table"] == "payments")
+        self.assertFalse(payments["created"])
+        self.assertEqual(0, review["hidden_tables"])
+
+    def _save_policy(self, policy: ProtectionPolicy) -> None:
+        save_materialization(self.table, replace(get_materialization(self.table, "mat-1"), protection=policy))
+
+
+class WebProtectionSettingsTests(unittest.TestCase):
+    def test_system_settings_describe_the_kinds_the_default_and_the_key(self) -> None:
+        settings = settings_view(config=ControlPlaneConfig(default_protection="email=partial,secret=redact"))
+        protection = settings["protection"]
+        self.assertEqual({"email": "partial", "secret": "redact"}, protection["default"])
+        self.assertTrue(protection["key_configured"])
+        self.assertEqual(11, len(protection["kinds"]))
+        secret = next(item for item in protection["kinds"] if item["id"] == "secret")
+        self.assertEqual(["partial", "redact"], secret["masks"])
+        self.assertEqual(["hash", "partial", "redact"], [item["id"] for item in protection["masks"]])
+
+
+#: These tests run as a deployment with a protection key: the default protection hashes, and
+#: without a key every create that takes it is refused (handbook 22). Patched for this module only.
+_PROTECTION_KEY = patch.dict(os.environ, {"PROTECTION_KEY": "web-tests-protection-key-of-at-least-32-chars"})
+
+
 def setUpModule() -> None:
     # A deployment always names the namespace its runtimes run in (handbook 02 §2.3); these tests
     # reach the configuration without choosing one, so the environment names it for them.
     os.environ.setdefault("CONTROL_PLANE_DEFAULT_NAMESPACE", "midstream")
     control_plane_config.get_config.cache_clear()
+    _PROTECTION_KEY.start()
+    get_protection_key.cache_clear()
+
+
+def tearDownModule() -> None:
+    _PROTECTION_KEY.stop()
+    get_protection_key.cache_clear()
 
 
 if __name__ == "__main__":

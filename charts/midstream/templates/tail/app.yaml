@@ -60,6 +60,8 @@ spec:
               name: {{ include "midstream.authSecret" . }}
               key: service-token
               optional: true
+        # The live tail masks records as the writers do (handbook 22), so it hashes with the same key.
+        {{- include "midstream.protectionKeyEnv" . | nindent 8 }}
         - name: TAIL_TABLE_EVENTS_TOPIC
           value: {{ include "midstream.fullname" . }}-materialization-table-events
         - name: TAIL_REQUESTS_TOPIC

@@ -22,7 +22,7 @@ from pyiceberg.table.snapshots import Operation, Summary
 from pyiceberg.table.update.snapshot import ExpireSnapshots, _OverwriteFiles
 
 from midstream.lakehouse.catalog import commit_once
-from midstream.lakehouse.files import partition_text_of
+from midstream.lakehouse.files import partition_text_of, protection_revision_of
 from midstream.lakehouse.gcs import parse_gcs_uri
 from midstream.lakehouse.offsets import (
     COMMIT_ID_PROPERTY,
@@ -86,6 +86,15 @@ class LiveFile:
     added_at_ms: int | None
     timestamp_min: int | None
     timestamp_max: int | None
+
+    @property
+    def protection_revision(self) -> int:
+        """The protection revision its rows were masked under, from its name (`lakehouse/files.py`).
+
+        Compaction never puts two revisions in one output, so every file stays attributable to the
+        policy it was written under (design §5.6).
+        """
+        return protection_revision_of(self.path)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -254,7 +263,9 @@ def plan_compaction(
                 for item in _settled_files(by_partition[key], granularity=granularity, now_ms=now_ms, hot_ms=hot_ms)
                 if item.file_size < small_file_bytes
             ),
-            key=lambda item: (item.timestamp_min or 0, item.path),
+            # A partition's files of one protection revision together, so the worker writes each
+            # revision's rows into outputs of their own.
+            key=lambda item: (item.protection_revision, item.timestamp_min or 0, item.path),
         )
         if len(small) < min_input_files:
             continue

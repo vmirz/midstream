@@ -137,6 +137,8 @@ spec:
               name: {{ include "midstream.authSecret" . }}
               key: previous-federation-key
               optional: true
+        # Data protection: discovery and creates check it, and its id goes into every runtime's spec.
+        {{- include "midstream.protectionKeyEnv" . | nindent 8 }}
         {{- include "midstream.ssoEnv" . | nindent 8 }}
         - name: PROTOCOL_LOGGING_ENABLED
           value: {{ .Values.controlPlane.protocolLogging | quote }}

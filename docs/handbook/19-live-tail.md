@@ -133,6 +133,7 @@ its own partitions.
 | `paused` | At its bound, its rate ceiling or the member's budget: some partitions wait | rows, `X-Tail-Status: truncated` |
 | `backlogged` | The runtime is too far behind the topic for the tail to apply | `409 tail_backlogged` with `behind` |
 | `unavailable` | Its topic cannot be read (deleted, no leader for long) | `503 topic_unavailable`; retried every 30 s |
+| `unavailable` | It hashes, and the member has no protection key or another than the deployment's (22 §22.8) | `503 protection_key_missing`; nothing is read, so nothing is ever served plain |
 
 **Activation.** A table is read only while someone asks for it. A request activates a parked table
 and waits up to `wait_ms` (at most 5 s; the console sends its timeout minus 500 ms) for it to become
@@ -141,7 +142,7 @@ parks: its buffer is dropped and its partitions leave the consumer. A table no t
 `TAIL_FORGET_AFTER_SECONDS` (300) is forgotten.
 
 **Seeding.** The schema comes from the control plane (`GET …/tables/{table}/schema?raw=true`: the
-Iceberg schema, fork map, last column id and rejected paths) with the service credential, and from
+Iceberg schema, fork map, last column id, rejected paths and the table's `materializer.protection`) with the service credential, and from
 the table's GCS metadata when the control plane cannot answer (logged, `seed_source: gcs`). Each
 partition starts at the table's committed offset plus one — the newest the member knows from the
 tick, an event or the table — so the tail holds nothing the table holds already.
@@ -190,13 +191,18 @@ the topics it reads, as every consumer of them does, until the topic check lets 
 
 **Rows.** A record becomes the staged line the writer would stage (`{"m": {...}, "v": value}`, the
 value decoded as Kaspr's `json` serializer decodes it: `json.loads` of its UTF-8, the timestamp
-converted from milliseconds to seconds as Faust does), then a row by `build_row` with the table's
+converted from milliseconds to seconds as Faust does, the value masked by the table's protection plan
+as the writer's step 2a masks it — `ingest.py::protect`, 22 §22.5 — so the buffer holds only what the
+table will hold), then a row by `build_row` with the table's
 current schema and fork map — the seal's own code (handbook 10 §10.4). A record that cannot be
 decoded gets no row and its offset is passed; a tombstone is skipped when the materialization skips
 them. A row whose values went to `_unmapped` and that the writer's drift detection would turn into a
 schema change is **settling** (`X-Tail-Settling`): once the change is committed, the seal puts those
 values in columns, and so does the tail, which rebuilds held segments under the new schema from their
-staged lines.
+staged lines. A recorded protection policy is different: the staged lines were masked under the older
+revision, so the tail drops the table's buffer and reads its uncommitted records again from the
+committed offsets under the new plan — on the `schema_changed` event that announces it, or on a tick
+whose hints carry a newer `protection_revision`.
 
 **Segments.** Each partition's rows accumulate in an open segment that closes at 2,000 rows, 4 MiB
 of staged lines or 5 s, into an Arrow batch plus its staged lines compressed with zstd (level 1).
@@ -271,6 +277,7 @@ JSON (`errorContentType`; Kaspr 0.11.30 and kaspr-operator 0.19.7 or later):
 | `409` | `tail_backlogged` (`behind`, `end_offsets`, `committed`) | §19.6 |
 | `503` | `tail_not_ready` (`details.state`, `Retry-After: 1`) | Warming up past `wait_ms` |
 | `503` | `topic_unavailable`, `tail_owner_unreachable`, `control_plane_unreachable`, `peek_failed` | |
+| `503` | `protection_key_missing` | The table hashes and this app has no protection key, or another than the deployment's (22 §22.8) |
 
 ## 19.10 Who may read a tail
 
@@ -366,6 +373,8 @@ reaches the tail app within a minute. **The console's** four (`liveTailEnabled`,
 | The source topic is deleted | `unavailable`, retried every 30 s; nothing else on the member is affected |
 | A burst beyond the bound, or a backlog | `truncated` (paused), or `backlogged` past twice the bound; the console says which and how far |
 | A schema change in flight | Rows settle: `_unmapped` until the change is committed, then rebuilt |
+| A protection policy recorded | The buffer is dropped and the uncommitted records read again from the committed offsets under the new revision, as after a re-seed |
+| The tail app lacks the protection key a table needs | The table is `unavailable`, `503 protection_key_missing`; the console shows committed rows and says *Live is unavailable* until the app restarts with the key |
 | A snapshot older than the retention | `409 tail_unavailable`: a new run, on a newer snapshot, has its tail |
 | The materialization is stopped or deleted | Cancelled at the next tick (a table no longer tailed answers `404 live_tail_off`); the console hides Live at once and asks for no tail. Resumed: the toggle is back at once and the tail within a minute |
 | `live_tail_enabled` is turned off | No ticks are sent; each member forgets its tables within the forget window; consoles stop asking within two minutes (§19.11) and pick the tail back up the same way once it is on |

@@ -11,7 +11,7 @@ of 1.0. §6.16 lists what 1.0 removed.
 | `materialization-work` | `request-intake`, `workflow-apply`, `resource-observation`, `identity-intake` (a claim's answer), the sweep and maintenance tasks, the scheduler | `workflow-apply`, `resource-observation`, `maintenance` | `materialization:<id>` |
 | `materialization-status` | each runtime's `emit-status` task | `runtime-status` agent | `<id>` |
 | `materialization-table-events` | each runtime's committer agent; the maintenance app's `maintenance-worker` agent and `maintenance-step` task | `table-events` agent; every member of the tail app, with a plain consumer of no group (19) | `materialization:<id>` (§6.6) |
-| `materialization-schema-authority-updates` | `settings-intake`, `workflow-apply` | every runtime's `settings` agent | `runtime-settings` (§6.7) |
+| `materialization-schema-authority-updates` | `settings-intake`, `workflow-apply` | every runtime's `settings` agent | `runtime-settings`, `protection-policy:<id>` (§6.7) |
 | `<runtime>-commits` | the runtime's pipeline and commit-timer tasks, its committer (wakeups) | the runtime's committer agent | the constant `commits` (§6.8) |
 | `<release>-maintenance-requests` | the control plane's `maintenance` agent, the `materializations-maintenance` WebView | the maintenance app's `maintenance-worker` agent | `maintenance:<id>:<table>` (§6.17) |
 | `<release>-tail-requests` | the control plane's `maintenance` agent | the tail app's `tail-worker` agent | `tail:<id>:<table>` (§6.18) |
@@ -398,7 +398,9 @@ record accumulates the deleted count across passes.
   "pending_upload_bytes": 2097152,
   "files_pending_commit": 2,
   "unmapped_values": 0,
-  "table_counters": { "orders": { "rows_written": 120000, "unmapped_values": 0 }, "payments": { "rows_written": 32340 } },
+  "table_counters": { "orders": { "rows_written": 120000, "unmapped_values": 0, "protected_values": 120000, "withheld_values": 0 }, "payments": { "rows_written": 32340 } },
+  "protection_revisions": { "orders": 2, "payments": 2 },
+  "protection_key_id": "3f9a1c2e",
   "performance": { "…": "a window of rates, plus acknowledgements and the pipeline in flight" },
   "tables": {
     "orders": {
@@ -424,7 +426,9 @@ record accumulates the deleted count across passes.
 ```
 
 `schema_versions` holds each table's schema id as the member last loaded it; `latest_offsets` the
-highest offset it handled per table and partition; `table_counters` its own counters per table.
+highest offset it handled per table and partition; `table_counters` its own counters per table, the
+values it masked and withheld among them; `protection_revisions` the protection revision it masks
+each table with, and `protection_key_id` the id of the protection key it loaded (22 §22.7).
 **Only the committer member sends `tables`** (`committer_table_blocks`), one block per table; their
 `member_id` names it, and the console marks that member as the committer. A runtime before 2.0 also
 reported `small_files`, `last_compaction_at` and the running maintenance job here; maintenance is the
@@ -441,6 +445,10 @@ Degraded example:
   "phase_message": "Files this member uploaded 312 s ago are not committed yet: the committer is not committing. Its member's logs say why."
 }
 ```
+
+A member that must hash and has no protection key, or another than the deployment's, reports
+`health_reason` `protection_key_missing` or `protection_key_mismatch`, degraded, and writes nothing
+for that table until it has the right key (22 §22.5).
 
 ### Runtime `phase_reason` values
 
@@ -503,10 +511,10 @@ which updates the record of the table the event names (`materialization-table:<i
 | `kind` | `payload` |
 |---|---|
 | `table_committed` | `snapshot_id`, `sequence_number`, `committed_at`, `files_added`, `records_added`, `bytes_added`, `totals` (`records`, `files`, `bytes`), `offsets` (partition → the last offset in the table, inclusive), `valid_through`, `duration_ms`, `metadata_location`, `schema_id`, `snapshots` |
-| `schema_changed` | `schema_id`, `schema` (Iceberg JSON), `fork_map`, `fields` and `field_count` (the rendered projection, 09 §9.9), `changes` (`added`, `forked`, `collapsed`, `rejected`, each with its path, field id and type), `metadata_location`, `last_column_id`, `rejected_paths`, `duration_ms` |
+| `schema_changed` | `schema_id`, `schema` (Iceberg JSON), `fork_map`, `fields` and `field_count` (the rendered projection, 09 §9.9), `changes` (`added`, `forked`, `collapsed`, `rejected`, each with its path, field id and type), `metadata_location`, `last_column_id`, `rejected_paths`, `duration_ms`, and `protection`, the table's `materializer.protection` property, when it records one. A recorded policy is announced the same way with the same `schema_id` and `changes: []`; its projection replaces the one of the same schema by its protection revision (22 §22.6) |
 | `maintenance_started` | `job` (`compaction`, `orphan_cleanup`), `started_at`, `partition` (compaction), `attempt` — sets the record's `maintenance_job` |
 | `maintenance_completed` | `job` (`compaction`, `expire_snapshots`, `orphan_cleanup`), `outcome` (`succeeded`, `skipped`, `abandoned`, `failed`, `cancelled`), `started_at` (a long job's, clearing the record's `maintenance_job`), `partition` (compaction), `snapshot_id`, `duration_ms`, `message`, `counts` (compaction: `partitions`, `inputs`, `outputs`, `records`, `input_bytes`, `output_bytes`; expiry: `expired`, `remaining`; orphans: `listed`, `deleted`…), and after a compaction's commit `totals`, `metadata_location`, `sequence_number`, `snapshots` |
-| `table_error` | `reason` (`table_unavailable`, `commit_failed`, `schema_evolution_failed`, `schema_field_limit`, `compaction_failed`), `message` |
+| `table_error` | `reason` (`table_unavailable`, `commit_failed`, `schema_evolution_failed`, `schema_field_limit`, `compaction_failed`, `protection_commit_failed`), `message` |
 
 Every event names its `table` (2.0); one without — from a 1.0 runtime — is logged and dropped, as is
 one for a table the materialization has no record of, or one being dropped or dropped, and every
@@ -552,6 +560,32 @@ it right. A runtime ignores one that is not newer than what it holds, by `lineag
 `revision`: a later lineage wins whatever revision an earlier one reached, and a delivery without a
 lineage (`null`, from a control plane before 4.1) sorts before every lineage. The settings agent
 stores it in the runtime's state table and installs it (`live_settings.py`, 17 §17.7).
+
+### Protection policy
+
+**Producer:** `workflow-apply`, at every apply of a runtime — its creation, an edit, a resume, the
+sweep's re-apply, an upgrade — addressed to that runtime alone
+(`services/protection.py::protection_policy_output_for_apply`); nothing for a materialization from
+before data protection that no edit gave a policy (revision 0).
+**Key:** `protection-policy:<materialization_id>`
+
+```json
+{
+  "kind": "protection_policy",
+  "materialization_id": "mat-a1b2c3d4e5f6",
+  "revision": 4,
+  "policy": { "kinds": { "email": "partial", "phone": "hash", "secret": "redact" } },
+  "changed_by": "jane@example.com",
+  "published_at": "2026-11-20T15:12:39Z"
+}
+```
+
+`reason` is added when the edit recorded the same policy again with the current rules
+(`apply_rules`). The policy is not part of the runtime's spec, so an edit is such an apply with an
+unchanged spec: nothing is applied to Kubernetes, nothing restarts. The settings agent stores the
+newest revision in the state table (`protection-policy`), ignoring one that is not newer or that is
+addressed to another runtime, and the committer records it in each table (22 §22.7). A runtime from
+before data protection drops the kind unread.
 
 A `maintenance_request` here is a 1.x control plane's; a 2.0 runtime drops it (maintenance requests go
 to the maintenance app, §6.17).
@@ -872,19 +906,23 @@ and the app forgets every table once no tick has named it for its forget window.
   "target": { "materialization_id": "mat-a1b2c3d4e5f6", "dataset": "sales", "dataset_id": "ds-5c1e…",
               "table": "orders", "location": "gs://my-lake/midstream/mat-a1b2c3d4e5f6/orders",
               "source_topic": "orders", "partition_granularity": "day",
-              "table_uuid": "6b1c…", "skip_tombstones": false },
+              "table_uuid": "6b1c…", "skip_tombstones": false, "protection_key_id": "3f9a1c2e" },
   "issued_at": "2026-10-23T12:00:00Z",
   "settings": { "live_tail_max_rows_per_table": 250000, "live_tail_max_bytes_per_table": 268435456,
                 "live_tail_retention_seconds": 120, "live_tail_fetch_wait_ms": 200,
                 "live_tail_max_records_per_second_per_table": 5000, "live_tail_peek_max_rows": 1000,
                 "live_tail_idle_seconds": 600, "protocol_logging_enabled": true },
   "hints": { "offsets": { "0": 1041, "1": 998 }, "schema_id": 3,
-             "metadata_location": "gs://…/metadata/00042-….metadata.json" }
+             "metadata_location": "gs://…/metadata/00042-….metadata.json", "protection_revision": 2 }
 }
 ```
 
 The settings are the control plane's live-tail settings as resolved that minute, overrides included
 (17 §17.3), so a change reaches the app within a minute without a restart. The hints are the table
-record's (§6.6): its committed offsets can lag the table by one event, never lead it. A cancel
+record's (§6.6): its committed offsets can lag the table by one event, never lead it; a
+`protection_revision` newer than the tail holds is a recorded policy it missed, so it fetches the
+schema again. `protection_key_id` is the deployment's protection key's id, absent without one: a tail
+with another key, or none, refuses a table that hashes rather than serve rows the writers would not
+write (22 §22.5). A cancel
 carries `kind`, `target`, `issued_at` and `reason`. A malformed message is logged and dropped; one
 naming a table the receiving member does not know changes nothing.

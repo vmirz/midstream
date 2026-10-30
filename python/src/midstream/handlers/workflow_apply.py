@@ -22,6 +22,7 @@ from midstream.services import (
     process_work_event_async,
 )
 from midstream.services.workflow import FollowUp, follow_ups, scheduled_request_id
+from midstream.services.protection import protection_policy_output_for_apply
 from midstream.services.settings import runtime_settings_output_for_apply
 from midstream.settings import effective_runtime_config, resolve_config
 from midstream.storage.objects import ObjectStoreClientProtocol
@@ -121,7 +122,7 @@ def handle_work_event_for_routed_output(
         if _is_stale_missing_state_retry(work_event, exc):
             return
         raise
-    yield from _routed_outputs(work_event, follow_up, settings_table=settings_table, config=cfg)
+    yield from _routed_outputs(work_event, follow_up, table=table, settings_table=settings_table, config=cfg)
 
 
 async def handle_work_event_for_routed_output_async(
@@ -165,7 +166,7 @@ async def handle_work_event_for_routed_output_async(
             return _generator(())
         raise
     return _generator(
-        _routed_outputs(work_event, follow_up, settings_table=settings_table, config=cfg)
+        _routed_outputs(work_event, follow_up, table=table, settings_table=settings_table, config=cfg)
     )
 
 
@@ -199,6 +200,7 @@ def _routed_outputs(
     work_event: MaterializationWorkEvent,
     follow_up: FollowUp,
     *,
+    table: TableProtocol | None = None,
     settings_table: TableProtocol | None,
     config: ControlPlaneConfig,
 ) -> Iterator[dict]:
@@ -214,6 +216,16 @@ def _routed_outputs(
         )
         if settings_output is not None:
             yield settings_output
+        # And onto its materialization's protection policy: an edit of the policy is an apply whose
+        # runtime spec is unchanged, so it reaches the runtime this way, without a restart.
+        protection_output = protection_policy_output_for_apply(
+            table,
+            materialization_id=work_event.materialization_id,
+            published_at=work_event.requested_at,
+            config=config,
+        )
+        if protection_output is not None:
+            yield protection_output
     for item in queued:
         if item.observation_policy is not None:
             yield build_scheduled_work_output(

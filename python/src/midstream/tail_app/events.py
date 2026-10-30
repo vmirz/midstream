@@ -6,8 +6,10 @@ offset at its start - the seed covers anything earlier - and applies, to the tab
 - `table_committed`: `payload.offsets` are the table's new committed offsets. Each partition's only
   ever rises, which starts the retention clock on the rows it now holds. A commit never changes rows.
 - `schema_changed`: `payload.schema`, `payload.fork_map`, `payload.schema_id`, `last_column_id`,
-  `rejected_paths` are the table's new schema. Rows built under an older one are built again from
-  their staged lines when next served.
+  `rejected_paths` are the table's new schema, and `payload.protection` what it masks. Rows built
+  under an older schema are built again from their staged lines when next served; a newer
+  protection revision reads the uncommitted records again, as their lines were masked under the
+  older one.
 - `maintenance_completed` after a compaction carries the offsets forward unchanged: nothing to do.
 
 Both are idempotent and may arrive late or twice: an event whose offsets or schema id are not newer
@@ -54,6 +56,7 @@ def apply_table_event(table: Any, event: dict[str, Any]) -> str | None:
                 fork_map=payload.get("fork_map") or {},
                 last_column_id=payload.get("last_column_id"),
                 rejected_paths=payload.get("rejected_paths") or (),
+                protection=payload.get("protection") if isinstance(payload.get("protection"), dict) else None,
             )
         except (KeyError, TypeError, ValueError) as error:
             LOGGER.warning("Ignoring a schema_changed event of %s that does not read: %s", table.key, error)

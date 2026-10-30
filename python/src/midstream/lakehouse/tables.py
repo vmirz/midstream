@@ -92,6 +92,8 @@ PROPERTY_CREATED_AT = "materializer.created-at"
 PROPERTY_PACKAGE_VERSION = "materializer.package-version"
 PROPERTY_PARTITION_GRANULARITY = "materializer.partition-granularity"
 PROPERTY_FORK_MAP = "materializer.fork-map"
+#: What the table protects: its policy, its protected fields and their history (`protection/policy.py`).
+PROPERTY_PROTECTION = "materializer.protection"
 
 
 def metadata_fields() -> list[NestedField]:
@@ -225,6 +227,7 @@ def table_properties(
     snapshot_retention_hours: int,
     min_snapshots_to_keep: int,
     fork_map_json: str | None = None,
+    protection_json: str | None = None,
 ) -> dict[str, str]:
     properties = dict(BASE_PROPERTIES)
     properties.update(
@@ -241,6 +244,8 @@ def table_properties(
     )
     if fork_map_json is not None:
         properties[PROPERTY_FORK_MAP] = fork_map_json
+    if protection_json is not None:
+        properties[PROPERTY_PROTECTION] = protection_json
     return properties
 
 

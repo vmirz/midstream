@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, Pin, Search } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 
+import { ProtectedMark } from '../protection/ProtectionSummary';
 import { ColumnLabelText } from './ColumnLabelText';
 import { compactType, groupColumns, type ColumnGroupId, type ColumnLabel } from './columns';
 import { Input, Skeleton } from '@/components/ui/primitives';
@@ -218,14 +219,17 @@ function ColumnRow({
           onClick={onToggleExpanded}
           className="min-w-0 flex-1 text-left"
         >
-          <ColumnLabelText
-            labels={labels}
-            name={column.name}
-            className={cn(
-              'numeric text-[12px]',
-              visible ? 'text-[var(--color-ink)]' : 'text-[var(--color-ink-faint)]',
-            )}
-          />
+          <span className="flex min-w-0 items-center gap-1">
+            <ColumnLabelText
+              labels={labels}
+              name={column.name}
+              className={cn(
+                'numeric min-w-0 text-[12px]',
+                visible ? 'text-[var(--color-ink)]' : 'text-[var(--color-ink-faint)]',
+              )}
+            />
+            <ProtectedMark protection={column.protection} />
+          </span>
         </button>
         <button
           type="button"

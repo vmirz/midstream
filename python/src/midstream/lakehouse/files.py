@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 import io
+import re
 from typing import Any
 
 import pyarrow as pa
@@ -113,18 +114,49 @@ def data_file_uri(
     offset_end: int,
     member_id: str,
     unique: str,
+    protection_revision: int = 0,
 ) -> str:
-    """`L/data/ts_day=2026-10-18/p03-o0000000100-0000000199-<member>-<uuid>.parquet`."""
+    """`L/data/ts_day=2026-10-18/p03-o0000000100-0000000199-<member>-<uuid>[-r<revision>].parquet`.
+
+    A file whose rows were masked under a protection revision says so in its name
+    (`protection_revision_of`), so which policy a file was written under is known from the manifests
+    alone; revision 0 - a table without protection - adds nothing.
+    """
     name = (
         f"p{kafka_partition:02d}-o{offset_start:010d}-{offset_end:010d}-"
-        f"{_safe(member_id)}-{unique}.parquet"
+        f"{_safe(member_id)}-{unique}{_revision_suffix(protection_revision)}.parquet"
     )
     return f"{location.rstrip('/')}/data/{partition_directory(granularity, partition_value_text)}{name}"
 
 
-def compacted_file_uri(location: str, *, granularity: str, partition_value_text: str | None, unique: str) -> str:
-    """`L/data/ts_day=2026-10-18/compact-<unique>.parquet`: a compaction's output."""
-    return f"{location.rstrip('/')}/data/{partition_directory(granularity, partition_value_text)}compact-{_safe(unique)}.parquet"
+def compacted_file_uri(
+    location: str,
+    *,
+    granularity: str,
+    partition_value_text: str | None,
+    unique: str,
+    protection_revision: int = 0,
+) -> str:
+    """`L/data/ts_day=2026-10-18/compact-<unique>[-r<revision>].parquet`: a compaction's output, of
+    inputs all written under one protection revision."""
+    return (
+        f"{location.rstrip('/')}/data/{partition_directory(granularity, partition_value_text)}"
+        f"compact-{_safe(unique)}{_revision_suffix(protection_revision)}.parquet"
+    )
+
+
+_REVISION_SUFFIX = re.compile(r"-r(\d+)\.parquet$")
+
+
+def _revision_suffix(revision: int) -> str:
+    return f"-r{int(revision)}" if revision and revision > 0 else ""
+
+
+def protection_revision_of(path: str) -> int:
+    """The protection revision a data file's rows were masked under, from its name; 0 for a file
+    written without protection, before it, or by another writer."""
+    match = _REVISION_SUFFIX.search(path)
+    return int(match.group(1)) if match else 0
 
 
 def read_parquet_footer(client: Any, uri: str) -> tuple[pq.FileMetaData, int]:

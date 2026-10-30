@@ -125,6 +125,18 @@ def apply_runtime_status_event(
             for name, counters in event.table_counters.items()
             if "unmapped_values" in counters
         },
+        table_protected={
+            name: counters["protected_values"]
+            for name, counters in event.table_counters.items()
+            if "protected_values" in counters
+        },
+        table_withheld={
+            name: counters["withheld_values"]
+            for name, counters in event.table_counters.items()
+            if "withheld_values" in counters
+        },
+        protection_revisions=event.protection_revisions,
+        protection_key_id=event.protection_key_id,
     )
     # A stopping runtime keeps reporting until its last member exits, and those reports are true
     # about the rows it wrote — but not about the lifecycle: the stop is confirmed by observing the

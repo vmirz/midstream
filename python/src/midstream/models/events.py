@@ -13,6 +13,7 @@ from midstream.models.materialization import (
 )
 from midstream.models.offsets import table_offsets_from, validate_table_offsets
 from midstream.models.status import ConsumerLag
+from midstream.protection.policy import ProtectionPolicy
 from midstream.scale import normalize_replicas, normalize_storage_size
 
 # `pause` is no longer requested by any endpoint; it stays decodable for events already on the topic.
@@ -104,6 +105,14 @@ class MaterializationRequestSpec:
     partition_granularity: str | None = None
     labels: dict[str, str] = field(default_factory=dict)
     annotations: dict[str, str] = field(default_factory=dict)
+    #: The protection policy. On a create the API resolves it - the deployment default when the
+    #: request names none - so it is never None there; on an update None leaves it as it is.
+    protection: ProtectionPolicy | None = None
+    #: On an update: record the policy again with the current rules, even unchanged.
+    apply_protection_rules: bool = False
+    #: On an update that sets `protection`: the policy revision the API read. Intake applies the
+    #: change only to that revision, so a redelivered or overtaken request changes nothing.
+    protection_base_revision: int | None = None
 
     def __post_init__(self) -> None:
         validate_table_specs(self.tables)
@@ -137,6 +146,9 @@ class MaterializationRequestSpec:
             "partition_granularity": self.partition_granularity,
             "labels": dict(self.labels),
             "annotations": dict(self.annotations),
+            "protection": None if self.protection is None else self.protection.to_dict(),
+            "apply_protection_rules": self.apply_protection_rules,
+            "protection_base_revision": self.protection_base_revision,
         }
 
     @classmethod
@@ -156,6 +168,9 @@ class MaterializationRequestSpec:
             partition_granularity=value.get("partition_granularity"),
             labels=dict(value.get("labels", {})),
             annotations=dict(value.get("annotations", {})),
+            protection=None if value.get("protection") is None else ProtectionPolicy.from_dict(value.get("protection")),
+            apply_protection_rules=bool(value.get("apply_protection_rules", False)),
+            protection_base_revision=value.get("protection_base_revision"),
         )
 
 
@@ -503,8 +518,14 @@ class RuntimeStatusEvent:
     #: Each table as the committer member sees it, by table name; only the member running the
     #: committer sends them.
     tables: dict[str, dict[str, Any]] | None = None
-    #: This member's own counters per table: rows, bytes and files written, values unmapped.
+    #: This member's own counters per table: rows, bytes and files written, values unmapped, and
+    #: values masked and withheld (data protection).
     table_counters: dict[str, dict[str, int]] = field(default_factory=dict)
+    #: The protection revision this member masks with, per table (its schema view's); empty when no
+    #: table records one, and from a runtime before data protection.
+    protection_revisions: dict[str, int] = field(default_factory=dict)
+    #: The id of the protection key this member loaded; None without one.
+    protection_key_id: str | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -570,6 +591,10 @@ class RuntimeStatusEvent:
             payload["tables"] = {name: dict(block) for name, block in self.tables.items()}
         if self.table_counters:
             payload["table_counters"] = {name: dict(counters) for name, counters in self.table_counters.items()}
+        if self.protection_revisions:
+            payload["protection_revisions"] = dict(self.protection_revisions)
+        if self.protection_key_id is not None:
+            payload["protection_key_id"] = self.protection_key_id
         return payload
 
     @classmethod
@@ -621,4 +646,10 @@ class RuntimeStatusEvent:
                 for name, counters in (value.get("table_counters") or {}).items()
                 if isinstance(counters, dict)
             },
+            protection_revisions={
+                str(table): revision
+                for table, revision in (value.get("protection_revisions") or {}).items()
+                if _optional_int(revision) is not None and revision >= 0
+            },
+            protection_key_id=_optional_str(value.get("protection_key_id")),
         )

@@ -501,7 +501,16 @@ class FakeRequest:
     remote: str = "10.0.0.9"
 
 
-def target(materialization_id: str = "mat-1", table: str = "orders", *, topic: str = "orders", dataset_id: str = DATASET_ID, table_uuid: str = "uuid-1", skip_tombstones: bool = False) -> LiveTailTarget:
+def target(
+    materialization_id: str = "mat-1",
+    table: str = "orders",
+    *,
+    topic: str = "orders",
+    dataset_id: str = DATASET_ID,
+    table_uuid: str = "uuid-1",
+    skip_tombstones: bool = False,
+    protection_key_id: str | None = None,
+) -> LiveTailTarget:
     return LiveTailTarget(
         materialization_id=materialization_id,
         dataset="sales" if dataset_id == DATASET_ID else "finance",
@@ -512,6 +521,7 @@ def target(materialization_id: str = "mat-1", table: str = "orders", *, topic: s
         partition_granularity="day",
         table_uuid=table_uuid,
         skip_tombstones=skip_tombstones,
+        protection_key_id=protection_key_id,
     )
 
 
@@ -549,6 +559,7 @@ def schema_payload(schema: TailSchema, materialization_id: str = "mat-1", table:
         "fork_map": schema.fork_map.to_dict(),
         "last_column_id": None,
         "rejected_paths": [list(path) for path in schema.rejected_paths],
+        "protection": schema.protection.to_dict() if (schema.protection.revision or schema.protection.fields) else None,
     }
 
 

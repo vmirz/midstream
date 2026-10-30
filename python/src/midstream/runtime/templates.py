@@ -16,6 +16,7 @@ import yaml
 
 from midstream.config import ControlPlaneConfig, get_config
 from midstream.models import Materialization, MaterializationTable
+from midstream.protection.secrets import PROTECTION_KEY_ID_ENV, get_protection_key
 from midstream.runtime.naming import resolve_runtime_app_name, runtime_component_names
 from midstream.runtime_app.config import get_runtime_app_config
 
@@ -107,10 +108,13 @@ def build_dedicated_runtime_template_input(
         "runtime_spec": _pin_runtime_package(
             _merge_runtime_spec(
                 _merge_runtime_spec(
-                    _default_runtime_spec(cfg),
-                    cfg.runtime_app_spec,
+                    _merge_runtime_spec(
+                        _default_runtime_spec(cfg),
+                        cfg.runtime_app_spec,
+                    ),
+                    _runtime_scale_spec(materialization, scaled_to_zero=scaled_to_zero),
                 ),
-                _runtime_scale_spec(materialization, scaled_to_zero=scaled_to_zero),
+                _protection_key_spec(),
             ),
             package_source.requirement,
         ),
@@ -361,6 +365,20 @@ def _merge_env(base_env: list[dict[str, Any]], override_env: list[dict[str, Any]
     """
     overridden = {item["name"] for item in override_env}
     return [item for item in base_env if item["name"] not in overridden] + list(override_env)
+
+
+def _protection_key_spec() -> dict[str, Any]:
+    """The id of the protection key the control plane holds, for every runtime (design §5.11, D14).
+
+    The key itself reaches each runtime pod from the auth Secret (`PROTECTION_KEY`, the chart's
+    runtime spec); its id here lets a member tell that the key it loaded is the deployment's, and
+    makes adding or changing the key re-apply every runtime once. Without a key nothing is
+    rendered, so the runtimes of a deployment without one keep their spec.
+    """
+    key = get_protection_key()
+    if key is None:
+        return {}
+    return {"template": {"kasprContainer": {"env": [{"name": PROTECTION_KEY_ID_ENV, "value": key.key_id}]}}}
 
 
 def _runtime_scale_spec(materialization: Materialization, *, scaled_to_zero: bool = False) -> dict[str, Any]:

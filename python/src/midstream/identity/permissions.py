@@ -233,6 +233,17 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
         scope=DATASET_SCOPE,
     ),
     PermissionDefinition(
+        "dataset.protect",
+        "datasets",
+        "Choose data protection",
+        "Choose how a materialization writing tables into the dataset masks sensitive data, when "
+        "that differs from the deployment's default - masking less, more, or otherwise - at its "
+        "creation or by an edit. Needed on every dataset the materialization writes into.",
+        implies=("dataset.view_schema",),
+        danger=True,
+        scope=DATASET_SCOPE,
+    ),
+    PermissionDefinition(
         "data.query",
         "data",
         "Query data",
@@ -284,7 +295,17 @@ PERMISSIONS: tuple[PermissionDefinition, ...] = (
         "settings.manage",
         "configuration",
         "Manage settings",
-        "Change and reset settings, including the security settings and ones that can remove data.",
+        "Change and reset settings, including the security settings and ones that can remove data. "
+        "The data protection defaults need Manage data protection defaults too.",
+        implies=("settings.view",),
+        danger=True,
+    ),
+    PermissionDefinition(
+        "settings.manage_protection",
+        "configuration",
+        "Manage data protection defaults",
+        "Change which kinds of sensitive data new materializations mask by default, and how. "
+        "Manage settings does not include it, and changing the defaults needs both.",
         implies=("settings.view",),
         danger=True,
     ),
@@ -412,8 +433,17 @@ BUILT_IN_ROLES: tuple[BuiltInRole, ...] = (
         "dataset-owner",
         "Dataset Owner",
         "Reads a dataset, adds and drops its tables, and manages it: its description, who may use "
-        "it, and deleting it once it is empty.",
-        ("dataset.view_schema", "data.query", "data.export", "catalog.read", "dataset.write", "dataset.manage"),
+        "it, how materializations writing into it mask sensitive data, and deleting it once it is "
+        "empty.",
+        (
+            "dataset.view_schema",
+            "data.query",
+            "data.export",
+            "catalog.read",
+            "dataset.write",
+            "dataset.manage",
+            "dataset.protect",
+        ),
     ),
 )
 

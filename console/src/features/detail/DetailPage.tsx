@@ -8,6 +8,7 @@ import { RuntimeTab } from './RuntimeTab';
 import { TableTab } from './TableTab';
 import { canDelete, canEdit, canResume, canStop, useLifecycleActions } from '../materializations/actions';
 import { DataTab } from '../data/DataTab';
+import { ProtectionTab } from '../protection/ProtectionTab';
 import { SchemaTab } from '../schema/SchemaTab';
 import { LiveIndicator, PageBody, PageHeader } from '@/components/AppShell';
 import { Identifier } from '@/components/Inline';
@@ -32,6 +33,7 @@ const TABS = [
   { key: 'schema', label: 'Schema', permission: 'dataset.view_schema' },
   { key: 'data', label: 'Data', permission: 'data.query' },
   { key: 'table', label: 'Table', permission: null },
+  { key: 'protection', label: 'Protection', permission: 'dataset.view_schema' },
   { key: 'runtime', label: 'Runtime', permission: null },
 ] as const;
 
@@ -198,6 +200,8 @@ export function DetailPage(): ReactNode {
         <DataTab materializationId={materializationId} snapshot={data} />
       ) : activeTab === 'table' ? (
         <TableTab snapshot={data} />
+      ) : activeTab === 'protection' ? (
+        <ProtectionTab snapshot={data} />
       ) : activeTab === 'runtime' ? (
         <RuntimeTab snapshot={data} />
       ) : (

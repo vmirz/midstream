@@ -23,6 +23,7 @@ export const DATASET_PERMISSIONS = [
   'catalog.write',
   'dataset.write',
   'dataset.manage',
+  'dataset.protect',
 ] as const;
 
 export type DatasetPermission = (typeof DATASET_PERMISSIONS)[number];

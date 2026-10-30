@@ -53,6 +53,9 @@ class LiveTailTarget:
     table_uuid: str | None = None
     #: The materialization's: a tombstone is then no row, for the tail as for the runtime.
     skip_tombstones: bool = False
+    #: The id of the protection key the deployment hashes with (handbook 22): a tail with another
+    #: key, or none, serves no table that hashes rather than rows the writers would not write.
+    protection_key_id: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("materialization_id", "dataset", "dataset_id", "table", "location", "source_topic"):
@@ -76,6 +79,7 @@ class LiveTailTarget:
             "partition_granularity": self.partition_granularity,
             "table_uuid": self.table_uuid,
             "skip_tombstones": self.skip_tombstones,
+            "protection_key_id": self.protection_key_id,
         }
 
     @classmethod
@@ -90,6 +94,7 @@ class LiveTailTarget:
             partition_granularity=str(value.get("partition_granularity") or "day"),
             table_uuid=str(value["table_uuid"]) if value.get("table_uuid") else None,
             skip_tombstones=bool(value.get("skip_tombstones", False)),
+            protection_key_id=str(value["protection_key_id"]) if value.get("protection_key_id") else None,
         )
 
 
@@ -101,18 +106,26 @@ class LiveTailHints:
     offsets: dict[str, int] = field(default_factory=dict)
     schema_id: int | None = None
     metadata_location: str | None = None
+    #: The protection revision the table records (handbook 22): a newer one than the tail holds means
+    #: a recorded policy it missed.
+    protection_revision: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"offsets": dict(self.offsets), "schema_id": self.schema_id, "metadata_location": self.metadata_location}
+        payload = {"offsets": dict(self.offsets), "schema_id": self.schema_id, "metadata_location": self.metadata_location}
+        if self.protection_revision is not None:
+            payload["protection_revision"] = self.protection_revision
+        return payload
 
     @classmethod
     def from_dict(cls, value: dict[str, Any] | None) -> "LiveTailHints":
         value = value or {}
         schema_id = value.get("schema_id")
+        protection_revision = value.get("protection_revision")
         return cls(
             offsets={str(partition): int(offset) for partition, offset in (value.get("offsets") or {}).items()},
             schema_id=None if schema_id is None else int(schema_id),
             metadata_location=value.get("metadata_location"),
+            protection_revision=None if protection_revision is None else int(protection_revision),
         )
 
 

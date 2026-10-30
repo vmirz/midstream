@@ -37,7 +37,7 @@ helm install midstream charts/midstream -n midstream --create-namespace -f my-va
 | `kaspr.nodeSelector`, `kaspr.tolerations`, `kaspr.affinity` | none | where every Kaspr pod, runtimes included, is placed; `controlPlane`, `maintenance`, `tail` and `controlPlane.runtime` take the same three keys to place their own pods instead |
 | `console.nodeSelector`, `console.tolerations`, `console.affinity` | none | where the console runs; it does not follow `kaspr.*` |
 | `gcs.credentialsSecret` | none | a Secret with a service-account key under `gcs.credentialsKey`; empty uses application default credentials |
-| `auth.existingSecret` | `<release>-auth` | the Secret with `signing-key`, `service-token`, `federation-key` (the same in every domain), `bootstrap-admin-email`, `bootstrap-admin-password` |
+| `auth.existingSecret` | `<release>-auth` | the Secret with `signing-key`, `service-token`, `federation-key` (the same in every domain), `protection-key` (what data protection hashes with; the same in every domain whose masked columns should join), `bootstrap-admin-email`, `bootstrap-admin-password` |
 | `auth.sso.*`, `auth.passwordSignIn` | off, `true` | the sign-in providers this domain takes — Entra ID, GitHub, Google, OpenID Connect — the same clients the console is registered with; its first-sign-in policy (`open` or `invited`), allowed email domains, and whether a password works here |
 | `controlPlane.settings.defaultDestinationUri` | none | the `gs://` prefix every materialization's tables go under; required to create one |
 | `controlPlane.settings.storagePrefix`, `runtimeNamePrefix` | the release name | the directory under the destination; the runtimes' name prefix |

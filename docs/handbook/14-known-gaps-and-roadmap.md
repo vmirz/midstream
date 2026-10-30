@@ -85,10 +85,10 @@ Finding a table needs the control plane — its API (`GET /datasets/{dataset}/ta
 REST facade — or a known location. The bucket knows nothing of datasets: tables are stored by
 materialization (11 §11.1).
 
-### An edit changes only the replicas and the topics
+### An edit changes only the label, the scale, the topics and data protection
 
-`PATCH /materializations/{id}` changes the label (`name`), `replicas` and the topics (`tables`,
-`removed_tables`), nothing else. Labels, annotations, storage size and the rest are refused rather
+`PATCH /materializations/{id}` changes the label (`name`), `replicas` and `autoscaling`, the topics
+(`tables`, `removed_tables`) and the protection policy (`protection`, 22 §22.4), nothing else. Labels, annotations, storage size and the rest are refused rather
 than applied; a storage size change in particular would need the StatefulSet's volume claim
 template replaced, which Kubernetes does not allow in place. The partition granularity is the
 tables' partition spec and the destination their location, both fixed when the tables are created.
@@ -483,6 +483,15 @@ or another engine, reads each fork as its own column and must coalesce them, gui
 A Kafka key or header value that is not UTF-8 is stored as `b64:` followed by its base64
 (`runtime_app/writer/context.py`). A reader comparing keys must expect the prefix.
 
+### Data protection recognises fields by their names, and only from then on
+
+The writers mask what the rules recognise from field names (22 §22.2): a sensitive value under a
+name no rule matches, a bare scalar record, the record key and headers are written as they arrive.
+A policy applies to records written from when it reaches the runtime; rows already written keep
+their values, plain or masked, until a job rewrites them (§14.19). Partial values are for reading,
+not de-identification, and whoever holds the protection key can enumerate low-entropy hashed values
+(22 §22.3). Open items: §14.19.
+
 ### PyIceberg reads a null list of structs as an empty list
 
 PyIceberg 0.12 projects every data file onto the table's schema (`_to_requested_schema`) and
@@ -759,6 +768,8 @@ Before "fixing" any of these, read the linked section.
 15. Iceberg v3 once PyIceberg writes it: `_unmapped` as a `variant` (§14.1).
 16. Other object stores behind the FileIO and the pointer's conditional write (§14.1).
 17. Avro and Protobuf topics.
+18. Data protection's extensions: the maintenance app's job that masks rows already written,
+    per-field choices and per-table policies, value-based detection and the record key (§14.19).
 
 ## 14.13 What 1.0 resolved or retired
 
@@ -850,3 +861,28 @@ Handbook 19 has the model; these are its limits as built in 4.1.
 | Entry | In 4.2 |
 |-------|--------|
 | The shipped runtime spec limited each member to one core, so a seal shared it with the worker; and every member of every runtime requested the spec's CPU, busy or quiet (§14.4) | Members are limited to two cores, and a VerticalPodAutoscaler sets each runtime's CPU request from what its members use, in place; so are the control plane's, the maintenance app's and the tail app's (02 §2.10c). Memory and `resource_profile` stay open (§14.4) |
+
+## 14.19 Data protection: open items
+
+Designed in `docs/design/data-protection.md` §15, not built; each fits what is there (22 §22.14).
+
+- **Rows already written keep their values.** Adding a kind masks new records only; the older rows
+  of the field stay plain, and a numeric field's masked values fork into a string column. A job of
+  the maintenance app that rewrites the files whose names carry an older protection revision than
+  the table's — the revision is already in every file's name, and compaction already keeps
+  revisions apart — would close it; the app already holds the key.
+- **No per-field choice.** A field the rules miss cannot be protected, nor one they match left plain,
+  except by changing the kinds of the whole materialization. `protection.fields` is reserved in the
+  API and refused.
+- **One policy per materialization.** Every table of a materialization masks the same kinds, whatever
+  its dataset. `protection.tables` is reserved and refused.
+- **Names only.** No value-based detection (an email under `contact`, a number in a free-text note),
+  and the Kafka record key and headers are never masked.
+- **No reveal.** A hash cannot be read back; reversible encryption with a reveal permission is the
+  designed path.
+- **One key per deployment, for the lake's lifetime.** Changing the protection key makes new hashes
+  stop joining with old ones; there is no rotation that keeps them joinable.
+- **`catalog.write` can commit plaintext.** An engine with it writes what it likes (§14.2); grant it to
+  maintenance tools only.
+- **The default changes nothing that exists.** By design (22 §22.4): a deployment that raises its
+  default must edit each existing materialization to follow it.
