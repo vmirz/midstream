@@ -4,8 +4,9 @@ The maintenance app keeps every materialization's tables healthy - compaction, s
 orphan cleanup - whatever its runtime is doing, stopped included. It holds no records of its own:
 
 - `maintenance_tick`, every minute for each table that is written or kept, says where the table is,
-  the maintenance settings as they are now, when each job last finished (from the table record), and
-  which job the record says is running;
+  the maintenance settings as they are now, when each job last finished (from the table record),
+  which job the record says is running, the protection revision the table recorded, and a reprotect
+  asked for and not done yet;
 - `maintenance_request` asks for a job now (`POST .../maintenance`);
 - `maintenance_cancel` stops whatever runs on a table that is being dropped.
 
@@ -18,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from midstream.models.table import MAINTENANCE_JOBS, RunningMaintenance
+from midstream.models.table import MAINTENANCE_JOBS, ReprotectRequest, RunningMaintenance
 
 MAINTENANCE_MESSAGE_KINDS = ("maintenance_tick", "maintenance_request", "maintenance_cancel")
 #: The tables the maintenance app maintains: those its runtime writes, and those kept read-only.
@@ -87,6 +88,11 @@ class MaintenanceMessage:
     last_runs: dict[str, str] = field(default_factory=dict)
     #: Tick: the job the table's record says is running.
     running: RunningMaintenance | None = None
+    #: Tick: a reprotect asked for and not done yet (`ReprotectRequest`).
+    reprotect: ReprotectRequest | None = None
+    #: Tick: the protection revision the table recorded, as the control plane last heard; None when
+    #: it records none.
+    protection_revision: int | None = None
     #: Request: the job asked for.
     job: str | None = None
     request_id: str | None = None
@@ -118,6 +124,10 @@ class MaintenanceMessage:
             payload["last_runs"] = dict(self.last_runs)
         if self.running is not None:
             payload["running"] = self.running.to_dict()
+        if self.reprotect is not None:
+            payload["reprotect"] = self.reprotect.to_dict()
+        if self.protection_revision is not None:
+            payload["protection_revision"] = self.protection_revision
         for name in ("job", "request_id", "requested_by", "reason"):
             if getattr(self, name) is not None:
                 payload[name] = getattr(self, name)
@@ -132,6 +142,8 @@ class MaintenanceMessage:
             settings=dict(value.get("settings") or {}),
             last_runs={str(job): str(at) for job, at in (value.get("last_runs") or {}).items()},
             running=RunningMaintenance.from_dict(value.get("running")),
+            reprotect=ReprotectRequest.from_dict(value.get("reprotect")),
+            protection_revision=None if value.get("protection_revision") is None else int(value["protection_revision"]),
             job=value.get("job"),
             request_id=value.get("request_id"),
             requested_by=value.get("requested_by"),
