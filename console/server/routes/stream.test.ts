@@ -12,7 +12,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { installTestAuth, testPrincipal } from '../auth/testing.ts';
 import { installTestDomains } from '../domains/testing.ts';
 import type { FleetSnapshot } from '../../shared/types.ts';
-import { registerFleetStreamRoutes } from './stream.ts';
+import { MERGE_DELAY_MS, registerFleetStreamRoutes } from './stream.ts';
 
 const domains = await installTestDomains(['domain_a', 'domain_b']);
 const listeners = new Map<string, (snapshot: FleetSnapshot) => void>();
@@ -45,11 +45,14 @@ after(async () => {
   await server.close();
 });
 
-/** Read frames from a stream until `count` have arrived or `ms` pass; each with when it arrived. */
+/**
+ * Read frames from a stream until `count` have arrived or `ms` pass; each with when it arrived, after
+ * the response itself - not counting the connection and the sign-in check, which a busy machine slows.
+ */
 async function frames(count: number, ms: number, during?: () => void): Promise<{ frames: { at: number; data: string }[]; started: number }> {
   const controller = new AbortController();
-  const started = performance.now();
   const response = await fetch(`${base}/api/stream/fleet`, { signal: controller.signal });
+  const started = performance.now();
   const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   const seen: { at: number; data: string }[] = [];
@@ -85,7 +88,8 @@ describe('the merged fleet stream', () => {
   it('sends its first frame at once, with every domain in it', async () => {
     const { frames: seen } = await frames(1, 2_000);
     assert.equal(seen.length, 1);
-    assert.ok((seen[0]?.at ?? Infinity) < 60, `the first frame took ${seen[0]?.at} ms`);
+    // Not held back by the merge delay, as the frames after it are.
+    assert.ok((seen[0]?.at ?? Infinity) < MERGE_DELAY_MS, `the first frame took ${seen[0]?.at} ms after the response`);
     const body = JSON.parse(seen[0]!.data.split('\ndata: ')[1] ?? '{}') as { domains: { domain: string }[] };
     assert.deepEqual(body.domains.map((entry) => entry.domain), ['domain_a', 'domain_b']);
   });
