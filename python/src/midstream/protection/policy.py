@@ -13,7 +13,7 @@ the live tail and every reader of the table go by.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 from typing import Any
 
@@ -136,13 +136,39 @@ def parse_policy(value: Any, *, field_name: str = "protection", allow: Iterable[
     return ProtectionPolicy(kinds=resolved)
 
 
+#: How a field's values were written from one protection revision on: `(revision, kind, mask)`,
+#: with kind and mask None while they were written plain.
+FieldState = tuple[int, "str | None", "str | None"]
+
+
+class _Unknown:
+    """What `FieldProtection.state_at` answers for a revision its record no longer describes."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "UNKNOWN"
+
+
+UNKNOWN = _Unknown()
+
+#: States a field keeps; the oldest beyond it are dropped, and with them what is known before.
+STATES_LIMIT = 100
+
+
 @dataclass(frozen=True, slots=True)
 class FieldProtection:
-    """What a table records of one field: its kind and mask, from which schema, until which.
+    """What a table records of one field: its kind and mask, from which schema, until which, and
+    how its values were masked under each protection revision.
 
     `since` is the schema id from which the field's values were masked; `until`, when set, the
     schema id from which they are written plain again (its kind left the policy). The path is the
-    field's physical path.
+    field's physical path. `states` says, revision by revision, what the writers did to the field's
+    values (oldest first); before its first state they wrote them plain, or the field did not exist
+    yet. A data file's name says the revision it was written under, so together they say whether a
+    file holds the field's values plain - what `reprotect` rewrites (design §15.3). `known_from` is
+    the first revision `states` describes in full: 0 for a field recorded with states from the
+    start, the revision a record was first rewritten at when it was written before states were kept.
     """
 
     field_id: int
@@ -151,20 +177,55 @@ class FieldProtection:
     mask: str
     since: int
     until: int | None = None
+    states: tuple[FieldState, ...] = ()
+    known_from: int = 0
 
     @property
     def active(self) -> bool:
         return self.until is None
 
+    def state_at(self, revision: int) -> "tuple[str, str] | None | _Unknown":
+        """How the field's values were masked under `revision`: `(kind, mask)`, None for plain, or
+        `UNKNOWN` for a revision before `known_from`. Revision 0 - no protection - is always plain."""
+        if revision <= 0:
+            return None
+        if revision < self.known_from:
+            return UNKNOWN
+        current: tuple[str, str] | None = None
+        for state_revision, kind, mask in self.states:
+            if state_revision > revision:
+                break
+            current = None if kind is None or mask is None else (kind, mask)
+        return current
+
+    def with_state(self, revision: int, state_kind: str | None, state_mask: str | None, **changes: Any) -> "FieldProtection":
+        """The field with its state from `revision` on recorded - replacing one recorded at the same
+        revision - and `changes` applied."""
+        states = [state for state in self.states if state[0] < revision] + [(revision, state_kind, state_mask)]
+        known_from = self.known_from
+        if len(states) > STATES_LIMIT:
+            states = states[-STATES_LIMIT:]
+            known_from = max(known_from, states[0][0])
+        return replace(self, states=tuple(states), known_from=known_from, **changes)
+
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"path": list(self.path), "kind": self.kind, "mask": self.mask, "since": self.since}
         if self.until is not None:
             payload["until"] = self.until
+        payload["states"] = [list(state) for state in self.states]
+        if self.known_from:
+            payload["known_from"] = self.known_from
         return payload
 
     @classmethod
     def from_dict(cls, field_id: int, value: Mapping[str, Any]) -> "FieldProtection":
         until = value.get("until")
+        states: list[FieldState] = []
+        for item in value.get("states") or ():
+            if isinstance(item, (list, tuple)) and len(item) == 3:
+                kind, mask = item[1], item[2]
+                states.append((int(item[0]), None if kind is None else str(kind), None if mask is None else str(mask)))
+        states.sort(key=lambda state: state[0])
         return cls(
             field_id=int(field_id),
             path=tuple(str(item) for item in value.get("path") or ()),
@@ -172,6 +233,9 @@ class FieldProtection:
             mask=str(value["mask"]),
             since=int(value.get("since") or 0),
             until=None if until is None else int(until),
+            states=tuple(states),
+            # A record from before states were kept: the table's from_dict anchors it.
+            known_from=int(value.get("known_from") or 0) if "states" in value else -1,
         )
 
 
@@ -264,6 +328,7 @@ class TableProtection:
     def from_dict(cls, value: Any) -> "TableProtection":
         if not isinstance(value, Mapping):
             return cls()
+        revision = int(value.get("revision") or 0)
         fields: dict[int, FieldProtection] = {}
         for field_id, item in (value.get("fields") or {}).items():
             if not isinstance(item, Mapping):
@@ -272,6 +337,11 @@ class TableProtection:
                 parsed = FieldProtection.from_dict(int(field_id), item)
             except (KeyError, TypeError, ValueError):
                 continue
+            if parsed.known_from < 0:
+                # Recorded before states were kept: what it says now holds at the table's revision,
+                # and nothing is known of the revisions before.
+                state = (revision, parsed.kind, parsed.mask) if parsed.active else (revision, None, None)
+                parsed = replace(parsed, states=(state,) if revision > 0 else (), known_from=revision)
             fields[parsed.field_id] = parsed
         history = []
         for item in value.get("history") or ():
@@ -281,7 +351,7 @@ class TableProtection:
                 except (TypeError, ValueError):
                     continue
         return cls(
-            revision=int(value.get("revision") or 0),
+            revision=revision,
             policy=ProtectionPolicy.from_dict(value.get("policy")),
             key_id=value.get("key_id"),
             fields=fields,

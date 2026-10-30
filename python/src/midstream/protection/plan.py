@@ -361,17 +361,23 @@ def record_policy(
             entry = fields.get(member.field_id)
             if state is None:
                 if entry is not None and entry.active:
-                    fields[member.field_id] = replace(entry, until=schema_id)
+                    fields[member.field_id] = entry.with_state(revision, None, None, until=schema_id)
                 continue
             if entry is not None and entry.active and entry.kind == state.kind and entry.mask == state.mask:
                 continue
-            fields[member.field_id] = FieldProtection(
-                field_id=member.field_id,
-                path=member.path,
-                kind=state.kind,
-                mask=state.mask,
-                since=schema_id,
-            )
+            if entry is None:
+                fields[member.field_id] = FieldProtection(
+                    field_id=member.field_id,
+                    path=member.path,
+                    kind=state.kind,
+                    mask=state.mask,
+                    since=schema_id,
+                    states=_first_state(revision, state),
+                )
+            else:
+                fields[member.field_id] = entry.with_state(
+                    revision, state.kind, state.mask, path=member.path, kind=state.kind, mask=state.mask, since=schema_id, until=None
+                )
     change = ProtectionChange(
         revision=revision,
         policy=policy,
@@ -435,11 +441,18 @@ def record_new_fields(protection: TableProtection, before: SchemaIndex | None, a
                 kind=state.kind,
                 mask=state.mask,
                 since=after.schema_id,
+                # Its first values are the writers' under the table's revision now.
+                states=_first_state(protection.revision, state),
             )
             changed = True
     if not changed:
         return protection
     return replace(protection, fields=fields)
+
+
+def _first_state(revision: int, state: Decision) -> tuple[tuple[int, str | None, str | None], ...]:
+    """A new entry's states: masked from `revision` on, plain - or absent - before."""
+    return ((revision, state.kind, state.mask),) if revision > 0 else ()
 
 
 def initial_protection(

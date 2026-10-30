@@ -25,6 +25,8 @@ from midstream.protection.plan import (
 from midstream.protection.policy import (
     NONE,
     PROPERTY_PROTECTION,
+    STATES_LIMIT,
+    UNKNOWN,
     FieldProtection,
     PolicyError,
     ProtectionPolicy,
@@ -121,14 +123,52 @@ class TablePropertyTests(unittest.TestCase):
             policy=ProtectionPolicy({"email": "hash"}),
             key_id="3f9a1c2e",
             fields={
-                14: FieldProtection(14, ("customer", "email"), "email", "hash", since=0),
-                40: FieldProtection(40, ("ssn__v2",), "national_id", "hash", since=7, until=9),
+                14: FieldProtection(14, ("customer", "email"), "email", "hash", since=0, states=((1, "email", "hash"),)),
+                40: FieldProtection(
+                    40, ("ssn__v2",), "national_id", "hash", since=7, until=9, states=((2, "national_id", "hash"), (3, None, None)), known_from=2
+                ),
             },
         )
         again = TableProtection.from_json(protection.to_json())
         self.assertEqual(again, protection)
         self.assertEqual(set(again.active_fields()), {14})
         self.assertEqual(protection_of_properties({PROPERTY_PROTECTION: protection.to_json()}), protection)
+
+    def test_a_record_from_before_states_holds_at_its_revision_and_nothing_before(self) -> None:
+        legacy = {
+            "version": 1,
+            "revision": 4,
+            "policy": {"kinds": {"email": "hash"}},
+            "fields": {"14": {"path": ["email"], "kind": "email", "mask": "hash", "since": 0}, "15": {"path": ["phone"], "kind": "phone", "mask": "hash", "since": 0, "until": 2}},
+        }
+        protection = TableProtection.from_dict(legacy)
+        email, phone = protection.fields[14], protection.fields[15]
+        self.assertEqual((email.states, email.known_from), (((4, "email", "hash"),), 4))
+        self.assertEqual((phone.states, phone.known_from), (((4, None, None),), 4))
+        self.assertEqual(email.state_at(4), ("email", "hash"))
+        self.assertEqual(email.state_at(9), ("email", "hash"))
+        self.assertIs(email.state_at(3), UNKNOWN)
+        self.assertIsNone(email.state_at(0), "revision 0 protected nothing")
+        self.assertIsNone(phone.state_at(4))
+
+    def test_states_answer_for_any_revision(self) -> None:
+        item = FieldProtection(14, ("phone",), "phone", "partial", since=3, states=((2, "phone", "hash"), (5, None, None), (7, "phone", "partial")))
+        expected = {0: None, 1: None, 2: ("phone", "hash"), 4: ("phone", "hash"), 5: None, 6: None, 7: ("phone", "partial"), 12: ("phone", "partial")}
+        for revision, state in expected.items():
+            with self.subTest(revision=revision):
+                self.assertEqual(item.state_at(revision), state)
+
+    def test_a_field_keeps_its_newest_states_and_knows_what_it_dropped(self) -> None:
+        item = FieldProtection(14, ("phone",), "phone", "hash", since=0)
+        for revision in range(1, STATES_LIMIT + 6):
+            item = item.with_state(revision, "phone", "hash" if revision % 2 else "partial")
+        self.assertEqual(len(item.states), STATES_LIMIT)
+        self.assertEqual(item.known_from, 6)
+        self.assertIs(item.state_at(5), UNKNOWN)
+        self.assertEqual(item.state_at(6), ("phone", "partial"))
+        again = item.with_state(STATES_LIMIT + 5, "phone", "redact")
+        self.assertEqual(again.states[-1], (STATES_LIMIT + 5, "phone", "redact"), "the same revision recorded again replaces its state")
+        self.assertEqual(len(again.states), STATES_LIMIT)
 
     def test_nothing_recorded_reads_as_nothing_protected(self) -> None:
         for value in (None, "", "not json", "[]", '{"fields": {"x": {}}}'):
@@ -247,6 +287,35 @@ class WalkTests(unittest.TestCase):
 
 
 class ClassificationTests(unittest.TestCase):
+    def test_each_field_records_its_state_by_revision(self) -> None:
+        index = index_of(schema_from({"email": "a", "phone": "b", "ip_address": "c"}))
+        protection = initial_protection(index, DEFAULT, revision=1)
+        fields = lambda value: {item.path[0]: item for item in value.fields.values()}  # noqa: E731
+        self.assertEqual(fields(protection)["email"].states, ((1, "email", "hash"),))
+        # Revision 2 masks IP addresses and makes phone numbers partial; revision 3 drops phone
+        # numbers; revision 4 hashes them again.
+        two = record_policy(protection, index, ProtectionPolicy({**DEFAULT.kinds, "ip_address": "hash", "phone": "partial"}), revision=2)
+        three = record_policy(two, index, ProtectionPolicy({"email": "hash", "ip_address": "hash"}), revision=3)
+        four = record_policy(three, index, ProtectionPolicy({"email": "hash", "ip_address": "hash", "phone": "hash"}), revision=4)
+        self.assertEqual(fields(four)["email"].states, ((1, "email", "hash"),))
+        self.assertEqual(fields(four)["ip_address"].states, ((2, "ip_address", "hash"),))
+        phone = fields(four)["phone"]
+        self.assertEqual(phone.states, ((1, "phone", "hash"), (2, "phone", "partial"), (3, None, None), (4, "phone", "hash")))
+        self.assertTrue(phone.active)
+        self.assertEqual([phone.state_at(revision) for revision in range(5)], [None, ("phone", "hash"), ("phone", "partial"), None, ("phone", "hash")])
+        self.assertIsNone(fields(four)["ip_address"].state_at(1), "plain before the edit that masked it")
+        # Recording a revision again (what the review does) does not add a state.
+        self.assertEqual(record_policy(four, index, four.policy, revision=4).fields, four.fields)
+
+    def test_a_field_added_later_records_its_state_from_the_tables_revision(self) -> None:
+        before = schema_from({"id": 1})
+        before_index = index_of(before)
+        protection = record_policy(initial_protection(before_index, DEFAULT, revision=1), before_index, DEFAULT, revision=3)
+        after = schema_from({"contact_email": "x"}, base=(before.schema, before.fork_map, before.last_column_id))
+        updated = record_new_fields(protection, before_index, index_of(after))
+        (entry,) = updated.fields.values()
+        self.assertEqual(entry.states, ((3, "email", "hash"),))
+
     def test_a_new_tables_fields_are_classified_by_the_rules(self) -> None:
         masked = ProtectionPlan.for_policy(DEFAULT, secret=KEY).protect(
             {"id": 1, "email": "a@b", "phone": {"number": "1", "type": "m"}, "ssn": 5, "password": "x", "name": "n"}
