@@ -1,3 +1,4 @@
+import { ProtectedMark } from '../protection/ProtectionSummary';
 import { ChevronDown, ChevronUp, Copy, Filter, X } from 'lucide-react';
 import { useEffect, useMemo, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -133,10 +134,11 @@ export function RowDrawer({
                       className="group grid grid-cols-[minmax(0,180px)_minmax(0,1fr)] items-start gap-3 border-b border-[var(--color-line)] px-4 py-2 last:border-b-0 hover:bg-[var(--color-raised)]"
                     >
                       <dt
-                        className="numeric truncate pt-px text-[11px] text-[var(--color-ink-muted)]"
-                        title={`${column.name} · ${column.type}`}
+                        className="numeric flex min-w-0 items-center gap-1 pt-px text-[11px] text-[var(--color-ink-muted)]"
+                        title={`${column.name} · ${column.type}${column.protection ? ` · masked: ${column.protection.kind.replace(/_/g, ' ')}, ${column.protection.mask}` : ''}`}
                       >
-                        {column.name}
+                        <span className="truncate">{column.name}</span>
+                        <ProtectedMark protection={column.protection} />
                       </dt>
                       <dd className="flex min-w-0 items-start gap-1">
                         <span

@@ -291,5 +291,6 @@ export function toDefaults(settings: CpSystemSettings): MaterializationDefaults 
     reservedNames: [...settings.reserved_names],
     reservedNamespaceNames: [...(settings.reserved_namespace_names ?? NAMESPACE_KEYWORDS)],
     maxTopics: settings.max_topics ?? DEFAULT_MAX_TOPICS,
+    protection: settings.protection ?? null,
   };
 }

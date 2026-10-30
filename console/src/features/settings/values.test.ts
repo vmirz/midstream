@@ -188,3 +188,48 @@ describe('sectionSettings', () => {
     );
   });
 });
+
+describe('a choice-map setting (data protection)', () => {
+  const protection = setting({
+    key: 'default_protection',
+    section: 'protection',
+    label: 'Protected by default',
+    kind: 'choice_map',
+    unit: null,
+    minimum: null,
+    maximum: null,
+    nullable: true,
+    choiceOptions: [
+      { value: 'email', label: 'Email addresses', description: 'emails', choices: ['hash', 'partial', 'redact'] },
+      { value: 'phone', label: 'Phone numbers', description: 'phones', choices: ['hash', 'partial', 'redact'] },
+      { value: 'secret', label: 'Passwords, tokens and keys', description: 'secrets', choices: ['partial', 'redact'] },
+    ],
+    choiceLabels: { hash: 'Hashed', partial: 'Partial', redact: 'Withheld' },
+    permission: 'settings.manage_protection',
+    value: 'email=hash,secret=redact',
+    defaultValue: 'email=hash,phone=hash,secret=redact',
+    envVar: 'CONTROL_PLANE_DEFAULT_PROTECTION',
+  });
+
+  it('stores choices in the options’ order', () => {
+    assert.deepEqual(parseInput(protection, 'secret=partial, email=hash'), { ok: true, value: 'email=hash,secret=partial' });
+    assert.deepEqual(parseInput(protection, ''), { ok: true, value: '' });
+  });
+
+  it('refuses an unknown option and a choice the option does not allow', () => {
+    assert.equal(parseInput(protection, 'nope=hash').ok, false);
+    const refused = parseInput(protection, 'secret=hash');
+    assert.equal(refused.ok, false);
+    assert.match(refused.ok ? '' : refused.error, /Passwords, tokens and keys cannot be hash/);
+  });
+
+  it('says what is chosen in words', () => {
+    assert.equal(formatValue(protection, 'email=hash,secret=redact'), 'Email addresses: hashed · Passwords, tokens and keys: withheld');
+    assert.equal(formatValue(protection, ''), 'None');
+  });
+
+  it('is unchanged when the same choices come back in another order', () => {
+    assert.equal(draftChanges(protection, { reset: false, input: 'secret=redact,email=hash' }), false);
+    assert.equal(draftChanges(protection, { reset: false, input: 'email=partial,secret=redact' }), true);
+  });
+});

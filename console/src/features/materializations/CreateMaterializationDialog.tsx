@@ -13,6 +13,8 @@ import { useApi, useDomainPath } from '@/lib/domains';
 import { labelProblem } from '@shared/tableNames';
 import type { MaterializationSummary, PartitionGranularity } from '@shared/types';
 
+import { ProtectionField } from '../protection/ProtectionField';
+import { choiceOf, sameChoice, type ProtectionChoice } from '../protection/protection';
 import { TableDraftRow } from '../datasets/TableDraftRow';
 import {
   blocksSubmit,
@@ -42,6 +44,8 @@ interface FormState {
   skip_tombstones: boolean;
   /** Empty takes the control plane's default. */
   partition_granularity: PartitionGranularity | '';
+  /** Null until changed: the domain's Protected by default (handbook 22). */
+  protection: ProtectionChoice | null;
 }
 
 /** Shown until the control plane reports its own defaults, and when it predates reporting them. */
@@ -59,6 +63,7 @@ const EMPTY: FormState = {
   labels: '',
   skip_tombstones: false,
   partition_granularity: '',
+  protection: null,
 };
 
 const GRANULARITY_LABELS: Record<PartitionGranularity, string> = {
@@ -152,6 +157,21 @@ export function CreateMaterializationDialog({
   // Every materialization's tables go under the deployment's destination: none, and none can be made.
   const destinationMissing = defaults !== null && !defaults.destinationUri;
 
+  // Data protection: the domain's default, unless chosen otherwise - which needs Choose data
+  // protection on every dataset a table goes in (the control plane decides; this says so first).
+  const catalog = defaults?.protection ?? null;
+  const defaultChoice = useMemo(() => choiceOf(catalog?.default ?? {}, catalog), [catalog]);
+  const protection = form.protection ?? defaultChoice;
+  const protectionLockedBy = useMemo(() => {
+    const byName = new Map((datasets.data?.datasets ?? []).map((dataset) => [dataset.name, dataset]));
+    const names = [...new Set(form.tables.map((draft) => draft.dataset).filter(Boolean))];
+    return names.filter((name) => {
+      const dataset = byName.get(name);
+      return dataset !== undefined && !dataset.permissions.includes('dataset.protect');
+    });
+  }, [form.tables, datasets.data]);
+  const protectionChanged = !sameChoice(protection, defaultChoice);
+
   const mutation = useMutation({
     mutationFn: (input: CreateMaterializationInput) => api.create(input),
     onSuccess: (accepted) => {
@@ -220,11 +240,18 @@ export function CreateMaterializationDialog({
       ...(Object.keys(labels).length > 0 ? { labels } : {}),
       ...(form.skip_tombstones ? { skip_tombstones: true } : {}),
       ...(form.partition_granularity ? { partition_granularity: form.partition_granularity } : {}),
+      // Sent only when it differs from the default: matching it is no decision at all.
+      ...(catalog && protectionChanged ? { protection: { kinds: protection } } : {}),
     });
   };
 
   const ready =
-    form.source_topics.length > 0 && form.source_topics.length <= maxTopics && !nameProblem && !destinationMissing && !tablesBlocked;
+    form.source_topics.length > 0 &&
+    form.source_topics.length <= maxTopics &&
+    !nameProblem &&
+    !destinationMissing &&
+    !tablesBlocked &&
+    !(protectionChanged && protectionLockedBy.length > 0);
   const errorFor = (field: string): string | null => (fieldError?.field === field ? fieldError.message : null);
   const first = form.tables[0];
 
@@ -315,6 +342,22 @@ export function CreateMaterializationDialog({
             aria-invalid={nameProblem !== null || errorFor('name') !== null}
           />
         </Field>
+
+        {catalog ? (
+          <ProtectionField
+            idPrefix="create-protection"
+            catalog={catalog}
+            value={protection}
+            defaultChoice={defaultChoice}
+            lockedBy={protectionLockedBy}
+            error={errorFor('protection')}
+            onChange={(choice) => {
+              update('protection', choice);
+              if (fieldError?.field?.startsWith('protection')) setFieldError(null);
+            }}
+            note="Applies to every record this materialization writes. Rows are masked before they are written, so no query ever sees them."
+          />
+        ) : null}
 
         <div className="rounded-[var(--radius-control)] border border-[var(--color-line)]">
           <button

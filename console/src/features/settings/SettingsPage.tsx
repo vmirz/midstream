@@ -270,6 +270,11 @@ export function SettingsPage(): ReactNode {
                 serverErrors={serverErrors}
                 readOnly={readOnly}
                 onDraft={setDraft}
+                lockedReason={(setting) =>
+                  setting.permission && !can(setting.permission)
+                    ? `Changing this needs ${permissionLabel(setting.permission)}, besides Manage settings.`
+                    : null
+                }
               />
             ) : null}
           </div>
@@ -327,6 +332,7 @@ function SectionContent({
   serverErrors,
   readOnly,
   onDraft,
+  lockedReason,
 }: {
   section: SettingsSection;
   overview: SettingsOverview;
@@ -334,6 +340,8 @@ function SectionContent({
   serverErrors: Record<string, string>;
   readOnly: boolean;
   onDraft: (setting: SettingView, draft: Draft | undefined) => void;
+  /** Why one setting cannot be changed by this person though the section can (its own permission). */
+  lockedReason: (setting: SettingView) => string | null;
 }): ReactNode {
   if (section.kind === 'deployment') return <DeploymentSection entries={overview.deployment} />;
 
@@ -369,7 +377,8 @@ function SectionContent({
             setting={setting}
             draft={drafts[draftKey(setting)]}
             serverError={serverErrors[draftKey(setting)] ?? null}
-            readOnly={readOnly}
+            readOnly={readOnly || lockedReason(setting) !== null}
+            lockedReason={readOnly ? null : lockedReason(setting)}
             onDraft={(draft) => onDraft(setting, draft)}
           />
         );
@@ -552,3 +561,12 @@ function hasOutstandingRollout(overview: SettingsOverview | undefined): boolean 
   // Revision 0 too: a runtime may still run settings an earlier installation delivered.
   return (overview?.rollout?.pending ?? 0) > 0;
 }
+
+/** A permission's name as the role editor shows it, for the few settings that need one of their own. */
+function permissionLabel(permission: string): string {
+  return PERMISSION_LABELS[permission] ?? permission;
+}
+
+const PERMISSION_LABELS: Record<string, string> = {
+  'settings.manage_protection': 'Manage data protection defaults',
+};

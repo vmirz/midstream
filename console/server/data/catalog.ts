@@ -14,7 +14,7 @@ import { ConsoleError, unavailable } from '../errors.ts';
 import { logger } from '../logger.ts';
 import { ObjectMissingError } from '../iceberg/io.ts';
 import { currentSchema, type IcebergSchema } from '../iceberg/metadata.ts';
-import { FORK_MAP_PROPERTY, parseForkMap, type ForkMap } from '../iceberg/schema.ts';
+import { FORK_MAP_PROPERTY, PROTECTION_PROPERTY, parseForkMap, parseProtection, type ForkMap, type ProtectionMap } from '../iceberg/schema.ts';
 import { snapshotCatalog, type DataObject, type SnapshotCatalog } from '../iceberg/snapshot.ts';
 import { loadTable } from '../iceberg/table.ts';
 import { warmFooter } from './objects.ts';
@@ -32,6 +32,8 @@ export interface Catalog {
   /** The table's current schema, which every snapshot is read through. Null without a table. */
   schema: IcebergSchema | null;
   forkMap: ForkMap;
+  /** The table's protected fields (handbook 22); empty for a table that records none. */
+  protection: ProtectionMap;
   /** The snapshot the catalog describes. Null without a table. */
   snapshot: SnapshotCatalog | null;
   /** The table's current snapshot when the catalog was read; differs from `snapshot` when pinned as of an older one. */
@@ -75,6 +77,7 @@ export async function loadCatalog(
     metadataLocation: table.metadataLocation,
     schema: currentSchema(table.metadata),
     forkMap: parseForkMap(table.metadata.properties[FORK_MAP_PROPERTY]),
+    protection: parseProtection(table.metadata.properties[PROTECTION_PROPERTY]),
     snapshot,
     currentSnapshotId: table.metadata.currentSnapshotId,
     objects: snapshot.objects,
@@ -110,6 +113,7 @@ function emptyCatalog(materializationId: string, table: string | null, location:
     metadataLocation: null,
     schema: null,
     forkMap: new Map(),
+    protection: new Map(),
     snapshot: null,
     currentSnapshotId: null,
     objects: [],

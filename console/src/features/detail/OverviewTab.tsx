@@ -10,7 +10,8 @@ import { StatCard } from '@/components/StatCard';
 import { TimeSeriesChart, type ChartPoint } from '@/components/TimeSeriesChart';
 import { Badge, Button, EmptyState, KeyValue, Panel, PanelHeader, SegmentedControl } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
-import { useAutoscaling } from '@/lib/defaults';
+import { useAutoscaling, useMaterializationDefaults } from '@/lib/defaults';
+import { ProtectionChips, ProtectionStateBadge } from '../protection/ProtectionSummary';
 import { useApi } from '@/lib/domains';
 import {
   formatBytes,
@@ -119,6 +120,7 @@ export function DetailOverviewTab({ snapshot }: { snapshot: DetailSnapshot }): R
   const [showSkips, setShowSkips] = useState(false);
   const [metric, setMetric] = useState<ThroughputMetric>('rows');
   const autoscalingPolicy = useAutoscaling();
+  const protectionCatalog = useMaterializationDefaults().defaults?.protection ?? null;
 
   // What is in the tables, from their current snapshots' manifests — the same counts the Data tab opens with.
   // Kept tables too: they hold data, and stay readable.
@@ -353,6 +355,14 @@ export function DetailOverviewTab({ snapshot }: { snapshot: DetailSnapshot }): R
             <KeyValue label="Partitioned by">
               {partitionLabel(detail.tables[0]?.partition_granularity ?? detail.materialization.partition_granularity ?? null)}
             </KeyValue>
+            {detail.materialization.protection !== undefined ? (
+              <KeyValue label="Data protection" className="col-span-2">
+                <span className="flex flex-wrap items-center gap-2">
+                  <ProtectionChips policy={detail.materialization.protection} catalog={protectionCatalog} />
+                  {detail.protection ? <ProtectionStateBadge summary={detail.protection} /> : null}
+                </span>
+              </KeyValue>
+            ) : null}
           </dl>
           <LabelList title="Labels" entries={detail.materialization.labels} />
           <LabelList title="Annotations" entries={detail.materialization.annotations} />

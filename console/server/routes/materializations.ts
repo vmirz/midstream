@@ -53,6 +53,18 @@ const tableRequest = z.strictObject({
   name: tableName.optional(),
 });
 
+/**
+ * A protection policy (handbook 22): each kind of sensitive data with its mask, or the kinds alone for
+ * their default masks. The control plane knows the kinds and which masks each allows, and refuses
+ * the rest; here only the shape is checked.
+ */
+const protectionKind = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, 'must be a kind of sensitive data');
+const protectionMask = z.enum(['hash', 'partial', 'redact']);
+const protectionPolicy = z.strictObject({
+  kinds: z.union([z.array(protectionKind).max(64), z.record(protectionKind, protectionMask)]),
+});
+const protectionEdit = protectionPolicy.extend({ apply_rules: z.boolean().optional() });
+
 /** One table each, in this order; the control plane bounds how many (Settings › Materializations). */
 function tableRequests(needsDataset: boolean) {
   return z
@@ -98,6 +110,8 @@ export const createMaterializationSchema = z.strictObject({
   partition_granularity: z.enum(PARTITION_GRANULARITIES).optional(),
   labels: labelMap.optional(),
   annotations: labelMap.optional(),
+  /** Omitted, the domain's Protected by default (Settings › Data protection). */
+  protection: protectionPolicy.optional(),
 });
 
 /**
@@ -112,6 +126,8 @@ export const updateMaterializationSchema = z
     autoscaling: z.boolean().optional(),
     tables: tableRequests(false).optional(),
     removed_tables: z.record(z.string().trim().min(1).max(255), z.enum(['drop', 'keep'])).optional(),
+    /** The whole policy from now on; needs Choose data protection on every dataset written into. */
+    protection: protectionEdit.optional(),
   })
   .refine(
     (body) =>
@@ -119,8 +135,9 @@ export const updateMaterializationSchema = z
       body.replicas !== undefined ||
       body.autoscaling !== undefined ||
       body.tables !== undefined ||
-      body.removed_tables !== undefined,
-    { message: 'say what to change: name, replicas, autoscaling, tables or removed_tables', path: ['replicas'] },
+      body.removed_tables !== undefined ||
+      body.protection !== undefined,
+    { message: 'say what to change: name, replicas, autoscaling, tables, removed_tables or protection', path: ['replicas'] },
   );
 
 export function materializationId(request: FastifyRequest): string {
@@ -183,6 +200,15 @@ export async function registerMaterializationRoutes(app: FastifyInstance): Promi
     const id = materializationId(request);
     const detail = await live.getDetail(id);
     return visibleDetail({ ...live.detailSnapshot(id), detail }, authOf(request).state.principal);
+  });
+
+  /**
+   * The protection review (handbook 22): asked as the person, so the control plane leaves out the
+   * tables of datasets whose schemas they may not see.
+   */
+  app.get('/materializations/:materializationId/protection', { preHandler: permit('materializations.view_details') }, async (request) => {
+    const domain = domainOf(request);
+    return domain.controlPlane.protection(callerOf(request), materializationId(request));
   });
 
   /** Scale the runtime to zero; resume scales it back to its replica count. */

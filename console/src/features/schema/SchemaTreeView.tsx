@@ -1,3 +1,4 @@
+import { ProtectedMark } from '../protection/ProtectionSummary';
 import { ChevronRight } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 
@@ -126,9 +127,12 @@ export function SchemaTreeView({ fields }: { fields: CpSchemaField[] }): ReactNo
               <span className="size-4 shrink-0" />
             )}
 
-            <span className="numeric min-w-0 flex-1 truncate text-[12px] text-[var(--color-ink)]">
-              {node.name}
-              {list ? <span className="text-[var(--color-ink-faint)]">[]</span> : null}
+            <span className="numeric flex min-w-0 flex-1 items-center gap-1.5 text-[12px] text-[var(--color-ink)]">
+              <span className="truncate">
+                {node.name}
+                {list ? <span className="text-[var(--color-ink-faint)]">[]</span> : null}
+              </span>
+              <ProtectedMark protection={node.field?.protection} />
             </span>
 
             {hasChildren ? (

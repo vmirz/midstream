@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 
+import { ProtectedMark } from '../protection/ProtectionSummary';
 import { formatSpan, fromTheStart, stoppedArriving } from './timeline';
 import { Badge } from '@/components/ui/primitives';
 import { cn } from '@/lib/cn';
@@ -15,6 +16,9 @@ function typeTone(type: string): string {
 }
 
 const GRID = 'grid grid-cols-[minmax(0,1fr)_150px_84px_120px_64px] items-center gap-4';
+
+/** How a masked field's values are written, in the field table's words (handbook 22). */
+const MASK_WORDS: Record<string, string> = { hash: 'hashed', partial: 'partial', redact: 'withheld' };
 
 /** A field's name, its leading segments dimmed so deep paths stay scannable. */
 export function FieldName({ name }: { name: string }): ReactNode {
@@ -92,12 +96,16 @@ export function SchemaFieldTable({ fields, timeline = null }: { fields: CpSchema
           const parts = [
             note ? `written to ${note}` : null,
             (field.since_schema_id ?? 0) > 0 ? `since schema ${field.since_schema_id}` : null,
+            field.protection ? `masked: ${field.protection.kind.replace(/_/g, ' ')}, ${MASK_WORDS[field.protection.mask] ?? field.protection.mask}` : null,
             dates,
           ].filter((part): part is string => part !== null);
           return (
             <li key={field.field_id} className={cn(GRID, 'px-5 py-2.5', field.state === 'superseded' && 'opacity-55')}>
               <span className="flex min-w-0 flex-col">
-                <FieldName name={field.name} />
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <FieldName name={field.name} />
+                  <ProtectedMark protection={field.protection} />
+                </span>
                 {parts.length > 0 ? (
                   <span className="numeric truncate text-[11px] text-[var(--color-ink-faint)]" title={`${parts.join(' · ')}${dates ? ' (UTC)' : ''}`}>
                     {parts.join(' · ')}

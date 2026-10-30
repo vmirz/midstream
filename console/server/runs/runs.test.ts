@@ -173,6 +173,7 @@ before(async () => {
     metadataLocation: join(dataDir, 'metadata', '00001.metadata.json'),
     schema,
     forkMap,
+    protection: new Map(),
     snapshot: {
       tableUuid: 'uuid',
       snapshotId: '7',
