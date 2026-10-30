@@ -1,0 +1,41 @@
+{{- if include "midstream.controlPlaneEnabled" . }}
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: {{ include "midstream.fullname" . }}-materializations-protection
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kaspr.io/app: {{ include "midstream.controlPlane" . }}
+spec:
+  name: materializations-protection
+  description: Review a materialization's data protection - its policy, how far it has reached, and per table what is masked and what the current rules would change.
+  request:
+    method: GET
+    path: /materializations/{materialization_id}/protection
+  processors:
+    pipeline:
+      - get-protection
+    operations:
+      - name: get-protection
+        tables:
+          - name: {{ include "midstream.fullname" . }}-state
+            paramName: control_plane_table
+          - name: {{ include "midstream.fullname" . }}-directory
+            paramName: directory_table
+        map:
+          entrypoint: get_protection
+          python: |
+            from midstream.identity.authorization import authorize
+            from midstream.web.materializations import protection_review_view
+
+            def get_protection(request, materialization_id, control_plane_table, directory_table):
+                principal = authorize(request, directory_table, "materializations.view_details")
+                return protection_review_view(control_plane_table, materialization_id, principal=principal)
+  response:
+    contentType: application/json
+    bodySelector:
+      onSuccess:
+        python: |
+          def body(data):
+              return data
+{{- end }}

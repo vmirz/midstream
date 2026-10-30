@@ -436,6 +436,35 @@ class ProtectionDiscoveryTests(WorkflowTestCase):
         self.assertEqual({"kind": "email", "mask": "hash", "since_schema_id": 0}, annotated["customer.email"])
         self.assertIsNone(annotated["order_id"])
 
+    def routed_apply(self) -> list[dict]:
+        """Discovery and the tables, then the routed outputs of the runtime's apply."""
+        follow_up = self.process(work("start_discovery"))
+        follow_up = self.process(follow_up)
+        self.assertEqual("apply_runtime", follow_up.step)
+        return list(
+            handle_work_event_for_routed_output(
+                follow_up.to_dict(),
+                self.table,
+                self.discovery,
+                kaspr_app_client=self.kaspr,
+                object_store_client=self.client,
+                config=self.config,
+            )
+        )
+
+    def test_every_apply_delivers_the_policy_to_its_runtime(self) -> None:
+        routed = self.routed_apply()
+        (delivery,) = [item for item in routed if item["route"] == "topic" and item["value"].get("kind") == "protection_policy"]
+        self.assertEqual(self.config.schema_authority_updates_topic, delivery["topic"])
+        self.assertEqual(f"protection-policy:{MATERIALIZATION_ID}", delivery["key"])
+        self.assertEqual(
+            {"kind": "protection_policy", "materialization_id": MATERIALIZATION_ID, "revision": 1, "policy": self.POLICY.to_dict()},
+            {key: delivery["value"][key] for key in ("kind", "materialization_id", "revision", "policy")},
+        )
+        # The runtime's spec carries no policy: an edit changes no resource, and restarts nothing.
+        app = next(resource for resource in self.kaspr.applied if resource["kind"] == "KasprApp")
+        self.assertNotIn("protection", str(app))
+
     def test_a_materialization_created_before_data_protection_records_nothing(self) -> None:
         save_materialization(self.table, build_materialization())
         self.create()
@@ -445,6 +474,11 @@ class ProtectionDiscoveryTests(WorkflowTestCase):
         fields = {item["name"]: item["type"] for item in projection.fields}
         self.assertEqual("long", fields["ssn"])
         self.assertIn("password", fields)
+
+    def test_an_apply_of_one_created_before_data_protection_delivers_nothing(self) -> None:
+        save_materialization(self.table, build_materialization())
+        routed = self.routed_apply()
+        self.assertEqual([], [item for item in routed if item["route"] == "topic" and item["value"].get("kind") == "protection_policy"])
 
 
 class TableCreationTests(WorkflowTestCase):

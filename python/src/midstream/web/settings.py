@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from midstream.config import ControlPlaneConfig, get_config
@@ -17,9 +17,10 @@ from midstream.identity.providers import get_provider_settings
 from midstream.identity.secrets import get_identity_secrets
 from midstream.models import SETTINGS_SCOPES, SettingFallback, SettingsChangeRequest
 from midstream.observation.progress import MEMBER_STATE_FRESHNESS_SECONDS
+from midstream.protection.secrets import get_protection_key
 from midstream.runtime.templates import get_installed_package_revision
 from midstream.services.settings import validate_change
-from midstream.settings.catalog import DEPLOYMENT_SETTINGS, SettingValueError
+from midstream.settings.catalog import DEPLOYMENT_SETTINGS, SettingValueError, definition_for
 from midstream.settings.effective import (
     CONSOLE_SCOPE,
     CONTROL_PLANE_SCOPE,
@@ -35,6 +36,9 @@ from midstream.storage.settings import (
 )
 from midstream.storage.table import TableProtocol
 from midstream.web.errors import conflict, invalid_request, not_found
+
+if TYPE_CHECKING:
+    from midstream.identity.authorization import Principal
 
 _DELETION_PHASES = frozenset({"deleting", "deleted"})
 
@@ -107,6 +111,7 @@ def update_settings(
     accepted_at: str | None = None,
     config: ControlPlaneConfig | None = None,
     environ: Mapping[str, str] | None = None,
+    principal: "Principal | None" = None,
 ) -> SettingsAcceptance:
     """Validate a change to a scope's settings and return the request that will apply it.
 
@@ -114,6 +119,10 @@ def update_settings(
     deployment or default value), and `base_revision`, the revision the client last read. A
     client that sends `base_revision` is refused with 409 when the scope has changed since, so it
     never overwrites a change it did not see.
+
+    A setting whose definition names a `permission` (the protection default's
+    `settings.manage_protection`) needs it too: `principal`, the caller the view authorized for
+    `settings.manage`, must hold it to set or reset that setting (403 otherwise).
     """
     _require_scope(scope)
     if not isinstance(body, dict):
@@ -133,6 +142,14 @@ def update_settings(
     ):
         raise invalid_request("base_revision must be a non-negative integer", field_name="base_revision")
     fallbacks = _parse_fallbacks(body.get("fallbacks"), scope=scope)
+    if principal is not None:
+        # Imported here: the authorization module imports the web package, which imports this one.
+        from midstream.identity.authorization import require
+
+        for key in [*values, *reset]:
+            definition = definition_for(scope, key) if isinstance(key, str) else None
+            if definition is not None and definition.permission is not None:
+                require(principal, definition.permission)
 
     document = get_settings_document(settings_table, scope)
     current_revision = 0 if document is None else document.revision
@@ -318,6 +335,9 @@ def _deployment_value(key: str, config: ControlPlaneConfig, runtime: Any) -> Any
         if current is None:
             return "not configured: no access token can be made or checked"
         return f"{current.key_id}, with a previous key" if len(secrets.federation_keys) > 1 else current.key_id
+    if key == "protection_key":
+        key_object = get_protection_key()
+        return "not configured: nothing can be hashed" if key_object is None else key_object.key_id
     if key == "domain":
         if config.domain_id is None:
             return "none: not part of a shared console"

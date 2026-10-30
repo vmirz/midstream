@@ -364,6 +364,49 @@ KIND_IDS: tuple[str, ...] = tuple(kind.id for kind in KINDS)
 DEFAULT_PROTECTION: dict[str, str] = {"email": MASK_HASH, "phone": MASK_HASH, "national_id": MASK_HASH, "secret": MASK_REDACT}
 
 
+class ProtectionTextError(ValueError):
+    """A protection default's text names an unknown kind, or a mask its kind does not allow."""
+
+
+def format_protection_text(kinds: dict[str, str]) -> str:
+    """A choice of kinds and masks as the setting stores it: `email=hash,phone=partial`, in the
+    catalog's order. Empty for nothing protected."""
+    return ",".join(f"{kind_id}={kinds[kind_id]}" for kind_id in KIND_IDS if kind_id in kinds)
+
+
+def parse_protection_text(text: str | None) -> dict[str, str]:
+    """The kinds and masks a setting's text names; `ProtectionTextError` for anything invalid.
+
+    `email=hash,secret=redact`; a kind alone takes its default mask (`email,secret`); spaces are
+    ignored and an empty text protects nothing.
+    """
+    kinds: dict[str, str] = {}
+    for part in (text or "").split(","):
+        item = part.strip()
+        if not item:
+            continue
+        kind_id, _, mask = (piece.strip() for piece in item.partition("="))
+        entry = KINDS_BY_ID.get(kind_id)
+        if entry is None:
+            raise ProtectionTextError(f"{kind_id!r} is not a kind of sensitive data; kinds are: {', '.join(KIND_IDS)}")
+        resolved = mask or entry.default_mask
+        if resolved not in MASKS:
+            raise ProtectionTextError(f"{resolved!r} is not a mask; masks are: {', '.join(MASKS)}")
+        if not entry.allows(resolved):
+            raise ProtectionTextError(f"{entry.label} cannot be masked with {resolved}; allowed: {', '.join(entry.masks)}")
+        kinds[kind_id] = resolved
+    return kinds
+
+
+def normalize_protection_text(text: str | None) -> str:
+    """A protection default's text in its stored form; `ProtectionTextError` when invalid."""
+    return format_protection_text(parse_protection_text(text))
+
+
+#: The shipped default as the setting stores it.
+DEFAULT_PROTECTION_TEXT = format_protection_text(DEFAULT_PROTECTION)
+
+
 def kind(kind_id: str) -> Kind:
     """The kind with this id; KeyError when there is none."""
     return KINDS_BY_ID[kind_id]

@@ -40,9 +40,17 @@ from midstream.models import (
     TopicChangeRequest,
 )
 from midstream.models.table import MAINTENANCE_JOBS
+from midstream.lakehouse.lifecycle import schema_from_json
+from midstream.lakehouse.schema.forkmap import ForkMap
+from midstream.lakehouse.schema.index import build_index
+from midstream.protection.catalog import parse_protection_text
+from midstream.protection.plan import review
+from midstream.protection.policy import PolicyError, ProtectionPolicy, TableProtection, parse_policy
+from midstream.protection.secrets import get_protection_key
 from midstream.runtime.naming import normalize_runtime_app_name, resolve_runtime_app_name
 from midstream.scale import InvalidScaleError, normalize_replicas
 from midstream.services.identity import IdentityRejection, new_request_id, preview_identity_request
+from midstream.services.protection import protection_state
 from midstream.services.table_claims import claim_request
 from midstream.services.table_maintenance import maintenance_request_messages
 from midstream.services.topic_analysis import missing_topics_async, missing_topics_message
@@ -86,7 +94,11 @@ from midstream.web.responses import (
 #: and the topics it reads - with the tables of new topics and what becomes of the tables of removed
 #: ones. Everything else a materialization was created with is fixed, its tables' datasets and names
 #: above all.
-MUTABLE_SETTINGS = frozenset({"name", "replicas", "autoscaling", "tables", "removed_tables"})
+MUTABLE_SETTINGS = frozenset({"name", "replicas", "autoscaling", "tables", "removed_tables", "protection"})
+#: What an edit of the protection policy says it applies to (design §7.1).
+PROTECTION_APPLIES_TO = (
+    "records written from now on, within seconds, without a restart; rows already written keep their values"
+)
 #: What a request is told when it asks for a materialization without a live tail.
 LIVE_TAIL_ALWAYS = (
     "every materialization has a live tail; only the deployment's live_tail_enabled turns it off, for all of them"
@@ -106,6 +118,9 @@ _CREATION_SETTINGS = frozenset(
         "partition_granularity",
         "labels",
         "annotations",
+        "protection_revision",
+        "protection_changed_by",
+        "protection_reason",
     }
 )
 _DELETION_PHASES = frozenset({"deleting", "deleted"})
@@ -151,7 +166,7 @@ def get_materialization_detail(
     if status is None:
         status = _fallback_status(materialization)
     runtime_binding = get_runtime_binding(table, materialization_id)
-    return build_materialization_detail(
+    payload = build_materialization_detail(
         materialization=materialization,
         status=status,
         runtime_binding=runtime_binding,
@@ -159,6 +174,105 @@ def get_materialization_detail(
         table_records=list_materialization_tables(table, materialization_id),
         principal=principal,
     )
+    payload["protection"] = describe_protection(table, materialization, status)
+    return payload
+
+
+def describe_protection(table: TableProtocol, materialization: Materialization, status: MaterializationStatus) -> dict[str, Any]:
+    """The materialization's policy, how far it has reached, and what each table masked (handbook 22)."""
+    recorded = {}
+    for spec in materialization.tables:
+        projection = resolve_materialization_schema(table, materialization.materialization_id, spec.name)
+        if projection is not None:
+            recorded[spec.name] = projection.protection_revision
+    progress = status.runtime_progress
+    state = protection_state(
+        materialization,
+        member_progress=progress.member_progress,
+        recorded_revisions=recorded,
+        reference_time=_utc_now(),
+    )
+    return {
+        "policy": materialization.protection.to_dict(),
+        "revision": materialization.protection_revision,
+        "changed_by": materialization.protection_changed_by,
+        "reason": materialization.protection_reason,
+        **state,
+        "tables": {
+            spec.name: {
+                "recorded_revision": recorded.get(spec.name),
+                "protected_values": progress.cumulative_protected_by_table.get(spec.name, 0),
+                "withheld_values": progress.cumulative_withheld_by_table.get(spec.name, 0),
+            }
+            for spec in materialization.tables
+        },
+    }
+
+
+def protection_review_view(
+    table: TableProtocol,
+    materialization_id: str,
+    *,
+    principal: Principal | None = None,
+) -> dict[str, Any]:
+    """The protection review (design §5.8): per table, what it protects, since when, and what the
+    materialization's policy with the current rules would change.
+
+    Tables in datasets whose schemas the caller may not see are left out, and counted.
+    """
+    materialization = _require_materialization(table, materialization_id)
+    status = get_materialization_status(table, materialization_id) or _fallback_status(materialization)
+    tables: list[dict[str, Any]] = []
+    hidden = 0
+    for spec in materialization.tables:
+        if principal is not None and not principal.can("dataset.view_schema", spec.dataset_id):
+            hidden += 1
+            continue
+        tables.append(_review_table(table, materialization, spec))
+    return {
+        "materialization_id": materialization_id,
+        **describe_protection(table, materialization, status),
+        "review": tables,
+        "hidden_tables": hidden,
+    }
+
+
+def _review_table(table: TableProtocol, materialization: Materialization, spec: TableSpec) -> dict[str, Any]:
+    projection = resolve_materialization_schema(table, materialization.materialization_id, spec.name)
+    entry: dict[str, Any] = {"table": spec.name, "dataset": spec.dataset, "dataset_id": spec.dataset_id}
+    if projection is None:
+        return {**entry, "created": False, "fields": [], "would_change": [], "history": []}
+    protection = TableProtection.from_dict(projection.protection)
+    index = build_index(
+        schema_from_json(projection.iceberg_schema),
+        ForkMap.from_dict(projection.fork_map),
+        last_column_id=projection.last_column_id,
+    )
+    names = {member.field_id: ".".join(member.logical_path) for member in index.members.values()}
+    fields = [
+        {
+            "field_id": item.field_id,
+            "path": list(item.path),
+            "name": names.get(item.field_id, ".".join(item.path)),
+            "kind": item.kind,
+            "mask": item.mask,
+            "since_schema_id": item.since,
+            "until_schema_id": item.until,
+            "active": item.active,
+        }
+        for item in sorted(protection.fields.values(), key=lambda value: value.field_id)
+    ]
+    return {
+        **entry,
+        "created": True,
+        "schema_id": projection.schema_id,
+        "recorded_revision": protection.revision,
+        "recorded_policy": protection.policy.to_dict(),
+        "key_id": protection.key_id,
+        "fields": fields,
+        "would_change": [item.to_dict() for item in review(protection, index, materialization.protection)],
+        "history": [change.to_dict() for change in protection.history],
+    }
 
 
 def get_materialization_schema_view(
@@ -482,6 +596,10 @@ def create_materialization(
         materialization_id=resolved_materialization_id,
         directory_table=directory_table,
     )
+    if normalized_spec.protection != default_protection(cfg):
+        # Masking otherwise than the deployment's default is the datasets' owners' call (design §5.9);
+        # matching it is no decision at all.
+        _require_protect(principal, normalized_spec.tables)
     _preview_claim(
         directory_table,
         claim_request(
@@ -496,6 +614,8 @@ def create_materialization(
         ),
         principal=principal,
     )
+    # After the permissions: whoever may not create it learns that first.
+    _require_protection_key(normalized_spec.protection)
     materialization = Materialization(
         materialization_id=resolved_materialization_id,
         name=normalized_spec.name or resolved_materialization_id,
@@ -521,6 +641,9 @@ def create_materialization(
         partition_granularity=normalized_spec.partition_granularity or cfg.default_partition_granularity,
         labels=normalized_spec.labels,
         annotations=normalized_spec.annotations,
+        protection=normalized_spec.protection,
+        protection_revision=1,
+        protection_changed_by=submitted_by,
     )
     status = MaterializationStatus(
         materialization_id=resolved_materialization_id,
@@ -563,6 +686,8 @@ def create_materialization(
     response["tables"] = [table.to_dict() for table in materialization.tables]
     response["claim_request_id"] = resolved_claim_id
     response["claim_status_url"] = f"/identity/requests/{resolved_claim_id}"
+    # What its runtime masks, and how: resolved now, as the other defaults are (design §5.8).
+    response["protection"] = {"policy": materialization.protection.to_dict(), "revision": materialization.protection_revision}
     acceptance = MutationAcceptance(
         response=response,
         request_event=request_event,
@@ -697,7 +822,7 @@ def update_materialization(
         raise invalid_request(f"{field_name} is not a setting that can be changed", field_name=field_name)
     if all(_absent(body.get(field_name)) for field_name in MUTABLE_SETTINGS) and "name" not in body:
         raise invalid_request(
-            "say what to change: name, replicas, autoscaling, tables or removed_tables",
+            "say what to change: name, replicas, autoscaling, tables, removed_tables or protection",
             field_name="replicas",
         )
     autoscaling = body.get("autoscaling")
@@ -717,10 +842,16 @@ def update_materialization(
             raise invalid_request(str(error), field_name=error.field_name) from error
     records = list_materialization_tables(table, materialization_id)
     topic_change = _topic_change_request(body, materialization, records, directory_table=directory_table, config=cfg)
+    protection, apply_rules = _requested_protection_change(body, materialization)
 
     _require_not_deleting(materialization, verb="changed")
-    if topic_change is not None or replicas != materialization.replicas:
+    if topic_change is not None or replicas != materialization.replicas or protection is not None:
         _require_deployed(table, materialization, doing="change")
+    if protection is not None:
+        # Choosing how a materialization masks sensitive data is its datasets' owners' call: on
+        # every dataset of the tables it writes (design §5.9).
+        _require_protect(principal, materialization.tables)
+        _require_protection_key(protection)
     changes: dict[str, Any] = {}
     plan: TopicChangePlan | None = None
     resolved_claim_id: str | None = None
@@ -767,6 +898,21 @@ def update_materialization(
     if autoscaling is not None and autoscaling != materialization.autoscaling:
         # Not part of the runtime's spec: its version stays.
         changes["autoscaling"] = autoscaling
+    spec_changes: dict[str, Any] = {}
+    if protection is not None:
+        # Not part of the runtime's spec either: it is delivered to the runtime (design §5.8).
+        # Intake applies it to the revision read here, raising the revision.
+        changes.update(
+            protection=protection,
+            protection_revision=materialization.protection_revision + 1,
+            protection_changed_by=submitted_by,
+            protection_reason="apply_rules" if protection == materialization.protection else None,
+        )
+        spec_changes.update(
+            protection=protection,
+            protection_base_revision=materialization.protection_revision,
+            apply_protection_rules=apply_rules,
+        )
     if label is not None and label != materialization.name:
         changes["name"] = label
     else:
@@ -785,9 +931,18 @@ def update_materialization(
         topic_change=topic_change,
         claim_request_id=resolved_claim_id,
         label=label,
+        spec_changes=spec_changes,
     )
     acceptance.response["name"] = acceptance.materialization.name
     acceptance.response["live_tail"] = True
+    if protection is not None:
+        acceptance.response["protection"] = {
+            "before": materialization.protection.to_dict(),
+            "after": protection.to_dict(),
+            "revision": materialization.protection_revision + 1,
+            "apply_rules": apply_rules,
+            "applies_to": PROTECTION_APPLIES_TO,
+        }
     if plan is not None:
         acceptance.response["topic_change"] = _describe_topic_change(plan)
     if resolved_claim_id is not None:
@@ -1002,6 +1157,7 @@ def _request_change(
     topic_change: TopicChangeRequest | None = None,
     claim_request_id: str | None = None,
     label: str | None = None,
+    spec_changes: dict[str, Any] | None = None,
 ) -> MutationAcceptance:
     cfg = get_config() if config is None else config
     materialization_id = materialization.materialization_id
@@ -1023,7 +1179,7 @@ def _request_change(
         action=action,
         submitted_at=resolved_accepted_at,
         submitted_by=submitted_by,
-        spec=_materialization_to_request_spec(updated_materialization, cfg),
+        spec=replace(_materialization_to_request_spec(updated_materialization, cfg), **(spec_changes or {})),
         submitted_by_id=submitted_by_id,
         topic_change=topic_change,
         claim_request_id=claim_request_id,
@@ -1120,6 +1276,8 @@ def _normalize_request_spec(
         )
     except InvalidScaleError as error:
         raise invalid_request(str(error), field_name=error.field_name) from error
+    # Resolved now too: the deployment default when the request names none.
+    protection = default_protection(config) if body.get("protection") is None else _parse_protection(body["protection"])
     try:
         spec = MaterializationRequestSpec(
             name=name,
@@ -1136,11 +1294,64 @@ def _normalize_request_spec(
             partition_granularity=partition_granularity,
             labels=dict(labels),
             annotations=dict(annotations),
+            protection=protection,
         )
     except ValueError as error:
         field_name = _infer_field_name_from_error(str(error))
         raise invalid_request(str(error), field_name=field_name) from error
     return spec, resolved_runtime_name
+
+
+def default_protection(config: ControlPlaneConfig) -> ProtectionPolicy:
+    """The policy a new materialization gets when its create request names none: the effective
+    `default_protection` setting (handbook 22)."""
+    return ProtectionPolicy(parse_protection_text(config.default_protection))
+
+
+def _parse_protection(value: Any, *, allow: tuple[str, ...] = ()) -> ProtectionPolicy:
+    try:
+        return parse_policy(value, allow=allow)
+    except PolicyError as error:
+        raise invalid_request(str(error), field_name=error.field) from error
+
+
+def _requested_protection_change(body: dict[str, Any], materialization: Materialization) -> tuple[ProtectionPolicy | None, bool]:
+    """The policy an update asks for, and whether it asks to record it again with the current rules;
+    (None, False) when it asks for nothing new - no `protection`, or the policy in force repeated."""
+    raw = body.get("protection")
+    if raw is None:
+        return None, False
+    policy = _parse_protection(raw, allow=("apply_rules",))
+    apply_rules = raw.get("apply_rules", False) if isinstance(raw, dict) else False
+    if not isinstance(apply_rules, bool):
+        raise invalid_request("protection.apply_rules must be a boolean", field_name="protection.apply_rules")
+    if policy == materialization.protection and not apply_rules:
+        return None, False
+    return policy, apply_rules
+
+
+def _require_protect(principal: Principal | None, tables: Iterable[TableSpec]) -> None:
+    """Refuse a caller who may not choose data protection on every dataset of `tables`."""
+    if principal is None:
+        return
+    seen: set[str] = set()
+    for spec in tables:
+        if spec.dataset_id in seen:
+            continue
+        seen.add(spec.dataset_id)
+        _require(principal, "dataset.protect", dataset=_dataset_of(spec))
+
+
+def _require_protection_key(policy: ProtectionPolicy) -> None:
+    """Refuse a policy that hashes when the deployment has no key to hash with: nothing could be
+    written (design §6.8)."""
+    if policy.hashes and get_protection_key() is None:
+        raise conflict(
+            "This deployment has no protection key, so nothing can be hashed. Add protection-key to the "
+            "auth Secret and restart the control plane (handbook 22), or choose partial or withheld for "
+            "these kinds.",
+            reason="protection_key_not_configured",
+        )
 
 
 def _refuse_deployment_choices(body: dict[str, Any], *, config: ControlPlaneConfig, runtime_name: str) -> None:

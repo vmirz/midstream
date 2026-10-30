@@ -41,9 +41,25 @@ class PackageVersionTests(unittest.TestCase):
 
     def test_control_plane_reports_its_component_and_version(self) -> None:
         self.assertEqual(
-            version_view(config=ControlPlaneConfig(), secrets=IdentitySecrets()),
-            {"component": "control-plane", "version": PACKAGE_VERSION, "domain": None, "federation_key_id": None},
+            version_view(config=ControlPlaneConfig(), secrets=IdentitySecrets(), protection_key=None)
+            | {"protection_key_id": None},
+            {
+                "component": "control-plane",
+                "version": PACKAGE_VERSION,
+                "domain": None,
+                "federation_key_id": None,
+                "protection_key_id": None,
+            },
         )
+
+    def test_control_plane_reports_the_protection_keys_id_never_the_key(self) -> None:
+        """Domains whose masked columns should join share the key; the console compares its id."""
+        from midstream.protection.secrets import protection_key
+
+        key = protection_key("p" * 40)
+        view = version_view(config=ControlPlaneConfig(), secrets=IdentitySecrets(), protection_key=key)
+        self.assertEqual(view["protection_key_id"], hashlib.sha256(b"p" * 40).hexdigest()[:8])
+        self.assertNotIn("p" * 40, str(view))
 
     def test_control_plane_reports_its_domain_and_the_federation_keys_id_never_the_key(self) -> None:
         """The shared console checks the domain against its registry, and the key id across domains."""

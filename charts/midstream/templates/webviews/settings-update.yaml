@@ -33,7 +33,7 @@ spec:
             async def prepare_settings_change(request, scope, settings_table, directory_table):
                 principal = authorize(request, directory_table, "settings.manage")
                 body = await request.json()
-                acceptance = update_settings(settings_table, scope, body, submitted_by=principal.attribution)
+                acceptance = update_settings(settings_table, scope, body, submitted_by=principal.attribution, principal=principal)
                 return {"response": acceptance.response, "request_event": acceptance.request_event.to_dict()}
       - name: send-settings-request
         topicSend:

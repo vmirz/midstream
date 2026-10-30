@@ -362,6 +362,7 @@ class RenderedRuntimeTests(unittest.TestCase):
             "deleted_retention_hours": 3,
             "deleted_purge_batch_limit": 3,
             "default_partition_granularity": "hour",
+            "default_protection": "phone=partial",
             "discovery_sample_records": 50,
             "discovery_sample_seconds": 3,
             "schema_history_limit": 3,

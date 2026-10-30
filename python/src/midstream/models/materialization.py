@@ -251,6 +251,10 @@ class Materialization:
     #: The policy's revision: 1 at creation, one more per edit; 0 for one created before data
     #: protection. Delivered to its runtime with the policy, recorded by each table.
     protection_revision: int = 0
+    #: Who chose the current policy (the creator, or the account whose edit set it), and why when it
+    #: is not simply a new choice (`apply_rules`: the same policy recorded again with the current rules).
+    protection_changed_by: str | None = None
+    protection_reason: str | None = None
 
     def __post_init__(self) -> None:
         _validate_non_empty("materialization_id", self.materialization_id)
@@ -342,6 +346,8 @@ class Materialization:
             "pending_topic_change": None if self.pending_topic_change is None else self.pending_topic_change.to_dict(),
             "protection": self.protection.to_dict(),
             "protection_revision": self.protection_revision,
+            "protection_changed_by": self.protection_changed_by,
+            "protection_reason": self.protection_reason,
         }
 
     @classmethod
@@ -377,6 +383,8 @@ class Materialization:
             # Created before data protection: it protects nothing until an edit chooses otherwise.
             protection=ProtectionPolicy.from_dict(value.get("protection")),
             protection_revision=int(value.get("protection_revision") or 0),
+            protection_changed_by=value.get("protection_changed_by"),
+            protection_reason=value.get("protection_reason"),
         )
 
 

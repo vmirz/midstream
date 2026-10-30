@@ -110,6 +110,9 @@ class MaterializationRequestSpec:
     protection: ProtectionPolicy | None = None
     #: On an update: record the policy again with the current rules, even unchanged.
     apply_protection_rules: bool = False
+    #: On an update that sets `protection`: the policy revision the API read. Intake applies the
+    #: change only to that revision, so a redelivered or overtaken request changes nothing.
+    protection_base_revision: int | None = None
 
     def __post_init__(self) -> None:
         validate_table_specs(self.tables)
@@ -145,6 +148,7 @@ class MaterializationRequestSpec:
             "annotations": dict(self.annotations),
             "protection": None if self.protection is None else self.protection.to_dict(),
             "apply_protection_rules": self.apply_protection_rules,
+            "protection_base_revision": self.protection_base_revision,
         }
 
     @classmethod
@@ -166,6 +170,7 @@ class MaterializationRequestSpec:
             annotations=dict(value.get("annotations", {})),
             protection=None if value.get("protection") is None else ProtectionPolicy.from_dict(value.get("protection")),
             apply_protection_rules=bool(value.get("apply_protection_rules", False)),
+            protection_base_revision=value.get("protection_base_revision"),
         )
 
 

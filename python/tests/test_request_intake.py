@@ -6,6 +6,7 @@ import types
 import unittest
 from unittest.mock import patch
 
+from midstream.protection.policy import ProtectionPolicy  # noqa: E402
 from midstream.config import ControlPlaneConfig
 from midstream.handlers import handle_request_event, handle_request_event_for_output
 from midstream.models import (
@@ -351,6 +352,85 @@ class RequestIntakeServiceTests(unittest.TestCase):
         logged = "".join(str(arg) for call in logger.info.call_args_list for arg in call.args)
         self.assertIn("control_plane_request_intake_completed", logged)
         self.assertIn("claim_tables", logged)
+
+
+class ProtectionIntakeTests(unittest.TestCase):
+    """A create stores its resolved policy at revision 1; an edit replaces it from the revision it read,
+    and the runtime is applied - which delivers it - with its spec unchanged (design §5.8)."""
+
+    POLICY = ProtectionPolicy({"email": "hash", "secret": "redact"})
+
+    def setUp(self) -> None:
+        self.config = ControlPlaneConfig()
+        self.table = FakeTable()
+
+    def _running(self, **changes) -> None:
+        materialization = replace(build_materialization("mat-1", desired_phase="running"), replicas=4, **changes)
+        save_materialization(self.table, materialization)
+        save_materialization_status(self.table, build_status("mat-1", desired_phase="running", observed_phase="running"))
+
+    def _edit(self, policy: ProtectionPolicy, *, base: int, apply_rules: bool = False, request_id: str = "req-update") -> MaterializationRequestEvent:
+        event = build_request_event("mat-1", action="update")
+        return replace(
+            event,
+            request_id=request_id,
+            submitted_by="owner@example.com",
+            spec=replace(event.spec, replicas=4, protection=policy, protection_base_revision=base, apply_protection_rules=apply_rules),
+        )
+
+    def test_a_create_stores_its_policy_at_revision_one(self) -> None:
+        event = build_request_event("mat-1", action="create")
+        event = replace(event, spec=replace(event.spec, protection=self.POLICY))
+        process_request_event(self.table, event, config=self.config)
+        materialization = get_materialization(self.table, "mat-1")
+        self.assertEqual((self.POLICY, 1, "alice@example.com"), (materialization.protection, materialization.protection_revision, materialization.protection_changed_by))
+
+    def test_a_create_from_before_data_protection_protects_nothing(self) -> None:
+        process_request_event(self.table, build_request_event("mat-1", action="create"), config=self.config)
+        materialization = get_materialization(self.table, "mat-1")
+        self.assertTrue(materialization.protection.empty)
+        self.assertEqual(0, materialization.protection_revision)
+
+    def test_an_edit_raises_the_revision_and_applies_the_runtime_without_a_new_spec(self) -> None:
+        self._running(protection=self.POLICY, protection_revision=2)
+        result = process_request_event(self.table, self._edit(ProtectionPolicy({"phone": "partial"}), base=2), config=self.config, work_id="work-update")
+        materialization = get_materialization(self.table, "mat-1")
+        self.assertEqual(["apply_runtime"], steps(result))
+        self.assertEqual((ProtectionPolicy({"phone": "partial"}), 3), (materialization.protection, materialization.protection_revision))
+        self.assertEqual("owner@example.com", materialization.protection_changed_by)
+        self.assertIsNone(materialization.protection_reason)
+        self.assertEqual(1, materialization.spec_version)
+
+    def test_an_edit_delivered_again_changes_nothing(self) -> None:
+        self._running(protection=self.POLICY, protection_revision=2)
+        edit = self._edit(ProtectionPolicy({"phone": "partial"}), base=2)
+        process_request_event(self.table, edit, config=self.config)
+        again = process_request_event(self.table, edit, config=self.config)
+        self.assertEqual([], steps(again))
+        self.assertEqual(3, get_materialization(self.table, "mat-1").protection_revision)
+
+    def test_an_edit_overtaken_by_another_is_refused_and_says_so(self) -> None:
+        self._running(protection=self.POLICY, protection_revision=2)
+        process_request_event(self.table, self._edit(ProtectionPolicy({"phone": "partial"}), base=2, request_id="req-a"), config=self.config)
+        with self.assertLogs("midstream.services.request_intake", level="WARNING"):
+            result = process_request_event(self.table, self._edit(ProtectionPolicy({}), base=2, request_id="req-b"), config=self.config)
+        self.assertEqual([], steps(result))
+        materialization = get_materialization(self.table, "mat-1")
+        self.assertEqual((ProtectionPolicy({"phone": "partial"}), 3), (materialization.protection, materialization.protection_revision))
+        self.assertIn("another change of protection", get_materialization_status(self.table, "mat-1").phase_message)
+
+    def test_applying_the_rules_records_the_same_policy_again(self) -> None:
+        self._running(protection=self.POLICY, protection_revision=2)
+        result = process_request_event(self.table, self._edit(self.POLICY, base=2, apply_rules=True), config=self.config)
+        materialization = get_materialization(self.table, "mat-1")
+        self.assertEqual(["apply_runtime"], steps(result))
+        self.assertEqual((self.POLICY, 3, "apply_rules"), (materialization.protection, materialization.protection_revision, materialization.protection_reason))
+
+    def test_an_update_without_protection_leaves_it_alone(self) -> None:
+        self._running(protection=self.POLICY, protection_revision=2)
+        process_request_event(self.table, replace(self._edit(self.POLICY, base=2), spec=replace(self._edit(self.POLICY, base=2).spec, protection=None, replicas=8)), config=self.config)
+        materialization = get_materialization(self.table, "mat-1")
+        self.assertEqual((self.POLICY, 2, 8), (materialization.protection, materialization.protection_revision, materialization.replicas))
 
 
 class TopicChangeIntakeTests(unittest.TestCase):

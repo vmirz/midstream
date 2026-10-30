@@ -35,6 +35,7 @@ from midstream.models import (
     TargetRuntime,
     TopicChangePlan,
 )
+from midstream.protection.policy import NONE as NO_PROTECTION
 from midstream.runtime.naming import normalize_runtime_app_name, resolve_runtime_app_name
 from midstream.scale import normalize_replicas, normalize_storage_size
 from midstream.protocol_logging import elapsed_ms, log_protocol_event, monotonic_ms
@@ -106,6 +107,9 @@ class _Update:
     replicas_changed: bool = False
     #: Autoscaling was turned off while it had the runtime scaled up: it goes back to its own count.
     autoscale_released: bool = False
+    #: The protection policy changed (or was recorded again with the current rules): the runtime is
+    #: applied, which delivers it (design §5.8); its spec is unchanged, so nothing restarts.
+    protection_changed: bool = False
 
 
 def process_request_event(
@@ -273,7 +277,7 @@ def _update_outputs(
                 submitted_at=request_event.submitted_at,
             )
         )
-        if update.replicas_changed or update.autoscale_released:
+        if update.replicas_changed or update.autoscale_released or update.protection_changed:
             work.append(_work_event(request_event, "apply_runtime", target_runtime, work_id=work_id))
         return IntakeResult(work=tuple(work), identity=tuple(identity))
     plan = update.applied
@@ -295,6 +299,7 @@ def _update_outputs(
         and plan.dropped
         and not update.replicas_changed
         and not update.autoscale_released
+        and not update.protection_changed
     ):
         binding = get_runtime_binding(table, request_event.materialization_id)
         if binding is None or not binding.draining:
@@ -309,7 +314,7 @@ def _update_outputs(
                 )
             )
             return IntakeResult(work=tuple(work), identity=tuple(identity))
-    if plan is not None or update.replicas_changed or update.autoscale_released:
+    if plan is not None or update.replicas_changed or update.autoscale_released or update.protection_changed:
         work.append(_work_event(request_event, "apply_runtime", target_runtime, work_id=work_id))
     return IntakeResult(work=tuple(work), identity=tuple(identity))
 
@@ -401,6 +406,11 @@ def _persist_create_request_state(
             ),
             labels=dict(request_event.spec.labels),
             annotations=dict(request_event.spec.annotations),
+            # The API resolved the policy - the deployment default when the request named none. A
+            # create from a control plane before data protection carries none, and protects nothing.
+            protection=NO_PROTECTION if request_event.spec.protection is None else request_event.spec.protection,
+            protection_revision=0 if request_event.spec.protection is None else 1,
+            protection_changed_by=None if request_event.spec.protection is None else request_event.submitted_by,
         )
         save_materialization(table, materialization)
 
@@ -446,6 +456,10 @@ def _persist_mutation_request_state(
         desired_phase = materialization.desired_phase
         updated_materialization = _apply_settings_update(materialization, request_event, config=config)
         update = replace(update, replicas_changed=updated_materialization.replicas != materialization.replicas)
+        updated_materialization, protection_refused = _apply_protection_update(updated_materialization, request_event)
+        update = replace(update, protection_changed=updated_materialization.protection_revision != materialization.protection_revision)
+        if protection_refused is not None:
+            refused = protection_refused
         if materialization.autoscaling and not updated_materialization.autoscaling:
             # Turned off: whatever members autoscaling gave its runtime go, at once.
             update = replace(update, autoscale_released=forget_autoscale(table, materialization.materialization_id))
@@ -580,6 +594,51 @@ def _apply_settings_update(
         replicas=replicas,
         spec_version=materialization.spec_version + 1,
         updated_at=request_event.submitted_at,
+    )
+
+
+def _apply_protection_update(
+    materialization: Materialization,
+    request_event: MaterializationRequestEvent,
+) -> tuple[Materialization, str | None]:
+    """The materialization with an update's protection policy applied, and why it was not, if not.
+
+    The policy applies only to the revision the API read (`protection_base_revision`): a request
+    delivered again after it applied finds its revision gone and changes nothing, and one overtaken
+    by another edit is refused - its status says so - rather than undo the newer choice. Applying it
+    raises the revision, even for the same policy when the request asks to apply the current rules.
+    """
+    spec = request_event.spec
+    if spec.protection is None or spec.protection_base_revision is None:
+        return materialization, None
+    if materialization.protection_revision != spec.protection_base_revision:
+        if spec.protection == materialization.protection:
+            # What it asks for is in force: applied already, or chosen by someone else meanwhile.
+            return materialization, None
+        LOGGER.warning(
+            "Not applying the protection change of request %s for %s: it was made from revision %s, "
+            "and the materialization is at revision %s",
+            request_event.request_id,
+            request_event.materialization_id,
+            spec.protection_base_revision,
+            materialization.protection_revision,
+        )
+        return materialization, (
+            "The protection change was not applied: another change of protection was applied first. "
+            "Review the protection in force and change it again if needed."
+        )
+    if spec.protection == materialization.protection and not spec.apply_protection_rules:
+        return materialization, None
+    return (
+        replace(
+            materialization,
+            protection=spec.protection,
+            protection_revision=materialization.protection_revision + 1,
+            protection_changed_by=request_event.submitted_by,
+            protection_reason="apply_rules" if spec.protection == materialization.protection else None,
+            updated_at=request_event.submitted_at,
+        ),
+        None,
     )
 
 

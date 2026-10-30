@@ -93,6 +93,8 @@ def build_materialization_detail(
             "labels": dict(materialization.labels),
             "annotations": dict(materialization.annotations),
             "spec_version": materialization.spec_version,
+            "protection": materialization.protection.to_dict(),
+            "protection_revision": materialization.protection_revision,
             "datasets": sorted({table.dataset for table in materialization.all_tables}),
             "pending_topic_change": (
                 None
@@ -256,12 +258,18 @@ def build_materialization_schema(
             # What the live tail conforms its rows with, as the runtime's seal does (handbook 19).
             payload["last_column_id"] = schema.last_column_id
             payload["rejected_paths"] = [list(path) for path in schema.rejected_paths]
+        # What the table masks (handbook 22): its `materializer.protection` property as of this
+        # schema - the live tail builds its plan from it, as the writers do from the table.
+        payload["protection"] = dict(schema.protection) if schema.protection else None
     if status is not None:
         progress = status.runtime_progress
         payload["unmapped"] = {
             "total_values": progress.cumulative_unmapped_by_table.get(table_spec.name, 0),
             "last_seen_at": progress.unmapped_last_seen_by_table.get(table_spec.name),
         }
+        if payload.get("protection"):
+            payload["protection"]["protected_values"] = progress.cumulative_protected_by_table.get(table_spec.name, 0)
+            payload["protection"]["withheld_values"] = progress.cumulative_withheld_by_table.get(table_spec.name, 0)
     return payload
 
 
