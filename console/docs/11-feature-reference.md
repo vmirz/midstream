@@ -786,8 +786,12 @@ whether it is the settings home, whether you are signed in there — **Sign in**
 **Hashed**, **Partial** or **Withheld**, what every new materialization masks unless it chooses
 otherwise. Saving it also needs *Manage data protection defaults*: without it the row is read-only,
 saying so, while the rest of the page may still be saved. A change applies to materializations
-created from then on, never to existing ones. The domain's **Deployment** section shows the
-protection key's id, or *not configured: nothing can be hashed*.
+created from then on, never to existing ones. While the domain has no protection key, a warning
+above the rows says so: nothing can be hashed, so a create that keeps a default that hashes is
+refused until the key is added (control-plane handbook
+[22](../../docs/handbook/22-data-protection.md) §22.9). The
+domain's **Deployment** section shows the protection key's id, or *not configured: nothing can be
+hashed*.
 
 A section with unsaved edits carries a dot (a `•` in the picker). Settings marked advanced sit in a
 collapsed **Advanced** panel, which opens by itself when one of them has an edit.

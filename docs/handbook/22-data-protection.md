@@ -336,7 +336,7 @@ steward" role works across the deployment.
 
 | Where | What |
 |---|---|
-| Settings › **Data protection** | *Protected by default*: a row per kind — Off, Hashed, Partial, Withheld — read-only without Manage data protection defaults; the Deployment section shows the protection key's id, or that none is configured |
+| Settings › **Data protection** | *Protected by default*: a row per kind — Off, Hashed, Partial, Withheld — read-only without Manage data protection defaults; without a protection key, a warning above it that nothing can be hashed (§22.9). The Deployment section shows the protection key's id, or that none is configured |
 | Create and edit dialogs | a **Data protection** block: the policy in a line, opening into the same control; locked, with the dataset named, without Choose data protection; a warning when a hashing choice meets a domain with no key; the edit dialog says what changes and that it applies to records written from now on |
 | Detail › Overview | *Data protection*: the kinds in force as chips, and whether the revision has reached every member and table |
 | Detail › **Protection** | the review: the policy and its rollout; what a revision still reaching the tables is about to change; per table, the protected fields — and those written plain again — with their history; the fields a newer release's rules would protect otherwise, with *Apply the current rules* for whoever may choose protection on every dataset |

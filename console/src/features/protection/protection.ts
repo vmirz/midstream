@@ -53,6 +53,19 @@ export function hashes(choice: ProtectionChoice): boolean {
   return Object.values(choice).includes('hash');
 }
 
+/**
+ * What the Data protection settings section says while the domain has no protection key, or null
+ * once it has one: nothing can be hashed, so the control plane refuses a create that hashes - one
+ * that keeps a default that hashes included.
+ */
+export function missingKeyNotice(catalog: Pick<CpProtectionCatalog, 'key_configured' | 'default'> | null | undefined): string | null {
+  if (!catalog || catalog.key_configured) return null;
+  const until = 'Nothing can be hashed here until protection-key is in the domain’s auth Secret and its apps have restarted (handbook 22 §22.9).';
+  return hashes(catalog.default)
+    ? `${until} Until then a new materialization that keeps this default is refused: choose partial or withheld for the hashed kinds, or add the key.`
+    : `${until} Until then a materialization that chooses hashed is refused.`;
+}
+
 /** A choice in words: `Email addresses hashed · Passwords, tokens and keys withheld`, or `Nothing`. */
 export function describeChoice(choice: ProtectionChoice, catalog?: CpProtectionCatalog | null): string {
   const entries = Object.entries(choice);

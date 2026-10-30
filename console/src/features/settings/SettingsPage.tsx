@@ -19,6 +19,7 @@ import { HistorySection } from './HistorySection';
 import { RuntimeRolloutPanel } from './RuntimeRollout';
 import { SettingRow, SettingRowList } from './SettingRow';
 import { AccessSectionContent } from '../access/AccessSections';
+import { ProtectionKeyNotice } from '../protection/ProtectionKeyNotice';
 import {
   CONSOLE_SECTIONS,
   DOMAIN_SECTIONS,
@@ -352,6 +353,7 @@ function SectionContent({
   return (
     <div className="space-y-5">
       {scopes.includes('runtime') ? <RuntimeRolloutPanel rollout={overview.rollout} /> : null}
+      {section.id === 'protection' ? <ProtectionKeyNotice /> : null}
       {rows.length === 0 ? (
         <Panel>
           {readOnly ? (

@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { CpProtectionCatalog } from '@shared/types';
 
-import { choiceChanges, choiceOf, describeChoice, hashes, kindLabel, maskName, sameChoice } from './protection.ts';
+import { choiceChanges, choiceOf, describeChoice, hashes, kindLabel, maskName, missingKeyNotice, sameChoice } from './protection.ts';
 
 const CATALOG: CpProtectionCatalog = {
   kinds: [
@@ -46,6 +46,14 @@ const CATALOG: CpProtectionCatalog = {
 };
 
 describe('data protection in words', () => {
+  it('warns of a missing protection key, and of a default that hashes without one', () => {
+    assert.equal(missingKeyNotice(CATALOG), null);
+    assert.equal(missingKeyNotice(null), null);
+    const keyless = { ...CATALOG, key_configured: false, key_id: null };
+    assert.match(missingKeyNotice(keyless) ?? '', /keeps this default is refused/);
+    assert.match(missingKeyNotice({ ...keyless, default: { email: 'partial', secret: 'redact' } }) ?? '', /chooses hashed is refused/);
+  });
+
   it('orders a policy as the catalog does, from a policy or a plain choice', () => {
     assert.deepEqual(Object.keys(choiceOf({ kinds: { secret: 'redact', email: 'hash' } }, CATALOG)), ['email', 'secret']);
     assert.deepEqual(choiceOf({ phone: 'partial' }, CATALOG), { phone: 'partial' });
