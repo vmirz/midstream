@@ -290,14 +290,20 @@ export class ControlPlaneClient {
   }
 
   /**
-   * Ask the runtime to run one maintenance job now, on one table or, without one, on every table in
-   * turn. Accepted with 202; the runtime reports the outcome.
+   * Ask the maintenance app to run one maintenance job now, on one table or, without one, on every
+   * table in turn. Accepted with 202; the app reports the outcome. A reprotect may purge.
    */
-  maintain(caller: Caller, materializationId: string, job: MaintenanceJob, table: string | null = null): Promise<CpMaintenanceAccepted> {
+  maintain(
+    caller: Caller,
+    materializationId: string,
+    job: MaintenanceJob,
+    table: string | null = null,
+    options: { purge?: boolean } = {},
+  ): Promise<CpMaintenanceAccepted> {
     const id = assertSafeIdentifier(materializationId);
     return this.request<CpMaintenanceAccepted>(caller, `/materializations/${encodeURIComponent(id)}/maintenance`, {
       method: 'POST',
-      body: table === null ? { job } : { job, table },
+      body: { job, ...(table === null ? {} : { table }), ...(options.purge === undefined ? {} : { purge: options.purge }) },
     });
   }
 

@@ -198,7 +198,7 @@ function TableStatus({ record, block, state }: { record: CpTableSummary | null; 
   if (running) {
     return (
       <Badge tone="pending" title={running.partition ? `${running.job.replace(/_/g, ' ')} · ${running.partition}` : undefined}>
-        {running.job === 'compaction' ? 'compacting' : running.job.replace(/_/g, ' ')}
+        {running.job === 'compaction' ? 'compacting' : running.job === 'reprotect' ? 'masking rows' : running.job.replace(/_/g, ' ')}
       </Badge>
     );
   }

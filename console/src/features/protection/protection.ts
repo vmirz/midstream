@@ -4,7 +4,9 @@
  * console keeps no copy of them; the few words here only name the masks when nothing else does.
  */
 
-import type { CpProtectionCatalog, CpProtectionKind, ProtectionMask, ProtectionPolicy } from '@shared/types';
+import type { CpMaintenanceRun, CpPlaintextReport, CpProtectionCatalog, CpProtectionKind, ProtectionMask, ProtectionPolicy } from '@shared/types';
+
+import { formatExact } from '../../lib/format.ts';
 
 /** How each mask is called when the control plane names none. */
 export const MASK_NAMES: Record<ProtectionMask, string> = {
@@ -92,4 +94,49 @@ export function choiceChanges(before: ProtectionChoice, after: ProtectionChoice,
     else changes.push(`${label}: ${maskName(from, catalog).toLowerCase()} → ${maskName(to, catalog).toLowerCase()}`);
   }
   return changes;
+}
+
+/** A reprotect run's counts in words (handbook 22 §22.15): what it rewrote, masked and purged. */
+export function reprotectCounts(run: Pick<CpMaintenanceRun, 'counts'>): string[] {
+  const counts = run.counts ?? {};
+  const count = (key: string): number => (typeof counts[key] === 'number' ? counts[key] : 0);
+  const some = (key: string, one: string, many: string): string[] =>
+    count(key) > 0 ? [`${formatExact(count(key))} ${count(key) === 1 ? one : many}`] : [];
+  return [
+    ...some('inputs', 'file rewritten', 'files rewritten'),
+    ...some('masked', 'value masked', 'values masked'),
+    ...some('withheld', 'value withheld', 'values withheld'),
+    ...some('moved', 'value moved masked to a text field', 'values moved masked to a text field'),
+    ...some('expired_snapshots', 'older snapshot expired', 'older snapshots expired'),
+    ...some('deleted_files', 'replaced file deleted', 'replaced files deleted'),
+    ...some('files_left', 'file left for the next run', 'files left for the next run'),
+  ];
+}
+
+/** What the tables hold in plain text that they mask now, summed over those counted. */
+export interface PlaintextTotals {
+  /** Tables counted at least once. */
+  counted: number;
+  files: number;
+  rows: number;
+  bytes: number;
+  blockedFiles: number;
+  /** Why files cannot be rewritten yet, each reason once. */
+  blocked: string[];
+  unknownFiles: number;
+}
+
+export function plaintextTotals(reports: ReadonlyArray<CpPlaintextReport | null | undefined>): PlaintextTotals {
+  const totals: PlaintextTotals = { counted: 0, files: 0, rows: 0, bytes: 0, blockedFiles: 0, blocked: [], unknownFiles: 0 };
+  for (const report of reports) {
+    if (!report) continue;
+    totals.counted += 1;
+    totals.files += report.files;
+    totals.rows += report.rows;
+    totals.bytes += report.bytes;
+    totals.blockedFiles += report.blocked_files;
+    totals.unknownFiles += report.unknown_files;
+    for (const reason of report.blocked) if (!totals.blocked.includes(reason)) totals.blocked.push(reason);
+  }
+  return totals;
 }

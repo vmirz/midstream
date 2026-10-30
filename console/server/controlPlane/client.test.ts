@@ -18,9 +18,23 @@ const answers: Record<string, { status: number; type?: string; body: string }> =
   '/materializations/mat-html': { status: 502, type: 'text/html', body: '<html><body>Bad gateway</body></html>' },
   '/settings/control-plane': { status: 503, type: 'application/json', body: '{"error":{"code":"unavailable","message":"the settings table is starting","details":{}}}' },
 };
+/** The maintenance requests sent, as the stub received them. */
+const maintenance: unknown[] = [];
 const server = createServer((request, response) => {
-  const answer = answers[new URL(request.url ?? '/', 'http://stub').pathname] ?? { status: 404, type: 'text/plain', body: '404: Not Found' };
-  response.writeHead(answer.status, answer.type ? { 'content-type': answer.type } : {}).end(answer.body);
+  const path = new URL(request.url ?? '/', 'http://stub').pathname;
+  let text = '';
+  request.on('data', (chunk: Buffer) => (text += chunk.toString()));
+  request.on('end', () => {
+    if (request.method === 'POST' && path === '/materializations/mat-1/maintenance') {
+      const body = JSON.parse(text) as { job: string; table?: string };
+      maintenance.push(body);
+      const accepted = { materialization_id: 'mat-1', request_id: 'mnt-1', job: body.job, table: body.table ?? null, accepted_at: '2026-10-30T00:00:00Z' };
+      response.writeHead(202, { 'content-type': 'application/json' }).end(JSON.stringify(accepted));
+      return;
+    }
+    const answer = answers[path] ?? { status: 404, type: 'text/plain', body: '404: Not Found' };
+    response.writeHead(answer.status, answer.type ? { 'content-type': answer.type } : {}).end(answer.body);
+  });
 });
 await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 const client = new ControlPlaneClient(`http://127.0.0.1:${(server.address() as AddressInfo).port}`, 'token');
@@ -64,5 +78,14 @@ describe('a control plane’s answers and a gateway’s', () => {
     assert.equal(isControlPlaneError({ error: { code: 'invalid_upstream_payload', message: '<html>' } }), false);
     assert.equal(isControlPlaneError(null), false);
     assert.equal(isControlPlaneError({ items: [] }), false);
+  });
+});
+
+describe('maintenance requests', () => {
+  it('sends purge with a reprotect only when asked, and the table only when named', async () => {
+    await client.maintain(SERVICE, 'mat-1', 'reprotect', null, { purge: true });
+    await client.maintain(SERVICE, 'mat-1', 'compaction', 'orders');
+    await client.maintain(SERVICE, 'mat-1', 'reprotect');
+    assert.deepEqual(maintenance, [{ job: 'reprotect', purge: true }, { job: 'compaction', table: 'orders' }, { job: 'reprotect' }]);
   });
 });

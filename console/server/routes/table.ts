@@ -28,11 +28,14 @@ import {
   type TableView,
 } from '../../shared/types.ts';
 
-/** A job, on one table or, without `table`, on every table in turn. */
-const maintenanceSchema = z.strictObject({
-  job: z.enum(MAINTENANCE_JOBS),
-  table: z.string().min(1).max(128).nullish(),
-});
+/** A job, on one table or, without `table`, on every table in turn; `purge` is a reprotect's. */
+export const maintenanceSchema = z
+  .strictObject({
+    job: z.enum(MAINTENANCE_JOBS),
+    table: z.string().min(1).max(128).nullish(),
+    purge: z.boolean().optional(),
+  })
+  .refine((body) => body.purge === undefined || body.job === 'reprotect', { message: 'purge is an option of the reprotect job', path: ['purge'] });
 
 const SNAPSHOT_ROWS = 200;
 const DEFAULT_SMALL_FILE_BYTES = 64 * 1024 * 1024;
@@ -128,15 +131,16 @@ export async function registerTableRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /**
-   * Run a maintenance job now — compaction, snapshot expiry or orphan cleanup — on one table, or on
-   * every table, kept ones included. The maintenance app runs it, whether or not the runtime runs,
-   * and reports back.
+   * Run a maintenance job now — compaction, snapshot expiry, orphan cleanup or a reprotect — on one
+   * table, or on every table, kept ones included. A reprotect also needs Choose data protection on
+   * each table's dataset, which the control plane checks as the person asking. The maintenance app
+   * runs it, whether or not the runtime runs, and reports back.
    */
   app.post('/materializations/:materializationId/maintenance', { preHandler: permit('materializations.maintain') }, async (request, reply) => {
     const id = materializationId(request);
     const body = parseBody(maintenanceSchema, request.body);
     const table = body.table ? tableSpec(await domainOf(request).live.getDetail(id), body.table).name : null;
-    const accepted = await domainOf(request).controlPlane.maintain(callerOf(request), id, body.job, table);
+    const accepted = await domainOf(request).controlPlane.maintain(callerOf(request), id, body.job, table, { purge: body.purge });
     domainOf(request).live.wake();
     return reply.code(202).send(accepted);
   });
@@ -247,6 +251,7 @@ function snapshotRow(snapshot: TableMetadata['snapshots'][number], currentSnapsh
     sequenceNumber: snapshot.sequenceNumber,
     committedAt: new Date(snapshot.timestampMs).toISOString(),
     operation: summary.operation ?? 'unknown',
+    materializerOperation: summary['materializer.operation'] ?? null,
     schemaId: snapshot.schemaId,
     addedFiles: count('added-data-files'),
     addedRecords: count('added-records'),

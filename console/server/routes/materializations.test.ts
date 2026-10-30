@@ -181,4 +181,14 @@ describe('data protection on create and edit', () => {
     });
     assert.throws(() => updateMaterializationSchema.parse({ protection: { kinds: {}, apply_rules: 'yes' } }));
   });
+
+  it('takes an edit that then masks the rows already written, and a create that cannot', () => {
+    assert.deepEqual(updateMaterializationSchema.parse({ protection: { kinds: ['email'], reprotect: { purge: true } } }), {
+      protection: { kinds: ['email'], reprotect: { purge: true } },
+    });
+    assert.deepEqual(updateMaterializationSchema.parse({ protection: { kinds: ['email'], reprotect: true } }).protection?.reprotect, true);
+    assert.throws(() => updateMaterializationSchema.parse({ protection: { kinds: [], reprotect: { purge: 'yes' } } }));
+    assert.throws(() => updateMaterializationSchema.parse({ protection: { kinds: [], reprotect: { tables: ['orders'] } } }));
+    assert.throws(() => createMaterializationSchema.parse({ ...base, protection: { kinds: {}, reprotect: true } }));
+  });
 });

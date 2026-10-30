@@ -15,9 +15,11 @@ import type { CpProtectionCatalog, CpProtectionReviewItem, CpProtectionReviewTab
 
 import { ProtectionChips, ProtectionStateBadge } from './ProtectionSummary';
 import { describeChoice, choiceOf, kindLabel, maskName } from './protection';
+import { ReprotectPanel } from './ReprotectPanel';
 
 /**
- * The Protection tab (handbook 22): the policy in force and how far it has reached; per table, every
+ * The Protection tab (handbook 22): the policy in force and how far it has reached; what the tables
+ * hold in plain text that they mask now, with the action that masks it (a reprotect); per table, every
  * protected field with its kind, its mask and the schema it was protected from; what the current
  * rules would protect otherwise, with the action that applies them; and the history of policies.
  */
@@ -107,9 +109,11 @@ export function ProtectionTab({ snapshot }: { snapshot: DetailSnapshot }): React
         </dl>
         <p className="border-t border-[var(--color-line)] px-5 py-3 text-[12px] text-[var(--color-ink-muted)]">
           A change applies to records written from then on, within seconds and without a restart. Rows already written keep
-          the values they were written with.
+          the values they were written with until a reprotect masks them.
         </p>
       </Panel>
+
+      <ReprotectPanel review={data} detail={detail ?? null} />
 
       {pendingCount > 0 ? (
         <Panel>

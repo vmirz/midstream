@@ -249,11 +249,14 @@ export function domainApi(domain: string) {
 
     /** The Table tab, for one table: snapshots, files by partition, maintenance, properties and how to connect. */
     table: (id: string, table: string) => request<TableView>(tablePath(base, id, table)),
-    /** Run one maintenance job now, on one table or every table in turn; accepted at once, reported by the runtime when done. */
-    maintain: (id: string, job: MaintenanceJob, table: string | null = null) =>
+    /**
+     * Run one maintenance job now, on one table or every table in turn; accepted at once, reported by
+     * the maintenance app when done. A reprotect may purge the older snapshots once done.
+     */
+    maintain: (id: string, job: MaintenanceJob, table: string | null = null, options: { purge?: boolean } = {}) =>
       request<CpMaintenanceAccepted>(`${base}/materializations/${encodeURIComponent(id)}/maintenance`, {
         method: 'POST',
-        body: JSON.stringify(table === null ? { job } : { job, table }),
+        body: JSON.stringify({ job, ...(table === null ? {} : { table }), ...(options.purge === undefined ? {} : { purge: options.purge }) }),
       }),
     catalogConnection: () => request<CatalogConnection>(`${base}/catalog/connection`),
 
