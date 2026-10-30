@@ -54,7 +54,7 @@ class Decision:
 _PLAIN = None
 
 
-def _scalar_members(family: Family | None) -> list[Member]:
+def scalar_members(family: Family | None) -> list[Member]:
     """The family's members that hold scalars (or lists of scalars) a mask could apply to, newest first;
     collapsed ones excluded, and booleans: no kind's values are true or false, so a boolean `has_email`
     is never masked and never recorded as protected."""
@@ -236,7 +236,7 @@ class ProtectionPlan:
         return decision
 
     def _recorded_or_ruled(self, family: Family | None, parent: str | None, key: str, inherited: str | None) -> Decision | None:
-        members = _scalar_members(family)
+        members = scalar_members(family)
         if members:
             for member in members:
                 entry = self._active.get(member.field_id)
@@ -267,7 +267,7 @@ def _withheld_if_emptied(original: dict, masked: dict) -> Any:
 
 
 @dataclass(frozen=True, slots=True)
-class _Visit:
+class FamilyVisit:
     """A family met walking a schema index, with what the rules need to classify it."""
 
     struct: StructIndex
@@ -276,21 +276,21 @@ class _Visit:
     inherited: str | None
 
 
-def _families(struct: StructIndex, parent: str | None, inherited: str | None) -> Iterator[_Visit]:
+def family_visits(struct: StructIndex, parent: str | None, inherited: str | None) -> Iterator[FamilyVisit]:
     for key, family in struct.families.items():
-        yield _Visit(struct, family, parent, inherited)
+        yield FamilyVisit(struct, family, parent, inherited)
         child_kind = container_kind(parent, key, inherited)
         for member in family.members:
             if member.json:
                 continue
             if member.struct is not None:
-                yield from _families(member.struct, key, child_kind)
+                yield from family_visits(member.struct, key, child_kind)
             elif member.element is not None:
                 element = member.element
                 while element is not None and element.struct is None and element.element is not None:
                     element = element.element
                 if element is not None and element.struct is not None and not element.json:
-                    yield from _families(element.struct, key, child_kind)
+                    yield from family_visits(element.struct, key, child_kind)
 
 
 def _structs(index: SchemaIndex) -> dict[int, StructIndex]:
@@ -345,8 +345,8 @@ def record_policy(
     """
     schema_id = index.schema_id
     fields = dict(protection.fields)
-    for visit in _families(index.root, None, None):
-        members = _scalar_members(visit.family)
+    for visit in family_visits(index.root, None, None):
+        members = scalar_members(visit.family)
         if not members:
             continue
         recorded = _family_kind(fields, members)
@@ -409,14 +409,14 @@ def record_new_fields(protection: TableProtection, before: SchemaIndex | None, a
     before_structs = {} if before is None else _structs(before)
     fields = dict(protection.fields)
     changed = False
-    for visit in _families(after.root, None, None):
-        members = _scalar_members(visit.family)
+    for visit in family_visits(after.root, None, None):
+        members = scalar_members(visit.family)
         added = [member for member in members if member.field_id not in known]
         if not added:
             continue
         before_struct = before_structs.get(visit.struct.struct_id)
         before_family = None if before_struct is None else before_struct.families.get(visit.family.key)
-        before_members = _scalar_members(before_family)
+        before_members = scalar_members(before_family)
         state: Decision | None
         if before_members:
             kind_id = _family_kind(fields, before_members)
