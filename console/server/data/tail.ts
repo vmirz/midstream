@@ -324,6 +324,8 @@ export function refusal(status: number, body: Buffer): TailBacklogged | TailUnav
   if (status === 503 && reason === 'tail_not_ready') return { ...unavailableOutcome('not_ready', message, status), state: state ?? 'seeding' };
   if (status === 503 && reason === 'topic_unavailable') return unavailableOutcome('topic_unavailable', message, status);
   if (status === 503 && reason === 'peek_failed') return unavailableOutcome('peek_failed', message, status);
+  // The table hashes and the tail app has no protection key, or another: never served plain (handbook 22).
+  if (status === 503 && reason === 'protection_key_missing') return unavailableOutcome('protection_key_missing', message, status);
   if (status === 401 || status === 403) return unavailableOutcome('forbidden', message, status);
   if (status === 400) return unavailableOutcome('rejected', message, status);
   return unavailableOutcome('unreachable', message, status);

@@ -1098,8 +1098,9 @@ export interface RunTail {
   /**
    * Why the tail is `unavailable` or `off`: `not_ready` (warming up), `rebalancing`,
    * `unavailable_for_snapshot` (the snapshot is older than the tail keeps), `not_tailed` (the tail
-   * app does not follow the table yet), `topic_unavailable`, `unreachable`, `timeout`, `forbidden`,
-   * `unreadable`; `materialization`, `console`, `control_plane`, `stopped` or `not_configured` when off.
+   * app does not follow the table yet), `topic_unavailable`, `protection_key_missing` (the table
+   * hashes and the tail app cannot), `unreachable`, `timeout`, `forbidden`, `unreadable`;
+   * `materialization`, `console`, `control_plane`, `stopped` or `not_configured` when off.
    */
   reason?: string | null;
   /** What the tail said, for a tooltip. */

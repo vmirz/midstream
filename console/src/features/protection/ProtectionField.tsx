@@ -24,11 +24,14 @@ export function ProtectionField({
   note,
   title = 'Data protection',
   startOpen = false,
+  baselineTag = 'default',
+  resetLabel = 'Use the default',
 }: {
   idPrefix: string;
   catalog: CpProtectionCatalog;
   value: ProtectionChoice;
-  /** The domain's default, which a create may keep without any permission. */
+  /** What the choice starts from: the domain's default, which a create may keep without any
+   * permission, or the policy an edit would replace. */
   defaultChoice: ProtectionChoice;
   onChange: (value: ProtectionChoice) => void;
   /** Datasets on which the person may not choose data protection; non-empty locks the control. */
@@ -37,6 +40,10 @@ export function ProtectionField({
   note?: ReactNode;
   title?: string;
   startOpen?: boolean;
+  /** How the summary names an unchanged choice: `default`, or `current` in an edit. */
+  baselineTag?: string;
+  /** The button that returns to `defaultChoice`. */
+  resetLabel?: string;
 }): ReactNode {
   const [open, setOpen] = useState(startOpen);
   const locked = lockedBy.length > 0;
@@ -69,7 +76,7 @@ export function ProtectionField({
         </span>
         <span className="ml-auto min-w-0 truncate text-[11px] text-[var(--color-ink-muted)]" title={describeChoice(value, catalog)}>
           {describeChoice(value, catalog)}
-          {changed ? '' : ' · default'}
+          {changed ? '' : ` · ${baselineTag}`}
         </span>
       </button>
       {open ? (
@@ -91,7 +98,7 @@ export function ProtectionField({
           />
           {changed && !locked ? (
             <Button size="sm" variant="ghost" type="button" onClick={() => onChange(defaultChoice)}>
-              Use the default
+              {resetLabel}
             </Button>
           ) : null}
         </div>
@@ -110,7 +117,7 @@ export function ProtectionField({
         <p role="alert" className="border-t border-[var(--color-line)] px-3 py-2.5 text-[12px] text-[var(--color-phase-failed)]">
           {lockText}{' '}
           <button type="button" className="underline" onClick={() => onChange(defaultChoice)}>
-            Use the default
+            {resetLabel}
           </button>
         </p>
       ) : null}

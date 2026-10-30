@@ -174,9 +174,18 @@ export function EditMaterializationDialog({
   const undecided = change.removed.filter((spec) => !actions[spec.name]);
   const droppedKept = change.stillKept.filter((spec) => dropKept.has(spec.name));
   const protectionChanged = protectionCatalog !== null && !sameChoice(protection, currentProtection);
-  // Choosing how it masks needs Choose data protection on every dataset it writes into.
+  // Choosing how it masks needs Choose data protection on every dataset it writes into, those of the
+  // topics this edit adds or writes again included: the new policy masks their tables too.
+  const datasetIdOf = (name: string): string | null => datasets.data?.datasets.find((item) => item.name === name)?.dataset_id ?? null;
   const protectionLockedBy = [
-    ...new Set(materialization.tables.filter((spec) => !can('dataset.protect', spec.dataset_id)).map((spec) => spec.dataset)),
+    ...new Set(
+      [
+        ...[...materialization.tables, ...change.resumed].map((spec) => ({ id: spec.dataset_id, name: spec.dataset })),
+        ...drafts.filter((draft) => draft.dataset).map((draft) => ({ id: datasetIdOf(draft.dataset), name: draft.dataset })),
+      ]
+        .filter((item) => item.id !== null && !can('dataset.protect', item.id))
+        .map((item) => item.name),
+    ),
   ];
   const anyChange =
     labelChanged || replicasChanged || autoscalingChanged || change.changesTopics || droppedKept.length > 0 || protectionChanged;
@@ -448,6 +457,8 @@ export function EditMaterializationDialog({
             catalog={protectionCatalog}
             value={protection}
             defaultChoice={currentProtection}
+            baselineTag="current"
+            resetLabel="Keep the current protection"
             lockedBy={protectionLockedBy}
             error={error?.field?.startsWith('protection') ? error.message : null}
             onChange={setProtection}
