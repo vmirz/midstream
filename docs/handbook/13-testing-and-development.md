@@ -683,7 +683,7 @@ topic are in handbook 20 §20.15; the browser record is console 14 §14.4. In sh
 committed exactly 102,033,103 rows, in 89.4 and 88.9 minutes; the console's requests answered within a
 millisecond or two of rc.2's; nothing on the data path changed between the builds.
 
-## 13.8k Verified on a test cluster: data protection (1.1)
+## 13.8k Verified on a test cluster: data protection (1.0.0-rc.5)
 
 On 2026-10-30 two domains on a test cluster ran `feature/data-protection` — at c2a4ae4, then at cffb5a6
 with the fixes the run found — on Kaspr 0.11.31 and kaspr-operator 0.19.8, with the shared console in
@@ -716,7 +716,7 @@ command that made a new key on each run (cffb5a6). Not run on the test cluster: 
 *Manage settings* but not *Manage data protection defaults*, and an edit giving a revision-0
 materialization its first policy; unit tests cover both.
 
-## 13.8l Verified on a test cluster: reprotect
+## 13.8l Verified on a test cluster: reprotect (1.0.0-rc.5)
 
 On 2026-10-30 two domains on a test cluster ran `feature/reprotect` — at 3e7c260, then at 88d0c19 and
 d0dde4c with the fixes the run found — on Kaspr 0.11.31 and kaspr-operator 0.19.8, with the shared
