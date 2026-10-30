@@ -80,7 +80,7 @@ refuses `hash` for it.
 |---|---|---|---|
 | `hash` | Hashed | `HMAC-SHA256(protection key, text)`, the first 128 bits as 32 lowercase hex characters | string |
 | `partial` | Partial | `****` with the fragment the kind keeps (§22.2) | string |
-| `redact` | Withheld | nothing: the key is dropped from the record, so a field withheld from the start never exists | — |
+| `redact` | Withheld | nothing: the key is dropped from the record, so a field withheld from the start never exists. An object or list left empty by it is dropped too, so not even its shape reaches `_unmapped` | — |
 
 Every mask works on a value's **canonical text**, its JSON text: a string as it is, a number as its
 decimal text, so a phone number arriving as `5551234567` and as `"5551234567"` masks alike.

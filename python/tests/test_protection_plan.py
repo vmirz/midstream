@@ -167,8 +167,21 @@ class WalkTests(unittest.TestCase):
         self.assertEqual(self.plan().protect({"passwords": ["a", "b"], "id": 1}), {"id": 1})
 
     def test_every_leaf_of_a_secret_is_withheld(self) -> None:
-        masked = self.plan().protect({"secret": {"hash": "abc", "salt": "def", "nested": {"value": "x"}}, "id": 1})
-        self.assertEqual(masked, {"secret": {"nested": {}}, "id": 1})
+        masked = self.plan().protect({"secret": {"hash": "abc", "salt": "def", "nested": {"value": "x", "flag": True}}, "id": 1})
+        self.assertEqual(masked, {"secret": {"nested": {"flag": True}}, "id": 1})
+
+    def test_a_container_emptied_by_withholding_is_withheld_too(self) -> None:
+        # Its empty shape would otherwise land in `_unmapped`: a withheld value lands nowhere.
+        record = {"id": 1, "credentials": {"secret": {"token": "t", "hint": "h"}}, "logins": [{"password": "a"}, {"password": "b"}]}
+        self.assertEqual(self.plan().protect(record), {"id": 1})
+        mixed = {"logins": [{"password": "a"}, {"password": "b", "at": 5}, None]}
+        self.assertEqual(self.plan().protect(mixed), {"logins": [{"at": 5}, None]})
+
+    def test_an_empty_container_is_left_as_it_came(self) -> None:
+        record = {"email": "a@b", "meta": {}, "tags": [], "credentials": {"secret": {}}}
+        masked = self.plan().protect(record)
+        self.assertEqual(masked, {"email": h("a@b"), "meta": {}, "tags": [], "credentials": {"secret": {}}})
+        self.assertIs(masked["meta"], record["meta"])
 
     def test_booleans_and_nulls_are_never_masked(self) -> None:
         record = {"mobile": True, "email": None, "is_secret": False}

@@ -22,7 +22,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from midstream.lakehouse.schema.index import ElementIndex, Family, Member, SchemaIndex, StructIndex
-from midstream.protection.catalog import MASK_HASH, MASK_REDACT
+from midstream.protection.catalog import MASK_HASH
 from midstream.protection.mask import REDACTED, MissingProtectionKey, apply
 from midstream.protection.policy import (
     NONE,
@@ -149,7 +149,7 @@ class ProtectionPlan:
                 continue
             family = None if families is None else families.get(key)
             if isinstance(item, dict):
-                new = self._struct(_struct_of(family), item, key, container_kind(parent, key, inherited))
+                new = _withheld_if_emptied(item, self._struct(_struct_of(family), item, key, container_kind(parent, key, inherited)))
             elif isinstance(item, list):
                 new = self._list(struct, family, key, item, parent, inherited)
             else:
@@ -182,16 +182,14 @@ class ProtectionPlan:
 
     def _items(self, items: list, decision: Decision | None, element_struct: StructIndex | None, key: str, child_kind: str | None) -> Any:
         result: list | None = None
-        scalars = 0
         for position, item in enumerate(items):
             if item is None or isinstance(item, bool):
                 new = item
             elif isinstance(item, dict):
-                new = self._struct(element_struct, item, key, child_kind)
+                new = _withheld_if_emptied(item, self._struct(element_struct, item, key, child_kind))
             elif isinstance(item, list):
                 new = self._items(item, decision, None, key, child_kind)
             else:
-                scalars += 1
                 new = item if decision is None else self._mask(decision, item)
             if new is item and result is None:
                 continue
@@ -201,9 +199,8 @@ class ProtectionPlan:
                 result.append(new)
         if result is None:
             return items
-        if decision is not None and decision.mask == MASK_REDACT and scalars and not result:
-            return REDACTED
-        return result
+        # Every item was withheld, so the list is too.
+        return result if result else REDACTED
 
     def _decide(
         self,
@@ -243,6 +240,13 @@ class ProtectionPlan:
         if masked is not value:
             self.counters[(decision.kind, decision.mask)] += 1
         return masked
+
+
+def _withheld_if_emptied(original: dict, masked: dict) -> Any:
+    """A container the walk emptied - every value in it withheld - is withheld too: its empty shape
+    would otherwise land in `_unmapped`, and a withheld value lands nowhere (design §8). One that was
+    empty already is left alone."""
+    return REDACTED if masked is not original and not masked else masked
 
 
 # -- classification: what the committer records --------------------------------------------------

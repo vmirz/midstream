@@ -956,7 +956,9 @@ here").
   before staging, so the parity test's premise — the same staged line — still holds, and the test
   gains protected kinds and all three masks in its random records so it checks that too.
 - **`_unmapped`** holds the JSON of values no field could take: with masking before staging, a
-  protected value that lands there is its mask. A withheld value lands nowhere.
+  protected value that lands there is its mask. A withheld value lands nowhere, and neither does an
+  object or list that withholding emptied (`credentials: {secret: {…}}` under `secret`): it is
+  dropped with its values rather than leave `{}` for `_unmapped` (found on a test cluster).
 - **Collapsed families** (`__json` fields) hold JSON text of masked values. A collapsed struct that
   contained a protected leaf holds the mask inside its JSON.
 - **Forks**: a masked field is always a string, so protection itself never forks a field that was
