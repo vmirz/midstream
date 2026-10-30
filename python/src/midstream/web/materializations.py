@@ -101,6 +101,11 @@ MUTABLE_SETTINGS = frozenset({"name", "replicas", "autoscaling", "tables", "remo
 PROTECTION_APPLIES_TO = (
     "records written from now on, within seconds, without a restart; rows already written keep their values"
 )
+#: And when the edit also asks for a reprotect (handbook 22 §22.14).
+PROTECTION_APPLIES_TO_WITH_REPROTECT = (
+    "records written from now on, within seconds, without a restart; then the rows already written, "
+    "rewritten by the maintenance app once each table records the change"
+)
 #: What a request is told when it asks for a materialization without a live tail.
 LIVE_TAIL_ALWAYS = (
     "every materialization has a live tail; only the deployment's live_tail_enabled turns it off, for all of them"
@@ -220,7 +225,7 @@ def protection_review_view(
     """The protection review (design §5.8): per table, what it protects, since when, and what the
     materialization's policy with the current rules would change; and, for each table written or
     kept, what it holds in plain text that it masks now, and the reprotect asked or last run
-    (handbook 22 §22.15).
+    (handbook 22 §22.14).
 
     Tables in datasets whose schemas the caller may not see are left out, and counted.
     """
@@ -427,7 +432,7 @@ def request_maintenance(
     opportunity, whatever the runtime is doing - stopped included - and reports it with
     `maintenance_completed`. Without a table, the job runs on every table, kept ones included.
 
-    `reprotect` (handbook 22 §22.15) yields instead one `request` for the control plane, which puts
+    `reprotect` (handbook 22 §22.14) yields instead one `request` for the control plane, which puts
     it on each table's record: every tick carries it until the maintenance app reports it done, so
     it outlives a restart of either. It needs Choose data protection on each table's dataset too,
     and takes `purge`: whether to expire every older snapshot and delete the files it replaced.
@@ -1046,7 +1051,7 @@ def update_materialization(
             "after": protection.to_dict(),
             "revision": materialization.protection_revision + 1,
             "apply_rules": apply_rules,
-            "applies_to": PROTECTION_APPLIES_TO,
+            "applies_to": PROTECTION_APPLIES_TO if reprotect is None else PROTECTION_APPLIES_TO_WITH_REPROTECT,
         }
     if plan is not None:
         acceptance.response["topic_change"] = _describe_topic_change(plan)

@@ -2021,6 +2021,7 @@ class WebProtectionEditTests(unittest.TestCase):
         self.assertEqual(RequestedReprotect(purge=True), acceptance.request_event.reprotect)
         self.assertEqual(4, acceptance.materialization.protection_revision)
         self.assertEqual({"tables": ["orders", "payments"], "purge": True}, acceptance.response["reprotect"])
+        self.assertIn("then the rows already written", acceptance.response["protection"]["applies_to"])
         self.assertEqual(RequestedReprotect(purge=True), MaterializationRequestEvent.from_dict(acceptance.request_event.to_dict()).reprotect)
 
     def test_an_edit_that_keeps_the_policy_may_still_ask_for_a_reprotect(self) -> None:
@@ -2081,7 +2082,7 @@ class WebProtectionEditTests(unittest.TestCase):
 
 
 class WebReprotectTests(unittest.TestCase):
-    """The reprotect maintenance job (handbook 22 §22.15): one request event for the control plane,
+    """The reprotect maintenance job (handbook 22 §22.14): one request event for the control plane,
     which keeps it on each table's record until the maintenance app has run it. Jane owns shop and
     writes to finance."""
 
