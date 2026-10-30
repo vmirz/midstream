@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from midstream.protection.policy import NONE as NO_PROTECTION, ProtectionPolicy
 from midstream.scale import (
     DEFAULT_REPLICAS,
     DEFAULT_STORAGE_SIZE,
@@ -243,6 +244,13 @@ class Materialization:
     retired_tables: tuple[TableSpec, ...] = ()
     #: A change of topics waiting for its new tables' names to be claimed.
     pending_topic_change: PendingTopicChange | None = None
+    #: Which kinds of sensitive data its runtime masks, and how (handbook 22): resolved from the
+    #: deployment default when it was created, replaced by an edit. Nothing for one created before
+    #: data protection.
+    protection: ProtectionPolicy = NO_PROTECTION
+    #: The policy's revision: 1 at creation, one more per edit; 0 for one created before data
+    #: protection. Delivered to its runtime with the policy, recorded by each table.
+    protection_revision: int = 0
 
     def __post_init__(self) -> None:
         _validate_non_empty("materialization_id", self.materialization_id)
@@ -266,6 +274,10 @@ class Materialization:
             raise ValueError("namespace is required")
         if self.spec_version < 1:
             raise ValueError("spec_version must be >= 1")
+        if not isinstance(self.protection, ProtectionPolicy):
+            raise ValueError("protection must be a ProtectionPolicy")
+        if isinstance(self.protection_revision, bool) or not isinstance(self.protection_revision, int) or self.protection_revision < 0:
+            raise ValueError("protection_revision must be >= 0")
 
     @property
     def label(self) -> str:
@@ -328,6 +340,8 @@ class Materialization:
             "spec_version": self.spec_version,
             "retired_tables": [table.to_dict() for table in self.retired_tables],
             "pending_topic_change": None if self.pending_topic_change is None else self.pending_topic_change.to_dict(),
+            "protection": self.protection.to_dict(),
+            "protection_revision": self.protection_revision,
         }
 
     @classmethod
@@ -360,6 +374,9 @@ class Materialization:
             spec_version=value.get("spec_version", 1),
             retired_tables=_specs(value.get("retired_tables")),
             pending_topic_change=PendingTopicChange.from_dict(value.get("pending_topic_change")),
+            # Created before data protection: it protects nothing until an edit chooses otherwise.
+            protection=ProtectionPolicy.from_dict(value.get("protection")),
+            protection_revision=int(value.get("protection_revision") or 0),
         )
 
 
@@ -387,6 +404,8 @@ class MaterializationSchema:
     last_column_id: int | None = None
     #: Logical paths the policy refused at the field limit; writers stop asking for them.
     rejected_paths: list[list[str]] = field(default_factory=list)
+    #: The table's `materializer.protection` property as of this schema; empty when it records none.
+    protection: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_non_empty("materialization_id", self.materialization_id)
@@ -394,6 +413,17 @@ class MaterializationSchema:
         if self.schema_id < 0:
             raise ValueError("schema_id must be >= 0")
         _validate_non_empty("since", self.since)
+
+    @property
+    def protection_revision(self) -> int:
+        revision = self.protection.get("revision") if isinstance(self.protection, dict) else None
+        return revision if isinstance(revision, int) and not isinstance(revision, bool) else 0
+
+    @property
+    def position(self) -> tuple[int, int]:
+        """Which of two projections is newer: by schema, then by protection revision, as a policy
+        the committer records changes the protection and keeps the schema."""
+        return (self.schema_id, self.protection_revision)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -409,6 +439,7 @@ class MaterializationSchema:
             "changes": [dict(item) for item in self.changes],
             "last_column_id": self.last_column_id,
             "rejected_paths": [list(item) for item in self.rejected_paths],
+            "protection": dict(self.protection),
         }
 
     @classmethod
@@ -426,4 +457,5 @@ class MaterializationSchema:
             changes=[dict(item) for item in value.get("changes") or []],
             last_column_id=value.get("last_column_id"),
             rejected_paths=[list(item) for item in value.get("rejected_paths") or []],
+            protection=dict(value.get("protection") or {}),
         )

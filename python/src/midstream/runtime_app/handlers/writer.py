@@ -7,9 +7,12 @@ a record is written to its topic's. Per record, on the event loop:
 1. note the session the record arrived in, and the table's committed offset for its partition
    (read from the table when the partition's session starts);
 2. the replay guard: a record the table already holds is acknowledged without being written;
+2a. data protection: the values of the table's protected fields are masked - hashed, shortened or
+   withheld - so nothing after this step ever holds them (design §5.4); a batch holds rows of one
+   protection revision, so a new revision rolls the open batch first;
 3. drift detection against the table's current schema: whatever the schema cannot take yet becomes a
    `schema_change_request` for the committer, through the outbox - the record is not held;
-4. stage the record as it arrived, one JSON line in the partition's open batch, and roll the batch
+4. stage the record as masked, one JSON line in the partition's open batch, and roll the batch
    when the roll policy says so;
 5. hand the record to the ack ledger, which acknowledges it once a commit covers its batch.
 
@@ -21,6 +24,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from midstream.protection.catalog import MASK_REDACT
+from midstream.protection.secrets import get_expected_key_id, get_protection_key, key_problem
 from midstream.protocol_logging import elapsed_ms, log_protocol_event, monotonic_ms
 from midstream.runtime_app import acks
 from midstream.runtime_app.config import get_runtime_app_config
@@ -29,6 +34,7 @@ from midstream.runtime_app.models import RuntimeWriteResult
 from midstream.runtime_app.outbox import outbox
 from midstream.runtime_app.performance import record_source_record_processing
 from midstream.runtime_app.pipeline import batch_pipeline
+from midstream.runtime_app.protection_state import note_key_problem
 from midstream.runtime_app.schema.drift import RequestDeduper, observation_key
 from midstream.runtime_app.state import record_rolled_batch, record_runtime_write, within_pending_upload_limits
 from midstream.runtime_app.table_state import TableContext, contexts_by_topic, ensure_view
@@ -45,6 +51,9 @@ LOGGER = logging.getLogger(__name__)
 
 #: Each distinct observation is requested at most once per this many seconds per member, per table.
 _DEDUPERS: dict[str, RequestDeduper] = {}
+
+#: How often a writer that may not hash checks again, and logs that it waits.
+PROTECTION_KEY_WAIT_SECONDS = 15.0
 
 
 class RuntimeShutdownInterrupted(RuntimeError):
@@ -108,6 +117,13 @@ async def stage_source_record(
             return
         config = get_runtime_app_config()
         view = await ensure_view(state_table, table_context, app=app, client=batch_pipeline.storage_client)
+        plan = view.plan
+        if plan.hashes and key_problem(get_protection_key(), get_expected_key_id()) is not None:
+            # Never stage a value the table protects as it arrived: without the key the deployment
+            # hashes with, wait until the runtime is re-applied with it.
+            await _wait_for_protection_key(app, table_context.name, materialization_id=materialization_id)
+            view = await ensure_view(state_table, table_context, app=app, client=batch_pipeline.storage_client)
+            plan = view.plan
         partition_state = await batch_pipeline.ensure_partition_session(
             app=app,
             context=table_context,
@@ -142,6 +158,16 @@ async def stage_source_record(
             )
             return
 
+        protected = withheld = 0
+        if not plan.empty:
+            value = plan.protect(value)
+            if plan.counters:
+                for (_, mask), count in plan.drain_counters().items():
+                    if mask == MASK_REDACT:
+                        withheld += count
+                    else:
+                        protected += count
+
         observations = view.drift.observations(value) if isinstance(value, dict) else []
         requests = 0
         if observations:
@@ -161,7 +187,13 @@ async def stage_source_record(
                 )
 
         write_started_ms = monotonic_ms()
-        active_batch = _current_open_batch(partition_state, config=config, observed_at=source_record.observed_at, app=app)
+        active_batch = _current_open_batch(
+            partition_state,
+            config=config,
+            observed_at=source_record.observed_at,
+            app=app,
+            protection_revision=plan.revision,
+        )
         starts_batch = active_batch is None
         if active_batch is None:
             active_batch = create_open_batch(
@@ -170,6 +202,7 @@ async def stage_source_record(
                 table=table_context.name,
                 after_offset=partition_state.chain_offset,
                 session_generation=partition_state.session_generation,
+                protection_revision=plan.revision,
             )
         staged = append_row_to_batch(
             active_batch,
@@ -187,7 +220,7 @@ async def stage_source_record(
             partition=source_record.partition,
             offset=source_record.offset,
             event_time=source_record.timestamp,
-            write_result=RuntimeWriteResult(rows_increment=1),
+            write_result=RuntimeWriteResult(rows_increment=1, protected_increment=protected, withheld_increment=withheld),
             updated_at=source_record.observed_at,
             active_batch=None if rolled is not None else staged,
             rolled_batch=rolled,
@@ -213,10 +246,18 @@ async def stage_source_record(
             _acknowledge(context, outcome, materialization_id=materialization_id, generation=received_generation)
 
 
-def _current_open_batch(partition_state, *, config, observed_at: str, app):
-    """The partition's open batch to append to, after rolling it first if it is due."""
+def _current_open_batch(partition_state, *, config, observed_at: str, app, protection_revision: int = 0):
+    """The partition's open batch to append to, after rolling it first if it is due.
+
+    A batch staged under another protection revision is rolled whatever the roll policy and the
+    backlog say: a batch's rows, and so its files, are of one revision (design §5.4).
+    """
     batch = partition_state.active_batch
     if batch is None or batch.state != "open":
+        return None
+    if batch.protection_revision != protection_revision and batch.row_count >= 1:
+        record_rolled_batch(roll_batch(batch, observed_at=observed_at))
+        batch_pipeline.schedule(app)
         return None
     if not _roll_due(batch, config=config, observed_at=observed_at):
         return batch
@@ -227,6 +268,34 @@ def _current_open_batch(partition_state, *, config, observed_at: str, app):
     record_rolled_batch(roll_batch(batch, observed_at=observed_at))
     batch_pipeline.schedule(app)
     return None
+
+
+async def _wait_for_protection_key(app, table: str, *, materialization_id: str) -> None:
+    """Return once this member may hash; until then, wait, report why, and log it now and then.
+
+    The key comes from the pod's environment, so a member without it - or with another than the
+    deployment expects - waits until the control plane re-applies the runtime with it, which it does
+    whenever the key's id it renders changes. Nothing is written meanwhile: the record stays
+    unacknowledged and is read again if the member restarts.
+    """
+    problem = key_problem(get_protection_key(), get_expected_key_id())
+    if problem is None:
+        note_key_problem(None)
+        return
+    note_key_problem(problem)
+    while problem is not None:
+        LOGGER.warning(
+            "Table %s of materialization %s masks values with a keyed hash, and this member %s: "
+            "nothing is written until the runtime runs with the deployment's protection key.",
+            table,
+            materialization_id,
+            "has no protection key" if problem == "protection_key_missing" else "has another protection key than the deployment's",
+        )
+        _raise_if_runtime_stopping(app, materialization_id=materialization_id)
+        await asyncio.sleep(PROTECTION_KEY_WAIT_SECONDS)
+        _raise_if_runtime_stopping(app, materialization_id=materialization_id)
+        problem = key_problem(get_protection_key(), get_expected_key_id())
+    note_key_problem(None)
 
 
 def _roll_due(batch, *, config, observed_at: str) -> bool:

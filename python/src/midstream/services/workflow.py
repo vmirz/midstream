@@ -18,9 +18,13 @@ from midstream.kafka.admin import ConsumerGroupNotEmptyError
 from midstream.kafka.metadata import KafkaMetadataClient, get_metadata_client
 from midstream.lakehouse.lifecycle import CreatedTable, create_materializer_table, schema_from_json
 from midstream.lakehouse.schema.forkmap import ForkMap
+from midstream.lakehouse.schema.index import build_index
 from midstream.lakehouse.schema.infer import infer
 from midstream.lakehouse.schema.policy import evolve, limits_of
 from midstream.lakehouse.tables import TableIdentity, build_schema, table_identity, table_properties
+from midstream.protection.plan import SHAPE_ONLY_SECRET, ProtectionPlan, initial_protection
+from midstream.protection.policy import NONE as NO_PROTECTION, ProtectionPolicy, TableProtection
+from midstream.protection.secrets import get_protection_key
 from midstream.models import (
     EventCause,
     TableSpec,
@@ -53,7 +57,7 @@ from midstream.runtime import (
 )
 from midstream.runtime_app.config import RuntimeAppConfig
 from midstream.services.autoscaling import scaled_materialization
-from midstream.services.schema_projection import build_schema_projection
+from midstream.services.schema_projection import annotate_protection, build_schema_projection
 from midstream.services.topic_analysis import missing_topics_message
 from midstream.services.topic_changes import apply_topic_change, describe_topic_change
 from midstream.storage import (
@@ -725,6 +729,7 @@ def _record_start_discovery(
         work_event,
         discovery_result,
         tables,
+        protection=materialization.protection,
         runtime_config=runtime_config,
         config=config,
         started_ms=started_ms,
@@ -773,6 +778,7 @@ def _evolve_schema_zero(
     discovery_result: DiscoveryResult,
     tables,
     *,
+    protection: ProtectionPolicy = NO_PROTECTION,
     runtime_config: RuntimeAppConfig,
     config: ControlPlaneConfig,
     started_ms: int,
@@ -780,11 +786,14 @@ def _evolve_schema_zero(
     """Each table's schema 0, evolved from its topic's samples, and how many there were, by table.
 
     The samples go through the very policy the runtime's committer applies later, so a topic with
-    several historical shapes starts with its forks in place.
+    several historical shapes starts with its forks in place. They are masked first, as the writer
+    will mask every record (design §5.5): a protected number is a string field, a withheld value no
+    field. Only their shapes matter, so they are hashed with a placeholder key, never the real one.
     """
+    plan = ProtectionPlan.for_policy(protection, secret=SHAPE_ONLY_SECRET)
     evolutions = {}
     for spec in tables:
-        records = discovery_result.records(spec.source_topic)
+        records = [plan.protect(record) for record in discovery_result.records(spec.source_topic)]
         evolution = evolve(
             build_schema(),
             ForkMap(),
@@ -933,7 +942,13 @@ def _record_discover_tables(
     would leave the running materialization with a table it cannot create while the topic is gone.
     """
     evolutions = _evolve_schema_zero(
-        work_event, discovery_result, specs, runtime_config=runtime_config, config=config, started_ms=started_ms
+        work_event,
+        discovery_result,
+        specs,
+        protection=_protection_of(table, work_event.materialization_id),
+        runtime_config=runtime_config,
+        config=config,
+        started_ms=started_ms,
     )
     state = _state_after_wait(table, work_event, config=config, started_ms=started_ms)
     if state is None:
@@ -953,6 +968,12 @@ def _record_discover_tables(
         if spec.name in evolutions and resolve_materialization_schema(table, materialization.materialization_id, spec.name) is None:
             _save_schema_zero(table, materialization.materialization_id, spec, evolutions[spec.name][0], discovery_result, config=config)
     return _build_create_tables_after_discovery(work_event)
+
+
+def _protection_of(table: TableProtocol, materialization_id: str) -> ProtectionPolicy:
+    """The materialization's protection policy; none when its record is gone."""
+    materialization = get_materialization(table, materialization_id)
+    return NO_PROTECTION if materialization is None else materialization.protection
 
 
 def _build_create_tables_after_discovery(work_event: MaterializationWorkEvent) -> MaterializationWorkEvent:
@@ -1066,6 +1087,10 @@ def _plan_create_table(
         projection = resolve_materialization_schema(table, materialization.materialization_id, spec.name)
         if projection is None:
             raise ValueError(f"create_table requires the discovered schema of table {spec.name}")
+        protection_json = _initial_protection_json(materialization, projection)
+        if protection_json is not None:
+            protection = TableProtection.from_json(protection_json).to_dict()
+            projection = replace(projection, fields=annotate_protection(projection.fields, protection), protection=protection)
         properties = table_properties(
             materialization_id=materialization.materialization_id,
             source_topic=spec.source_topic,
@@ -1076,6 +1101,7 @@ def _plan_create_table(
             snapshot_retention_hours=runtime_config.snapshot_retention_hours,
             min_snapshots_to_keep=runtime_config.min_snapshots_to_keep,
             fork_map_json=ForkMap.from_dict(projection.fork_map).to_json(),
+            protection_json=protection_json,
         )
         return _TableCreate(
             materialization=materialization,
@@ -1089,6 +1115,29 @@ def _plan_create_table(
     # Every table is there: go on with what follows them.
     _log_step_skipped(work_event, reason="table_already_created", config=config, started_ms=started_ms)
     return _build_apply_after_create(work_event, materialization.materialization_id)
+
+
+def _initial_protection_json(materialization: Materialization, projection: MaterializationSchema) -> str | None:
+    """A new table's `materializer.protection`: its first schema's fields classified by the
+    materialization's policy (design §5.5); None for a materialization created before data
+    protection, whose tables record none until an edit."""
+    if materialization.protection_revision < 1:
+        return None
+    index = build_index(
+        schema_from_json(projection.iceberg_schema),
+        ForkMap.from_dict(projection.fork_map),
+        last_column_id=projection.last_column_id,
+    )
+    key = get_protection_key()
+    protection = initial_protection(
+        index,
+        materialization.protection,
+        revision=materialization.protection_revision,
+        at=materialization.created_at,
+        by=materialization.created_by,
+        key_id=None if key is None else key.key_id,
+    )
+    return protection.to_json()
 
 
 def _create_table(plan: _TableCreate, client: ObjectStoreClientProtocol | None) -> CreatedTable:

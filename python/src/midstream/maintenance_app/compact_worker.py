@@ -95,7 +95,7 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
     import pyarrow.parquet as pq
     from pyiceberg.io.pyarrow import pyarrow_to_schema
 
-    from midstream.lakehouse.files import compacted_file_uri, partition_text_of
+    from midstream.lakehouse.files import compacted_file_uri, partition_text_of, protection_revision_of
     from midstream.lakehouse.gcs import parse_gcs_uri, shared_storage_client
     from midstream.lakehouse.lifecycle import schema_from_json
     from midstream.lakehouse.maintenance import CompactionPlan
@@ -120,9 +120,11 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
     chunk_bytes = 0
     # The output being written: its writer, and what it holds so far.
     output: dict[str, Any] | None = None
-    # The partition being accumulated: the plan's inputs come grouped by partition.
+    # The partition being accumulated: the plan's inputs come grouped by partition, and within it by
+    # protection revision, which an output never mixes (design §5.6).
     partition: tuple[Any, ...] = plan.partition
     partition_key = plan.partition_key
+    revision = protection_revision_of(plan.inputs[0].path) if plan.inputs else 0
     sort_keys = [("_kafka_timestamp", "ascending"), ("_kafka_partition", "ascending"), ("_kafka_offset", "ascending")]
 
     def bound(current: Any, value: Any, pick) -> Any:
@@ -142,7 +144,17 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
             index = len(outputs)
             local = confined_path(work_dir, f"output-{index}.parquet")
             writer = pq.ParquetWriter(str(local), table.schema, compression="zstd", write_statistics=True)
-            output = {"index": index, "local": local, "writer": writer, "rows": 0, "low": None, "high": None, "first": None, "last": None}
+            output = {
+                "index": index,
+                "local": local,
+                "writer": writer,
+                "rows": 0,
+                "low": None,
+                "high": None,
+                "first": None,
+                "last": None,
+                "revision": revision,
+            }
         for start in range(0, table.num_rows, row_group_rows):
             output["writer"].write_table(table.take(order.slice(start, row_group_rows)), row_group_size=row_group_rows)
         stamps, offsets = table.column("_kafka_timestamp"), table.column("_kafka_offset")
@@ -169,6 +181,7 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
             partition_value_text=partition_text_of(job["granularity"], partition),
             # Unique to this run: a plan run again never collides with an earlier run's outputs.
             unique=f"{plan.job_id[:16]}-{current['index']}-{uuid.uuid4().hex[:8]}",
+            protection_revision=current["revision"],
         )
         bucket_name, name = parse_gcs_uri(uri)
         client.bucket(bucket_name).blob(name).upload_from_filename(str(current["local"]), if_generation_match=0)
@@ -184,16 +197,19 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
                 "timestamp_max": None if high is None else int(high.timestamp() * 1_000_000),
                 "offset_min": current["first"],
                 "offset_max": current["last"],
+                "protection_revision": current["revision"],
             }
         )
         current["local"].unlink(missing_ok=True)
 
     for position, item in enumerate(plan.inputs):
-        if item.partition_key != partition_key:
-            # A file never mixes partitions: the previous one's output is finished first.
+        item_revision = protection_revision_of(item.path)
+        if item.partition_key != partition_key or item_revision != revision:
+            # A file never mixes partitions, nor protection revisions: the previous output is
+            # finished first.
             flush()
             close()
-            partition, partition_key = item.partition, item.partition_key
+            partition, partition_key, revision = item.partition, item.partition_key, item_revision
         bucket_name, name = parse_gcs_uri(item.path)
         local_input = confined_path(work_dir, f"input-{position}.parquet")
         client.bucket(bucket_name).blob(name).download_to_filename(str(local_input))

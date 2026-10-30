@@ -1,9 +1,12 @@
-"""Runtime handler for what the control plane delivers while a runtime runs: its settings.
+"""Runtime handler for what the control plane delivers while a runtime runs: its settings and its
+protection policy.
 
 The settings agent consumes the control plane's broadcast topic (`materialization-schema-authority-
 updates`, named before 1.0). It carries `runtime_settings`, stored in the runtime's state table and
-installed (`live_settings.py`). Table maintenance is the maintenance app's (`maintenance_app/`): a
-`maintenance_request` an older control plane still sends here is dropped.
+installed (`live_settings.py`), and `protection_policy`, addressed to one runtime, stored for its
+committer to record in each table (`protection_state.py`). Table maintenance is the maintenance
+app's (`maintenance_app/`): a `maintenance_request` an older control plane still sends here is
+dropped.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from midstream.runtime_app.live_settings import (
     sanitize_runtime_settings,
     settings_position,
 )
+from midstream.runtime_app.protection_state import apply_protection_policy_message, is_protection_policy_message
 
 LOGGER = logging.getLogger(__name__)
 
@@ -56,6 +60,8 @@ def handle_control_message(
     try:
         if is_runtime_settings_message(value):
             apply_runtime_settings_message(value, state_table, materialization_id=materialization_id)
+        elif is_protection_policy_message(value):
+            apply_protection_policy_message(value, state_table, materialization_id=materialization_id)
         elif value.get("kind") == "maintenance_request":
             LOGGER.info("Ignoring a maintenance request: the maintenance app runs table maintenance")
     except Exception:  # noqa: BLE001 - one bad message must not stop later deliveries

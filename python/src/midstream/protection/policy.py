@@ -17,10 +17,8 @@ from dataclasses import dataclass, field
 import json
 from typing import Any
 
+from midstream.lakehouse.tables import PROPERTY_PROTECTION
 from midstream.protection.catalog import KIND_IDS, KINDS_BY_ID, MASK_HASH, MASKS
-
-#: The table property recording what a table protects.
-PROPERTY_PROTECTION = "materializer.protection"
 #: The version of the property's shape.
 PROTECTION_FORMAT_VERSION = 1
 

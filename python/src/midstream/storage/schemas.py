@@ -39,10 +39,11 @@ def save_materialization_schema(
     archive: bool = True,
     config: ControlPlaneConfig | None = None,
 ) -> dict[str, Any]:
-    """Persist `schema` as its table's current projection (and archive it). An older one never wins."""
+    """Persist `schema` as its table's current projection (and archive it). An older one never wins:
+    by schema, then by the protection revision it carries (a recorded policy keeps the schema)."""
     current = get_materialization_schema(table, schema.materialization_id, schema.table)
     stored = _encode(ENTITY_TYPE, schema)
-    if current is None or current.schema_id <= schema.schema_id:
+    if current is None or current.position <= schema.position:
         table[materialization_schema_key(schema.materialization_id, schema.table)] = stored
     if archive:
         save_schema_version(table, schema, config=config)
@@ -63,7 +64,7 @@ def resolve_materialization_schema(table: TableProtocol, materialization_id: str
     """
     current = get_materialization_schema(table, materialization_id, table_name)
     latest = _latest_archived(table, materialization_id, table_name)
-    if latest is None or (current is not None and current.schema_id >= latest.schema_id):
+    if latest is None or (current is not None and current.position >= latest.position):
         return current
     LOGGER.warning(
         "Schema projection of %s table %s regressed to %s; restoring schema %s from the archive.",
@@ -101,6 +102,10 @@ def save_schema_version(
     config: ControlPlaneConfig | None = None,
 ) -> dict[str, Any]:
     stored = _encode(VERSION_ENTITY_TYPE, schema)
+    existing = get_schema_version(table, schema.materialization_id, schema.table, schema.schema_id)
+    if existing is not None and existing.position > schema.position:
+        # A policy recorded at this schema is newer than what arrived: keep it.
+        return _encode(VERSION_ENTITY_TYPE, existing)
     table[materialization_schema_version_key(schema.materialization_id, schema.table, schema.schema_id)] = stored
     cfg = get_config() if config is None else config
     _prune(table, schema.materialization_id, schema.table, limit=cfg.schema_history_limit)
@@ -163,7 +168,7 @@ def _latest_archived(table: TableProtocol, materialization_id: str, table_name: 
     latest = None
     for envelope in _iter_versions(table, materialization_id, table_name):
         candidate = MaterializationSchema.from_dict(envelope.payload)
-        if latest is None or candidate.schema_id > latest.schema_id:
+        if latest is None or candidate.position > latest.position:
             latest = candidate
     return latest
 

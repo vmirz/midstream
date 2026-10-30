@@ -192,6 +192,45 @@ class TableEventTests(unittest.TestCase):
         self.assertEqual(1, get_materialization_schema(self.table, MATERIALIZATION_ID, "orders").schema_id)
         self.assertEqual([1], [item.schema_id for item in list_schema_versions(self.table, MATERIALIZATION_ID, "orders")])
 
+    def protected(self, schema_id: int, revision: int, *, at: str = "2026-10-18T11:00:00.000Z") -> dict:
+        """A `schema_changed` carrying the table's protection, as the committer sends it."""
+        value = self.schema_changed(schema_id, at=at)
+        field_id = 10 + schema_id
+        value["payload"]["protection"] = {
+            "version": 1,
+            "revision": revision,
+            "policy": {"kinds": {"email": "hash"}},
+            "key_id": "abcd1234",
+            "fields": {str(field_id): {"path": [f"f{schema_id}"], "kind": "email", "mask": "hash" if revision < 3 else "partial", "since": schema_id}},
+            "history": [{"revision": item, "policy": {"kinds": {"email": "hash"}}} for item in range(1, revision + 1)],
+        }
+        value["payload"]["changes"] = [] if revision > 1 else value["payload"]["changes"]
+        return value
+
+    def test_a_recorded_policy_at_the_same_schema_replaces_the_projection(self) -> None:
+        self.assertTrue(handle_table_event(self.protected(1, 1), self.table))
+        self.assertTrue(handle_table_event(self.protected(1, 3, at="2026-10-18T12:00:00.000Z"), self.table))
+
+        projection = get_materialization_schema(self.table, MATERIALIZATION_ID, "orders")
+        self.assertEqual((1, 3), projection.position)
+        self.assertEqual({"kind": "email", "mask": "partial", "since_schema_id": 1}, projection.fields[0]["protection"])
+        (archived,) = list_schema_versions(self.table, MATERIALIZATION_ID, "orders")
+        self.assertEqual(3, archived.protection_revision)
+        self.assertEqual("gs://lake/t/metadata/00001-a.metadata.json", self.record().metadata_location)
+
+    def test_an_older_protection_delivered_late_never_wins(self) -> None:
+        handle_table_event(self.protected(1, 3, at="2026-10-18T12:00:00.000Z"), self.table)
+        self.assertFalse(handle_table_event(self.protected(1, 1), self.table))
+        projection = get_materialization_schema(self.table, MATERIALIZATION_ID, "orders")
+        self.assertEqual((1, 3), projection.position)
+        self.assertEqual(3, list_schema_versions(self.table, MATERIALIZATION_ID, "orders")[0].protection_revision)
+
+    def test_a_table_without_protection_has_no_annotations(self) -> None:
+        handle_table_event(self.schema_changed(1), self.table)
+        projection = get_materialization_schema(self.table, MATERIALIZATION_ID, "orders")
+        self.assertEqual({}, projection.protection)
+        self.assertNotIn("protection", projection.fields[0])
+
     def test_a_commit_updates_the_table_record(self) -> None:
         handle_table_event(
             event(

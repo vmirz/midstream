@@ -40,6 +40,7 @@ from midstream.models import (  # noqa: E402
     RunningMaintenance,
     RuntimeHealth,
 )
+from midstream.protection.policy import ProtectionPolicy, TableProtection  # noqa: E402
 from midstream.runtime_app.config import RuntimeAppConfig  # noqa: E402
 from midstream.schema import StubDiscoveryService  # noqa: E402
 from midstream.services import process_work_event, process_work_event_async  # noqa: E402
@@ -391,6 +392,59 @@ class DiscoveryTests(WorkflowTestCase):
 
         self.assertIsNone(self.process(work("start_discovery")))
         self.assertIsNone(get_materialization_schema(self.table, MATERIALIZATION_ID, "orders"))
+
+
+class ProtectionDiscoveryTests(WorkflowTestCase):
+    """Discovery masks its samples and table creation records what the table protects (design §5.5)."""
+
+    POLICY = ProtectionPolicy({"email": "hash", "phone": "partial", "national_id": "hash", "secret": "redact"})
+    PROTECTED_SAMPLE = [
+        {"order_id": "O-1", "ssn": 123456789, "phone": "540-948-9848", "password": "pw", "customer": {"email": "a@example.com"}},
+        {"order_id": "O-2", "ssn": 987654321, "phone": 5409489848, "password": "pw2"},
+    ]
+
+    def setUp(self) -> None:
+        super().setUp()
+        save_materialization(self.table, build_materialization(protection=self.POLICY, protection_revision=1))
+        self.discovery = StubDiscoveryService(self.PROTECTED_SAMPLE)
+
+    def test_schema_zero_holds_the_masked_types(self) -> None:
+        self.process(work("start_discovery"))
+        projection = get_materialization_schema(self.table, MATERIALIZATION_ID, "orders")
+        fields = {item["name"]: item["type"] for item in projection.fields}
+        # A national id sampled as a number is a string field: its hashes are strings.
+        self.assertEqual("string", fields["ssn"])
+        self.assertEqual("string", fields["phone"])
+        self.assertNotIn("password", fields)
+        self.assertNotIn("phone__v2", fields)
+
+    def test_a_new_table_records_its_protected_fields_in_metadata_v0(self) -> None:
+        self.create()
+        table = self.catalog().load_table(("shop", "orders"))
+        protection = TableProtection.from_json(table.metadata.properties.get("materializer.protection"))
+        self.assertEqual(1, protection.revision)
+        self.assertEqual(self.POLICY, protection.policy)
+        self.assertEqual(
+            {("ssn",): ("national_id", "hash"), ("phone",): ("phone", "partial"), ("customer", "email"): ("email", "hash")},
+            {item.path: (item.kind, item.mask) for item in protection.active_fields().values()},
+        )
+        self.assertEqual("jane@example.com", protection.history[0].by)
+        projection = get_materialization_schema(self.table, MATERIALIZATION_ID, "orders")
+        self.assertEqual(1, projection.protection_revision)
+        annotated = {item["name"]: item.get("protection") for item in projection.fields}
+        self.assertEqual({"kind": "national_id", "mask": "hash", "since_schema_id": 0}, annotated["ssn"])
+        self.assertEqual({"kind": "email", "mask": "hash", "since_schema_id": 0}, annotated["customer.email"])
+        self.assertIsNone(annotated["order_id"])
+
+    def test_a_materialization_created_before_data_protection_records_nothing(self) -> None:
+        save_materialization(self.table, build_materialization())
+        self.create()
+        table = self.catalog().load_table(("shop", "orders"))
+        self.assertNotIn("materializer.protection", table.metadata.properties)
+        projection = get_materialization_schema(self.table, MATERIALIZATION_ID, "orders")
+        fields = {item["name"]: item["type"] for item in projection.fields}
+        self.assertEqual("long", fields["ssn"])
+        self.assertIn("password", fields)
 
 
 class TableCreationTests(WorkflowTestCase):

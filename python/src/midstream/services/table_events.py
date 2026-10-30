@@ -27,6 +27,7 @@ from midstream.models import (
 )
 from midstream.models.table import MaintenanceRun, RunningMaintenance, TableError
 from midstream.protocol_logging import log_protocol_event
+from midstream.services.schema_projection import annotate_protection
 from midstream.storage import (
     get_materialization,
     get_materialization_schema,
@@ -121,6 +122,7 @@ def _apply_schema_changed(
     config: ControlPlaneConfig,
 ) -> bool:
     payload = event.payload
+    protection = payload.get("protection") if isinstance(payload.get("protection"), dict) else {}
     projection = MaterializationSchema(
         materialization_id=event.materialization_id,
         table=record.name,
@@ -128,14 +130,18 @@ def _apply_schema_changed(
         since=event.occurred_at,
         metadata_location=payload.get("metadata_location"),
         field_count=int(payload.get("field_count") or 0),
-        fields=[dict(item) for item in payload.get("fields") or []],
+        fields=annotate_protection(payload.get("fields") or [], protection),
         fork_map=dict(payload.get("fork_map") or {}),
         iceberg_schema=dict(payload.get("schema") or {}),
         changes=[dict(item) for item in payload.get("changes") or []],
         last_column_id=payload.get("last_column_id"),
         rejected_paths=[list(item) for item in payload.get("rejected_paths") or []],
+        protection=dict(protection),
     )
-    late = record.schema_id is not None and record.schema_id >= projection.schema_id
+    current = get_materialization_schema(table, event.materialization_id, record.name)
+    # A policy the committer recorded keeps the schema and raises the protection revision.
+    current_revision = current.protection_revision if current is not None and current.schema_id == record.schema_id else 0
+    late = record.schema_id is not None and (record.schema_id, current_revision) >= projection.position
     before = _stored_schemas(table, event.materialization_id, record.name) if late else None
     # The archive takes every schema, even one that arrives after a newer one.
     save_materialization_schema(table, projection, archive=True, config=config)

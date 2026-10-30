@@ -57,6 +57,8 @@ class SealJob:
     row_group_bytes: int = 32 * 1024 * 1024
     #: Rows at or below this offset are left out (a re-seal after an overlap); None keeps all.
     after_offset: int | None = None
+    #: The protection revision the batch's rows were masked under; the files' names carry it.
+    protection_revision: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,6 +75,7 @@ class SealJob:
             "seal_id": self.seal_id,
             "row_group_bytes": self.row_group_bytes,
             "after_offset": self.after_offset,
+            "protection_revision": self.protection_revision,
         }
 
     @classmethod
@@ -241,6 +244,7 @@ def run_seal(job: SealJob) -> SealOutput:
                         offset_end=group.offset_max,
                         member_id=job.member_id,
                         unique=f"{job.seal_id[:16]}-{group.index}",
+                        protection_revision=job.protection_revision,
                     ),
                     "partition_text": text,
                     "partition_value": partition_values(job.granularity, text),

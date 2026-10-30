@@ -585,6 +585,7 @@ class BatchPipeline:
                 offset_end=batch.end_offset,
                 seal_id=seal_id,
                 row_group_bytes=config.target_row_group_size_bytes,
+                protection_revision=batch.protection_revision,
             )
             job_path = jsonl.with_name(f"{jsonl.stem}-{seal_id[:8]}.seal.json")
             job_path.write_text(json.dumps(job.to_dict()), encoding="utf-8")

@@ -142,6 +142,9 @@ class RuntimeWriteResult:
     last_error_kind: str | None = None
     last_file_path: str | None = None
     last_malformed_record: RuntimeMalformedRecord | None = None
+    #: Values masked (hashed or shortened) and withheld in the record (data protection).
+    protected_increment: int = 0
+    withheld_increment: int = 0
 
     def __post_init__(self) -> None:
         _validate_non_negative("rows_increment", self.rows_increment)
@@ -260,6 +263,9 @@ class RuntimeBatchState:
     announced_at: str | None = None
     announce_attempts: int = 0
     reseals: int = 0
+    #: The protection revision its rows were masked under: a batch holds rows of one revision, so
+    #: its files say in their names which policy they were written under (design §5.4).
+    protection_revision: int = 0
 
     def __post_init__(self) -> None:
         for name in ("batch_id", "materialization_id", "table", "owner_member_id", "local_path"):
@@ -314,6 +320,7 @@ class RuntimeBatchState:
             "announced_at": self.announced_at,
             "announce_attempts": self.announce_attempts,
             "reseals": self.reseals,
+            "protection_revision": self.protection_revision,
         }
 
 

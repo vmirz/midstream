@@ -79,13 +79,30 @@ class CompactionTests(unittest.TestCase):
             "granularity": "day",
         }
 
-    def commit_files(self, count: int, *, partition: int = 0, day_offset: int = 0, at: datetime | None = None, lake=None) -> None:
+    def commit_files(
+        self,
+        count: int,
+        *,
+        partition: int = 0,
+        day_offset: int = 0,
+        at: datetime | None = None,
+        lake=None,
+        protection_revision: int = 0,
+    ) -> None:
         lake = lake or self.lake
         after = committed_offsets(lake.load().metadata).get(partition)
         for _ in range(count):
             offsets = [after + 1, after + 2]
             moment = at or BASE_TIME + timedelta(days=day_offset)
-            lake.commit(lake.write_seal(partition=partition, after_offset=after, offsets=offsets, times=[moment, moment]))
+            lake.commit(
+                lake.write_seal(
+                    partition=partition,
+                    after_offset=after,
+                    offsets=offsets,
+                    times=[moment, moment],
+                    protection_revision=protection_revision,
+                )
+            )
             after = offsets[-1]
 
     def compact(self, compaction_plan, **job):
@@ -133,6 +150,28 @@ class CompactionTests(unittest.TestCase):
         self.assertEqual(8, result.input_records)
         self.assertEqual(table.metadata.current_snapshot_id, result.planned_snapshot_id)
         self.assertEqual(4, small_file_count(live_data_files(table), small_file_bytes=64 * 1024 * 1024))
+
+    def test_files_of_two_protection_revisions_are_compacted_into_outputs_of_their_own(self) -> None:
+        # A policy edit between commits: the partition holds files masked under revision 1 and 2,
+        # interleaved. No output may mix them, so each file stays attributable to its policy.
+        for revision in (1, 2, 1, 2):
+            self.commit_files(1, protection_revision=revision)
+        table = self.lake.load()
+        compaction_plan = plan(table)
+        self.assertEqual([1, 1, 2, 2], [item.protection_revision for item in compaction_plan.inputs])
+        _, result = self.compact(compaction_plan)
+        self.assertEqual([1, 2], sorted(output["protection_revision"] for output in result["outputs"]))
+        live = live_data_files(self.lake.load())
+        self.assertEqual({1: 1, 2: 1}, {revision: sum(1 for item in live if item.protection_revision == revision) for revision in (1, 2)})
+        self.assertTrue(all(item.path.endswith(f"-r{item.protection_revision}.parquet") for item in live))
+        self.assertEqual(8, len(self.rows()))
+
+    def test_files_without_a_revision_compact_as_before(self) -> None:
+        self.commit_files(3)
+        _, result = self.compact(plan(self.lake.load()))
+        (output,) = result["outputs"]
+        self.assertEqual(0, output["protection_revision"])
+        self.assertNotIn("-r", output["uri"].rsplit("/", 1)[1].replace("compact-", ""))
 
     def test_the_partition_being_written_waits_for_the_hot_delay(self) -> None:
         now = datetime.now(tz=UTC)

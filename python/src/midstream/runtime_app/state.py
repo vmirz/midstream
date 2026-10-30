@@ -60,6 +60,9 @@ class RuntimePartitionState:
     files_written: int = 0
     records_skipped: int = 0
     unmapped_values: int = 0
+    #: Values masked and values withheld before staging (data protection).
+    protected_values: int = 0
+    withheld_values: int = 0
     active_batch: RuntimeBatchState | None = None
     pending_batches: dict[str, RuntimeBatchState] = field(default_factory=dict)
     skip_reasons: dict[str, RuntimeSkipReason] = field(default_factory=dict)
@@ -207,6 +210,8 @@ def record_runtime_write(
         state.updated_at = updated_at
         state.rows_written += write_result.rows_increment
         state.records_skipped += write_result.records_skipped_increment
+        state.protected_values += write_result.protected_increment
+        state.withheld_values += write_result.withheld_increment
         if write_result.last_error is not None:
             state.last_error = write_result.last_error
             state.last_error_kind = write_result.last_error_kind
@@ -360,6 +365,9 @@ def build_runtime_processing_summary(
             counters["bytes_written"] += state.bytes_written
             counters["files_written"] += state.files_written
             counters["unmapped_values"] += state.unmapped_values
+            if state.protected_values or state.withheld_values:
+                counters["protected_values"] = counters.get("protected_values", 0) + state.protected_values
+                counters["withheld_values"] = counters.get("withheld_values", 0) + state.withheld_values
             totals["rows"] += state.rows_written
             totals["bytes"] += state.bytes_written
             totals["files"] += state.files_written

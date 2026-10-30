@@ -13,6 +13,7 @@ from midstream.models.materialization import (
 )
 from midstream.models.offsets import table_offsets_from, validate_table_offsets
 from midstream.models.status import ConsumerLag
+from midstream.protection.policy import ProtectionPolicy
 from midstream.scale import normalize_replicas, normalize_storage_size
 
 # `pause` is no longer requested by any endpoint; it stays decodable for events already on the topic.
@@ -104,6 +105,11 @@ class MaterializationRequestSpec:
     partition_granularity: str | None = None
     labels: dict[str, str] = field(default_factory=dict)
     annotations: dict[str, str] = field(default_factory=dict)
+    #: The protection policy. On a create the API resolves it - the deployment default when the
+    #: request names none - so it is never None there; on an update None leaves it as it is.
+    protection: ProtectionPolicy | None = None
+    #: On an update: record the policy again with the current rules, even unchanged.
+    apply_protection_rules: bool = False
 
     def __post_init__(self) -> None:
         validate_table_specs(self.tables)
@@ -137,6 +143,8 @@ class MaterializationRequestSpec:
             "partition_granularity": self.partition_granularity,
             "labels": dict(self.labels),
             "annotations": dict(self.annotations),
+            "protection": None if self.protection is None else self.protection.to_dict(),
+            "apply_protection_rules": self.apply_protection_rules,
         }
 
     @classmethod
@@ -156,6 +164,8 @@ class MaterializationRequestSpec:
             partition_granularity=value.get("partition_granularity"),
             labels=dict(value.get("labels", {})),
             annotations=dict(value.get("annotations", {})),
+            protection=None if value.get("protection") is None else ProtectionPolicy.from_dict(value.get("protection")),
+            apply_protection_rules=bool(value.get("apply_protection_rules", False)),
         )
 
 
