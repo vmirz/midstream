@@ -448,6 +448,41 @@ class RuntimeTemplateTests(unittest.TestCase):
         later = replace(first, updated_at="2026-07-12T00:05:00Z")
         self.assertEqual(spec_hash(render(first)), spec_hash(render(later, schema_id=7, metadata_location="gs://elsewhere")))
 
+    def test_the_protection_keys_id_is_rendered_only_when_the_control_plane_has_a_key(self) -> None:
+        # A deployment without a key renders its runtimes as before; adding the key renders its id
+        # (never the key) into every runtime, which the sweep then applies once (design D14).
+        from midstream.protection import secrets
+
+        def env_of(rendered: dict) -> dict:
+            return {item["name"]: item.get("value") for item in rendered["kaspr_app"]["spec"]["template"]["kasprContainer"]["env"]}
+
+        secrets.get_protection_key.cache_clear()
+        self.addCleanup(secrets.get_protection_key.cache_clear)
+        with patch.dict(os.environ, {"PROTECTION_KEY": ""}):
+            secrets.get_protection_key.cache_clear()
+            without = render()
+        self.assertNotIn("PROTECTION_KEY_ID", env_of(without))
+        key_text = "k" * 48
+        with patch.dict(os.environ, {"PROTECTION_KEY": key_text}):
+            secrets.get_protection_key.cache_clear()
+            with_key = render()
+        self.assertEqual(secrets.protection_key(key_text).key_id, env_of(with_key)["PROTECTION_KEY_ID"])
+        self.assertNotIn(key_text, str(with_key))
+        self.assertNotEqual(spec_hash(without), spec_hash(with_key))
+        with patch.dict(os.environ, {"PROTECTION_KEY": "j" * 48}):
+            secrets.get_protection_key.cache_clear()
+            another = render()
+        self.assertNotEqual(spec_hash(with_key), spec_hash(another))
+
+    def test_a_policy_and_its_edits_never_change_the_runtimes_spec(self) -> None:
+        # A policy reaches the runtime on its control topic, so an edit restarts nothing (design §3.7).
+        from midstream.protection.policy import ProtectionPolicy
+
+        plain = render()
+        protected = render(build_materialization(protection=ProtectionPolicy({"email": "hash"}), protection_revision=3))
+        self.assertEqual(spec_hash(plain), spec_hash(protected))
+        self.assertNotIn("protection", str(protected["kaspr_agents"]))
+
     def test_an_hourly_table_is_written_hourly(self) -> None:
         rendered = render(build_materialization(partition_granularity="hour"))
         self.assertIn('partition_granularity="hour"', init_python(by_suffix(rendered["kaspr_agents"], "-writer")))

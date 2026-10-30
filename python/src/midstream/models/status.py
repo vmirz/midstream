@@ -76,6 +76,12 @@ class MemberProgress:
     settings_lineage: str | None = None
     # Last per-category skip counts this member reported, for monotonic skip-reason totals.
     skip_counts: dict[str, int] = field(default_factory=dict)
+    #: Values this member masked and withheld, per table, as last reported (data protection).
+    table_protected: dict[str, int] = field(default_factory=dict)
+    table_withheld: dict[str, int] = field(default_factory=dict)
+    #: The protection revision this member masks with, per table, and the key it loaded.
+    protection_revisions: dict[str, int] = field(default_factory=dict)
+    protection_key_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -103,6 +109,14 @@ class MemberProgress:
             payload["skip_counts"] = dict(self.skip_counts)
         if self.table_unmapped:
             payload["table_unmapped"] = dict(self.table_unmapped)
+        if self.table_protected:
+            payload["table_protected"] = dict(self.table_protected)
+        if self.table_withheld:
+            payload["table_withheld"] = dict(self.table_withheld)
+        if self.protection_revisions:
+            payload["protection_revisions"] = dict(self.protection_revisions)
+        if self.protection_key_id is not None:
+            payload["protection_key_id"] = self.protection_key_id
         return payload
 
     @classmethod
@@ -126,6 +140,10 @@ class MemberProgress:
             settings_lineage=value.get("settings_lineage") if isinstance(value.get("settings_lineage"), str) else None,
             skip_counts=dict(value.get("skip_counts") or {}),
             table_unmapped={str(key): int(item) for key, item in (value.get("table_unmapped") or {}).items()},
+            table_protected={str(key): int(item) for key, item in (value.get("table_protected") or {}).items()},
+            table_withheld={str(key): int(item) for key, item in (value.get("table_withheld") or {}).items()},
+            protection_revisions={str(key): int(item) for key, item in (value.get("protection_revisions") or {}).items()},
+            protection_key_id=value.get("protection_key_id") if isinstance(value.get("protection_key_id"), str) else None,
         )
 
 
@@ -193,6 +211,9 @@ class RuntimeProgress:
     #: member last reported one for the table.
     cumulative_unmapped_by_table: dict[str, int] = field(default_factory=dict)
     unmapped_last_seen_by_table: dict[str, str] = field(default_factory=dict)
+    #: Values masked and withheld before staging, per table, monotonic across member restarts.
+    cumulative_protected_by_table: dict[str, int] = field(default_factory=dict)
+    cumulative_withheld_by_table: dict[str, int] = field(default_factory=dict)
     member_progress: dict[str, MemberProgress] = field(default_factory=dict)
     skip_reasons: dict[str, SkipReasonTotal] = field(default_factory=dict)
     #: Each table as the committer member last reported it, by table name (spec §7.12).
@@ -241,6 +262,10 @@ class RuntimeProgress:
             payload["cumulative_unmapped_by_table"] = dict(self.cumulative_unmapped_by_table)
         if self.unmapped_last_seen_by_table:
             payload["unmapped_last_seen_by_table"] = dict(self.unmapped_last_seen_by_table)
+        if self.cumulative_protected_by_table:
+            payload["cumulative_protected_by_table"] = dict(self.cumulative_protected_by_table)
+        if self.cumulative_withheld_by_table:
+            payload["cumulative_withheld_by_table"] = dict(self.cumulative_withheld_by_table)
         if self.tables:
             payload["tables"] = {name: dict(block) for name, block in self.tables.items()}
         if self.latest_offsets:
@@ -280,6 +305,12 @@ class RuntimeProgress:
             },
             unmapped_last_seen_by_table={
                 str(key): str(item) for key, item in (value.get("unmapped_last_seen_by_table") or {}).items()
+            },
+            cumulative_protected_by_table={
+                str(key): int(item) for key, item in (value.get("cumulative_protected_by_table") or {}).items()
+            },
+            cumulative_withheld_by_table={
+                str(key): int(item) for key, item in (value.get("cumulative_withheld_by_table") or {}).items()
             },
             tables={
                 str(name): dict(block)

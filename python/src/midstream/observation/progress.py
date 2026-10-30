@@ -52,6 +52,10 @@ def merge_member_progress(
     files_pending_commit: int | None = None,
     tables: dict[str, dict[str, Any]] | None = None,
     table_unmapped: dict[str, int] | None = None,
+    table_protected: dict[str, int] | None = None,
+    table_withheld: dict[str, int] | None = None,
+    protection_revisions: dict[str, int] | None = None,
+    protection_key_id: str | None = None,
 ) -> RuntimeProgress:
     """Fold one member heartbeat into cumulative totals without losing prior progress.
 
@@ -81,6 +85,10 @@ def merge_member_progress(
         settings_lineage=settings_lineage,
         skip_counts=_member_skip_counts(previous, reported_skips),
         table_unmapped=dict(table_unmapped or {}),
+        table_protected=dict(table_protected or {}),
+        table_withheld=dict(table_withheld or {}),
+        protection_revisions=dict(protection_revisions or {}),
+        protection_key_id=protection_key_id,
     )
 
     cumulative: dict[str, int] = {}
@@ -104,6 +112,9 @@ def merge_member_progress(
             unmapped_by_table[table_name] = unmapped_by_table.get(table_name, 0) + delta
             if reported_at:
                 unmapped_seen_by_table[table_name] = reported_at
+
+    protected_by_table = _fold_table_counters(current.cumulative_protected_by_table, previous.table_protected, observed.table_protected)
+    withheld_by_table = _fold_table_counters(current.cumulative_withheld_by_table, previous.table_withheld, observed.table_withheld)
 
     member_progress = dict(current.member_progress)
     member_progress[member_id] = observed
@@ -129,6 +140,8 @@ def merge_member_progress(
         unmapped_last_seen_at=unmapped_last_seen_at,
         cumulative_unmapped_by_table=unmapped_by_table,
         unmapped_last_seen_by_table=unmapped_seen_by_table,
+        cumulative_protected_by_table=protected_by_table,
+        cumulative_withheld_by_table=withheld_by_table,
         tables=merged_tables,
         skip_reasons=_merge_skip_reasons(
             current.skip_reasons,
@@ -138,6 +151,18 @@ def merge_member_progress(
         ),
         **cumulative,
     )
+
+
+def _fold_table_counters(totals: dict[str, int], previous: dict[str, int], observed: dict[str, int]) -> dict[str, int]:
+    """Per-table cumulative totals with one member's new reading folded in; a reading below the
+    previous one is a restarted member's, all of it new."""
+    folded = dict(totals)
+    for table_name, observed_value in observed.items():
+        previous_value = previous.get(table_name, 0)
+        delta = observed_value - previous_value if observed_value >= previous_value else observed_value
+        if delta > 0:
+            folded[table_name] = folded.get(table_name, 0) + delta
+    return folded
 
 
 def _member_skip_counts(

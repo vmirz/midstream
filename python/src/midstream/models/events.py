@@ -513,8 +513,14 @@ class RuntimeStatusEvent:
     #: Each table as the committer member sees it, by table name; only the member running the
     #: committer sends them.
     tables: dict[str, dict[str, Any]] | None = None
-    #: This member's own counters per table: rows, bytes and files written, values unmapped.
+    #: This member's own counters per table: rows, bytes and files written, values unmapped, and
+    #: values masked and withheld (data protection).
     table_counters: dict[str, dict[str, int]] = field(default_factory=dict)
+    #: The protection revision this member masks with, per table (its schema view's); empty when no
+    #: table records one, and from a runtime before data protection.
+    protection_revisions: dict[str, int] = field(default_factory=dict)
+    #: The id of the protection key this member loaded; None without one.
+    protection_key_id: str | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -580,6 +586,10 @@ class RuntimeStatusEvent:
             payload["tables"] = {name: dict(block) for name, block in self.tables.items()}
         if self.table_counters:
             payload["table_counters"] = {name: dict(counters) for name, counters in self.table_counters.items()}
+        if self.protection_revisions:
+            payload["protection_revisions"] = dict(self.protection_revisions)
+        if self.protection_key_id is not None:
+            payload["protection_key_id"] = self.protection_key_id
         return payload
 
     @classmethod
@@ -631,4 +641,10 @@ class RuntimeStatusEvent:
                 for name, counters in (value.get("table_counters") or {}).items()
                 if isinstance(counters, dict)
             },
+            protection_revisions={
+                str(table): revision
+                for table, revision in (value.get("protection_revisions") or {}).items()
+                if _optional_int(revision) is not None and revision >= 0
+            },
+            protection_key_id=_optional_str(value.get("protection_key_id")),
         )

@@ -285,6 +285,71 @@ class PolicyDeliveryTests(unittest.TestCase):
         self.assertEqual("apply_rules", protection.history[-1].reason)
 
 
+class HeartbeatTests(unittest.TestCase):
+    def test_a_member_reports_its_protection_revision_and_key(self) -> None:
+        from midstream.runtime_app.handlers.status import build_runtime_status_snapshot
+
+        runtime = RuntimeHarness(SEED, protection_policy=DEFAULT, protection_revision=4)
+        self.addCleanup(runtime.close)
+        run(runtime.write({"order_id": "O-1", "email": "a@example.com"}, offset=0))
+        snapshot = build_runtime_status_snapshot(runtime.state_table, materialization_id="mat-a1b2c3d4e5f6", tables=("orders",))
+        self.assertEqual({"orders": 4}, snapshot["protection_revisions"])
+        self.assertEqual(protection_key(PROTECTION_KEY).key_id, snapshot["protection_key_id"])
+        self.assertEqual(1, snapshot["table_counters"]["orders"]["protected_values"])
+        self.assertEqual("running", snapshot["phase"])
+
+    def test_a_member_that_may_not_hash_reports_itself_degraded(self) -> None:
+        from midstream.runtime_app.handlers.status import build_runtime_status_snapshot
+        from midstream.runtime_app.protection_state import note_key_problem
+
+        runtime = RuntimeHarness(SEED, protection_policy=DEFAULT, protection_key=None)
+        self.addCleanup(runtime.close)
+        note_key_problem("protection_key_missing")
+        snapshot = build_runtime_status_snapshot(runtime.state_table, materialization_id="mat-a1b2c3d4e5f6", tables=("orders",))
+        self.assertEqual(("degraded", "degraded", "protection_key_missing"), (snapshot["phase"], snapshot["health"], snapshot["health_reason"]))
+        self.assertIn("protection-key", snapshot["last_error"])
+        self.assertNotIn("protection_key_id", snapshot)
+
+    def test_a_runtime_without_protection_reports_none(self) -> None:
+        from midstream.runtime_app.handlers.status import build_runtime_status_snapshot
+
+        runtime = RuntimeHarness({"order_id": "O-0"}, protection_key=None)
+        self.addCleanup(runtime.close)
+        run(runtime.write({"order_id": "O-1"}, offset=0))
+        snapshot = build_runtime_status_snapshot(runtime.state_table, materialization_id="mat-a1b2c3d4e5f6", tables=("orders",))
+        self.assertNotIn("protection_revisions", snapshot)
+        self.assertNotIn("protected_values", snapshot["table_counters"]["orders"])
+
+    def test_the_control_plane_keeps_monotonic_totals_per_table(self) -> None:
+        from midstream.models.status import RuntimeProgress
+        from midstream.observation.progress import merge_member_progress
+
+        def beat(progress, protected, withheld, member="m-0"):
+            return merge_member_progress(
+                progress,
+                member_id=member,
+                rows_written=1,
+                bytes_written=1,
+                files_written=0,
+                records_skipped=0,
+                latest_offsets={},
+                table_protected={"orders": protected},
+                table_withheld={"orders": withheld},
+                protection_revisions={"orders": 2},
+                protection_key_id="abcd1234",
+            )
+
+        progress = beat(RuntimeProgress(), 5, 1)
+        progress = beat(progress, 8, 2)
+        progress = beat(progress, 3, 0)  # restarted: its counters began again
+        self.assertEqual({"orders": 11}, progress.cumulative_protected_by_table)
+        self.assertEqual({"orders": 2}, progress.cumulative_withheld_by_table)
+        again = RuntimeProgress.from_dict(progress.to_dict())
+        self.assertEqual(progress.cumulative_protected_by_table, again.cumulative_protected_by_table)
+        self.assertEqual({"orders": 2}, again.member_progress["m-0"].protection_revisions)
+        self.assertEqual("abcd1234", again.member_progress["m-0"].protection_key_id)
+
+
 class SchemaViewTests(unittest.TestCase):
     def test_a_newer_protection_revision_of_the_same_schema_replaces_the_view(self) -> None:
         runtime = RuntimeHarness(SEED, protection_policy=DEFAULT)

@@ -12,12 +12,14 @@ from datetime import UTC, datetime
 import logging
 from typing import Any
 
+from midstream.protection.secrets import get_protection_key
 from midstream.protocol_logging import log_protocol_event
 from midstream.runtime_app.acks import ack_snapshot
 from midstream.runtime_app.config import get_runtime_app_config
 from midstream.runtime_app.live_settings import current_settings_position, refresh_runtime_settings
 from midstream.runtime_app.performance import build_runtime_performance_snapshot
 from midstream.runtime_app.pipeline import batch_pipeline
+from midstream.runtime_app.protection_state import current_key_problem
 from midstream.runtime_app.state import build_runtime_processing_summary, list_partition_states
 from midstream.runtime_app.table_state import current_view
 from midstream.runtime_app.writer.batches import parse_timestamp
@@ -101,6 +103,14 @@ def build_runtime_status_snapshot(
     schema_versions = {name: view.schema_id for name, view in views.items() if view is not None}
     if schema_versions:
         snapshot["schema_versions"] = schema_versions
+    # Which policy each table's writers mask with, so the control plane can say when an edit has
+    # reached every member; and the key this member hashes with (never the key itself).
+    protection_revisions = {name: view.protection.revision for name, view in views.items() if view is not None}
+    if any(protection_revisions.values()):
+        snapshot["protection_revisions"] = protection_revisions
+    key = get_protection_key()
+    if key is not None:
+        snapshot["protection_key_id"] = key.key_id
     if summary is not None:
         snapshot["latest_offsets"] = {table: dict(offsets) for table, offsets in summary.latest_handled_offsets.items()}
         if summary.latest_committed_offsets:
@@ -140,7 +150,22 @@ def build_runtime_status_snapshot(
             performance=performance,
         )
     stalled = _oldest_uncommitted_seconds(materialization_id, member_id=member_id, now=now or _utc_now())
-    if summary is not None and summary.last_error:
+    key_problem = current_key_problem()
+    if key_problem is not None:
+        message = (
+            "A table masks values with a keyed hash and this member has no protection key: it writes "
+            "nothing until the runtime runs with the deployment's key (protection-key in the auth Secret)."
+            if key_problem == "protection_key_missing"
+            else "A table masks values with a keyed hash and this member has another protection key than "
+            "the deployment's: it writes nothing until the runtime is re-applied with the deployment's key."
+        )
+        snapshot["phase"] = "degraded"
+        snapshot["health"] = "degraded"
+        snapshot["health_reason"] = key_problem
+        snapshot["phase_reason"] = "runtime_reported_degraded"
+        snapshot["phase_message"] = message
+        snapshot["last_error"] = message
+    elif summary is not None and summary.last_error:
         snapshot["phase"] = "degraded"
         snapshot["health"] = "degraded"
         snapshot["phase_reason"] = "runtime_reported_degraded"

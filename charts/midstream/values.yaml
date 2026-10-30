@@ -73,9 +73,11 @@ gcs:
 
 auth:
   # The Secret with `signing-key`, `previous-signing-key`, `service-token`, `federation-key`,
-  # `previous-federation-key`, `bootstrap-admin-email` and `bootstrap-admin-password` (handbook 18
-  # §18.11). Empty names <release>-auth. Every key is optional to Kubernetes, but without
-  # `signing-key` nobody can sign in, and without `federation-key` no access token can be made or used.
+  # `previous-federation-key`, `protection-key`, `bootstrap-admin-email` and `bootstrap-admin-password`
+  # (handbook 18 §18.11). Empty names <release>-auth. Every key is optional to Kubernetes, but without
+  # `signing-key` nobody can sign in, without `federation-key` no access token can be made or used,
+  # and without `protection-key` nothing can be hashed, so creates that would hash are refused
+  # (handbook 22; `kubectl patch` it in, as handbook 16 §16.16 shows).
   # `federation-key` must be the same in every domain: access tokens are signed with it, and every
   # domain accepts a token any domain made (handbook 20).
   existingSecret: ""
