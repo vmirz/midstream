@@ -62,7 +62,7 @@ advanced sits behind the section's **Advanced** toggle.
 
 | Key | Env var | Default | Bounds | Label |
 |---|---|---|---|---|
-| `default_destination_uri` | `…DEFAULT_DESTINATION_URI` | none | a `gs://` URI | Destination — where every new materialization's tables are created; none, and no materialization can be created |
+| `default_destination_uri` | `…DEFAULT_DESTINATION_URI` | none | a `gs://`, `s3://` or `abfss://` destination (`destination_uri`) | Destination — where every new materialization's tables are created; none, and no materialization can be created |
 | `default_runtime_replicas` | `…DEFAULT_RUNTIME_REPLICAS` | 1 | 1–1,024 | Default replicas |
 | `max_runtime_replicas` | `…MAX_RUNTIME_REPLICAS` | 64 | 1–1,024 | Maximum replicas |
 | `default_runtime_storage_size` | `…DEFAULT_RUNTIME_STORAGE_SIZE` | `64Mi` | a Kubernetes quantity | Storage per replica — every new runtime member's volume, which holds only its state table |
@@ -177,6 +177,23 @@ for none (`protection/catalog.py::normalize_protection_text`). Its definition al
 to whoever lacks it. It takes effect for the next create and never reaches an existing
 materialization (22 §22.4).
 
+`default_destination_uri` is the one `destination_uri`: `gs://<bucket>[/<prefix>]` in Google Cloud
+Storage, `s3://<bucket>[/<prefix>]` in Amazon S3 or an S3-compatible server, or
+`abfss://<container>@<account>.dfs.core.windows.net[/<prefix>]` in Azure Blob Storage — one form per
+backend, the one every engine reads. It is stored trimmed, without trailing slashes, and holds at
+most 1,024 characters. A GCS bucket is lower-case letters, digits, dots, hyphens and underscores; an
+S3 bucket 3 to 63 lower-case letters, digits, dots and hyphens; an Azure container 3 to 63 lower-case
+letters, digits and single hyphens, in an account of 3 to 24 lower-case letters and digits; each
+bucket or container starts and ends with a letter or digit (`lakehouse/store/uris.py::destination_problem`).
+Anything else is refused with a sentence that says why: whitespace, a scheme in capitals, another
+spelling of a backend (`gcs://`, `s3a://`, `s3n://`, `abfs://`, `az://`, `wasb://`, `wasbs://`,
+`adl://`), a web address, any other scheme, and `file://`, which only a deployment that sets
+`CONTROL_PLANE_ALLOW_FILE_DESTINATIONS` accepts, for tests (03 §3.2.1). The page checks the three
+forms before it sends a change. A new destination decides new materializations only, since each
+keeps the one it was created with, and every app and runtime needs credentials for its backend
+(02 §2.9a). An override that no longer passes — a `file://` one once the deployment stops allowing
+them — is ignored like any other (§17.2).
+
 Cross-field rules: the default replica count may not exceed the maximum; the idle timeout may not
 be longer than the maximum session length; the renewal interval must be shorter than the idle
 timeout. When an override and a
@@ -267,11 +284,15 @@ table is created and not updated after: the maintenance app's expiry follows the
 ### The console (`console`)
 
 See the console handbook, [03 — Configuration](../../console/docs/03-configuration-reference.md).
-Twenty-nine of its settings are overridable — refresh cadence, chart and rate windows, query and
+Thirty-one of its settings are overridable — refresh cadence, chart and rate windows, query and
 export limits, the Data explorer switch, log level, request timeout, how often it re-checks a
 session and how many sign-in attempts one address may make — and everything that is sized with
 the pod or wires it to its environment is not. The attribution setting (`defaultSubmittedBy`) was
-retired when accounts arrived; a stored override for it is ignored.
+retired when accounts arrived; a stored override for it is ignored. Its storage profiles are the
+deployment's too (console 03 §3.6a): the console's page shows them read-only under
+**Deployment › This console**, as **Object storage access** — each profile's name, kind and mode —
+and one row per profile with its scope, mode, kind, endpoint, region and path style, and the
+variables its credentials come from, never a value.
 
 ### Never overridable
 
@@ -281,11 +302,13 @@ Reported read-only on the Settings page's **Deployment** section (`DEPLOYMENT_SE
 |---|---|
 | Topic names (seven), `K_APP_NAME`, the state, settings and directory table bindings | Must match the chart's agent and WebView wiring |
 | `CONTROL_PLANE_STORAGE_PREFIX` | Part of every table's location |
+| `STORAGE_S3_ENDPOINT`, `STORAGE_S3_REGION`, `STORAGE_S3_PATH_STYLE`, `STORAGE_AZURE_ENDPOINT` | How every app and runtime reaches `s3://` and `abfss://` destinations, set by the chart from `storage.*` and read when a process first uses the backend (02 §2.9a, 03 §3.3a). Shown under **Deployment › Control plane** as **S3 endpoint**, **S3 region**, **S3 path-style addressing** and **Azure Blob endpoint**, as the control plane's own stores read them; a value they cannot use shows as `invalid: …` |
+| `CONTROL_PLANE_ALLOW_FILE_DESTINATIONS` | Shown as **Local file destinations**: whether a destination may be a `file:///` path on the local disk, which every app and runtime would have to share — tests only, never set by the chart |
 | `CONTROL_PLANE_CATALOG_BASE_URL` | The address engines reach the control plane at; the console's connection snippets show it |
 | `CONTROL_PLANE_DEFAULT_NAMESPACE` | A namespace needs the runtimes' role, service account and secrets |
 | `CONTROL_PLANE_RUNTIME_NAME_PREFIX` | Names every runtime and decides which topics a delete removes |
 | `CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION`, `…_RUNTIME_APP_SPEC` | Shape of the rendered runtime; changing it re-applies — and restarts — every runtime. Shown as **Resources per replica**, **Storage class** and **Vertical autoscaling**; a change to the vertical autoscaling alone restarts none (02 §2.10c) |
-| Credentials, `GOOGLE_APPLICATION_CREDENTIALS`, the session signing keys, the console's service token, the bootstrap administrator | Never through a UI. The page says only whether each identity secret is configured |
+| Credentials — each storage backend's (`GOOGLE_APPLICATION_CREDENTIALS`, `AWS_*`, `AZURE_*`), the session signing keys, the console's service token, the bootstrap administrator | Never through a UI. The page says only whether each identity secret is configured, and nothing of a storage credential |
 | The protection key (`PROTECTION_KEY`, the auth Secret's `protection-key`) | Hashing's key, for the lake's lifetime (22 §22.8). The page shows its id, or that none is configured |
 | The runtime's task intervals (heartbeat, pipeline, commit timer) | Rendered into the runtime's tasks; built in |
 | The maintenance app's job slots and forget window (03 §3.4) | Read from its environment at start; they size its pod |
@@ -435,11 +458,10 @@ and a new runtime reads the delivery topic from its start, which can hold an ear
 deliveries: a control plane installed afresh over a Kafka cluster that kept the topic, or one whose
 `settings` table was lost, starts its revisions again. The settings therefore have a **lineage**,
 which names one history of revisions. The `settings-bootstrap` task (at startup, on the leader)
-asks the settings agent to begin one when the `runtime` scope has none — on a new installation, on
-the first start after an upgrade from before 4.1, or after the table was lost — and the agent
-delivers the scope to every runtime under it, revision 0 with no values on a new installation. It
-never changes after (a change that finds none begins one too). A lineage starts with the UTC time
-it began, in a fixed width, then a random part (`20261024T101502Z-3f9a1c2e`), so a later one sorts
+asks the settings agent to begin one when the `runtime` scope has none — on a new installation, or
+after the table was lost — and the agent delivers the scope to every runtime under it, revision 0
+with no values on a new installation. It never changes after (a change that finds none begins one
+too). A lineage starts with the UTC time it began, in a fixed width, then a random part (`20261024T101502Z-3f9a1c2e`), so a later one sorts
 after an earlier one. A runtime keeps the newest settings **by lineage, then by revision**:
 whatever revision an earlier lineage reached, the first delivery of a later one replaces it, and
 deliveries without a lineage, from a control plane that predates them, sort before every lineage.
@@ -487,17 +509,14 @@ summarises how far the current revision has reached:
 | `not_reporting` | No member has reported in the last two minutes |
 | `unsupported` | Its runtime predates live settings; it takes them at its next deploy |
 
-A runtime from before 4.1 reports no lineage and keeps comparing revisions alone; the rollout
-judges it by its revision, as before. Upgrading re-applies it within minutes, and the re-applied
-runtime usually holds its revision without a lineage: its old member received the start's delivery
-and the re-apply's, and ignored both, being on that revision already. The document keeps the
-revision its lineage began at (`lineage_revision`), and a member on that revision without a
-lineage, with nothing changed since, runs exactly the settings the lineage began from: it counts as
-`current`. The next change reaches it under the lineage.
+The document keeps the revision its lineage began at (`lineage_revision`). A member whose settings
+have no lineage counts as `current` only on that revision, with nothing changed since: it then runs
+exactly the settings the lineage began from. The next change reaches it under the lineage.
 
-**Version skew.** 1.0 runtimes and control planes run together only at 1.0: the fresh-start
-rollout (12 §12.13) leaves no older runtime. Upgrading the control plane changes every runtime's package pin, so the sweep
-re-applies every runtime within about two minutes, and each re-apply delivers the current settings.
+**Version skew.** Every runtime installs exactly the package the control plane runs (01 §1.6), so
+none runs another for long: when the control plane's package changes (`package.*`), every
+runtime's package pin changes with it, the sweep re-applies every runtime within about two minutes,
+and each re-apply delivers the current settings.
 
 ## 17.8 The console's settings
 
@@ -560,6 +579,7 @@ Full shapes: [04 — HTTP API reference](./04-http-api-reference.md).
 | A runtime is `unsupported` | It runs a package older than 0.5.0 | It takes the settings at its next apply; resume it or wait for the sweep |
 | A runtime logs `Ignoring runtime settings revision N` | The overrides do not fit that runtime's environment | Fix the override; the runtime keeps its own values meanwhile |
 | An env var change "does nothing" | An override for the same setting wins | Reset the override |
+| A destination is refused | It is not one of the three forms: another spelling of the backend (`s3a://`, `az://`, `wasbs://` …), a web address, capitals, `file://` | Write it as engines read it: `gs://<bucket>/…`, `s3://<bucket>/…` or `abfss://<container>@<account>.dfs.core.windows.net/…` |
 
 Inspecting the store directly:
 

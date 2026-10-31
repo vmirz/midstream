@@ -10,6 +10,7 @@
 
 import type { PartitionGranularity } from '../../shared/types.ts';
 import { notFound } from '../errors.ts';
+import { objectKey } from '../storage/uris.ts';
 import { assertUnderLocation, isUnderLocation } from './io.ts';
 import { ENTRY_DELETED, decodeBound, readManifest, readManifestList, type ManifestEntry, type ManifestFile } from './manifests.ts';
 import { partitionGranularity, snapshotById, type IcebergSnapshot, type TableMetadata } from './metadata.ts';
@@ -17,7 +18,7 @@ import { OFFSET_FIELD_ID, PARTITION_FIELD_ID, TIMESTAMP_FIELD_ID } from './schem
 
 export interface DataObject {
   uri: string;
-  /** The object's name within its bucket. */
+  /** The object's key within its bucket or container. */
   name: string;
   bytes: number;
   /** Exact rows, from the manifest. */
@@ -213,7 +214,7 @@ function toDataObject(
   const allNull = entry.nullValueCounts.get(TIMESTAMP_FIELD_ID) === entry.recordCount;
   return {
     uri: entry.filePath,
-    name: objectName(entry.filePath),
+    name: objectKey(entry.filePath),
     bytes: entry.fileSizeInBytes,
     rows: entry.recordCount,
     committedAt: entry.snapshotId === null ? null : (committedAtBySnapshot.get(entry.snapshotId) ?? null),
@@ -247,12 +248,6 @@ export function timestampMs(buffer: Buffer | undefined): number | null {
   return Number(millis);
 }
 
-function objectName(uri: string): string {
-  if (!uri.startsWith('gs://')) return uri;
-  const remainder = uri.slice('gs://'.length);
-  const slash = remainder.indexOf('/');
-  return slash === -1 ? remainder : remainder.slice(slash + 1);
-}
 
 /** The partition of rows that have no Kafka timestamp, as the runtime names it. */
 export const NULL_PARTITION = '__null__';

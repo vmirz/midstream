@@ -10,7 +10,7 @@ Where this document and the code disagree, the implementation is authoritative, 
 2. `python/src/midstream/`
 3. `python/tests/`
 
-> **Looking for more depth?** `docs/handbook/` is a 21-document reference manual: full field
+> **Looking for more depth?** `docs/handbook/` is a 22-document reference manual: full field
 > tables, decision tables, worked examples, an operations runbook, a test map and a known-gaps
 > register. Start at [`docs/handbook/README.md`](./handbook/README.md) and load only the
 > document you need; this file cites it as `handbook <n>`. The console has its own, `console/docs/`.
@@ -18,7 +18,8 @@ Where this document and the code disagree, the implementation is authoritative, 
 ## 1. What this project is
 
 Midstream continuously materializes JSON records from Kafka topics into **Apache
-Iceberg tables, one per source topic**, in Google Cloud Storage, exactly once. A materialization
+Iceberg tables, one per source topic**, in object storage — Google Cloud Storage, Amazon S3 or an
+S3-compatible server, or Azure Blob Storage — exactly once. A materialization
 reads one or more topics with one dedicated runtime, and its topics can be changed later. It has a
 self-service HTTP API, a schema that evolves by itself, table maintenance by an app of its own, an Iceberg REST catalog
 any engine can attach, accounts and permissions, settings that change without a redeploy, and a web
@@ -37,8 +38,8 @@ Iceberg field ids, and upload them; one member, the **committer**, commits them 
 acknowledges the Kafka offsets only once their rows are in it.
 
 It is not an ETL engine (no transformations), not CDC (the table is the topic's log: tombstones are
-rows, nothing is upserted), not multi-cloud (GCS only), and not a schema-registry client (values
-must be JSON; schemas are inferred).
+rows, nothing is upserted), and not a schema-registry client (values must be JSON; schemas are
+inferred).
 
 ## 2. High-level architecture
 
@@ -56,7 +57,7 @@ HTTP ─▶ KasprWebView ─▶ materialization-requests ─▶ request-intake �
              one member: committer ◀─────────────────────┘
                 commit · schema evolution
                          │
-             Iceberg tables in GCS ◀── engines via the REST catalog, and the console
+             Iceberg tables: GCS · S3 · Azure ◀── engines via the REST catalog, and the console
                          │            ◀── maintenance app: compaction · expiry · orphans · reprotect, every table
                          │                 ▲ ticked each minute on <release>-maintenance-requests
                          │            the console ◀── tail app: each watched table's records past its
@@ -93,7 +94,7 @@ One wheel, pinned to an exact git commit (handbook 01, 16).
 
 | Path | Contents |
 |---|---|
-| `python/src/midstream/` | The package. `models/` (immutable models with `to_dict`/`from_dict`), `storage/` (table keys, envelopes), `services/` (workflow, request intake, observation, table events), `handlers/` (thin Kaspr adapters), `web/` (WebView logic, the REST catalog views), `lakehouse/` (pointer catalog, table lifecycle, commits, schema policy, maintenance, REST protocol), `runtime/` (template rendering, naming, bindings), `runtime_app/` (writer, pipeline, committer, templates), `maintenance_app/` (ticks, job slots, the compaction child), `tail_app/` (the live tail: ticks, one consumer per member, buffers, answers, routing), `observation/`, `schema/` (discovery), `kubernetes/`, `kafka/`, `scheduler/`, `settings/`, `identity/` |
+| `python/src/midstream/` | The package. `models/` (immutable models with `to_dict`/`from_dict`), `storage/` (table keys, envelopes, the destination drop), `services/` (workflow, request intake, observation, table events), `handlers/` (thin Kaspr adapters), `web/` (WebView logic, the REST catalog views), `lakehouse/` (pointer catalog, table lifecycle, commits, schema policy, maintenance, REST protocol; `lakehouse/store/`, the object store layer: a store per backend and the conformance suite), `runtime/` (template rendering, naming, bindings), `runtime_app/` (writer, pipeline, committer, templates), `maintenance_app/` (ticks, job slots, the compaction and reprotect children), `tail_app/` (the live tail: ticks, one consumer per member, buffers, answers, routing), `observation/`, `schema/` (discovery), `kubernetes/`, `kafka/`, `scheduler/`, `settings/`, `identity/` |
 | `python/tests/` | The `unittest` suite: the executable specification |
 | `charts/midstream/templates/` | The control plane's CRDs: app, agents, tasks, tables, webviews, RBAC; `maintenance/`, the maintenance app's; `tail/` and `webviews/tail-*.yaml`, the tail app's |
 | `console/` | The Midstream Console and its handbook (`console/docs/`) |
@@ -102,9 +103,12 @@ One wheel, pinned to an exact git commit (handbook 01, 16).
 ## 4. Stack
 
 Python ≥ 3.12; PyIceberg 0.12 with its minor pinned (the committer uses documented-but-internal
-update APIs); pyarrow ≥ 18; google-cloud-storage ≥ 2.18; Jinja2; PyYAML; kubernetes-asyncio ≥ 33;
-aiokafka from the Kaspr image. Kaspr (`kaspr.io/v1alpha1`) runs on twm-faust. Helm renders the
-chart. Tests are stdlib `unittest`; the console uses `node --test`, `tsc` and Vite. There is no
+update APIs); pyarrow ≥ 18; one storage library per backend — google-cloud-storage ≥ 2.18,
+boto3 ≥ 1.36, azure-storage-blob ≥ 12.31 with azure-identity ≥ 1.19 — each imported only when a
+process first meets its scheme; Jinja2; PyYAML; kubernetes-asyncio ≥ 33; aiokafka from the Kaspr
+image. Kaspr (`kaspr.io/v1alpha1`) runs on twm-faust. Helm renders the chart. The console reads
+storage with GCS's JSON API, `@aws-sdk/client-s3` and `@azure/storage-blob`, and data files with
+DuckDB. Tests are stdlib `unittest`; the console uses `node --test`, `tsc` and Vite. There is no
 linter or formatter by design (handbook 01 §1.8).
 
 ## 5. Deployed resources
@@ -142,6 +146,21 @@ from use and resizes pods in place, keeping each request under its CPU limit; th
 memory stay as the chart sets them. Runtime members are limited to two cores, and a quiet
 runtime's members reserve about 100m each (handbook 02 §2.10c).
 
+**Storage** (handbook 02 §2.9a, 03 §3.3a, 11 §11.1a): `storage.gcs`, `storage.s3` and `storage.azure` give the
+control plane, the maintenance and tail apps and, through the runtime spec, every runtime the same
+backend credentials, as Secret references and never values — a GCS service-account key mounted and
+named by `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_*` keys, an Azure connection string, account key or
+service principal — with the `STORAGE_*` settings: an S3-compatible server's endpoint, the region,
+path-style addressing, an Azure emulator's endpoint. A backend without a Secret uses the pods' cloud
+identity — GKE workload identity, IRSA, EKS Pod Identity, AKS workload identity — and
+`kaspr.podLabels` and `kaspr.serviceAccountAnnotations` label every Kaspr pod and annotate its
+ServiceAccount for the identities that need it. `controlPlane.settings.defaultDestinationUri` must be
+a `gs://`, `s3://` or `abfss://` URI (handbook 11 §11.1); the chart refuses any other, `file://`
+included. The console reads through `console.storage`, one profile per
+destination prefix with read-only credentials of its own (`CONSOLE_STORAGE_<NAME>_*` from its
+Secret), and its identity through `console.podLabels` and `console.serviceAccountAnnotations`;
+`NOTES.txt` warns when no profile serves the release's destination.
+
 ## 6. Configuration and settings
 
 Every component reads environment variables through one config object
@@ -162,6 +181,13 @@ limits (forks per field, struct fields, nesting depth, total fields), compaction
 (`compaction_small_file_bytes`, `compaction_min_input_files`, `compaction_max_input_bytes` 1 GiB,
 `compaction_hot_partition_delay_minutes`), snapshot retention (72 h, every snapshot of the last
 hour, the newest 20 always), and `orphan_min_age_hours`.
+
+Where new materializations' tables go is the `default_destination_uri` setting, of kind
+`destination_uri`: `gs://<bucket>[/<prefix>]`, `s3://<bucket>[/<prefix>]` or
+`abfss://<container>@<account>.dfs.core.windows.net[/<prefix>]`, and `file:///<path>` only where
+`CONTROL_PLANE_ALLOW_FILE_DESTINATIONS` allows it, for tests. A materialization keeps the destination
+it was created with. The storage endpoints are fixed by the deployment and shown read-only on the
+Settings page (handbook 11 §11.1a, 17 §17.3).
 
 ## 7. The HTTP API
 
@@ -234,8 +260,9 @@ topics and groups only to delete materializations; nothing on the cluster (handb
 
 **Create** (handbook 07): the WebView validates — each topic's dataset and table name (lowercase,
 readable unquoted), the topics (at most `max_materialization_topics`); a request naming a
-destination, namespace, runtime name or storage is refused, and with no `gs://` destination
-configured no create is accepted (`409 destination_not_configured`, handbook 04 §4.5.2) —
+destination, namespace, runtime name or storage is refused, and with no usable destination
+configured — a `gs://`, `s3://` or `abfss://` URI — no create is accepted
+(`409 destination_not_configured`, handbook 04 §4.5.2) —
 previews the claim of the tables' names against the directory, asks Kafka for every topic — one it
 does not list, missing or hidden from the Kafka user, is refused, `400 source_topic_missing`, and a
 Kafka that does not answer is a `503` — and answers 202. `request-intake`
@@ -246,7 +273,8 @@ or none and answers `tables_claimed` — and the workflow emits `start_discovery
 1. `start_discovery` samples up to 200 records of each topic and infers each table's schema 0 — for
    an empty topic, the metadata columns alone, the runtime adding fields as data arrives. A topic
    gone from the metadata since the request fails the create as `source_topic_missing`.
-2. `create_table` writes each table's metadata v0 and catalog pointer, one table at a time: field ids 1–9 for the metadata columns
+2. `create_table` writes each table's metadata v0 and catalog pointer, create-only, through the store
+   of the destination's scheme, one table at a time: field ids 1–9 for the metadata columns
    (`_kafka_timestamp`, partition, offset, key, headers, `_materialized_at`, `_unmapped`), payload
    from 10; partitioned by the UTC day (or hour, or month, or none) of `_kafka_timestamp`; a location that cannot hold
    a table fails the step as `invalid_destination`.
@@ -275,9 +303,10 @@ static members keep their old assignment, so the runtime is *drained* — held a
 consumer group is empty, about two minutes — the added topics' offsets are set, and it starts
 again: about five minutes in all. A table re-created under an old name is a new incarnation, and
 the runtime ignores what its predecessor left. **Delete**: the runtime is deleted, its Kafka topics and group cleaned up,
-every table dropped (pointer retired; its objects removed while `destination_cleanup_enabled`,
-Settings › Delete object data, is on), and the records purged (`purge_materialization_records`, or
-the retention sweep after `deleted_retention_hours`).
+every table dropped (its objects deleted while `destination_cleanup_enabled`, Settings › Delete
+object data, is on, in bounded passes that delete in the backend's own batches: 100 objects a
+request on GCS, 1,000 on S3, 256 on Azure; only its pointer retired while it is off), and the records purged
+(`purge_materialization_records`, or the retention sweep after `deleted_retention_hours`).
 
 ## 11. Inside a runtime
 
@@ -293,9 +322,11 @@ bounded however many topics it reads, and backpressure pauses every topic.
 **Pipeline** (§10.4): a child process seals a batch — spooling its lines to a file per partition
 value, then, one partition at a time, conforming every value to the schema and writing one zstd
 Parquet file with field ids and statistics, a row group at a time, so a seal holds one row group
-however far its batch spreads — then pool threads upload each file create-only, and the outbox announces it
-on `<rt>-commits` with the seal's `after_offset`, `offset_start` and `offset_end`. Uncommitted files
-are re-announced every 60 s and to every new committer. Backlog pauses consumption.
+however far its batch spreads — then pool threads upload each file create-only through the table's
+object store (an object already at its name with the file's size is that very upload, landed), and
+the outbox announces it on `<rt>-commits` with the seal's `after_offset`, `offset_start` and
+`offset_end`. Uncommitted files are re-announced every 60 s and to every new committer. Backlog
+pauses consumption.
 
 **Committer** (§10.6): one member, the owner of the one-partition commits topic, committing to
 every table of the runtime, one commit at a time, the longest-waiting first. Every
@@ -304,8 +335,10 @@ table* — **accepted** (continues exactly where the table is), **covered** (alr
 (partly in: the member re-seals the tail), **deferred** (a seal before it is missing), **error**
 (file absent) — and commits the accepted files as one merge-append snapshot whose summary carries
 the new offsets and `valid-through`, through the pointer's compare-and-swap, once, retrying by
-reloading and deciding again. Covered files are never deleted (they may be the table's own); only an
-overlapping seal's are. A member's announcements carry its session generation (its rebalance count)
+reloading and deciding again. A pointer write that failed is checked against the pointer read back:
+it landed, it provably lost, or nobody can tell — and then nothing is deleted, and the next attempt
+decides against the table it reloads (handbook 11 §11.2). Covered files are never deleted (they may
+be the table's own); only an overlapping seal's are. A member's announcements carry its session generation (its rebalance count)
 and its process's epoch. The committer ignores only an older session of the same process, so a
 restarted member is heard, though its count has started again.
 
@@ -329,8 +362,9 @@ the member owning the table's partition runs one long job at a time by default �
 child process then one `replace` commit, with the past partitions of a backfill taken several at a
 time up to 1 GiB and the partition being written left until it settles; orphan cleanup with an age
 guard — and snapshot expiry; and a reprotect the table's record asks for, ahead of the scheduled jobs.
-Its commits and the committer's both go through the pointer's CAS and retry. Jobs report
-`maintenance_started` and `maintenance_completed`; a drop waits for a running job.
+Its commits and the committer's both go through the pointer's CAS and retry; a job's outputs are
+deleted only when its commit provably did not land. Jobs report `maintenance_started` and
+`maintenance_completed`; a drop waits for a running job.
 
 **Heartbeat**: every member every 30 s — progress per table, health, settings revision and lineage,
 the protection revision it masks each table with and its key's id; the committer's adds a block per
@@ -355,21 +389,55 @@ removes, and an optional purge expires every older snapshot and deletes the file
 (handbook 11.) Iceberg v2, one table per source topic at
 `<destination>/<storage prefix>/<materialization id>/<table>`, in the Iceberg namespace of its
 dataset (`lake.<dataset>.<table>` to an engine):
-`data/ts_day=…/` Parquet files and `metadata/`. The **catalog is a pointer**:
-`metadata/catalog-pointer.json` names the current metadata file and is replaced only with a GCS
-generation precondition, by the committer, the maintenance app, the control plane (create, drop) and the REST facade —
-so no commit is ever lost and a pointer never moves backwards. `version-hint.text` lets path-based
-readers find the latest metadata. Snapshot summaries carry `materializer.offsets` (the exactly-once
-checkpoint) and `materializer.valid-through` ("is my record there yet?").
+`data/ts_day=…/` Parquet files and `metadata/`.
+
+**Object storage.** The destination names the backend by its scheme, in the one form engines read:
+`gs://<bucket>` (Google Cloud Storage), `s3://<bucket>` (Amazon S3, or an S3-compatible server that
+honours conditional writes) or `abfss://<container>@<account>.dfs.core.windows.net` (Azure Blob
+Storage, which Midstream reaches through the account's Blob endpoint), each with an optional prefix;
+`file:///` serves tests only. A table's location is in its metadata for good, so a table never moves
+between backends, and a changed destination affects new materializations only. Everything that
+touches a bucket goes through `lakehouse/store/`: `store_for(uri)` returns the process's one store
+for the URI's scheme — `GcsStore`, `S3Store`, `AzureBlobStore`, `FileStore` — built from the
+environment: the SDKs' own credential variables, so a cloud identity needs no Secret, and
+Midstream's `STORAGE_S3_ENDPOINT`, `STORAGE_S3_REGION`, `STORAGE_S3_PATH_STYLE` and
+`STORAGE_AZURE_ENDPOINT`. Each store maps its backend onto one contract — a read with the version
+read, head, create-only, compare-and-swap and unconditional writes, deletes one and many, listings —
+and its answers onto `PreconditionFailedError`, `ObjectNotFoundError`, `StoreConfigurationError` (a
+missing bucket or container, or credentials Azure refuses: never retried, never taken for a missing
+table) and `StoreError`, a 403 from S3 or GCS included. Nothing above it branches on the backend, so one deployment may hold tables on several
+(handbook 11 §11.1, §11.1a). `python -m midstream.lakehouse.store.check <uri>` proves a store's
+conditional writes — create-only, compare-and-swap, sixteen concurrent writers with exactly one winner
+a round, a pointer that never repeats its bytes — and CI runs it against SeaweedFS and moto, Azurite
+and fake-gcs-server: S3 is verified against SeaweedFS and moto, not yet against Amazon S3 itself,
+and Azure against Azurite.
+
+The **catalog is a pointer**: `metadata/catalog-pointer.json` names the current metadata file and is
+replaced only by the store's compare-and-swap — a GCS generation precondition, an S3 or Azure
+`If-Match` on the ETag read — by the committer, the maintenance app, the control plane (create, drop)
+and the REST facade, so no commit is ever lost and a pointer never moves backwards. Its `sequence`
+rises with every commit, so no two versions are byte-identical and an S3 ETag, the MD5 of the
+content, never matches a stale one. Storage libraries retry a conditional write whose answer they
+lost, and the retry of one that landed is refused, so a failed pointer write is checked against the
+pointer read back: landed (answered as committed), provably lost (the staged metadata file deleted),
+or unknown (`CommitStateUnknownException`, nothing deleted). The drop deletes in the backend's batches
+— 100 objects a request on GCS, 1,000 on S3, 256 on Azure — in passes of at most 100 requests' worth
+and about 10 s. `version-hint.text` lets path-based readers find the latest metadata. Snapshot
+summaries carry `materializer.offsets` (the exactly-once checkpoint) and `materializer.valid-through`
+("is my record there yet?").
 
 External engines attach `<control plane>/catalog` with an access token (`tok_…`, `catalog.read`, or
 `catalog.write` to commit): DuckDB, PyIceberg, and engines on the same protocol. The facade vends no
-storage credentials. `catalog.write` is for maintenance tools; a commit cannot move the table's
-files, and Midstream assumes it is the only writer of data (handbook 14 §14.2).
+storage credentials: an engine reads the files with its own access to the table's backend, through
+its own FileIO, and the console's Connect panel prints the settings for each table's backend.
+`catalog.write` is for maintenance tools; a commit cannot move the table's files, and Midstream
+assumes it is the only writer of data (handbook 14 §14.2).
 
 ## 13. Identity and settings, briefly
 
-People sign in with email and password; the control plane issues signed session tokens. Users,
+People sign in with email and password, or through Microsoft Entra ID, Google, GitHub or an OpenID
+Connect issuer, whose credential each domain checks itself (handbook 18 §18.17); the control plane
+issues signed session tokens. Users,
 groups, roles, sessions, access tokens, datasets, their grants and the claims of table names live in
 the `directory` table, written only by `identity-intake`, one request at a time on one partition.
 Permissions are per action (for example `materializations.create`, `data.query`, `catalog.read`),
@@ -383,13 +451,20 @@ cuts its shared live views down to what each person may see.
 ## 14. The console
 
 `console/` — a Fastify BFF and a React client (console 01). Its live store polls the control plane and fans
-out snapshots over SSE. For data it reads each table itself: pointer, metadata and Avro manifests
-from GCS (exact 64-bit ids, cached because they never change), so totals and time pruning cost no
-data reads; data files through DuckDB, by field id, folding fork families into logical columns.
+out snapshots over SSE. For data it reads each table itself, through the storage profile whose scope
+is the longest prefix of the table's location (`console.storage`: one profile per destination
+prefix, `gcs`, `s3` or `azure`, with read-only credentials of its own; console 07 §07.10): pointer,
+metadata and Avro manifests with the backend's own client (exact 64-bit ids, cached because they
+never change), so totals and time pruning cost no data reads; data files through DuckDB — in place
+with the profile's scoped secret, or downloaded first — by field id, folding fork families into
+logical columns. One statement may read tables on several backends. A location no profile covers is
+never read, since DuckDB would send its path anonymously to the public cloud, and the statement guard
+refuses the functions that list DuckDB's secrets or run SQL from a string.
 Every query is a **run** pinned to a snapshot (the current one; the runs API can ask for an older
-one, the Data tab never does); a statement can read and
-join any of the materialization's tables the person may query, each named `<dataset>.<table>`. Statements run in a DuckDB sandbox that can open only the
-run's files and write only its own directory, and nothing is read outside each table's recorded
+one, the Data tab never does); a statement can read and join any table the person may query, in any
+domain, each named `<domain>.<dataset>.<table>` (handbook 20 §20.9). Statements run in a DuckDB
+sandbox that can open only the run's files, holds only the secrets of the storage profiles they are
+read with, and writes only its own directory, and nothing is read outside each table's recorded
 location (console 06, 07, 12). The Schema tab dates each change by when the data had it: the manifests'
 per-file value counts and `_kafka_timestamp` bounds give each field's first and last value, in UTC,
 as precise as the table's partitions (console 06 §6.3).
@@ -409,16 +484,22 @@ python -m compileall python/src
 helm lint charts/midstream -f charts/midstream/ci/test-values.yaml
 cd console && npm install && npm run typecheck && npm test && npm run build
 python python/tests/console_fixture.py      # regenerate the console's fixture table
+python -m midstream.lakehouse.store.check s3://example-lake/_check   # prove a store's conditional writes
 ```
 
 Deploying and verifying on a cluster is in handbook 12; installing from scratch is `docs/install.md`.
 
 ## 16. Tests as the specification
 
-The Python suite asserts payload shapes, workflow steps, observation, the lakehouse library against
-an in-memory GCS fake (`gcs_fakes.py`, `lakehouse_support.py`) — commits, exactly-once decisions,
-schema policy, compaction planning — runtime templates and pinning, settings, identity, and that
-every WebView authorizes. The console suite runs its Iceberg reader against a table the control
+The Python suite asserts payload shapes, workflow steps, observation, the lakehouse library over the
+in-memory object store (`MemoryStore`, `lakehouse_support.py`) — commits, exactly-once decisions,
+lost answers (`test_lakehouse_lost_answers.py`), schema policy, compaction planning, a table's whole
+life on every scheme (`test_lakehouse_schemes.py`) — each store against its library's answers
+(`test_store_gcs.py`, `test_store_s3.py`, `test_store_azure.py`), the conformance suite over the
+memory and file stores (`test_store_contract.py`), runtime templates and pinning, the chart's storage
+values (`test_chart_storage.py`), settings, identity, and that every WebView authorizes. CI's Object
+stores job runs the conformance suite against SeaweedFS, moto, Azurite and fake-gcs-server
+(`test_store_live.py`). The console suite runs its Iceberg reader against a table the control
 plane's library wrote and its run engine against real Parquet. Behaviour that only a cluster shows
 is in the experiments (E1–E14) and the E13 load test (handbook 13).
 
@@ -443,7 +524,11 @@ From handbook 14, the ones most likely to matter:
   it is caught up.
 - **A change of topics stops the runtime for about five minutes**: the drain waits out the broker's
   session timeout.
-- **Not multi-cloud, no shared runtime mode, no per-table access grants, no SSO.**
+- **S3 is verified against SeaweedFS and moto, not against AWS itself, and Azure against Azurite,
+  not a real storage account.** Run the conformance suite against a bucket or account before
+  pointing a deployment at it; a server that ignores `If-Match` would lose commits. One S3 endpoint
+  serves a deployment.
+- **No shared runtime mode, no per-table access grants.**
 - **`catalog.write` is trusted**: an external commit's deletes or rewrites are not interpreted by
   the runtime.
 

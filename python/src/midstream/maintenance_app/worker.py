@@ -25,7 +25,10 @@ Fault tolerance (spec §7.9.1):
 
 - compaction runs in a child process (`compact_worker.py`) that only *adds* files, as does reprotect
   (`reprotect_worker.py`); this member then commits one `replace` snapshot. A job that dies before
-  that commit leaves orphans; one that dies after it is done;
+  that commit leaves orphans; one that dies after it is done. A commit that provably did not land
+  deletes the job's outputs; one whose outcome is unknown (`CommitStateUnknownException`) keeps them,
+  since the table may reference them, and orphan cleanup removes them if it does not; a commit that
+  landed counts as done even when the table cannot be read back after it;
 - a job is bounded by `compaction_timeout_minutes`, after which the child is killed; it is also
   killed when the table is cancelled (dropped, or its materialization deleted), forgotten, or the
   member stops;
@@ -59,12 +62,12 @@ import time
 from typing import Any
 import uuid
 
-from pyiceberg.exceptions import CommitFailedException
+from pyiceberg.exceptions import CommitFailedException, CommitStateUnknownException
 from pyiceberg.typedef import Record
 
 from midstream.lakehouse.commits import fork_map_of, protection_json_of, table_totals
 from midstream.lakehouse.files import build_data_file, read_parquet_footer
-from midstream.lakehouse.gcs import delete_object, shared_storage_client
+from midstream.lakehouse.store import ObjectStore, store_for
 from midstream.lakehouse.lifecycle import schema_to_json
 from midstream.lakehouse.maintenance import (
     CompactionInputGone,
@@ -114,7 +117,7 @@ REPLACE_RETRY_SECONDS = 1.0
 #: A job the table record says has run this much longer than any job may is over, whoever ran it.
 STALE_JOB_MARGIN_SECONDS = 600
 
-# Planning, commits, expiry and orphan listing block on GCS: a few threads, shared by every table.
+# Planning, commits, expiry and orphan listing block on storage: a few threads, shared by every table.
 _POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="maintenance")
 
 
@@ -225,10 +228,11 @@ class TableMaintenance:
     #: How a reprotect pass runs: in a child process too.
     reprotector = staticmethod(reprotect_in_subprocess)
 
-    def __init__(self, target: MaintenanceTarget, settings: RuntimeAppConfig, *, client: Any = None, app: MaintenanceAppConfig | None = None) -> None:
+    def __init__(self, target: MaintenanceTarget, settings: RuntimeAppConfig, *, store: ObjectStore | None = None, app: MaintenanceAppConfig | None = None) -> None:
         self.target = target
         self.settings = settings
-        self.client = client
+        #: The object store of the table; None: its location's own (`store_for`).
+        self.store = store
         self.app = app or get_maintenance_app_config()
         self.last_seen = time.monotonic()
         self.job: _Job | None = None
@@ -540,7 +544,7 @@ class TableMaintenance:
 
     def _plan_compaction(self, skip: set[str], requested: bool = False):
         config = self.settings
-        table = load_table(self.context, self.client)
+        table = load_table(self.context, self.store)
         files = live_data_files(table)
         plan = plan_compaction(
             table,
@@ -594,7 +598,17 @@ class TableMaintenance:
             self._delete_outputs(ready)
             LOGGER.info("Abandoned compaction %s of table %s %s: %s", ready.plan.job_id, self.target.table, ready.plan.label, error)
             return [self._completed(ready, snapshot_id=None, outcome="abandoned", message=str(error))]
-        except Exception as error:  # noqa: BLE001 - CompactionMismatch, GCS errors, lost races
+        except CommitStateUnknownException as error:
+            LOGGER.warning(
+                "The commit of compaction %s of table %s %s may have landed; its %d outputs are kept: %s",
+                ready.plan.job_id,
+                self.target.table,
+                ready.plan.label,
+                len(ready.outputs),
+                error,
+            )
+            return self._compaction_failed(ready.plan, _unknown_outcome(error), started_wall=ready.started_wall)
+        except Exception as error:  # noqa: BLE001 - CompactionMismatch, storage errors before the commit, lost races
             self._delete_outputs(ready)
             return self._compaction_failed(ready.plan, str(error), started_wall=ready.started_wall)
         for key in ready.plan.partition_keys:
@@ -616,15 +630,18 @@ class TableMaintenance:
         )
         return [self._completed(ready, snapshot_id=snapshot_id, outcome="succeeded", table=table)]
 
+    def _object_store(self) -> ObjectStore:
+        return store_for(self.target.location) if self.store is None else self.store
+
     def _commit_compaction(self, ready: _Finished):
-        client = self.client or shared_storage_client()
+        store = self._object_store()
         last_error: BaseException | None = None
         for _ in range(REPLACE_ATTEMPTS):
-            table = load_table(self.context, self.client)
+            table = load_table(self.context, self.store)
             granularity = granularity_of(table)
             data_files = []
             for output in ready.outputs:
-                footer, size = read_parquet_footer(client, output["uri"])
+                footer, size = read_parquet_footer(store, output["uri"])
                 data_files.append(
                     build_data_file(
                         table.metadata,
@@ -642,14 +659,24 @@ class TableMaintenance:
                 last_error = error
                 time.sleep(REPLACE_RETRY_SECONDS)
                 continue
-            return load_table(self.context, self.client), snapshot_id
+            return self._read_back(table), snapshot_id
         raise RuntimeError(f"the replace commit kept losing to other commits: {last_error}")
 
+    def _read_back(self, committed: Any) -> Any:
+        """The table as it is after a commit that landed; `committed`, the table the commit updated,
+        when it cannot be read: the commit stands, and is never reported failed - its outputs
+        deleted - for a failed read."""
+        try:
+            return load_table(self.context, self.store)
+        except Exception as error:  # noqa: BLE001 - the commit landed
+            LOGGER.warning("Reading table %s back after a commit failed; going on with it as committed: %s", self.target.table, error)
+            return committed
+
     def _delete_outputs(self, ready: "_Finished | _ReprotectReady") -> None:
-        client = self.client or shared_storage_client()
+        store = self._object_store()
         for output in ready.outputs:
             try:
-                delete_object(client, output["uri"])
+                store.delete(output["uri"])
             except Exception:  # noqa: BLE001 - orphan cleanup collects them
                 pass
 
@@ -872,7 +899,7 @@ class TableMaintenance:
         return _wall_clock() < at + self.settings.max_open_file_age_ceiling_seconds + REPROTECT_SETTLE_MARGIN_SECONDS
 
     def _plan_reprotect(self) -> tuple[Any, ReprotectPlan | None, ReprotectBacklog]:
-        table = load_table(self.context, self.client)
+        table = load_table(self.context, self.store)
         plan, backlog = plan_reprotect(table, max_input_bytes=self.settings.compaction_max_input_bytes)
         return table, plan, backlog
 
@@ -909,7 +936,16 @@ class TableMaintenance:
             self._delete_outputs(ready)
             LOGGER.info("Abandoned reprotect %s of table %s: %s", ready.plan.job_id, self.target.table, error)
             return [self._reprotect_completed(ready.request, ready, snapshot_id=None, outcome="abandoned", message=str(error), done=False)]
-        except Exception as error:  # noqa: BLE001 - CompactionMismatch, GCS errors, lost races
+        except CommitStateUnknownException as error:
+            LOGGER.warning(
+                "The commit of reprotect %s of table %s may have landed; its %d outputs are kept: %s",
+                ready.plan.job_id,
+                self.target.table,
+                len(ready.outputs),
+                error,
+            )
+            return self._reprotect_failed(ready.request, _unknown_outcome(error), started_wall=ready.started_wall)
+        except Exception as error:  # noqa: BLE001 - CompactionMismatch, storage errors before the commit, lost races
             self._delete_outputs(ready)
             return self._reprotect_failed(ready.request, str(error), started_wall=ready.started_wall)
         self.reprotect_failure = _Failure()
@@ -947,15 +983,15 @@ class TableMaintenance:
         )
 
     def _commit_reprotect_blocking(self, ready: _ReprotectReady):
-        client = self.client or shared_storage_client()
+        store = self._object_store()
         inputs: dict[str, LiveFile] = {item.path: item for item in ready.plan.inputs}
         last_error: BaseException | None = None
         for _ in range(REPLACE_ATTEMPTS):
-            table = load_table(self.context, self.client)
+            table = load_table(self.context, self.store)
             granularity = granularity_of(table)
             rewritten = []
             for output in ready.outputs:
-                footer, size = read_parquet_footer(client, output["uri"])
+                footer, size = read_parquet_footer(store, output["uri"])
                 data_file = build_data_file(
                     table.metadata,
                     file_path=output["uri"],
@@ -971,7 +1007,7 @@ class TableMaintenance:
                 last_error = error
                 time.sleep(REPLACE_RETRY_SECONDS)
                 continue
-            return load_table(self.context, self.client), snapshot_id
+            return self._read_back(table), snapshot_id
         raise RuntimeError(f"the replace commit kept losing to other commits: {last_error}")
 
     async def _finish_reprotect(
@@ -992,7 +1028,7 @@ class TableMaintenance:
         if request.purge:
             try:
                 purge = await asyncio.get_running_loop().run_in_executor(_POOL, self._purge_blocking)
-                purged_table = await asyncio.get_running_loop().run_in_executor(_POOL, load_table, self.context, self.client)
+                purged_table = await asyncio.get_running_loop().run_in_executor(_POOL, load_table, self.context, self.store)
             except Exception as error:  # noqa: BLE001 - the rewrite stands; expiry and orphan cleanup finish the job
                 LOGGER.warning("Purging table %s after a reprotect failed: %s", self.target.table, error)
                 message = f"Every file is rewritten, but the purge failed: {error}. Snapshot expiry and orphan cleanup remove the old files in time."
@@ -1031,20 +1067,20 @@ class TableMaintenance:
         ]
 
     def _purge_blocking(self) -> PurgeResult:
-        client = self.client or shared_storage_client()
+        store = self._object_store()
         last_error: BaseException | None = None
         for _ in range(REPLACE_ATTEMPTS):
-            table = load_table(self.context, self.client)
+            table = load_table(self.context, self.store)
             if table.metadata.current_snapshot_id is None:
                 return PurgeResult()
             try:
                 return purge_before(
-                    lambda: load_table(self.context, self.client),
+                    lambda: load_table(self.context, self.store),
                     table.metadata.current_snapshot_id,
-                    client=client,
+                    store=store,
                     now=datetime.now(tz=UTC),
                     orphan_min_age_hours=self.settings.orphan_min_age_hours,
-                    delete=lambda uri: delete_object(client, uri),
+                    delete=store.delete,
                 )
             except CommitFailedException as error:
                 last_error = error
@@ -1212,7 +1248,7 @@ class TableMaintenance:
     def _expire_blocking(self):
         config = self.settings
         for _ in range(REPLACE_ATTEMPTS):
-            table = load_table(self.context, self.client)
+            table = load_table(self.context, self.store)
             ids = plan_expiry(
                 table.metadata,
                 now=datetime.now(tz=UTC),
@@ -1227,7 +1263,7 @@ class TableMaintenance:
             except CommitFailedException:
                 time.sleep(REPLACE_RETRY_SECONDS)
                 continue
-            return load_table(self.context, self.client), expired
+            return self._read_back(table), expired
         raise RuntimeError("snapshot expiry kept losing to other commits")
 
     # -- orphan cleanup --------------------------------------------------------------------------
@@ -1279,10 +1315,10 @@ class TableMaintenance:
 
     def _orphans_blocking(self) -> tuple[int, int]:
         config = self.settings
-        client = self.client or shared_storage_client()
-        table = load_table(self.context, self.client)
+        store = self._object_store()
+        table = load_table(self.context, self.store)
         scan = find_orphans(
-            client,
+            store,
             self.target.location,
             referenced_files(table),
             now=datetime.now(tz=UTC),
@@ -1291,7 +1327,7 @@ class TableMaintenance:
         )
         deleted = 0
         for uri in scan.candidates:
-            if delete_object(client, uri):
+            if store.delete(uri):
                 deleted += 1
         if scan.truncated:
             # More to do: the next pass comes at the next step rather than a whole interval later.
@@ -1336,8 +1372,8 @@ class MaintenanceWorker:
     #: Quick maintenance work one step does across tables before it leaves the rest to the next.
     STEP_BUDGET_SECONDS = 10.0
 
-    def __init__(self, *, client: Any = None, app: MaintenanceAppConfig | None = None) -> None:
-        self.client = client
+    def __init__(self, *, store: ObjectStore | None = None, app: MaintenanceAppConfig | None = None) -> None:
+        self.store = store
         self.app = app
         self.tables: dict[str, TableMaintenance] = {}
         self._rotation = 0
@@ -1354,14 +1390,14 @@ class MaintenanceWorker:
                 return table.cancel(reason=message.reason or "cancelled")
             if message.running is not None:
                 # Nothing runs here, yet the record says something does: report it over.
-                return TableMaintenance(message.target, job_settings(message.settings), client=self.client, app=self.config())._settle_reported(message.running)
+                return TableMaintenance(message.target, job_settings(message.settings), store=self.store, app=self.config())._settle_reported(message.running)
             return []
         table = self.tables.get(key)
         if table is None:
             table = self.tables[key] = TableMaintenance(
                 message.target,
                 job_settings(message.settings),
-                client=self.client,
+                store=self.store,
                 app=self.config(),
             )
         if message.kind == "maintenance_request":
@@ -1491,6 +1527,14 @@ def _pass_counts(ready: _ReprotectReady) -> dict[str, int]:
         "withheld": int(ready.counts.get("withheld", 0)),
         "moved": int(ready.counts.get("moved", 0)),
     }
+
+
+def _unknown_outcome(error: BaseException) -> str:
+    """What a job whose commit may or may not have landed reports."""
+    return (
+        "The commit's outcome is unknown, so the job's outputs are kept; orphan cleanup removes them if "
+        f"the table never took them: {error}"
+    )
 
 
 def _wall_clock() -> float:

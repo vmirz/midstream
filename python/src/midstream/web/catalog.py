@@ -11,9 +11,9 @@ tables of different datasets and materializations. A dataset the caller cannot r
 and answers as though it did not exist: an engine lists namespaces in order to load them, and one it
 could not read would only produce errors. A name resolves in three keyed reads: the dataset's name
 index, the table's claim in the directory, and the table's record in the state table. Loading a
-table reads its pointer and metadata from GCS on a worker thread, under a deadline; what was read is
-answered again for `catalog_metadata_cache_seconds`, so an engine planning many queries does not
-cost a GCS read each.
+table reads its pointer and metadata from the table's object store on a worker thread, under a
+deadline; what was read is answered again for `catalog_metadata_cache_seconds`, so an engine
+planning many queries does not cost a storage read each.
 """
 
 from __future__ import annotations
@@ -29,7 +29,8 @@ from typing import Any
 from midstream.config import ControlPlaneConfig
 from midstream.identity.authorization import require
 from midstream.identity.principals import Principal
-from midstream.lakehouse.catalog import GcsPointerCatalog, StaticTableDirectory, TableEntry
+from midstream.lakehouse.catalog import PointerCatalog, StaticTableDirectory, TableEntry
+from midstream.lakehouse.store import ObjectStore
 from midstream.lakehouse.rest import (
     CatalogError,
     commit,
@@ -49,7 +50,7 @@ from midstream.storage.identity import find_dataset_by_name, get_table_claim, it
 from midstream.storage.table import TableProtocol
 from midstream.web.errors import WebError
 
-#: Longest a request waits on GCS before it answers 503.
+#: Longest a request waits on the object store before it answers 503.
 CATALOG_DEADLINE_SECONDS = 30.0
 #: The tables a namespace holds: those the runtime writes, and those kept read-only after their
 #: topics were removed.
@@ -152,7 +153,7 @@ async def catalog_load_table_view(
     principal: Principal | None = None,
     settings_table: TableProtocol | None = None,
     config: ControlPlaneConfig | None = None,
-    client: Any = None,
+    store: ObjectStore | None = None,
 ) -> dict[str, Any]:
     """`LoadTableResult` for one table: its metadata location and metadata."""
     cfg = _require_enabled(_config(settings_table, config))
@@ -162,7 +163,7 @@ async def catalog_load_table_view(
         cached = _CACHE.get(key)
     if cached is not None and time.monotonic() - cached.fetched_at < cfg.catalog_metadata_cache_seconds:
         return cached.payload
-    catalog = _catalog(record, client=client, writer="catalog")
+    catalog = _catalog(record, store=store, writer="catalog")
 
     def load() -> tuple[str, dict[str, Any]]:
         pointer, _ = catalog.load_pointer(record.identifier)
@@ -190,7 +191,7 @@ async def catalog_commit_view(
     principal: Principal | None = None,
     settings_table: TableProtocol | None = None,
     config: ControlPlaneConfig | None = None,
-    client: Any = None,
+    store: ObjectStore | None = None,
 ) -> dict[str, Any]:
     """Commit an engine's changes to a table; `409` when another commit landed first.
 
@@ -201,7 +202,7 @@ async def catalog_commit_view(
     if principal is not None:
         with catalog_errors():
             require(principal, "catalog.write", dataset=dataset)
-    catalog = _catalog(record, client=client, writer=f"catalog:{committed_by}")
+    catalog = _catalog(record, store=store, writer=f"catalog:{committed_by}")
     response = await _blocking(lambda: commit(catalog, record.identifier, body), what=f"committing to {namespace}.{name}")
     with _CACHE_LOCK:
         _CACHE.pop((record.dataset_id, record.name, record.table_uuid), None)
@@ -287,9 +288,9 @@ def _find_table(
     return dataset, record
 
 
-def _catalog(record: MaterializationTable, *, client: Any, writer: str) -> GcsPointerCatalog:
+def _catalog(record: MaterializationTable, *, store: ObjectStore | None, writer: str) -> PointerCatalog:
     entry = TableEntry(identifier=record.identifier, location=record.location, materialization_id=record.materialization_id)
-    return GcsPointerCatalog(directory=StaticTableDirectory([entry]), client=client, writer=writer)
+    return PointerCatalog(directory=StaticTableDirectory([entry]), store=store, writer=writer)
 
 
 async def _blocking(function, *, what: str):

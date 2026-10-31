@@ -109,8 +109,8 @@ export function DatasetAccess({ dataset }: { dataset: CpDatasetDetail }): ReactN
         <ShieldAlert className="mt-0.5 size-3.5 shrink-0" />
         <span>
           Access is enforced by the control plane, the Iceberg catalog and this console, not by the storage. Anyone holding
-          credentials that read the bucket - a GCS HMAC key for DuckDB, Google credentials for PyIceberg - reads every
-          table in it, whatever their roles here. Table names are not secret either: everyone who sees datasets sees them.
+          credentials that read the destination - an S3 or Azure key, or a GCS HMAC key for DuckDB - reads every table in
+          it, whatever their roles here. Table names are not secret either: everyone who sees datasets sees them.
         </span>
       </p>
     </PageBody>

@@ -54,11 +54,12 @@
 | **Member rate** | One runtime member's rows (or bytes) per second, from the change in its counters between its own heartbeats |
 | **Field name** | A field's path without the schema's `payload.` root — `customer.email` — the way the console shows it and SQL refers to it |
 | **Sample** | One observation: cumulative counters plus rates derived against the previous sample |
-| **Direct mode** | DuckDB scans `gs://` in place using HMAC credentials |
-| **Cached mode** | Data files are mirrored to local disk, under their bucket and object name, then scanned |
+| **Storage profile** | How the console reads one destination prefix (its scope): a kind (`gcs`, `s3`, `azure`), an endpoint, credentials from `CONSOLE_STORAGE_<NAME>_…`, and a mode. Each object is read with the profile whose scope is its longest prefix (07 §07.10) |
+| **Direct mode** | A storage profile's data files are scanned in place by DuckDB, with the profile's scoped secret: an S3 or Azure profile and a GCS profile with an HMAC key pair, except where **Cached mode** applies |
+| **Cached mode** | A storage profile's data files are mirrored to local disk, under `<cache>/<profile>/<container>/<key>`, then scanned: a profile that says `"access": "cached"`, a GCS profile without an HMAC key pair, an Azure emulator with neither a connection string nor the account key |
 | **Baseline diff** | A diff against nothing, where every field is new |
 | **Table name** | What SQL and engines call one of a materialization's tables, inside its dataset: its topic's name made an identifier (`orders`, `payments_v2`) unless another was typed, fixed once the table exists. In a statement, always with its domain: `<domain>.<dataset>.<table>` (`domain_a.sales.orders`) is a view over the snapshot's data files in the chosen time range, one column per field with forks folded in; `<domain>_iceberg.<dataset>.<table>` is the same rows as the native Iceberg table. Engines read `lake.<domain>.<dataset>.<table>` through the federated catalog, or `lake.<dataset>.<table>` through a domain's own |
-| **Sandbox** | The DuckDB instance a statement runs in, made for it: it can open only the run's data files and write only the run's own directory |
+| **Sandbox** | The DuckDB instance a statement runs in, made for it: it can open only the run's data files and the run's own directory, and holds only the secrets of the storage profiles those files are read with |
 | **As of** | Reading a table as of an older snapshot: the runs API's `asOf`. The Data tab always reads the latest; a link from before carrying `asof=` opens on the latest |
 | **Stopped** | A materialization whose runtime is scaled to zero replicas; resume scales it back to its replica count |
 | **Run** | One execution of the view on screen — time range plus filters, or a statement. The only way a query executes; pages and exports read from it. Pinned to the snapshot it started on, or the one **As of** names |
@@ -91,7 +92,7 @@
 
 | Term | Meaning |
 |------|---------|
-| **Domain** | One Midstream deployment — a control plane with its maintenance and tail apps, in one cluster, with its own accounts, datasets, tables, bucket and settings — as the console serves it. Its id (`domain_a`) is its URL segment (`/d/domain_a`), its catalog in SQL and its first level in the federated catalog; its name (*Domain A*) is what people read |
+| **Domain** | One Midstream deployment — a control plane with its maintenance and tail apps, in one cluster, with its own accounts, datasets, tables, lake and settings — as the console serves it. Its id (`domain_a`) is its URL segment (`/d/domain_a`), its catalog in SQL and its first level in the federated catalog; its name (*Domain A*) is what people read |
 | **Shared console** | The one console serving every domain, at one URL. There are no per-domain consoles: an old per-domain hostname redirects to `/d/<domain>` |
 | **Registry** | The domains the console serves and how it reaches each — `controlPlaneUrl`, `tailUrl`, the Secret with its service token — from `console.domains[]` in the chart, as `CONSOLE_DOMAINS_FILE` |
 | **Settings home** | The one domain that stores the console's own settings (its `console` scope), and whose `settings.view`/`settings.manage` decide who may see and change them |
@@ -198,7 +199,7 @@ named on its page.
 
 **Does a dataset role protect the files?**
 No. Roles decide what the control plane, the REST catalog and this console show and serve. Anyone
-holding credentials that read the bucket — an HMAC key for DuckDB, Google credentials for PyIceberg —
+holding credentials that read the destination — an S3 or Azure key, or a GCS HMAC key for DuckDB —
 reads every table in it.
 
 **I deleted it and it is still listed.**
@@ -306,9 +307,16 @@ An export is the run's whole result in the order shown, up to `CONSOLE_EXPORT_RO
 tool for a whole dataset: read the table with an engine through the REST catalog (Table ›
 Connect).
 
-**Why is the first Data tab load slow in cached mode?**
-It downloads each data file the first time a page or scan needs it. Later reads reuse the cache —
-data files are immutable, so nothing is downloaded twice. Direct mode avoids downloads entirely.
+**Why is the first Data tab load slow for some tables?**
+A table read through a cached storage profile downloads each data file the first time a page or scan
+needs it. Later reads reuse the cache — data files are immutable, so nothing is downloaded twice. A
+direct profile avoids downloads entirely: give a GCS profile its HMAC key pair, an Azure emulator's
+profile a connection string or the account key, and no profile `"access": "cached"`.
+
+**What does "no storage is configured for …" mean?**
+No storage profile's scope covers the table's location, so the console reads nothing of it — it
+never guesses at credentials, and never lets DuckDB send the path anonymously to a public cloud. Add
+a profile whose scope covers the location (`console.storage[]`, 03 §3.6a).
 
 **Why can't I query a snapshot another engine wrote?**
 A snapshot with delete files — rows an engine deleted — or with data files outside the table's
@@ -446,7 +454,7 @@ one control plane at `localhost:6065`), and it works unchanged. Nothing under `/
 | `localStorage['console.data.railWidth']` | Column rail width, px (264–720) |
 | `localStorage['console.data.jsonShape']` | JSON layout for exports and the row drawer: `nested` or `flat` |
 | The settings home's `settings` table, `console` scope | This console's settings overrides; the console keeps no copy on disk |
-| `<CONSOLE_DATA_DIR>/parquet-cache/<bucket>/<object path>` | Mirrored Parquet |
+| `<CONSOLE_DATA_DIR>/parquet-cache/<profile>/<container>/<key>` | Mirrored Parquet of cached storage profiles |
 | `<CONSOLE_DATA_DIR>/runs/<run id>/` | One statement run's result, removed with the run |
 
 ### Key defaults

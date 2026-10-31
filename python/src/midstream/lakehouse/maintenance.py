@@ -23,7 +23,6 @@ from pyiceberg.table.update.snapshot import ExpireSnapshots, _OverwriteFiles
 
 from midstream.lakehouse.catalog import commit_once
 from midstream.lakehouse.files import partition_text_of, protection_label_of, protection_revision_of
-from midstream.lakehouse.gcs import parse_gcs_uri
 from midstream.lakehouse.offsets import (
     COMMIT_ID_PROPERTY,
     COMMITTED_AT_PROPERTY,
@@ -35,6 +34,7 @@ from midstream.lakehouse.offsets import (
     offsets_from_summary,
 )
 from midstream.lakehouse.pointer import POINTER_NAME, VERSION_HINT_NAME, utc_now
+from midstream.lakehouse.store import ObjectStore
 from midstream.lakehouse.tables import TIMESTAMP_FIELD_ID, partition_granularity_of
 
 LOGGER = logging.getLogger(__name__)
@@ -483,7 +483,7 @@ def purge_before(
     load: Any,
     snapshot_id: int,
     *,
-    client: Any,
+    store: ObjectStore,
     now: datetime,
     orphan_min_age_hours: int,
     delete: Any,
@@ -494,7 +494,8 @@ def purge_before(
     What `reprotect` asks for with `purge`: the files it replaced hold plain text, and so do the
     manifests that list them - their bounds - which only the older snapshots still reference. Those
     were committed once, so none is an upload not committed yet, and they go whatever their age.
-    `load` loads the table; `delete` deletes one object by its URI.
+    `load` loads the table; `store` is its object store, listed for the orphans; `delete` deletes one
+    object by its URI.
     """
     table = load()
     snapshot = table.metadata.snapshot_by_id(snapshot_id)
@@ -522,7 +523,7 @@ def purge_before(
             deleted += 1
         except Exception:  # noqa: BLE001 - orphan cleanup deletes it later
             failed += 1
-    scan = find_orphans(client, table.location(), after, now=now, min_age_hours=orphan_min_age_hours)
+    scan = find_orphans(store, table.location(), after, now=now, min_age_hours=orphan_min_age_hours)
     for uri in scan.candidates:
         try:
             delete(uri)
@@ -679,7 +680,7 @@ class OrphanScan:
 
 
 def find_orphans(
-    client: Any,
+    store: ObjectStore,
     location: str,
     referenced: set[str],
     *,
@@ -688,21 +689,23 @@ def find_orphans(
     protected: Iterable[str] = (),
     limit: int = 1000,
 ) -> OrphanScan:
-    """Files under the table's `data/` and `metadata/` nothing references, older than the age guard."""
+    """Files under the table's `data/` and `metadata/` nothing references, older than the age guard.
+
+    An object's age is the store's `last_modified`; one whose store cannot tell is never a candidate.
+    """
     keep = set(referenced) | set(protected)
-    bucket_name, prefix = parse_gcs_uri(location.rstrip("/") + "/")
+    root = location.rstrip("/") + "/"
     cutoff = now - timedelta(hours=min_age_hours)
     candidates: list[str] = []
     listed = 0
     for directory in ("data/", "metadata/"):
-        for blob in client.list_blobs(bucket_name, prefix=prefix + directory):
+        for item in store.list(root + directory):
             listed += 1
-            name = blob.name
-            uri = f"gs://{bucket_name}/{name}"
-            base = name.rsplit("/", 1)[-1]
+            uri = item.uri
+            base = uri.rsplit("/", 1)[-1]
             if uri in keep or base in (POINTER_NAME, VERSION_HINT_NAME) or base.startswith("catalog-pointer"):
                 continue
-            created = _blob_time(blob)
+            created = item.last_modified
             if created is None or created > cutoff:
                 # Only a file provably older than the guard is deleted.
                 continue
@@ -710,14 +713,6 @@ def find_orphans(
             if len(candidates) >= limit:
                 return OrphanScan(candidates=tuple(candidates), listed=listed, truncated=True)
     return OrphanScan(candidates=tuple(candidates), listed=listed)
-
-
-def _blob_time(blob: Any) -> datetime | None:
-    for name in ("time_created", "updated"):
-        value = getattr(blob, name, None)
-        if isinstance(value, datetime):
-            return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
-    return None
 
 
 def _partition_key(granularity: str, partition: Any) -> str:

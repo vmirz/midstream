@@ -69,6 +69,18 @@ If your cluster does expose a stable label (check with
 `kubectl get pods -n $NS --show-labels`), `-l <label>` is more convenient — the CRs themselves
 carry `kaspr.io/app: $RT`.
 
+The lake is read here the way Midstream reads it, whatever its backend: through the object store of
+the URI's scheme (`lakehouse/store/`, §12.12a), inside a pod and with that pod's own storage
+credentials — the control plane's unless another pod is named:
+
+```bash
+lake_cat() { kubectl exec -n $NS ${2:-$(cp_pod)} -c kaspr -- python -c 'import sys; from midstream.lakehouse.store import store_for; u = sys.argv[1]; sys.stdout.buffer.write(store_for(u).get(u)[0])' "$1"; }
+lake_ls()  { kubectl exec -n $NS ${2:-$(cp_pod)} -c kaspr -- python -c 'import sys; from midstream.lakehouse.store import store_for; p = sys.argv[1]; [print(o.uri, o.size, o.last_modified) for o in store_for(p).list(p)]' "$1"; }
+
+lake_cat "$LOC/metadata/catalog-pointer.json"           # an object, as the control plane reads it
+lake_ls "$LOC/metadata/" $(rt_pods | head -1)           # a prefix, as a runtime member lists it
+```
+
 ## 12.1 Deploy
 
 ```bash
@@ -82,6 +94,14 @@ helm upgrade --install midstream charts/midstream -n midstream -f my-values.yaml
 kubectl get kasprapp -n $NS -w
 kubectl get pods -n $NS -o wide -w | grep $CP
 ```
+
+### No upgrade from an earlier release
+
+Every installation of this release is new, with `storage.*` and `console.storage` written for it:
+nothing converts or adopts the values, tables or records an earlier installation left (14 §14.1,
+`docs/install.md` §8). `helm upgrade` applies changed values to an installation of this release. The
+four upgrades that follow are the development line's, before 1.0.0 (16 §16.4–§16.12), kept as a
+record of what each changed.
 
 ### Upgrading to 1.0
 
@@ -135,27 +155,27 @@ likely to fall behind — each member requests what the runtime spec says, its C
 VPA — or lower *Autoscaling maximum replicas*, or turn *Autoscale runtimes* off, before the upgrade
 (Settings › Materializations, or `CONTROL_PLANE_RUNTIME_AUTOSCAL…` in the manifest).
 
-### Upgrading to data protection: the protection key
+### Adding the protection key
 
-The release that brings data protection masks emails, phone numbers and national identifiers with a
-keyed hash by default, and hashing needs `protection-key` in the auth Secret, which no installation
-has yet. Add it — best before `helm upgrade`, which then starts every app with it (22 §22.9):
+The default protection masks emails, phone numbers and national identifiers with a keyed hash, and
+hashing needs `protection-key` in the auth Secret, which `docs/install.md` §2 creates with it. An
+installation made without one adds it, generated here and never printed (22 §22.9):
 
 ```bash
-kubectl -n "$NS" patch secret "$RELEASE-auth" --type merge \
+kubectl -n $NS patch secret midstream-auth --type merge \
   -p "{\"stringData\":{\"protection-key\":\"$(openssl rand -base64 48)\"}}"
 ```
 
-Added after the upgrade, it reaches the apps once they restart
-(`kubectl -n "$NS" rollout restart statefulset "$RELEASE-control-plane-app" "$RELEASE-tail-app" "$RELEASE-maintenance-app"`);
+It reaches the apps once they restart
+(`kubectl -n $NS rollout restart statefulset $CP-app $TAIL-app midstream-maintenance-app`);
 runtimes need nothing, as the control plane renders the key's id into their specs and the sweep
-re-applies each once. Until then existing materializations run on unchanged — they protect nothing
-until an edit chooses otherwise — and a create that takes the default is refused with
-`409 protection_key_not_configured`. Domains whose masked columns should join share one key:
-generate it once and patch the same value into each (22 §22.9) - the command above, run in each
-domain, would give each its own. Their `GET /system/version` then reports the same `protection_key_id`.
+re-applies each once. Until then existing materializations run on unchanged, and a create that takes
+the default is refused with `409 protection_key_not_configured`. Domains whose masked columns should
+join share one key: generate it once and patch the same value into each (22 §22.9) - the command
+above, run in each domain, would give each its own. Their `GET /system/version` then reports the
+same `protection_key_id`.
 
-### Upgrading to a release that adds topics
+### A later release that adds topics
 
 The control plane uses static group membership, so the restart that deploys a release does not
 rebalance its consumer group, and topics the release adds are never assigned. 0.5.0 added the
@@ -177,7 +197,8 @@ confirm it: [17 — Settings](./17-settings.md) §17.12.
 
 | Secret | Used for |
 |--------|----------|
-| `gcs.credentialsSecret` (`<release>-gcs` in docs/install.md) | GCS read and write on the destination bucket: tables, their pointers, maintenance; empty for workload identity |
+| `storage.gcs.credentialsSecret`, `storage.s3.credentialsSecret` or `storage.azure.credentialsSecret`, for each backend the destinations use | Read, write, delete and list on the destination, for the control plane, the maintenance and tail apps and every runtime: tables, their pointers, maintenance, drops. Keys: `service-account.json` (GCS); `access-key-id`, `secret-access-key` and optionally `session-token` (S3); `connection-string`, or `account-key`, or `client-id`, `tenant-id` and `client-secret` (Azure). Empty for the pods' own cloud identity (§12.12a, 02 §2.9a) |
+| each `console.storage[].credentialsSecret` | The console's read-only access to the lake, one per storage profile (20 §20.11). Keys as above, and for a GCS profile `hmac-key-id` and `hmac-secret` for DuckDB's scans |
 | the Secret `kaspr.authentication.passwordSecret` names (`<release>-kafka`) | the Kafka user's password |
 | `<release>-auth` (`midstream-auth` in dev) | Session signing key, the console's service token, the first administrator. Optional to start, but without `signing-key` nobody can sign in |
 
@@ -212,6 +233,14 @@ curl -s localhost:6065/materializations | python3 -m json.tool
 
 Expect `{"items": [], "limit": "30", "returned": 0}` on a fresh install. Note `limit` is
 returned as a **string**.
+
+Check the object store before the first materialization: the conformance suite, from the control
+plane's pod, under a scratch prefix of the destination it then empties again (§12.12a). Every check
+must pass:
+
+```bash
+kubectl exec -n $NS $(cp_pod) -c kaspr -- python -m midstream.lakehouse.store.check s3://example-lake/_check
+```
 
 Check sign-in end to end. On a fresh install the log says the bootstrap administrator was made
 (`No active administrator existed; … is now one`); sign in as them, which answers with
@@ -384,13 +413,19 @@ The members heartbeat but have not loaded their table: they read its pointer at 
 trying.
 
 ```bash
-gcloud storage cat "$LOC/metadata/catalog-pointer.json"
+lake_cat "$LOC/metadata/catalog-pointer.json"                        # as the control plane reads it
+lake_cat "$LOC/metadata/catalog-pointer.json" $(rt_pods | head -1)   # as a member reads it
 for p in $(rt_pods); do kubectl logs -n $NS $p; done | grep -iE 'load_table|pointer|table'
 ```
 
-An unreadable pointer is a permission problem (the pods' GCS credentials), or a dropped or lost
-pointer: a dropped table has `catalog-pointer.dropped.json` instead; a lost pointer can be rebuilt
-(§12.11).
+An unreadable pointer is a credential or permission problem — the error names it, in each backend's
+words (§12.12a) — or a dropped or lost pointer: a dropped table has `catalog-pointer.dropped.json`
+instead; a lost pointer can be rebuilt (§12.11). When the control plane reads it and a member cannot,
+the runtime's pods lack what the control plane's have. With a cloud identity that trusts
+ServiceAccounts one by one — AKS workload identity, EKS Pod Identity — that is the runtime's own
+ServiceAccount, `$RT-app`, new with the materialization: give it its federated credential or
+association (§12.12a), then restart the runtime's pods so that each starts with the identity
+(`kubectl -n $NS rollout restart statefulset $RT-app`).
 
 ### `degraded` / `resource_ready_but_runtime_silent`
 
@@ -455,11 +490,11 @@ successful commit clears it, unless another table still has an error (08 §8.5).
 
 | Reason | What to do |
 |---|---|
-| `commit_failed` | the committer's log names the GCS or CAS error; an engine committing through the REST facade in a tight loop must back off |
+| `commit_failed` | the committer's log names the object store's error (§12.12a) or the lost compare-and-swap; an engine committing through the REST facade in a tight loop must back off. Failing again and again on an S3-compatible server: run the conformance suite against it (§12.12a) |
 | `schema_evolution_failed` | 09 §9.12 |
 | `schema_field_limit` | the schema is at `max_schema_fields`; new fields' values go to `_unmapped`. Raise the limit (Settings → Schema) if they matter |
 | `compaction_failed` | a partition failed compaction five times and is paused; the maintenance history has the error, the maintenance app's log `maintenance_compaction_failed`. Fix the cause, then **Run now** on the Table tab, or `POST …/maintenance {"job":"compaction"}`, to retry |
-| `drop_failed` | a table being dropped could not be, after its retries (07 §7.9a); it stays `dropping`. Fix the cause (bucket permissions, say), then resume the materialization: the apply drops it again |
+| `drop_failed` | a table being dropped could not be, after its retries (07 §7.9a); it stays `dropping`. Fix the cause (the store's delete permission, say), then resume the materialization: the apply drops it again |
 | `table_unavailable` | the committer could not load the table: as `waiting_for_table` above |
 | `protection_commit_failed` | the committer could not record a delivered protection policy in the table; it tries again on every event. Its member's log has `Recording protection revision …`; the writers keep the policy the table records meanwhile (22 §22.13) |
 | `reprotect_failed` | a reprotect failed `compaction_max_attempts` times and was given up; the table's maintenance history has each attempt's error, the maintenance app's log `maintenance_reprotect_failed`. Fix the cause — most often the maintenance app's protection key — then ask again (*Mask rows already written*, or `POST …/maintenance {"job":"reprotect"}`); the next commit clears the error from the status meanwhile |
@@ -546,7 +581,12 @@ and create it again once the topic can be read. `failed` / `table_missing` is a 
 with no table at all — created before 1.0, or a create whose discovery failed and was then
 resumed — and is deleted and created again (§12.13). `failed` / `discover_tables_failed` is a
 change of topics whose new tables could not be sampled: resuming the materialization samples and
-creates them, then applies the change.
+creates them, then applies the change. `failed` / `create_table_failed` is a create whose tables
+could not be written: its message carries the object store's error — credentials missing or refused,
+a permission, a missing bucket or container (§12.12a). Fix that, then resume: the tables still
+missing are created and the runtime applied. `failed` / `invalid_destination` is a materialization
+recorded with a destination that cannot hold a table; it is deleted and created again under a
+destination of 04 §4.5.2.
 
 **Nothing retries a `failed` status automatically.** Recover with:
 
@@ -588,9 +628,10 @@ consuming.
 The runtime and its Kafka resources are gone and the table is being dropped, a pass at a time
 (07 §7.10); the record goes when the last pass has run. Each pass logs
 `control_plane_drop_table_progress` with the count so far. A warning `destination cleanup pass left
-objects behind: could not delete …` names objects GCS refused or kept failing to delete; the next
-pass tries them again. `..._retry_scheduled` means a pass failed and will run again after a backoff;
-five in a row end as `failed` / `drop_table_failed`, whose message carries the GCS error.
+objects behind: could not delete …` names objects the store refused or kept failing to delete; the
+next pass tries them again. `..._retry_scheduled` means a pass failed and will run again after a
+backoff; five in a row end as `failed` / `drop_table_failed`, whose message carries the store's error
+(§12.12a).
 
 ### `running` / `waiting_for_source_records`
 
@@ -623,7 +664,7 @@ for p in $(rt_pods); do kubectl logs -n $NS $p | grep runtime_processing_perform
   | grep -oE '"(acknowledgements|pipeline)":\{[^}]*\}'
 
 # 5. The table's files
-gcloud storage ls "$LOC/data/**" | tail
+lake_ls "$LOC/data/" | tail
 ```
 
 | Finding | Meaning |
@@ -641,13 +682,22 @@ upload, then the next commit (`commit_interval_seconds`, 30 s). The Table tab's 
 
 ## 12.5 Querying the table
 
-Anything that reads Iceberg reads it; 11 §11.9 has the snippets. By path, DuckDB:
+Anything that reads Iceberg reads it; 11 §11.9 has the snippets. By path, DuckDB, with a secret for
+the backend the location names:
 
 ```sql
 INSTALL iceberg; LOAD iceberg;
-CREATE SECRET gcs (TYPE GCS, KEY_ID '<HMAC key id>', SECRET '<HMAC secret>');
+-- one of:
+CREATE SECRET lake (TYPE GCS, KEY_ID '<HMAC key id>', SECRET '<HMAC secret>');                            -- gs://
+CREATE SECRET lake (TYPE S3, KEY_ID '<access key id>', SECRET '<secret access key>', REGION 'us-east-1'); -- s3://
+CREATE SECRET lake (TYPE AZURE, CONNECTION_STRING '<connection string>');  -- abfss://, after INSTALL azure; LOAD azure;
 SELECT count(*) FROM iceberg_scan('<location>');
 ```
+
+An S3-compatible server's secret adds `ENDPOINT '<host>:<port>'` (without the scheme),
+`URL_STYLE 'path'` for path-style addressing and, over plain HTTP, `USE_SSL false`. The Table tab's
+**Connect** panel prints these for the table's backend, filled with the console's own profile for it:
+the endpoint, region and path style, never a credential.
 
 Through the REST catalog, with an access token (`catalog.read` on the table's dataset, §12.7):
 DuckDB's `ATTACH 'warehouse' AS lake (TYPE ICEBERG, …, ENDPOINT '<control plane>/catalog')`, then
@@ -798,9 +848,12 @@ records. **This cannot be undone.** To keep the table, copy it first, or run the
 `catalog-pointer.dropped.json`, so the table leaves the catalog and stays readable by path
 (07 §7.10).
 
-The objects go in passes of up to 10,000, deleted 100 to a GCS batch request; `pass_deleted_count`
-over `duration_ms` in the progress log is the actual rate. The control plane keeps serving
-everything else meanwhile, and the materialization stays listed as `deleted` until the last pass.
+The objects go in the store's batch deletes, in passes of about 10 s and at most 100 delete requests:
+100 to a GCS batch request (passes of up to 10,000 objects), 1,000 to an S3 `DeleteObjects`
+(100,000), 256 to an Azure blob batch (25,600). Where the store deletes one object per request, such
+as GCS behind an emulator, a pass deletes up to 1,000. `pass_deleted_count` over `duration_ms` in the
+progress log is the actual rate. The control plane keeps serving everything else meanwhile, and the
+materialization stays listed as `deleted` until the last pass.
 
 ```bash
 kubectl logs -n $NS $(cp_pod) -f | grep -E "control_plane_drop_table_(progress|retry_scheduled|completed)"
@@ -847,7 +900,9 @@ and orphan cleanup take the old files; ask again with `purge` to remove them at 
 Make an access token on the console's Account page (or `POST /auth/tokens`, `{"name": …,
 "permissions": ["catalog.read"], "expires_in_days": 90}`) and configure the engine with the catalog
 URI `<control plane>/catalog` and the token (11 §11.8, 18 §18.15). The token is shown once. Revoke
-it on the same page.
+it on the same page. The token opens the catalog only: the engine reads the data files with
+credentials of its own for the table's backend, which the catalog does not vend — read and list on
+the destination (§12.12a), set as the Connect panel shows (§12.5).
 
 ### Force reconciliation
 
@@ -952,8 +1007,8 @@ Key layout (from `storage/keys.py`):
 | `runtime-binding:<id>` | `RuntimeBinding` |
 | `materialization-op:<id>:<operation_id>` | operation record |
 
-The table's own state is in the bucket: `gcloud storage cat "$LOC/metadata/catalog-pointer.json"`
-names its current metadata file, and that file names its snapshots (11 §11.2, §11.4).
+The table's own state is in its object store: `lake_cat "$LOC/metadata/catalog-pointer.json"`
+(§12.0) names its current metadata file, and that file names its snapshots (11 §11.2, §11.4).
 
 Observing the event topics live:
 
@@ -970,13 +1025,16 @@ kafka-console-consumer --bootstrap-server $BROKERS --topic $RT-commits --max-mes
 | Symptom | Likely cause | Action |
 |---------|--------------|--------|
 | `400 name is required` on create | Missing/blank required field | Send `name`, `source_topics` (and `destination_uri` without a default) |
-| `409` on create | `destination_not_configured`, `table_name_taken`, or `protection_key_not_configured`: the policy hashes and the deployment has no protection key | Configure the destination; choose another name; add the protection key (22 §22.9), or choose partial or withheld |
+| `409` on create | `destination_not_configured`: no destination, or one that cannot hold tables, as the message says; `table_name_taken`; or `protection_key_not_configured`: the policy hashes and the deployment has no protection key | Configure a destination of 04 §4.5.2; choose another name; add the protection key (22 §22.9), or choose partial or withheld |
 | Create returns 202, nothing happens | `request-intake` agent down, or requests topic missing | Check agent + topic |
 | `400 invalid_request`, `reason: source_topic_missing`, on create or on adding a topic | Kafka does not list the topic: a typo, a topic not created yet, or one the Kafka user may not describe | Create the topic or grant Read on it ([21 §21.7](./21-kafka-access.md)), then send the request again |
 | `503 unavailable` on create or on adding a topic, "Kafka cannot be asked about the topics right now" | Kafka did not answer the topic check within 10 s | Check the brokers; send the request again |
 | `failed` / `source_topic_missing` | The topic left Kafka, or the Kafka user lost Describe on it, between the request and discovery | Delete; create again once the topic can be read |
 | `failed` / `start_discovery_failed`, "connecting to Kafka … timed out" | Source topic unreachable / auth failure | Check `K_KAFKA_*` env and ACLs; delete and recreate once fixed |
 | `failed` / `discover_tables_failed` after a change of topics | The added topics could not be sampled: Kafka unreachable, or the user may describe a topic but not read it | Fix the cause, then resume: the apply samples and creates the new tables first |
+| `failed` / `create_table_failed`, the message naming a `401` or `403`, `Unable to locate credentials`, `Your default credentials were not found` or `DefaultAzureCredential failed to retrieve a token` | The control plane has no usable credentials, or no write permission, for the destination's backend | Fix `storage.<backend>` or the identity's grants (§12.12a), then resume |
+| `failed` / `create_table_failed`, "the bucket does not exist", `NoSuchBucket` or `ContainerNotFound` | The destination's bucket or container is missing, or `storage.s3.endpoint` or `region` names another server | Create it, or correct the values; then resume |
+| `failed` / `invalid_destination` | A materialization recorded with a destination that cannot hold a table | Delete it and create it again under a destination of 04 §4.5.2 |
 | `failed` / `apply_runtime_failed` or `delete_runtime_failed`, "Kubernetes … timed out after 90s" | The API server never answered a call: past its own 60 s request timeout, so a lost connection rather than a slow server | Check the API server and the network path to it; resume or re-issue the delete. A failed re-apply left the deployed runtime as it was |
 | `failed` / `cleanup_runtime_kafka_failed`, "Kafka admin … timed out after 120s" | A broker never answered an admin call | Check the brokers, then re-issue the delete |
 | `failed` / `cleanup_runtime_kafka_failed`, "TopicAuthorizationFailedError … failed to delete topic" or "GroupAuthorizationFailedError … failed to delete consumer group" | The Kafka user may not delete the runtime's topics or group | Grant F1 and F2 ([21 §21.3](./21-kafka-access.md)), then re-issue the delete |
@@ -985,10 +1043,11 @@ kafka-console-consumer --bootstrap-server $BROKERS --topic $RT-commits --max-mes
 | `running`, a table that stays empty while its topic has records; `consumer_lag.error` "topic does not exist" | The Kafka user lost Read on the topic after it was checked, or the topic was deleted and created again | Grant Read, then stop, wait past the session timeout and resume ([21 §21.7](./21-kafka-access.md)) |
 | Log: "Observing KasprApp … timed out; the next sweep observes it again" | The API server did not answer a read within 90 s | Nothing, if it recovers: the sweep observes again every two minutes |
 | Stuck `deploying` | Pod scheduling, image pull, RBAC | `kubectl describe kasprapp $RT` |
+| `deploying` / `waiting_for_table` on a new materialization whose tables exist | Its runtime's pods cannot read them: with AKS workload identity or EKS Pod Identity, the runtime's ServiceAccount `$RT-app`, new with the materialization, has no federated credential or association yet | Make it, then restart the runtime's pods (§12.3, §12.12a) |
 | A runtime runs more members than its `replicas` | autoscaling: it is far behind (§12.7) | nothing; the detail's `autoscale.reason` says why. Turn it off for the materialization to stop it |
 | `deploying` a few minutes after a runtime fell far behind | autoscaling added members, and the new pods are starting | nothing; it is `running` again once they are ready |
 | `degraded` / `runtime_members_restarting` | members keep restarting: out of memory, most often | §12.3 |
-| Log: "Cannot read the pods of …" | the control plane's role lacks `pods` (§12.1, 4.4) | upgrade the release so the chart's Role applies |
+| Log: "Cannot read the pods of …" | the control plane's role lacks `pods` (02 §2.7) | let the chart make the Role (`rbac.create`), or give your own its `pods` rule |
 | Flapping `running` ↔ `degraded` | Heartbeat interval ≥ ⅓ of the 120 s staleness window | Keep heartbeat ≤ 40 s |
 | `records_skipped` growing | Records a member cannot write — a value that is not JSON | The skip reasons name the latest partition and offset (§12.3) |
 | `unmapped_values` growing | Values the schema cannot hold: past `max_schema_fields`, or a collapsed family's array element | 09 §9.8; raise the limit if the fields matter |
@@ -999,18 +1058,19 @@ kafka-console-consumer --bootstrap-server $BROKERS --topic $RT-commits --max-mes
 | `degraded` / `commits_stalled`, members healthy, commits flowing | the reason lingers after disruptions until the next resource observation (08 §8.6) | nothing; it clears within ten minutes |
 | `degraded` / `commits_stalled` that never clears; `last_commit_at` stopped; the committer's log quiet | the committer ignores a member's announcements as stale: after that member restarted, on a runtime that predates session epochs (10 §10.5) | restart the committer member (§12.3) |
 | Commits take many seconds | ~2 s plus ~16 ms per file (13 §13.8); a backfill commits hundreds of files at once | expected; raise `commit_interval_seconds` to commit less often |
+| `commit_failed` again and again on an S3-compatible server, lost compare-and-swaps that no other writer explains | the server does not honour conditional writes | run the conformance suite against it (§12.12a); a server that fails it must not hold tables |
 | Thousands of small files per day during a backfill | each seal writes a file per partition its rows touch; compaction works through past days a job a tick, 1 GiB at a time | expected; watch the Table tab's partitions shrink (11 §11.6) |
 | An external engine's query fails on a snapshot with delete files | the console refuses delete files; an engine with `catalog.write` committed row-level deletes | 14 §14.2 |
 | Scheduled work never arrives | Scheduler topic-name mismatch base vs dev | See [14](./14-known-gaps-and-roadmap.md) |
 | Delete stuck > 480 s | Consumer group never empties | Look for stray pods; check the group |
 | `RuntimeError: ... retry budget was exhausted` | Consumer group still non-empty | Delete the group manually, re-issue delete |
-| A deleted materialization stays listed for hours | its table still holds objects; the drop deletes them a pass at a time, 100 to a request | expected — follow `control_plane_drop_table_progress` (§12.7) |
+| A deleted materialization stays listed for hours | its table still holds objects; the drop deletes them a pass at a time, in the store's batch deletes | expected — follow `control_plane_drop_table_progress` (§12.7) |
 | The control-plane log warns `Skipping materialization record mat-…, which this version cannot read` (or a `materialization-table` record) | a record an earlier, incompatible release wrote, typically a 1.0 copy stranded in another shard of the `state` table after its deletion. The list, the sweep, the catalog and the name check skip it, and its name is free again | nothing: once it says `deleted`, the retention sweep purges it `deleted_retention_hours` after its last write. One that does not say `deleted` belonged to a materialization not deleted before the upgrade to 2.0 (16 §16.5) |
-| `failed` / `drop_table_failed` | five passes in a row failed: GCS access, a missing bucket, an outage — or only objects GCS refuses are left (`403`, a retention policy or object hold) | fix access from the error in `phase_message`, or release the holds; what is left under the table's location must be removed by hand |
+| `failed` / `drop_table_failed` | five passes in a row failed: the store's access, a missing bucket or container, an outage — or only objects the store refuses are left (`403`; a retention policy, an object lock or hold) | fix access from the error in `phase_message` (§12.12a), or release the holds; what is left under the table's location must be removed by hand |
 | The API stops answering — port-forwards and requests time out — while the pod is `Running` and `Ready` with no restarts | Something is holding the control plane's event loop. In the pod, the API port's line in `/proc/net/tcp` shows a full accept queue, and `/proc/1/task/1/wchan` sits in a blocking call. 0.x releases did this while deleting a large destination, compacting the object manifest, or waiting on a Kubernetes API or broker that stopped answering | upgrade; on such a release the stall ends when the work does, and a restart redelivers the same work |
 | `POST /topics/analyze` answers `503 unavailable` | Kafka failed, or did not answer within 10 s; `details.reason` says which | Check the brokers, the `K_KAFKA_*` settings and ACLs; `GET /topics` fails the same way ([04 §4.9.1a](./04-http-api-reference.md)) |
 | Consumer lag stops updating; the control-plane log shows `TimeoutError: Kafka did not answer within 30s` from the maintenance agent | The refresh's topic lookup timed out: Kafka is unreachable or not answering. Each refresh gives up after 30 s; the next, a minute later, tries again. A consumer group whose own lookup fails is measured as one that has committed nothing: from the runtime's heartbeat offsets | Fix Kafka connectivity; lag resumes with the first refresh that gets an answer |
-| Local disk filling in a runtime pod | uploads failing: the backlog grows to its limits, then the source pauses | fix GCS access; batches retry and the backlog drains by itself |
+| Local disk filling in a runtime pod | uploads failing: the backlog grows to its limits, then the source pauses | fix the store's access (§12.12a); batches retry and the backlog drains by itself |
 | Runtime pods restart `OOMKilled`, or seals fail with `seal process exited with status -9`, and the partition never advances | the memory limit is below a seal's need, on top of the worker's own use | raise the runtime memory to 2 GiB (§12.10); nothing is lost meanwhile |
 | The maintenance app restarts `OOMKilled`, or its compactions fail with `exited with status -9` | its limit is below a compaction child's need, times its concurrent jobs | raise its memory, or lower `MAINTENANCE_MAX_CONCURRENT_JOBS` (§12.10); the runtimes are not affected |
 | Seals take minutes, and backlog pauses come and go on a busy topic | the runtime pod's CPU limit is one core, which the seal shares with the writer (the shipped limit before 4.2) | two CPUs per runtime pod (§12.10) |
@@ -1051,8 +1111,10 @@ kafka-console-consumer --bootstrap-server $BROKERS --topic $RT-commits --max-mes
 | The Data tab has no **Live** toggle | No `tailUrl` for the domain in the console's registry; the live tail off in this console or in Settings › Live tail; or the materialization is stopped | Turn on what is off (§12.7) |
 | The Data tab says *Live is unavailable* | The tail app cannot be reached at the domain's `tailUrl`, or refuses the console (`403 console_only`: its `TAIL_SERVICE_TOKEN` is not the console's service token for the domain) | Fix the URL or the Secret; the console keeps asking |
 | A domain is *misconfigured* in the console | The registry's `controlPlaneUrl` for it reaches a control plane that says it is another domain, or none | Correct the entry, or the control plane's `domain.id` (20 §20.4) |
+| The Table and Data tabs say "no storage is configured for …" | No `console.storage` profile's scope covers the table's location; the console reads nothing outside its profiles | Add a profile for the destination's prefix, with read-only credentials (20 §20.11) |
+| The console cannot read a table whose runtime commits | The storage profile serving it lacks credentials, or they are refused; the console's start log lists each profile, its mode and whether its credentials were found | Fix the profile's Secret (`console.storage[].credentialsSecret`) and restart the console (§12.12a) |
 | Access tokens made in one domain are refused in another | The domains' `federation-key`s differ (a banner says so), or the owner has no account there (`token_unknown_owner`) | The same key in every domain's auth Secret (18 §18.11); add the person there |
-| *Live is starting* for more than a few seconds | The table is seeding: its schema cannot be had from the control plane or GCS, or its topic has no leader | The table's `last_error` in the tail's health (§12.7) |
+| *Live is starting* for more than a few seconds | The table is seeding: its schema cannot be had from the control plane or from the table in its object store, or its topic has no leader | The table's `last_error` in the tail's health (§12.7) |
 | *N records behind*, in amber on the Data tab's status line | The table is `backlogged`: its runtime is more than twice `live_tail_max_rows_per_table` behind the topic (a backfill, a burst, a stopped runtime) | Nothing: the tail starts once the runtime is within 75 % of the bound; **Peek** (under More actions) shows the topic's newest records meanwhile |
 | *N records behind* that stays short of the newest | The table is paused at its bound or its rate ceiling | Routine? Raise `live_tail_max_rows_per_table` or `live_tail_max_records_per_second_per_table` |
 | The tail app logs `tail_routing_mismatch` | A tick arrived on a partition its key does not hash to: the control plane's producer partitions differently from the tail's ownership rule | Report it: requests reach the wrong member until fixed (19 §19.5) |
@@ -1189,21 +1251,22 @@ costs reading again, never correctness.
 
 Metadata files are written before the pointer moves, so the newest `*.metadata.json` with the
 table's uuid is at least as new as the lost pointer (`lakehouse/pointer.py::find_latest_metadata`).
-With the materialization stopped, from a shell with the package installed and GCS access:
+With the materialization stopped, in Python in the control plane's pod, which has the package and
+the store's credentials — `kubectl exec -it -n $NS $(cp_pod) -c kaspr -- python` — or anywhere else
+with both:
 
 ```python
-from datetime import UTC, datetime
-from midstream.lakehouse.gcs import shared_storage_client
-from midstream.lakehouse.pointer import TablePointer, find_latest_metadata, write_pointer
+from midstream.lakehouse.pointer import TablePointer, find_latest_metadata, utc_now, write_pointer
+from midstream.lakehouse.store import store_for
 
-LOC = "gs://…/<storage prefix>/<materialization id>/<table>"   # the table record's location
+LOC = "<the table record's location>"            # gs://…, s3://… or abfss://…/<storage prefix>/<materialization id>/<table>
 UUID = "…"                                       # the table record's table_uuid
-client = shared_storage_client()
-latest = find_latest_metadata(client, LOC, table_uuid=UUID)
+store = store_for(LOC)                           # the store of the location's scheme
+latest = find_latest_metadata(store, LOC, table_uuid=UUID)
 pointer = TablePointer(table_uuid=UUID, identifier=("<dataset>", "<table>"), materialization_id="mat-…",
                        location=LOC, metadata_location=latest, sequence=0,
-                       updated_at=datetime.now(tz=UTC).isoformat(), updated_by="operator")
-write_pointer(client, LOC, pointer, generation=0)  # creates it; refuses if a pointer exists
+                       updated_at=utc_now(), updated_by="operator")
+write_pointer(store, LOC, pointer, expected_version=None)  # creates it; refuses if a pointer exists
 ```
 
 Then resume the materialization. Check `metadata_location` against the table record's
@@ -1228,10 +1291,200 @@ event and a protocol event in the app's log (`kubectl logs -n $NS <maintenance p
 | A job shown running for hours | the member that ran it went away without reporting | the next tick reports it `abandoned` once it has run longer than `compaction_timeout_minutes` + 10, or at once when the same member restarted |
 | A reprotect stays *requested* | it waits for the table to record the edit's protection revision (the committer does on its next commit, seconds); for the batches still open under the older revision, up to the batch ceiling (600 s) and two minutes after that; or for an earlier failure's backoff | the Protection tab's rollout; the history's last attempt; `maintenance_reprotect_failed` in the app's log |
 | A reprotect leaves files *that cannot be rewritten yet* | a number field's plain values wait for the family's text field, which the writers create with the first masked value; fields in lists of lists are never rewritten | ask again once such a record has been committed (22 §22.13) |
+| A compaction or reprotect failed: *The commit's outcome is unknown, so the job's outputs are kept…* | its pointer write got no usable answer — the connection lost, or S3 refusing a write that met another in flight — and the pointer read back could not tell whether it landed; nothing the table may reference is deleted | nothing, once: the next plan reads the table as it is, and orphan cleanup removes the outputs if the table never took them. Again and again: the store's answers (§12.12a) |
+| A job failed: *a different object already exists at …* | an output's name, which carries a fresh id, holds an object of another size: something other than Midstream writes under the table's `data/` | find the writer; nothing but the runtime, the maintenance app and an engine with `catalog.write` should write there |
 
 Compaction is safe to interrupt anywhere: its outputs are only files until one `replace` commit
 names them, and that commit checks every input is still live and the row counts match per partition
 (11 §11.6).
+
+## 12.12a The object store
+
+Every table lives in the object store its location names — `gs://` Google Cloud Storage, `s3://`
+Amazon S3 or an S3-compatible server, `abfss://` Azure Blob Storage — and every pod reaches it through
+`lakehouse/store/`: one store per scheme per process, built from the pod's environment the first time
+a location of that scheme is used (11 §11.1a). The control plane, the maintenance and tail apps and
+every runtime get the same credentials from the chart; the console reads with storage profiles of its
+own (20 §20.11). The destination's bucket or container must exist before the first materialization:
+no store creates one.
+
+| Backend | Values | What every app and runtime gets |
+|---|---|---|
+| GCS | `storage.gcs.credentialsSecret`, key `service-account.json` | the key at `/etc/midstream/gcs/service-account.json`, named by `GOOGLE_APPLICATION_CREDENTIALS`; without a Secret, application default credentials (GKE workload identity) |
+| S3 | `storage.s3.credentialsSecret` — `access-key-id`, `secret-access-key`, optionally `session-token` — and `region`, `endpoint`, `pathStyle` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`; `STORAGE_S3_REGION` (`us-east-1` unless set), `STORAGE_S3_ENDPOINT` (an S3-compatible server; AWS without it), `STORAGE_S3_PATH_STYLE`; without a Secret, boto3's default chain (IRSA, EKS Pod Identity, an instance role) |
+| Azure | `storage.azure.credentialsSecret` — `connection-string`, or `account-key`, or `client-id`, `tenant-id` and `client-secret`, each optional — and `endpoint` | `AZURE_STORAGE_CONNECTION_STRING`, `AZURE_STORAGE_ACCOUNT_KEY`, `AZURE_CLIENT_ID`/`AZURE_TENANT_ID`/`AZURE_CLIENT_SECRET`; `STORAGE_AZURE_ENDPOINT` (an emulator's Blob endpoint); without them, `DefaultAzureCredential` (AKS workload identity, a managed identity) |
+
+The Azure store takes a connection string first — it serves its own storage account only — then the
+account key, for the account a location names, then `DefaultAzureCredential`. It reaches an account
+through its Blob endpoint: a connection string's own, else `https://<account>.blob.core.windows.net`,
+or, behind an emulator, `<STORAGE_AZURE_ENDPOINT>/<account>`. A rendered manifest names Secrets, never
+a value (02 §2.9a). The Settings page's Deployment section shows the `STORAGE_*` values as the control
+plane's stores read them (04 §4.9.3, 17 §17.3).
+
+**What each needs.** Every app and runtime reads, writes, deletes and lists under the destination: on
+GCS `roles/storage.objectAdmin`; on S3 `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` and
+`s3:ListBucket` — a compare-and-swap's `If-Match` needs `s3:GetObject` besides `s3:PutObject`; on
+Azure a data role such as Storage Blob Data Contributor. The console reads and lists only:
+`roles/storage.objectViewer` (with an HMAC key of that service account for DuckDB's scans),
+`s3:GetObject` and `s3:ListBucket`, Storage Blob Data Reader. Give it nothing more: a statement's
+sandbox does not tell reads from writes (console 12 §12.4).
+
+**A cloud identity instead of a Secret.** A backend without a Secret uses the pod's own identity,
+given by `kaspr.podLabels` and `kaspr.serviceAccountAnnotations` (the console's:
+`console.podLabels`, `console.serviceAccountAnnotations`). kaspr-operator runs every app and every
+runtime under a ServiceAccount of its own, `<app>-app` — `$CP-app`, `midstream-maintenance-app`,
+`$TAIL-app`, and `$RT-app` for each runtime, a new one with every materialization — so the identity
+must trust them all. IRSA does it with a role trusting `system:serviceaccount:<namespace>:*-app`,
+which leaves the console's `<release>-console` out. AKS workload identity needs a federated
+credential, at most 20 per identity, and EKS Pod Identity an association, for each ServiceAccount, a
+new runtime's included: until it has one, and its pods have restarted with it, its members report
+`deploying` / `waiting_for_table`. GKE workload identity needs none: grant the bucket's role to the
+namespace, which covers the console's pods too unless the console runs in a namespace of its own.
+
+### Checking a store: the conformance suite
+
+`python -m midstream.lakehouse.store.check <uri>` (`lakehouse/store/check.py`) checks that the store for
+a URI keeps the contract Midstream's tables rely on, with the environment and credentials of wherever
+it runs. Run it from the control plane's pod — every app and runtime has the same — under a scratch
+prefix of the destination, before the first materialization and after any change of server, endpoint
+or credentials:
+
+```bash
+kubectl exec -n $NS $(cp_pod) -c kaspr -- python -m midstream.lakehouse.store.check s3://example-lake/_check
+kubectl exec -n $NS $(cp_pod) -c kaspr -- python -m midstream.lakehouse.store.check \
+  abfss://lake@exampleaccount.dfs.core.windows.net/_check --large-mb 64
+```
+
+Everything happens under `<uri>/<12 hex run id>/`, and the run deletes what it wrote. It prints one
+line per check — `PASS` or `FAIL`, the check, its seconds and what it found — then `N of 16 checks
+passed`, naming any that failed, and exits `0` only when all passed (`1` when one failed, `2` when no
+store can be built for the URI).
+
+11 §11.1a lists the sixteen checks: create-only writes and creators racing for one key,
+compare-and-swap and its refusals, 16 writers racing 25 rounds each on one counter with exactly one
+winner per round, reads of missing objects, a table pointer's bytes never repeating, ranges, sizes,
+versions and times, a listing across pages, streamed transfers, deletes and the cleanup. The S3 store
+reports `conditional_delete` skipped: it offers no conditional deletes, and nothing in Midstream sends
+one. `large_object` runs only with `--large-mb`.
+
+`--writers` (16), `--rounds` (25 compare-and-swaps a writer), `--race-rounds` (new keys raced: the
+rounds, at most six, unless given), `--list-objects` (1,050), `--large-mb` and `--skip <check>`
+(repeatable, for an emulator's known deviation; never `cleanup`) change the run.
+
+| Failed | Means | Do |
+|---|---|---|
+| `concurrent_writers`, `compare_and_swap`, `missing_under_condition` | the server does not honour `If-Match`: a stale version accepted, a missing object created under a condition, two writers winning one round, or a win lost | **do not use it**: the pointer's compare-and-swap is what keeps every commit exactly once (11 §11.2), and nothing makes up for a server that does not honour conditional writes |
+| `create_only`, `racing_creators`, `file_transfer`, `large_object` | the server does not honour `If-None-Match: *`, lets two creators win, or mixes two uploads | do not use it: two tables could take one location, two files one name |
+| `missing_object` | a missing key does not read as missing. On S3, a `403` `AccessDenied` here means the identity lacks `s3:ListBucket`, without which S3 answers a missing key with 403 | grant `s3:ListBucket`; otherwise do not use the store: a missing pointer would not read as "no table" |
+| `head_and_list` | no times, a clock more than 15 minutes off, or a listing that misses or repeats objects | correct the clock; a store whose listings miss objects cannot serve orphan cleanup or the drop |
+| `delete`, `delete_many` | deletes refused or failing | the delete permission: without it no table can be dropped |
+| any, naming a `401`, `403`, `NoSuchBucket`, `ContainerNotFound` or a configuration message | credentials, a permission, the bucket or the endpoint — not the server's semantics; a new Azure role assignment can take minutes to apply | fix it (below) and run the check again |
+| `cleanup` | objects left under the run's prefix | delete them; the line names one |
+
+CI runs the same checks on every change (13 §13.3a): against SeaweedFS 4.51 and moto 5.2.5 for S3,
+Azurite 3.37.0 for Azure, fake-gcs-server 1.56.1 for GCS. moto models AWS's answers, not its
+atomicity, and an emulator is not the service it imitates: S3 itself and a real Azure storage account
+are verified once someone runs this check against them (14 §14.20).
+
+### When the store refuses
+
+Each store retries what may succeed later — no answer, `408`, `429`, a `5xx` — inside the operation,
+through its SDK; only a batch delete is left to its caller, the drop, which sends it again itself
+(07 §7.10). Anything else comes back at once — a refusal with a message that starts with the object's
+URI, a credential that cannot be found as its SDK's own error — and shows where the request was made:
+
+| Where | What shows |
+|---|---|
+| Creating the tables | `failed` / `create_table_failed`, the store's error in `phase_message`: fix it, then resume (§12.3) |
+| A runtime | `deploying` / `waiting_for_table`, or a table's `table_unavailable` or `commit_failed` with the error in `last_error` |
+| The maintenance app | the table's maintenance history; `maintenance_*_failed` in its log |
+| A drop | `destination cleanup pass left objects behind`, `control_plane_drop_table_retry_scheduled`, and after five failed passes `failed` / `drop_table_failed` |
+| The console | the Table and Data tabs say the table cannot be read; the console's log has the store's answer (`table metadata unreadable`) |
+
+| | GCS | S3 | Azure |
+|---|---|---|---|
+| No credentials found | google-auth's `DefaultCredentialsError` | botocore's `NoCredentialsError: Unable to locate credentials` | azure-identity's `ClientAuthenticationError`: `DefaultAzureCredential failed to retrieve a token …` |
+| Credentials refused | a deleted or revoked key: google-auth's `RefreshError` (`invalid_grant`) | `403` `InvalidAccessKeyId` or `SignatureDoesNotMatch` | `the account refused the credentials: check the account key, connection string or identity (403 AuthenticationFailed)`; a token: `… (401 InvalidAuthenticationInfo)` |
+| A permission missing | `403 … does not have storage.objects.create access to the Google Cloud Storage object` | `403` `AccessDenied`, naming the operation: `PutObject`, `GetObject`, `DeleteObjects`, `ListObjectsV2` | `the identity has no data role on the account, such as Storage Blob Data Contributor (403 AuthorizationPermissionMismatch)`; a firewall: `… (403 AuthorizationFailure)` |
+| The bucket or container missing | `the bucket does not exist` | `the bucket does not exist, or STORAGE_S3_ENDPOINT or STORAGE_S3_REGION names the wrong server (404 NoSuchBucket)` | `the container does not exist in this storage account (404 ContainerNotFound)` |
+| Another server or account | — | `NoSuchBucket` as above, or a failure in transit with no status: `EndpointConnectionError` | `the endpoint does not serve this account or container: check the account and STORAGE_AZURE_ENDPOINT (404 ResourceNotFound)`; a connection string of another account: `AZURE_STORAGE_CONNECTION_STRING names the storage account '…', but the store was asked for '…'` |
+
+A missing bucket or container, and Azure's configuration answers, are never taken for a missing
+object — only an S3 HEAD, whose answer carries no code, cannot tell, and a pointer is read with a GET
+— so a table never looks dropped because its store is misconfigured.
+
+### Rotating credentials
+
+Credentials reach a pod as environment variables from a Secret — the GCS key as a mounted file — and a
+store reads them when it is first built, so a changed Secret takes effect at the pod's next start, as
+the protection key does (22 §22.9). Without a gap:
+
+1. Make the new credential while the old one still works: a second access key (S3), the account's
+   other key (Azure's `key1` and `key2`), a new key of the service account (GCS), another key for the
+   identity (SeaweedFS).
+2. Put it in the Secret in place of the old one.
+3. Restart the apps, every runtime — a member loses only its uncommitted work, which it reads again
+   (10 §10.7) — and the console when a profile's Secret changed:
+
+   ```bash
+   kubectl -n $NS rollout restart statefulset $CP-app midstream-maintenance-app $TAIL-app
+   for app in $(kubectl get kasprapp -n $NS -o name | grep -- '-mat-'); do
+     kubectl -n $NS rollout restart statefulset "${app#*/}-app"
+   done
+   kubectl -n $NS rollout restart deployment midstream-console
+   ```
+
+4. Retire the old credential once every pod has restarted.
+
+A cloud identity has nothing to rotate: each SDK refreshes its tokens itself.
+
+### An endpoint that moves
+
+`storage.s3.endpoint` and `storage.azure.endpoint` are no part of any table's location, so a server
+that moves — another Service name, host or port — needs a values change and a `helm upgrade`, and
+nothing in the bucket. The control plane and the maintenance and tail apps restart with the new
+`STORAGE_*` value; the runtime spec carries it too, so the control plane re-applies every runtime once
+it is back (§12.10). Change each console profile's `endpoint` with it. An Azure location keeps its
+`abfss://<container>@<account>.dfs.core.windows.net` form behind an emulator, so the same objects in a
+real account are the same table. A table never moves to another backend: its metadata names every
+file by its full URI, so a move is a new materialization.
+
+### SeaweedFS
+
+The S3-compatible server for development and test clusters, verified at 4.51:
+
+- `weed mini` runs the master, a volume server, the filer and the S3 gateway in one process: one pod
+  on a persistent volume serves a test cluster. `-bucket <name>` creates the bucket at start. Let its
+  components talk over loopback (`-ip=127.0.0.1`), so its data and conditions survive the pod coming
+  back with another address.
+- Values: `storage.s3.endpoint: http://<service>.<namespace>.svc.cluster.local:8333` and
+  `pathStyle: true`; any region will do.
+- Identities scoped per bucket — `Read:<bucket>`, `List:<bucket>`, `Write:<bucket>` — give the apps a
+  read-write identity and the console a read-only one.
+- The S3 gateway answers before its filer is ready: after a start, wait until a signed listing
+  answers before running the check.
+- It settles create-only writes racing for one key at about 0.6 s per writer, so `racing_creators`
+  takes about ten seconds a key at 16 writers, and the whole check about a minute.
+
+### Azurite
+
+Microsoft's emulator: a stand-in for an Azure storage account while building and testing, verified at
+3.37.0, and never a store for data anyone keeps.
+
+- Start it as `azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck --disableProductStyleUrl`, with
+  `--location /data` on a volume to keep its blobs. The SDKs send API versions newer than Azurite
+  accepts: without `--skipApiVersionCheck` every request is refused, `the service refused a request
+  header, usually the API version … (400 InvalidHeaderValue)`. Without `--disableProductStyleUrl` it
+  takes the first label of a dotted host name, such as `azurite.<namespace>.svc`, for the account.
+- Values: `storage.azure.endpoint: http://azurite.<namespace>.svc.cluster.local:10000`, to which the
+  store appends the account; for credentials, a connection string whose `BlobEndpoint` is
+  `<endpoint>/<account>`, or the account key. The development account `devstoreaccount1` and its key
+  are published: never let them guard anything reachable from outside the cluster. `AZURITE_ACCOUNTS`
+  sets accounts of your own.
+- Azurite has no DFS endpoint. Midstream and the console read through the Blob endpoint and need none,
+  but an engine that reads `abfss://` through the DFS endpoint cannot read a table there.
+- A killed Azurite loses up to 5 s of writes it had acknowledged, a compare-and-swap among them: stop
+  it gracefully, and never by force under a test.
 
 ## 12.13 The 1.0 rollout: a fresh start that keeps people and settings
 

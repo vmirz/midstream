@@ -93,3 +93,79 @@ jobs:
             helm lint charts/midstream -f "$values"
             helm template midstream charts/midstream -n midstream -f "$values" > /dev/null
           done
+
+  object-stores:
+    name: Object stores
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Throwaway keys for the job's own SeaweedFS and moto, which hold nothing.
+      AWS_ACCESS_KEY_ID: midstream-ci
+      AWS_SECRET_ACCESS_KEY: midstream-ci-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: python/pyproject.toml
+      - name: Start SeaweedFS, Azurite and fake-gcs-server
+        run: |
+          docker run -d --name seaweedfs -p 8333:8333 -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
+            chrislusf/seaweedfs:4.51 mini -dir=/data
+          docker run -d --name azurite -p 10000:10000 mcr.microsoft.com/azure-storage/azurite:3.37.0 \
+            azurite-blob --blobHost 0.0.0.0 --blobPort 10000 --inMemoryPersistence --skipApiVersionCheck --disableProductStyleUrl
+          docker run -d --name fake-gcs-server -p 4443:4443 fsouza/fake-gcs-server:1.56.1 \
+            -scheme http -port 4443 -public-host localhost:4443
+      - name: Install the package and moto
+        run: python -m pip install --upgrade pip && python -m pip install -e ./python 'moto[server]==5.2.5'
+      - name: Start moto
+        run: nohup moto_server -H 127.0.0.1 -p 5055 > moto.log 2>&1 &
+      - name: Wait until every store answers
+        run: |
+          wait_for() {
+            for attempt in $(seq 1 90); do
+              if eval "$2" > /dev/null 2>&1; then echo "$1 answers"; return 0; fi
+              sleep 1
+            done
+            echo "$1 did not answer within 90 seconds"
+            return 1
+          }
+          # SeaweedFS's S3 gateway answers before its filer is ready: wait for a signed listing.
+          wait_for SeaweedFS "python -c \"import boto3; boto3.client('s3', endpoint_url='http://localhost:8333', region_name='us-east-1').list_buckets()\""
+          wait_for Azurite "curl -s -o /dev/null 'http://localhost:10000/devstoreaccount1?comp=list'"
+          wait_for fake-gcs-server "curl -sf -o /dev/null http://localhost:4443/storage/v1/b"
+          wait_for moto "curl -sf -o /dev/null http://localhost:5055/moto-api/"
+      - name: SeaweedFS (s3://)
+        # The slowest store, at about 70 seconds: SeaweedFS settles create-only writes racing for one
+        # key at about 0.6 s per writer, and the racing creators race check.RACE_ROUNDS keys whatever
+        # the rounds, which drive only the compare-and-swap writers (seconds at the default 20).
+        env:
+          STORAGE_S3_ENDPOINT: http://localhost:8333
+          STORAGE_S3_PATH_STYLE: "true"
+          STORAGE_LIVE_TESTS: s3://live-seaweedfs
+        run: python -m unittest discover -s python/tests -p 'test_store_live.py' -v
+      - name: moto (s3://)
+        env:
+          STORAGE_S3_ENDPOINT: http://localhost:5055
+          STORAGE_S3_PATH_STYLE: "true"
+          STORAGE_LIVE_TESTS: s3://live-moto
+        run: python -m unittest discover -s python/tests -p 'test_store_live.py' -v
+      - name: Azurite (abfss://)
+        env:
+          # Azurite's published development account and key, not a secret.
+          AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://localhost:10000/devstoreaccount1;"
+          STORAGE_LIVE_TESTS: abfss://live@devstoreaccount1.dfs.core.windows.net
+        run: python -m unittest discover -s python/tests -p 'test_store_live.py' -v
+      - name: fake-gcs-server (gs://)
+        env:
+          STORAGE_EMULATOR_HOST: http://localhost:4443
+          STORAGE_LIVE_TESTS: gs://live-gcs
+        run: python -m unittest discover -s python/tests -p 'test_store_live.py' -v
+      - name: Emulator logs
+        if: failure()
+        run: |
+          for name in seaweedfs azurite fake-gcs-server; do
+            echo "== $name"; docker logs --tail 80 "$name" 2>&1 || true
+          done
+          echo "== moto"; tail -n 80 moto.log || true

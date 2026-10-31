@@ -1,8 +1,8 @@
 """The runtime end to end: records staged by the writer become rows of the table exactly once.
 
-Each test runs the writer, the batch pipeline and the committer of one member against a table on the
-fake GCS (`runtime_support.RuntimeHarness`), and checks the table's rows and the source records'
-acknowledgements - the two things exactly-once is about (spec §7.8).
+Each test runs the writer, the batch pipeline and the committer of one member against a table in an
+in-memory object store (`runtime_support.RuntimeHarness`), and checks the table's rows and the
+source records' acknowledgements - the two things exactly-once is about (spec §7.8).
 """
 
 from __future__ import annotations
@@ -236,8 +236,7 @@ class RuntimeFlowTests(unittest.TestCase):
             messages = [await self.runtime.write({"order_id": f"O-{offset}"}, offset=offset) for offset in range(3)]
             announcements = await self.runtime.pipeline()
             for announcement in announcements:
-                bucket, name = announcement["file_path"].removeprefix("gs://").split("/", 1)
-                self.runtime.lake.store.objects.pop((bucket, name))
+                self.runtime.store.objects.pop(announcement["file_path"])
             refused = await self.runtime.deliver(announcements)
             events = await self.runtime.cycle()
             return messages, refused, events

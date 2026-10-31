@@ -58,6 +58,96 @@ export const FORBIDDEN_TOKENS = [
 ] as const;
 
 /**
+ * Functions a console statement may not call, however the call is spelled — quoted or not, in any
+ * case, qualified with a catalog or schema or not.
+ *
+ * `duckdb_secrets()` and `which_secret()` list the secrets of the instance a statement runs in: every
+ * storage profile's name, scope, endpoint, region and key id (the secret values are redacted). The
+ * statement's sandbox cannot refuse them, because they open no file, so the guard must. `query()` and
+ * `json_execute_serialized_sql()` run SQL handed to them as a string, which no keyword check sees.
+ * `enable_logging()` turns on DuckDB's own log, whose HTTP entries carry each request's
+ * Authorization header - a storage profile's key id with it - and `duckdb_logs`,
+ * `duckdb_logs_parsed()` and `duckdb_log_contexts` read it back. (`duckdb_settings()` and
+ * `current_setting()` were checked and name no profile: secrets are not settings.) Matched as calls
+ * only - the name followed by `(` - so a table, column or alias of the same name stays queryable, and
+ * no table name needs reserving for them.
+ */
+export const FORBIDDEN_FUNCTIONS = [
+  'duckdb_secrets',
+  'which_secret',
+  'query',
+  'json_execute_serialized_sql',
+  'enable_logging',
+  'duckdb_logs',
+  'duckdb_logs_parsed',
+  'duckdb_log_contexts',
+] as const;
+
+/**
+ * DuckDB's log, read as a table rather than called: refused wherever the name stands as a whole
+ * identifier, quoted or not, qualified or not - as a column or alias too, which no table of a lake
+ * needs. Logging stays off, since nothing may turn it on (`enable_logging` above, and SET, PRAGMA and
+ * CALL among the forbidden tokens); refusing the reads as well leaves nothing to rely on.
+ */
+export const FORBIDDEN_RELATIONS = ['duckdb_logs', 'duckdb_log_contexts'] as const;
+
+const IDENTIFIER_CHAR = /[a-z0-9_$]/;
+/** Whitespace and invisible formatting characters, which separate tokens as whitespace does. */
+const SEPARATOR = /[\s\p{Cf}]/u;
+
+/**
+ * The forbidden function `sql` calls, if any. Deliberately blind to string literals and comments
+ * around the name: a name inside a string that is followed by `(` is refused too, which costs nothing
+ * real and leaves no question of where a string ends.
+ */
+export function forbiddenCall(sql: string): string | null {
+  const lowered = sql.toLowerCase();
+  for (const name of FORBIDDEN_FUNCTIONS) {
+    for (let at = lowered.indexOf(name); at !== -1; at = lowered.indexOf(name, at + 1)) {
+      if (at > 0 && IDENTIFIER_CHAR.test(lowered[at - 1] as string)) continue;
+      let cursor = at + name.length;
+      if (IDENTIFIER_CHAR.test(lowered[cursor] ?? '')) continue;
+      if (lowered[cursor] === '"') cursor += 1;
+      if (lowered[skipSeparators(lowered, cursor)] === '(') return name;
+    }
+  }
+  return null;
+}
+
+/** Past whitespace and comments — a `--` line, or a block comment, which DuckDB lets nest. */
+function skipSeparators(text: string, start: number): number {
+  let cursor = start;
+  while (cursor < text.length) {
+    const char = text[cursor] as string;
+    if (SEPARATOR.test(char)) {
+      cursor += 1;
+    } else if (text.startsWith('--', cursor)) {
+      // DuckDB ends a `--` comment at the first carriage return OR line feed, not at a line feed
+      // alone: `name --x\r(` is a call, so the comment must stop at the `\r` for the `(` to be seen.
+      const offset = text.slice(cursor).search(/[\r\n]/);
+      cursor = offset === -1 ? text.length : cursor + offset;
+    } else if (text.startsWith('/*', cursor)) {
+      let depth = 0;
+      while (cursor < text.length) {
+        if (text.startsWith('/*', cursor)) {
+          depth += 1;
+          cursor += 2;
+        } else if (text.startsWith('*/', cursor)) {
+          depth -= 1;
+          cursor += 2;
+          if (depth === 0) break;
+        } else {
+          cursor += 1;
+        }
+      }
+    } else {
+      break;
+    }
+  }
+  return cursor;
+}
+
+/**
  * Reject anything that is not a single read-only statement.
  *
  * The query console is intentionally powerful, so the guard is deliberately conservative:
@@ -85,7 +175,24 @@ export function assertReadOnlyStatement(sql: string): string {
       throw badRequest(`"${token}" is not allowed in console queries`, { field: 'sql', token });
     }
   }
+  const call = forbiddenCall(trimmed);
+  if (call) throw badRequest(`"${call}" is not allowed in console queries`, { field: 'sql', token: call });
+  const relation = forbiddenRelation(trimmed);
+  if (relation) throw badRequest(`"${relation}" is not allowed in console queries`, { field: 'sql', token: relation });
   return trimmed;
+}
+
+/** The forbidden relation `sql` names, if any, outside string literals and comments. */
+export function forbiddenRelation(sql: string): string | null {
+  const lowered = stripStringsAndComments(sql, { keepLength: true }).toLowerCase();
+  for (const name of FORBIDDEN_RELATIONS) {
+    for (let at = lowered.indexOf(name); at !== -1; at = lowered.indexOf(name, at + 1)) {
+      if (at > 0 && IDENTIFIER_CHAR.test(lowered[at - 1] as string)) continue;
+      if (IDENTIFIER_CHAR.test(lowered[at + name.length] ?? '')) continue;
+      return name;
+    }
+  }
+  return null;
 }
 
 /**
@@ -106,8 +213,10 @@ export function stripStringsAndComments(sql: string, options: { keepLength?: boo
     const next = sql[index + 1];
 
     if (char === '-' && next === '-') {
-      const found = sql.indexOf('\n', index);
-      const end = found === -1 ? sql.length : found;
+      // A `--` comment runs to the first carriage return or line feed, as DuckDB ends it (so a
+      // forbidden token hidden after `--x\r` is still scanned); the terminator itself is kept.
+      const offset = sql.slice(index).search(/[\r\n]/);
+      const end = offset === -1 ? sql.length : index + offset;
       if (keep) result += blank(sql.slice(index, end));
       index = end;
       continue;

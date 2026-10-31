@@ -15,6 +15,7 @@ from uuid import uuid4
 from midstream.config import ControlPlaneConfig, get_config
 from midstream.identity.providers import get_provider_settings
 from midstream.identity.secrets import get_identity_secrets
+from midstream.lakehouse.store import StoreSettings
 from midstream.models import SETTINGS_SCOPES, SettingFallback, SettingsChangeRequest
 from midstream.observation.progress import MEMBER_STATE_FRESHNESS_SECONDS
 from midstream.protection.secrets import get_protection_key
@@ -360,8 +361,28 @@ def _deployment_value(key: str, config: ControlPlaneConfig, runtime: Any) -> Any
         return storage.get("class") if isinstance(storage, dict) else None
     if key in ("heartbeat_interval", "upload_interval"):
         return getattr(runtime, key, None)
+    if key in _STORE_SETTINGS:
+        return _store_setting(key)
     value = getattr(config, key, None)
     return value
+
+
+#: Deployment settings that are the object stores' own (`StoreSettings`), by the field each reads.
+_STORE_SETTINGS = {
+    "storage_s3_endpoint": "s3_endpoint",
+    "storage_s3_region": "s3_region",
+    "storage_s3_path_style": "s3_path_style",
+    "storage_azure_endpoint": "azure_endpoint",
+}
+
+
+def _store_setting(key: str) -> Any:
+    """A `STORAGE_*` setting as this process's stores read it from the environment."""
+    try:
+        settings = StoreSettings.from_environment()
+    except ValueError as error:
+        return f"invalid: {error}"
+    return getattr(settings, _STORE_SETTINGS[key])
 
 
 def _describe_provider(provider: str) -> str:

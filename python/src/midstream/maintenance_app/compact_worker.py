@@ -15,8 +15,11 @@ each with its partition, as JSON.
 
 Nothing here touches the table: the outputs are only files until the maintenance app commits a
 `replace` snapshot naming them, so a worker killed at any point leaves the table exactly as it was
-(its uploaded outputs are orphans, removed by orphan cleanup). On Linux the worker asks to be killed
-when its parent dies, so it never outlives the maintenance member that started it.
+(its uploaded outputs are orphans, removed by orphan cleanup). Each output is uploaded create-only
+under a name with a fresh id, so an object already there when the store refuses the upload can only
+be this job's own write - one that landed before a retry of it was refused - and counts once its size
+is the file's (`upload_output`). On Linux the worker asks to be killed when its parent dies, so it
+never outlives the maintenance member that started it.
 
 The job file is the maintenance app's own, but the worker does not trust it with the filesystem: the work
 directory it names must lie inside the compaction work root, the job id must be one the planner
@@ -72,6 +75,29 @@ def confined_path(base: str | os.PathLike[str], name: str) -> Path:
     return Path(candidate)
 
 
+def upload_output(uri: str, local: str | os.PathLike[str]) -> None:
+    """Upload a finished output create-only to `uri`, a name with a fresh id no other file has.
+
+    The store's library retries a request whose answer it lost - S3's streamed PutObject, Azure's
+    block-list commit, GCS's upload under `if_generation_match=0` - and a retry of a write that landed
+    is refused as if another had won. Only this job's own write can be at such a name, so one of the
+    local file's size is the upload done, as `runtime_app/writer/upload.py` counts a seal's file; any
+    other object there fails the job.
+    """
+    from midstream.lakehouse.store import ABSENT, PreconditionFailedError, store_for
+
+    store = store_for(uri)
+    try:
+        store.put_file(uri, str(local), if_version=ABSENT)
+    except PreconditionFailedError as exc:
+        existing = store.head(uri)
+        size = os.path.getsize(local)
+        if existing is None:
+            raise RuntimeError(f"the create-only upload of {uri} was refused, yet no object is there") from exc
+        if existing.size != size:
+            raise RuntimeError(f"a different object already exists at {uri}: {existing.size} bytes, not this output's {size}") from exc
+
+
 def _die_with_parent() -> None:
     if not sys.platform.startswith("linux"):
         return
@@ -96,7 +122,7 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
     from pyiceberg.io.pyarrow import pyarrow_to_schema
 
     from midstream.lakehouse.files import compacted_file_uri, partition_text_of, protection_label_of
-    from midstream.lakehouse.gcs import parse_gcs_uri, shared_storage_client
+    from midstream.lakehouse.store import store_for
     from midstream.lakehouse.lifecycle import schema_from_json
     from midstream.lakehouse.maintenance import CompactionPlan
     from midstream.lakehouse.parquet import arrow_schema, project_batch
@@ -114,7 +140,6 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
     budget = int(job.get("memory_budget_bytes") or DEFAULT_MEMORY_BUDGET_BYTES)
     row_group_rows = int(job.get("row_group_rows") or DEFAULT_ROW_GROUP_ROWS)
     target_bytes = int(job.get("target_file_size_bytes") or DEFAULT_TARGET_FILE_SIZE_BYTES)
-    client = shared_storage_client()
     outputs: list[dict[str, Any]] = []
     chunk: list[Any] = []
     chunk_bytes = 0
@@ -183,8 +208,7 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
             unique=f"{plan.job_id[:16]}-{current['index']}-{uuid.uuid4().hex[:8]}",
             protection_label=current["label"],
         )
-        bucket_name, name = parse_gcs_uri(uri)
-        client.bucket(bucket_name).blob(name).upload_from_filename(str(current["local"]), if_generation_match=0)
+        upload_output(uri, current["local"])
         low, high = current["low"], current["high"]
         outputs.append(
             {
@@ -211,9 +235,8 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
             flush()
             close()
             partition, partition_key, label = item.partition, item.partition_key, item_label
-        bucket_name, name = parse_gcs_uri(item.path)
         local_input = confined_path(work_dir, f"input-{position}.parquet")
-        client.bucket(bucket_name).blob(name).download_to_filename(str(local_input))
+        store_for(item.path).get_to_file(item.path, str(local_input))
         with pq.ParquetFile(str(local_input)) as parquet:
             file_schema = pyarrow_to_schema(parquet.schema_arrow)
             for batch in parquet.iter_batches(batch_size=READ_BATCH_ROWS):

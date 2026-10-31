@@ -4,6 +4,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { reprotectCounts } from '../protection/protection';
+import { ENGINES, snippet, type Engine } from './connect';
 import { TABLE_PARAM, useSelectedTable } from '../tables/selectedTable';
 import { TablePicker } from '../tables/TablePicker';
 import { PageBody } from '@/components/AppShell';
@@ -26,6 +27,7 @@ import type {
   TableMetadataView,
   TablePartitionRow,
   TableSnapshotRow,
+  TableStorage,
 } from '@shared/types';
 
 /**
@@ -104,7 +106,7 @@ function TableDetail({
     );
   }
 
-  const { record, metadata, metadataError, connection } = tableQuery.data;
+  const { record, metadata, metadataError, connection, storage } = tableQuery.data;
   if (!record && !metadata) {
     return (
       <PageBody className="space-y-4">
@@ -140,7 +142,7 @@ function TableDetail({
         <PartitionsPanel metadata={metadata} />
         <PropertiesPanel record={record} metadata={metadata} />
       </div>
-      <ConnectPanel connection={connection} record={record} metadata={metadata} table={table} />
+      <ConnectPanel connection={connection} record={record} metadata={metadata} table={table} storage={storage} />
     </PageBody>
   );
 }
@@ -607,92 +609,20 @@ function PropertiesPanel({ record, metadata }: { record: CpTable | null; metadat
   );
 }
 
-type Engine = 'duckdb' | 'duckdb-path' | 'pyiceberg' | 'spark' | 'trino';
-
-const ENGINES: Array<{ value: Engine; label: string }> = [
-  { value: 'duckdb', label: 'DuckDB' },
-  { value: 'pyiceberg', label: 'PyIceberg' },
-  { value: 'spark', label: 'Spark' },
-  { value: 'trino', label: 'Trino' },
-  { value: 'duckdb-path', label: 'By path' },
-];
-
-/**
- * How each engine reads the table through a catalog, which attaches as `lake` (handbook 20).
- *
- * PyIceberg and Spark read nested namespaces, so they attach the federated catalog and name the
- * table in full, `lake.<domain>.<dataset>.<table>`: one catalog for every domain. DuckDB and Trino
- * read one level of namespaces, so they attach the domain's own catalog, one per domain, and name
- * the table `lake.<dataset>.<table>`.
- */
-export function snippet(engine: Engine, connection: CatalogConnection, namespace: string, table: string, location: string): string {
-  const federated = `${connection.domain}.${namespace}`;
-  switch (engine) {
-    case 'duckdb':
-      return [
-        'INSTALL iceberg; LOAD iceberg;',
-        "CREATE SECRET midstream (TYPE ICEBERG, TOKEN '<access token>');",
-        '-- DuckDB reads the data files itself, with a GCS HMAC key that can read the bucket:',
-        "CREATE SECRET gcs (TYPE GCS, KEY_ID '<HMAC key id>', SECRET '<HMAC secret>');",
-        `-- One level of namespaces: this domain's own catalog; attach another domain's beside it.`,
-        `ATTACH 'warehouse' AS lake (TYPE ICEBERG, SECRET midstream, ENDPOINT '${connection.uri}');`,
-        '',
-        `SELECT * FROM lake.${namespace}.${table} LIMIT 10;`,
-      ].join('\n');
-    case 'pyiceberg':
-      return [
-        'from pyiceberg.catalog.rest import RestCatalog',
-        '',
-        '# Every domain in one catalog. Data files are read with your Google credentials (ADC).',
-        `catalog = RestCatalog("lake", uri="${connection.federatedUri}", token="<access token>")`,
-        `table = catalog.load_table("${federated}.${table}")`,
-        'rows = table.scan(row_filter="_kafka_timestamp >= \'2026-01-01T00:00:00+00:00\'").to_arrow()',
-      ].join('\n');
-    case 'spark':
-      return [
-        '# Every domain in one catalog: tables are lake.<domain>.<dataset>.<table>.',
-        'spark.sql.catalog.lake=org.apache.iceberg.spark.SparkCatalog',
-        'spark.sql.catalog.lake.type=rest',
-        `spark.sql.catalog.lake.uri=${connection.federatedUri}`,
-        'spark.sql.catalog.lake.token=<access token>',
-        'spark.sql.catalog.lake.io-impl=org.apache.iceberg.gcp.gcs.GCSFileIO',
-        '',
-        `SELECT * FROM lake.${federated}.${table} LIMIT 10;`,
-      ].join('\n');
-    case 'trino':
-      return [
-        `# etc/catalog/lake.properties: this domain's own catalog, one level of namespaces.`,
-        'connector.name=iceberg',
-        'iceberg.catalog.type=rest',
-        `iceberg.rest-catalog.uri=${connection.uri}`,
-        'iceberg.rest-catalog.security=OAUTH2',
-        'iceberg.rest-catalog.oauth2.token=<access token>',
-        'fs.native-gcs.enabled=true',
-        '',
-        `SELECT * FROM lake.${namespace}."${table}" LIMIT 10;`,
-      ].join('\n');
-    case 'duckdb-path':
-      return [
-        '-- No catalog: read the newest snapshot straight from object storage.',
-        'INSTALL iceberg; LOAD iceberg;',
-        "CREATE SECRET gcs (TYPE GCS, KEY_ID '<HMAC key id>', SECRET '<HMAC secret>');",
-        '',
-        `SELECT count(*) FROM iceberg_scan('${location}');`,
-      ].join('\n');
-  }
-}
-
 function ConnectPanel({
   connection,
   record,
   metadata,
   table,
+  storage,
 }: {
   connection: CatalogConnection | null;
   record: CpTable | null;
   metadata: TableMetadataView | null;
   /** The table, in its dataset: its namespace on the catalog. */
   table: CpTableSpec;
+  /** The console's storage profile for its location: what the data-file half of a snippet says. */
+  storage: TableStorage | null;
 }): ReactNode {
   const { can } = useAuth();
   const [engine, setEngine] = useState<Engine>('duckdb');
@@ -700,7 +630,7 @@ function ConnectPanel({
   // The catalog lists a dataset's tables to those who may read them through it.
   if (!can('catalog.read', table.dataset_id) || !connection) return null;
   const location = metadata?.location ?? record?.location ?? '<table location>';
-  const text = snippet(engine, connection, table.dataset, table.name, location);
+  const text = snippet(engine, connection, table.dataset, table.name, location, storage);
   return (
     <Panel className="overflow-hidden">
       <PanelHeader
@@ -721,6 +651,12 @@ function ConnectPanel({
       {!connection.enabled ? (
         <p className="border-b border-[var(--color-line)] px-5 py-2.5 text-[12px] text-[var(--color-phase-paused)]">
           The REST catalog is turned off (Settings › Iceberg catalog); engines can still read the table by path.
+        </p>
+      ) : null}
+      {storage === null ? (
+        <p className="border-b border-[var(--color-line)] px-5 py-2.5 text-[12px] text-[var(--color-ink-muted)]">
+          This console has no storage profile for the table’s location, so the snippet names no endpoint, region or account
+          of its own: add your storage’s where it needs them.
         </p>
       ) : null}
       {!connection.configured ? (

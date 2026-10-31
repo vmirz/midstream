@@ -19,11 +19,11 @@ A settings change therefore applies from the next event on. See [17 — Settings
 if   step == "start_discovery":       _process_start_discovery(...)
 elif step == "discover_tables":       _process_discover_tables(...)        # topics an update added (§7.9a)
 elif step == "await_runtime_drained": _process_await_runtime_drained(...)  # requires kafka_admin_client (§7.9a)
-elif step == "create_table":          _process_create_table(...)           # GCS: metadata v0 + pointer
+elif step == "create_table":          _process_create_table(...)           # storage: metadata v0 + pointer
 elif step == "apply_runtime":         _process_apply_runtime(...)          # requires kaspr_app_client
 elif step == "delete_runtime":        _process_delete_runtime(...)         # requires kaspr_app_client
 elif step == "cleanup_runtime_kafka": _process_cleanup_runtime_kafka(...)  # requires kafka_admin_client
-elif step == "drop_table":            _process_drop_table(...)             # GCS: the table's objects
+elif step == "drop_table":            _process_drop_table(...)             # storage: the table's objects
 elif step == "purge_materialization_records":
                                       _process_purge_materialization_records(...)
 else:                                 follow_up = None
@@ -55,7 +55,7 @@ event loop.
   `consumer_group_state_async`, `delete_async`, `list_topics_async`, …).
   Each adapter runs its asyncio client on a loop of its own, on its own thread
   (`utils/background_loop.py`), so awaiting leaves the agent's loop free.
-- `create_table` and `drop_table` run their GCS calls on the one-thread table-lifecycle pool
+- `create_table` and `drop_table` run their storage calls on the one-thread table-lifecycle pool
   (`_TABLE_EXECUTOR`) or a worker thread (§7.3, §7.10).
 - `purge_materialization_records` touches only the table and never gives up the loop.
 
@@ -136,10 +136,11 @@ that (§7.5). A table drop retries every failed pass, timeouts included (§7.10)
 - `last_error = <error>`
 - operation record with `status: "failed"` and `error`
 
-Three failures carry a reason of their own instead of `<step>_failed`: `start_discovery` finding a
+Four failures carry a reason of their own instead of `<step>_failed`: `start_discovery` finding a
 source topic the cluster's metadata does not list (`SourceTopicMissingError`,
-`source_topic_missing`, §7.2), `create_table` finding another materialization's table at a table's
-location (`TableLocationInUseError`, `table_location_in_use`), and `apply_runtime` for a
+`source_topic_missing`, §7.2), `create_table` finding a destination that cannot hold a table
+(`InvalidTableLocationError`, `invalid_destination`, §7.3) or another materialization's table at a
+table's location (`TableLocationInUseError`, `table_location_in_use`), and `apply_runtime` for a
 materialization with no table record at all, one of whose tables has no discovered schema either
 (`TableMissingError`, `table_missing`): delete it and create it again. A table with a discovered
 schema but no record — a create that did not finish — is created by the apply instead, and a table
@@ -270,25 +271,33 @@ release.
 ### `create_table`
 
 Trigger: discovery follow-up, or an `apply_runtime` that finds a table missing. Code:
-`_plan_create_table`, `_create_table`, `_record_create_table`; the agent runs the GCS part on
+`_plan_create_table`, `_create_table`, `_record_create_table`; the agent runs the storage part on
 `_TABLE_EXECUTOR`, a pool of one thread of its own. **One table a pass**: the step creates the first
 table, in the topics' order, that has no record, and queues itself again — same `work_id` and
 `dedupe_key` — until every table exists, so the step stays bounded however many topics there are.
 
 1. **Plan.** Drop the step (log `skipped`, `materialization_deleting`) if the materialization is
    being deleted. Resolve each table's identity: namespace the table's dataset, name the table's,
-   location `<destination_uri>/<storage_prefix>/<materialization_id>/<table>` (11 §11.1). An unusable destination raises `InvalidTableLocationError` (`invalid_destination`)
-   before any I/O. A table whose record has that location was created by an earlier pass, or the pass
-   was redelivered: skip it. With every table there, log `table_already_created` and go on to the
-   apply. The table's schema projection must exist
+   location `<destination_uri>/<storage_prefix>/<materialization_id>/<table>` (11 §11.1). A
+   destination that cannot hold a table — its location no object URI of a known scheme, or one the
+   drop's guard would not recognise (11 §11.7) — raises `InvalidTableLocationError`
+   (`invalid_destination`) before any I/O. A table whose record has that location was created by an
+   earlier pass, or the pass was redelivered: skip it. With every table there, log
+   `table_already_created` and go on to the apply. The table's schema projection must exist
    (`ValueError("create_table requires the discovered schema of table <t>")`).
 2. **Create** (`lakehouse/lifecycle.py::create_materializer_table`): metadata version 0 — schema 0
    with explicit field ids, the partition spec, the sort order, the table properties
    (`materializer.*`, the fork map, `materializer.protection` — schema 0's fields classified by the
    materialization's policy at its revision, with the key's id (`_initial_protection_json`, 22 §22.6),
    none for a materialization from before data protection — snapshot retention, the write and commit
-   properties) — then the pointer, with `if_generation_match=0` (11 §11.7). A pointer of the same materialization means
-   done; another materialization's pointer at the location fails the step `table_location_in_use`.
+   properties) — written create-only, then the pointer, create-only too, both through the store of
+   the location's scheme (11 §11.1a, §11.7). A pointer of the same materialization means done;
+   another materialization's pointer at the location fails the step `table_location_in_use`. A
+   pointer write the store refused while there is still no pointer — a conflicting write may yet
+   land — raises `CommitStateUnknownException`, and any other storage failure (credentials the
+   destination's backend refuses, a bucket or container that does not exist) the store's error,
+   naming the object and the backend's answer: either fails the step `create_table_failed`, and
+   `POST …/resume` creates what is missing, finding the table if the write landed.
 3. **Record**, on the re-read records: the table record (`materialization-table:<id>:<table>`,
    05 §5.12) and the projection with its metadata location; status `phase_reason=table_created`,
    `phase_message="Iceberg table sales.orders created (1 of 3)"`; protocol event
@@ -974,8 +983,9 @@ A table can hold hundreds of thousands of objects. The drop is a chain of passes
 (`services/workflow.py::_process_drop_table`, `storage/objects.py::drop_table_objects_pass`):
 
 1. On the loop: read the materialization, and go straight to the purge if this `work_id`'s
-   operation record is already `applied`. A location that is not a `gs://` URI raises `ValueError`
-   here, before any request. If the table's record says the maintenance app runs a job on it
+   operation record is already `applied`. A location that is no object URI of a known scheme, or not
+   the table directory of its materialization (the guard of 11 §11.7), raises `ValueError` here,
+   before any request. If the table's record says the maintenance app runs a job on it
    (`maintenance_job`), the pass waits instead: it records `maintenance_wait` and checks again 15 s
    later, for up to 5 minutes (`MAINTENANCE_WAIT_SECONDS`), then forgets the job on the record
    (`control_plane_drop_table_maintenance_wait_expired`) and drops anyway. The control plane
@@ -988,13 +998,16 @@ A table can hold hundreds of thousands of objects. The drop is a chain of passes
    the full time — and, the job staying recorded, again before every later pass, since each pass
    records the drop's progress afresh.
 2. On the `destination-cleanup` thread: one pass empties `data/`, then `metadata/` but for the
-   pointer, then deletes the pointer — so the table stays loadable until its last pass. It deletes
-   what it lists in GCS batch requests of 100 calls (`DELETE_BATCH_SIZE`, the JSON API's limit),
-   at most `CLEANUP_PASS_MAX_BATCHED_OBJECTS` (10,000 — ten listing pages, read 100 at a time, so
-   memory holds one page) for about `CLEANUP_PASS_MAX_SECONDS` (10 s, checked between batch
-   requests); the time budget is what usually ends a pass. A client that cannot batch — only the
-   test doubles — deletes one object per request and is held to `CLEANUP_PASS_MAX_OBJECTS` (1,000).
-   The result is complete only once the pointer is gone.
+   pointer, then deletes the pointer — so the table stays loadable until its last pass. It lists
+   through the store of the table's location, lazily, so memory holds about one listing page, and
+   hands what it lists to the store's `delete_many`, `delete_batch_size` objects at a time: what one
+   request of the backend deletes (11 §11.1a) — a GCS JSON API batch of 100, an S3 `DeleteObjects`
+   of 1,000, an Azure blob batch of 256, or 1 for a store that deletes one object per request (GCS
+   against an emulator). A pass makes at most `CLEANUP_PASS_MAX_REQUESTS` (100) requests' worth —
+   100 × `delete_batch_size` objects, never fewer than `CLEANUP_PASS_MAX_OBJECTS` (1,000): 10,000 on
+   GCS, 100,000 on S3, 25,600 on Azure — for about `CLEANUP_PASS_MAX_SECONDS` (10 s, checked between
+   requests); the time budget is what usually ends a pass. The result is complete only once the
+   pointer is gone.
 3. On the loop: re-read the materialization — if a purge ran meanwhile, write nothing and stop —
    then update the operation record that every pass of the drop shares:
 
@@ -1008,40 +1021,47 @@ A pass that succeeds starts the retry count again. The fifth failure in a row ra
 `RuntimeError("dropping the table still failing after 4 retries: …")`, which records the step as
 `failed` (§7.1). Objects already deleted stay deleted.
 
-**Failed deletes.** google-cloud-storage retries no call in a batch and reports each call's status
-only in the batch's response (`raise_exception=False`), so the pass reads them itself:
+**Failed deletes.** `delete_many` retries nothing and reports every object's outcome — from a GCS
+batch each call's answer, from an S3 `DeleteObjects` the keys its `Errors` name (each code taken for
+its HTTP status), from an Azure blob batch each delete's answer; a request that fails as a whole fails
+every delete in it — so the pass decides itself:
 
-| A call's answer | Meaning | The pass |
+| An object's outcome | Meaning | The pass |
 |---|---|---|
-| 2xx or 404 | Gone (404: already) | Counts it in `deleted_count` |
-| 408, 429, 5xx — or the batch request gets no answer | GCS is throttling or failing | Retries those calls after 1, 2 and 4 s (`BATCH_RETRY_DELAYS_SECONDS`), never past its deadline; if they still fail, stops there |
-| Anything else, such as 403 for an object under a hold or retention policy | GCS refuses that object | Leaves it and goes on |
+| Deleted, or already missing (the object's 404, S3's `NoSuchKey`) | Gone | Counts it in `deleted_count` |
+| No answer, 408, 429 or a 5xx | The store is throttling or failing | Retries those objects after 1, 2 and 4 s (`BATCH_RETRY_DELAYS_SECONDS`), never past its deadline; if they still fail, stops there |
+| Anything else for that object, such as 403 for an object under a hold or retention policy | The store refuses that object | Leaves it and goes on |
+| Anything else for a whole request: a refused batch, a `DeleteObjects` turned away | Every request like it would fare the same | Stops there |
 
-A pass that left objects is not complete, so the next one lists them again, and logs
-`destination cleanup pass left objects behind: could not delete N objects from gs://<bucket>
-(<status>: <count>); <first object>: <GCS message>` as a warning. A pass that deleted nothing —
-every delete it tried failed, or its first listing did — raises instead (`DestinationDeleteError`
-with that message), which is the "Raised" row above. So a cleanup deletes all it can and fails only
-on what GCS keeps refusing. An error after a pass has deleted something ends the pass with its
-count rather than losing it.
+An Azure account whose service refuses blob batches as a feature it does not offer has its deletes
+sent one per request from then on, which is no failure. A pass that left objects is not complete, so
+the next one lists them again, and logs `destination cleanup pass left objects behind: could not
+delete N objects from <root> (<status>: <count>); <first object>: <message>` as a warning, the root
+being `gs://<bucket>`, `s3://<bucket>` or `abfss://<container>@<account>.dfs.core.windows.net`. A
+pass that deleted nothing raises instead — `DestinationDeleteError` with that message when every
+delete it tried failed, the store's own error when its first listing did — which is the "Raised" row
+above. So a cleanup deletes all it can and fails only on what the store keeps refusing. An error
+after a pass has deleted something ends the pass with its count rather than losing it.
 
 Deleted objects drop out of the listing, so a pass needs no cursor: a redelivered or duplicated
 pass lists what remains and deletes that. Passes travel through `materialization-work` like any
 other step, so other work runs between them and waits at most one pass.
 
-**How long it takes.** One listing request per 1,000 objects and one batch request per 100: about
-11 requests per 1,000 objects, where one `DELETE` per object took 1,001. The time depends on how
-long GCS takes to answer a batch of 100 deletes, which it does not document. Estimates, from the
-real client against a fake GCS JSON API:
+**How long it takes.** On GCS, one listing request per 1,000 objects and one batch request per 100:
+about 11 requests per 1,000 objects, where one `DELETE` per object would take 1,001. On S3, one
+listing request and one `DeleteObjects` per 1,000: about 2. On Azure, one blob batch per 256 besides
+the listing. The time depends on how long the store takes to answer one delete request, which GCS does
+not document for its batches. Estimates for GCS, from the real client against a fake GCS JSON API:
 
 | A batch of 100 is answered in | Objects per second | A million objects |
 |---|---|---|
 | ~60 ms: 30 ms a request, the calls run together (measured on the fake) | ~1,700 | ~10 minutes |
 | ~1 s: the calls run one after another, 10 ms each (measured on the fake) | ~70 | ~4 hours |
-| Before batching: one request per object, 20–50 ms each | 20–50 | 6–14 hours |
+| One request per object, 20–50 ms each | 20–50 | 6–14 hours |
 
-GCS does not document whether a batch's calls run together or one after another, so plan on the
-slower row until a real drop shows otherwise: each `control_plane_drop_table_progress` carries
+GCS does not document whether a batch's calls run together or one after another, and S3's and
+Azure's batch deletes have not been timed on the clouds themselves, so plan on the slower rows until a
+real drop shows otherwise: each `control_plane_drop_table_progress` carries
 `pass_deleted_count` and `duration_ms`, whose ratio is the rate. The materialization reads `deleted`
 throughout and leaves `GET /materializations` when the purge runs. Follow it in the protocol log:
 `control_plane_drop_table_progress` after each pass (`deleted_count` so far, `passes`),
@@ -1080,7 +1100,8 @@ attempt succeeded.
 | `x-scheduler-action: REPLACE` | all scheduled work | duplicate delayed deliveries |
 | `desired_phase == "deleted"` check | cleanup | double cleanup |
 | A table record at the same location | `create_table` | a redelivered create |
-| `if_generation_match=0` on the pointer | `create_table` | two creates of one table; another materialization's table at the location |
+| A create-only write of the pointer, read back when refused | `create_table` | two creates of one table; another materialization's table at the location; a write whose answer was lost |
+| The pointer read back after any failed pointer write | every commit (`PointerCatalog.commit_table`, 11 §11.2) | a landed write whose retry was refused taken for a lost race; a staged metadata file deleted while the pointer names it |
 | Shared `in_progress` record, re-listing what remains | table drop passes | redelivered, duplicated or interrupted passes |
 | Recent `in_progress` drop record | `find_purge_candidates` | the retention sweep purging a drop's records mid-way |
 | Status re-read, newer `measured_at` wins | `record_consumer_lag` | a lag saved over a newer one, after a purge, or over a heartbeat written since the measurement |

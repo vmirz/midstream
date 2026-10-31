@@ -17,6 +17,9 @@
     "test": "node --test 'server/**/*.test.ts' 'src/**/*.test.ts' 'shared/**/*.test.ts'"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1160.0",
+    "@azure/identity": "4.14.1",
+    "@azure/storage-blob": "12.34.0",
     "@codemirror/lang-sql": "^6.10.0",
     "@codemirror/lint": "^6.9.0",
     "@duckdb/node-api": "1.5.5-r.4",

@@ -22,6 +22,13 @@ classifiers = [
 dependencies = [
 	"jinja2>=3.1.0",
 	"google-cloud-storage>=2.18.0",
+	# The S3 store (lakehouse/store/s3.py): conditional PutObject (IfNoneMatch, IfMatch) and the default
+	# integrity checksums it keeps are both in 1.36.
+	"boto3>=1.36",
+	# The Azure store (lakehouse/store/azure.py): from 12.31 a chunked upload names its blocks by uuid4;
+	# up to 12.30 the ids came from offsets, and racing create-only chunked uploads committed mixed content.
+	"azure-storage-blob>=12.31.0,<13",
+	"azure-identity>=1.19",
 	"kubernetes-asyncio>=33.1.0",
 	"pyarrow>=18.1.0",
 	# The minor is pinned: the committer uses documented-but-internal update APIs (lakehouse/catalog.py

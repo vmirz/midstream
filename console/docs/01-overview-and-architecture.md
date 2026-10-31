@@ -44,7 +44,7 @@ and giving it its registry of domains (`CONSOLE_DOMAINS_FILE`, 03 §3.3).
 └───────────────────────────────┘         │        │                         │
                                           │        ├─ LiveStore              │
                                           │        ├─ Iceberg reader         │
-                                          │        └─ DuckDB + GCS           │
+                                          │        └─ DuckDB + storage       │
                                           └────────┬─────────────────────────┘
                                                    │ HTTP
                                           ┌────────▼─────────────────────────┐
@@ -55,7 +55,7 @@ and giving it its registry of domains (`CONSOLE_DOMAINS_FILE`, 03 §3.3).
                                           └────────┬─────────────────────────┘
                                                    │
                                           ┌────────▼─────────────────────────┐
-                                          │ Iceberg tables in GCS (gs://)    │
+                                          │ Iceberg tables in GCS, S3, Azure │
                                           │ read directly by the console     │
                                           └──────────────────────────────────┘
 ```
@@ -130,9 +130,9 @@ for four reasons.
 | HTTP server | Fastify 5 | Fast, first-class async, plugin ecosystem for static and CORS |
 | Validation | Zod 4 | Request-body validation at the trust boundary |
 | Logging | Pino 10 | Structured JSON, typed as `FastifyBaseLogger` so Fastify keeps its default generics |
-| Query engine | `@duckdb/node-api` 1.5 | Reads Parquet by field id natively; can read `gs://` directly with httpfs; sandboxes a statement with `enable_external_access` |
+| Query engine | `@duckdb/node-api` 1.5 | Reads Parquet by field id natively; reads `gs://`, `s3://` and Azure in place with httpfs and azure and scoped secrets; sandboxes a statement with `enable_external_access` |
 | Iceberg metadata | the console's own reader (`server/iceberg/`) with `avsc` 5 | Pointer, metadata and Avro manifests, per snapshot, with exact 64-bit ids |
-| Object storage | `@google-cloud/storage` 8 | ADC-based download |
+| Object storage | `@google-cloud/storage` 8, `@aws-sdk/client-s3` 3, `@azure/storage-blob` 12 with `@azure/identity` 4 | One storage profile per destination prefix (`server/storage/`): metadata objects and cached files through each SDK |
 | UI | React 19 + Vite 8 | Current stable; Vite gives a fast dev loop and small production output |
 | Routing | React Router 7 | URL-addressable tabs and deep links |
 | Server state | TanStack Query 5 | On-demand resources (schema, dataset, query results). Live data does **not** use it — it comes over SSE |
@@ -164,7 +164,7 @@ console/
 ├── shared/types.ts      Wire contracts. Imported by both halves. Must stay dependency-free.
 ├── server/              Node BFF. No React, no DOM.
 │   ├── main.ts          Composition root — the only file that wires everything together.
-│   ├── config.ts        The only place that reads process.env.
+│   ├── config.ts        The only place that reads process.env, but for the registries' credentials and UV_THREADPOOL_SIZE.
 │   ├── errors.ts        The only error type crossing the HTTP boundary.
 │   ├── domains/         The registry: one Domain per control plane, its client, live store and tail target.
 │   ├── controlPlane/    Outbound: a domain's control plane.
@@ -172,7 +172,8 @@ console/
 │   ├── live/            Stateful: polling, snapshots, derived metrics, subscriptions, per domain.
 │   ├── iceberg/         Outbound: reading a table's pointer, metadata, manifests and snapshots.
 │   ├── schema/          Schema comparison.
-│   ├── data/            Outbound: object storage and DuckDB.
+│   ├── storage/         Outbound: object storage — the storage profiles, each backend's SDK, the cache.
+│   ├── data/            DuckDB and its sandbox, where each data file is read from, the snapshot catalog, logical columns, the SQL guard, the live tail's client.
 │   ├── runs/            Query execution: browse and statement runs, pages, exports.
 │   └── routes/          Inbound: HTTP surface. Thin — validation and delegation only.
 └── src/                 React SPA. No Node APIs.
@@ -181,9 +182,10 @@ console/
     └── features/        Screens. Compose components; own their local state.
 ```
 
-The layering rule is one-directional: `routes → services (live/schema/runs/data) → outbound clients (iceberg, controlPlane)`.
-Routes never talk to `@google-cloud/storage` or `fetch` the control plane directly, and services
-never import from `routes/`.
+The layering rule is one-directional: `routes → services (live/schema/runs/data) → outbound clients (iceberg, storage, controlPlane)`.
+Routes never talk to a storage SDK or `fetch` the control plane directly — only `storage/` imports
+`@google-cloud/storage`, `@aws-sdk/client-s3`, `@azure/storage-blob` and `@azure/identity` — and
+services never import from `routes/`.
 
 ## 1.8 What the console is not
 
@@ -194,7 +196,8 @@ never import from `routes/`.
 - **Not a source of truth.** Every piece of state it displays originates in the control plane or
   the tables themselves. It writes nothing to either; **Run now** on the Table tab asks the
   control plane, which hands the job to its maintenance app.
-- **Not multi-cloud.** The data explorer is GCS-only, matching the runtime.
+- **Not a credentials broker.** It reads each destination with the storage profile that covers it
+  (GCS, S3 or Azure) and hands nobody its credentials; a table outside every profile is not read.
 - **Not a general SQL workbench.** Queries read tables by their full names, in any domain the person
   may query, each at its snapshot, restricted to read-only statements, in a sandbox. Engines on the
   federated Iceberg REST catalog (`/catalog`) are the general workbench.

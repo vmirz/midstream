@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { SERVICE } from '../controlPlane/client.ts';
 import type { Domain } from '../domains/domain.ts';
 import { authOf, domainOf, permit, requireOnDatasets } from '../auth/guard.ts';
-import { dataAccessMode } from '../config.ts';
+import { config } from '../config.ts';
 import { unreadableTable } from '../data/catalog.ts';
 import { badRequest } from '../errors.ts';
 import { partitionGranularity } from '../iceberg/metadata.ts';
@@ -140,7 +140,7 @@ async function schemaTimeline(id: string, table: string, summary: TableSummary |
   });
   const location = summary?.location ?? null;
   if (!location) return unavailable('the table has not been created yet');
-  if (dataAccessMode() === 'disabled') return unavailable('data access is turned off for this console (Settings › Data explorer)');
+  if (!config.dataAccessEnabled) return unavailable('data access is turned off for this console (Settings › Data explorer)');
   try {
     const loaded = await loadTable(location);
     if (!loaded) return unavailable('the table has not been created yet');

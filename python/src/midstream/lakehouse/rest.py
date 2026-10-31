@@ -1,7 +1,7 @@
 """The Iceberg REST catalog protocol, as the control plane serves it (spec §5.6).
 
 Pure protocol: the shapes of responses and errors, and committing a `CommitTableRequest` through
-the GCS-pointer catalog. `web/catalog.py` serves it. What the facade offers is deliberately small:
+the pointer catalog. `web/catalog.py` serves it. What the facade offers is deliberately small:
 every dataset is a namespace whose tables can be listed, loaded and - with `catalog.write` -
 committed to; tables are created and dropped by choosing and removing materializations' topics, so
 those endpoints, and creating namespaces and multi-table transactions, answer 501.
@@ -16,7 +16,7 @@ from pyiceberg.exceptions import CommitFailedException, CommitStateUnknownExcept
 from pyiceberg.table import CommitTableRequest, Table, TableProperties
 from pyiceberg.table.update import SetLocationUpdate, SetPropertiesUpdate
 
-from midstream.lakehouse.catalog import ForeignTableError, GcsPointerCatalog
+from midstream.lakehouse.catalog import ForeignTableError, PointerCatalog
 
 #: Every endpoint the facade answers, as `GET /v1/config` lists them. Clients use the list to tell
 #: what they may call; anything else they do not try.
@@ -94,7 +94,7 @@ def load_table_result(table: Table) -> dict[str, Any]:
     return {"metadata-location": table.metadata_location, "metadata": metadata_json(table), "config": {}}
 
 
-def commit(catalog: GcsPointerCatalog, identifier: tuple[str, str], body: Any) -> dict[str, Any]:
+def commit(catalog: PointerCatalog, identifier: tuple[str, str], body: Any) -> dict[str, Any]:
     """Apply a `CommitTableRequest` with the pointer's compare-and-swap; 409 when it lost a race.
 
     The runtime's committer refreshes before every commit, so an external commit is simply the

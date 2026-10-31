@@ -36,8 +36,10 @@ kaspr:
               - key: topology.kubernetes.io/zone
                 operator: In
                 values: [europe-west1-b]
-gcs:
-  credentialsSecret: midstream-gcs
+# The lake on GCS, with a service-account key from a Secret for the apps and the runtimes.
+storage:
+  gcs:
+    credentialsSecret: midstream-gcs
 auth:
   sso:
     entra:
@@ -109,7 +111,13 @@ console:
       effect: NoSchedule
   persistence:
     enabled: true
-  hmacSecret: midstream-gcs-hmac
+  # The console reads Domain A's lake with read-only credentials of its own: an HMAC key for DuckDB's
+  # scans and a service-account key for the metadata.
+  storage:
+    - name: lake
+      scope: gs://example-lake/
+      kind: gcs
+      credentialsSecret: midstream-lake-reader
   env:
     CONSOLE_DUCKDB_MEMORY_LIMIT: 2GB
 route:

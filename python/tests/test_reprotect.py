@@ -18,9 +18,9 @@ from lakehouse_support import LakeFixture  # noqa: E402
 
 from midstream.lakehouse.commits import commit_protection, commit_schema, fork_map_of  # noqa: E402
 from midstream.lakehouse.files import build_data_file, protection_label_of, read_parquet_footer  # noqa: E402
-from midstream.lakehouse.gcs import delete_object, set_shared_storage_client  # noqa: E402
 from midstream.lakehouse.lifecycle import schema_to_json  # noqa: E402
 from midstream.lakehouse.maintenance import commit_reprotect, live_data_files, purge_before  # noqa: E402
+from midstream.lakehouse.store import PreconditionFailedError  # noqa: E402
 from midstream.maintenance_app.reprotect_worker import run as run_reprotect  # noqa: E402
 from midstream.protection.mask import hash_text  # noqa: E402
 from midstream.protection.secrets import protection_key  # noqa: E402
@@ -285,8 +285,8 @@ class RewriteTests(unittest.TestCase):
     def setUp(self) -> None:
         self.table = ReprotectTable(PLAIN_SEED)
         self.addCleanup(self.table.close)
-        set_shared_storage_client(self.table.lake.client)
-        self.addCleanup(set_shared_storage_client, None)
+        # The reprotect worker finds its store by URI, as in the maintenance app.
+        self.table.lake.install()
         work = tempfile.TemporaryDirectory()
         self.addCleanup(work.cleanup)
         self.work = work.name
@@ -319,7 +319,7 @@ class RewriteTests(unittest.TestCase):
         inputs = {item.path: item for item in plan.inputs}
         rewritten = []
         for output in result["outputs"]:
-            footer, size = read_parquet_footer(self.table.lake.client, output["uri"])
+            footer, size = read_parquet_footer(self.table.lake.store, output["uri"])
             data_file = build_data_file(
                 table.metadata, file_path=output["uri"], file_size=size, parquet_metadata=footer, granularity="day", partition=Record(*output["partition"])
             )
@@ -420,19 +420,60 @@ class RewriteTests(unittest.TestCase):
         result = purge_before(
             self.table.load,
             snapshot_id,
-            client=self.table.lake.client,
+            store=store,
             now=datetime.now(tz=UTC),
             orphan_min_age_hours=24,
-            delete=lambda uri: delete_object(self.table.lake.client, uri),
+            delete=store.delete,
         )
         table = self.table.load()
         self.assertEqual([snapshot_id], [item.snapshot_id for item in table.metadata.snapshots])
         self.assertEqual(2, result.expired)
         for path in replaced:
-            self.assertNotIn(tuple(path.removeprefix("gs://").split("/", 1)), store.objects, f"{path} is still in the bucket")
+            self.assertNotIn(path, store.names(), f"{path} is still in the bucket")
         self.assertGreaterEqual(result.deleted, len(replaced))
         self.assertEqual(0, result.failed)
         self.assertEqual([h("jane1@example.com"), h("jane2@example.com")], [row["email"] for row in self.rows()])
+
+    def test_an_output_whose_first_upload_landed_before_its_retry_was_refused_counts(self) -> None:
+        # The store's library lost the answer to a create-only upload and sent it again: the first
+        # landed, so the retry is refused. Only this job's own write can be at an output's fresh name.
+        self.table.write(plain_record(1), label=(0,))
+        self.table.write(plain_record(2), label=(0,))
+        self.table.edit(ProtectionPolicy({"email": "hash"}), revision=1)
+        store = self.table.lake.store
+        upload = store.put_file
+        refused: list[str] = []
+
+        def landed_then_refused(uri, path, **kwargs):
+            upload(uri, path, **kwargs)
+            refused.append(uri)
+            raise PreconditionFailedError(f"{uri}: the object already exists", uri=uri)
+
+        with patch.object(store, "put_file", landed_then_refused):
+            (_, result, snapshot_id), _ = self.reprotect()
+        self.assertEqual([output["uri"] for output in result["outputs"]], refused)
+        self.assertEqual(2, len(refused))
+        self.assertEqual(snapshot_id, self.table.load().metadata.current_snapshot_id)
+        self.assertEqual([h("jane1@example.com"), h("jane2@example.com")], [row["email"] for row in self.rows()])
+
+    def test_an_output_name_that_holds_another_object_fails_the_job(self) -> None:
+        self.table.write(plain_record(1), label=(0,))
+        self.table.edit(ProtectionPolicy({"email": "hash"}), revision=1)
+        store = self.table.lake.store
+        for name, stage, refusal in (
+            ("another object", lambda uri: store.put(uri, b"not this output"), "a different object already exists at .*: 15 bytes, not this output's"),
+            ("nothing", lambda uri: None, "was refused, yet no object is there"),
+        ):
+            with self.subTest(found=name):
+
+                def refused(uri, path, **kwargs):
+                    stage(uri)
+                    raise PreconditionFailedError(f"{uri}: the object already exists", uri=uri)
+
+                with patch.object(store, "put_file", refused):
+                    with self.assertRaisesRegex(RuntimeError, refusal):
+                        self.reprotect()
+        self.assertEqual(["jane1@example.com"], [row["email"] for row in self.rows()], "nothing was committed")
 
     def test_a_key_other_than_the_tables_is_refused(self) -> None:
         self.table.write(plain_record(1), label=(0,))

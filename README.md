@@ -2,9 +2,10 @@
 
 Midstream is a platform for running streaming applications on Apache Kafka, built on
 [Kaspr](https://kaspr.dev). Its first feature is **materialization**: it continuously turns Kafka
-topics into Apache Iceberg tables in object storage, exactly once, with schemas that evolve by
-themselves, an Iceberg REST catalog any engine can attach, accounts and permissions, and a web
-console that reads the tables directly and follows new records live.
+topics into Apache Iceberg tables in object storage — Google Cloud Storage, Amazon S3 or an
+S3-compatible server, or Azure Blob Storage — exactly once, with schemas that evolve by themselves,
+an Iceberg REST catalog any engine can attach, accounts and permissions, and a web console that
+reads the tables directly and follows new records live.
 
 Any number of Midstream deployments — **domains**, one per cluster or team — share one console: one
 URL with a page per domain (`/d/<domain>`) and pages across all of them, search, SQL that joins

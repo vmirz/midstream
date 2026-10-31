@@ -1,7 +1,7 @@
 ## Overview
-- Kaspr control plane and dedicated runtime package for materializing Kafka topics into Apache Iceberg tables on GCS, on Kubernetes. A materialization reads one or more topics with one runtime, each topic into an Iceberg table of its own in a **dataset** — a named group of tables and their Iceberg namespace, so SQL reads `<dataset>.<table>`; the materialization's name is a label. One runtime member, the committer, commits to each table exactly once. Access is granted per dataset. A separate KasprApp, the maintenance app, compacts and expires every materialization's tables, and masks rows written before a protection change (**reprotect**). Another, the tail app, serves the console each watched table's records past its committed snapshot straight from Kafka (the **live tail**), so the newest records show within seconds, each exactly once. **Data protection** masks sensitive values — recognised by field name as kinds such as `email` or `secret` — before anything stages them: hashed, partial or withheld, by each materialization's policy (handbook 22).
-- One deployment of all that is a **domain** (`domain.id`, e.g. `domain_a`): its own accounts, datasets, tables, bucket and settings. Any number of domains share one console — one URL, `/d/<domain>` per domain, pages across every domain, search, SQL across domains (`<domain>.<dataset>.<table>`, always with the domain), sign-in through Entra ID, GitHub, Google or OpenID Connect into every domain at once, federated access tokens every domain honours, and one Iceberg REST catalog over every domain at the console's `/catalog` (handbook 20).
-- Tech stack: Python 3.12+, setuptools 69+, Jinja2 3, PyYAML 6, kubernetes-asyncio 33, pyarrow 18, PyIceberg 0.12 (minor pinned), google-cloud-storage 2, Kaspr CRDs in a Helm chart.
+- Kaspr control plane and dedicated runtime package for materializing Kafka topics into Apache Iceberg tables, on Kubernetes. The **lake** — every materialization's tables — lives in Google Cloud Storage (`gs://`), Amazon S3 or an S3-compatible server that honours conditional writes (`s3://`), or Azure Blob Storage (`abfss://<container>@<account>.dfs.core.windows.net`), each reached through the store of its URI scheme (`lakehouse/store/`); `file://` serves tests and a laptop only, and the chart refuses it. A materialization reads one or more topics with one runtime, each topic into an Iceberg table of its own in a **dataset** — a named group of tables and their Iceberg namespace, so SQL reads `<dataset>.<table>`; the materialization's name is a label. One runtime member, the committer, commits to each table exactly once. Access is granted per dataset. A separate KasprApp, the maintenance app, compacts and expires every materialization's tables, and masks rows written before a protection change (**reprotect**). Another, the tail app, serves the console each watched table's records past its committed snapshot straight from Kafka (the **live tail**), so the newest records show within seconds, each exactly once. **Data protection** masks sensitive values — recognised by field name as kinds such as `email` or `secret` — before anything stages them: hashed, partial or withheld, by each materialization's policy (handbook 22).
+- One deployment of all that is a **domain** (`domain.id`, e.g. `domain_a`): its own accounts, datasets, tables, lake and settings. Any number of domains share one console — one URL, `/d/<domain>` per domain, pages across every domain, search, SQL across domains (`<domain>.<dataset>.<table>`, always with the domain), sign-in through Entra ID, GitHub, Google or OpenID Connect into every domain at once, federated access tokens every domain honours, and one Iceberg REST catalog over every domain at the console's `/catalog` (handbook 20).
+- Tech stack: Python 3.12+, setuptools 69+, Jinja2 3, PyYAML 6, kubernetes-asyncio 33, pyarrow 18, PyIceberg 0.12 (minor pinned), google-cloud-storage 2.18+, boto3 1.36+, azure-storage-blob 12.31+ (major pinned), azure-identity 1.19+, Kaspr CRDs in a Helm chart. The console's storage SDKs: @google-cloud/storage 8, @aws-sdk/client-s3 3.1160.0, @azure/storage-blob 12.34.0, @azure/identity 4.14.1 (the last three pinned exactly).
 
 ## Essential Commands
 ```bash
@@ -22,6 +22,15 @@ python -m unittest discover -s python/tests -p 'test_runtime_templates.py' -v
 # The live tail's exactly-once model runs 150 random schedules with the suite; run more after touching tail_app/
 TAIL_EXACTLY_ONCE_SCHEDULES=2000 python -m unittest discover -s python/tests -p 'test_tail_exactly_once.py' -v
 
+# The conformance suite against a live store, before a deployment is pointed at it (the same environment and
+# credentials as a pod: AWS_*/STORAGE_S3_*, AZURE_*/STORAGE_AZURE_ENDPOINT, GOOGLE_APPLICATION_CREDENTIALS)
+python -m midstream.lakehouse.store.check s3://example-lake/_check
+
+# The live store tests: the suite and each backend's own cases, skipped unless STORAGE_LIVE_TESTS names base URIs
+# (one S3 endpoint per run); CI's Object stores job runs them against SeaweedFS, moto, Azurite and fake-gcs-server
+STORAGE_EMULATOR_HOST=http://localhost:4443 STORAGE_LIVE_TESTS=gs://live-check \
+  python -m unittest discover -s python/tests -p 'test_store_live.py' -v
+
 # Repo has no configured linter/formatter; use a syntax smoke check instead
 python -m compileall python/src
 
@@ -40,6 +49,7 @@ kubectl port-forward -n midstream svc/midstream-control-plane-app-api 6065:6065
 cd console && npm install && npm run dev   # BFF on :8787, client on :5173
 cd console && npm run typecheck            # both TypeScript projects
 cd console && npm test                     # node --test: reader, run engine, routes
+cd console && CONSOLE_STORAGE_LIVE=1 node --test server/storage/live.test.ts   # storage profiles vs local SeaweedFS, Azurite, fake-gcs-server
 cd console && npm run build                # production client bundle
 
 # Regenerate the console's fixture table (console/testdata/iceberg) after changing what the control plane writes
@@ -48,6 +58,7 @@ python python/tests/console_fixture.py
 # Read a materialization's table by hand (handbook 11 §11.9): DuckDB through a domain's REST catalog
 # behind the console, with an access token from the console's Account page
 #   CREATE SECRET m (TYPE ICEBERG, TOKEN 'tok_…');
+#   -- and a secret for the data files' backend, TYPE GCS, S3 or AZURE (handbook 11 §11.9; the Table tab's Connect panel)
 #   ATTACH 'warehouse' AS lake (TYPE ICEBERG, SECRET m, ENDPOINT 'https://<console>/d/<domain>/catalog');
 #   SELECT count(*) FROM lake.<dataset>.<table>;
 # PyIceberg and Spark can use the federated catalog instead: uri https://<console>/catalog,
@@ -57,7 +68,7 @@ python python/tests/console_fixture.py
 ## Project Map / Architecture
 - `/python/src/midstream/` — importable control-plane package; business logic lives here.
   - `models/` — immutable domain/event/status models with `to_dict()` / `from_dict()`.
-  - `storage/` — Kaspr table keys, envelopes, persistence helpers, bounded listings.
+  - `storage/` — Kaspr table keys, envelopes, persistence helpers, bounded listings, and the drop pass that deletes a materialization's tables through the store (`objects.py`).
   - `services/` — workflow orchestration and control-plane behavior.
   - `handlers/` — thin Kaspr-facing adapters that deserialize inputs and delegate to services.
   - `web/` — WebView request validation, mutations, and response shaping.
@@ -65,14 +76,16 @@ python python/tests/console_fixture.py
   - `runtime_app/` — runtime-side writer, batches and seals, upload, the committer, and template assets.
   - `maintenance_app/` — the maintenance KasprApp (`charts/midstream/templates/maintenance/`): compaction and reprotect (each in a child process), snapshot expiry and orphan cleanup of every materialization's tables, stopped ones included, ticked each minute by the control plane (`services/table_maintenance.py`), each tick carrying a reprotect the table's record asks for.
   - `tail_app/` — the tail KasprApp (`charts/midstream/templates/tail/`): each table's records past its committed offsets, read from Kafka, built into rows by the seal's own `lakehouse/rows.py::build_row`, and served to the console as Parquet; ticked each minute by the control plane (`services/live_tail.py`). It never writes a table.
-  - `lakehouse/` — the Iceberg side: the GCS-pointer catalog, table creation and drop, schema inference/evolution/fork map (`lakehouse/schema/`), the row builder the seal and the tail share (`lakehouse/rows.py`), exactly-once commit planning, compaction/expiry/orphan planning, reprotect planning and rewriting (`lakehouse/reprotect.py`), and the REST catalog protocol.
+  - `lakehouse/` — the Iceberg side: the pointer catalog (`catalog.py::PointerCatalog`, `pointer.py`: one pointer object per table, replaced by the store's compare-and-swap; a failed pointer write is judged by the pointer read back: landed, provably not, or unknown), PyIceberg's FileIO over the store (`io.py`), table creation and drop, schema inference/evolution/fork map (`lakehouse/schema/`), the row builder the seal and the tail share (`lakehouse/rows.py`), exactly-once commit planning, compaction/expiry/orphan planning, reprotect planning and rewriting (`lakehouse/reprotect.py`), and the REST catalog protocol.
+  - `lakehouse/store/` — the object store layer: the `ObjectStore` protocol (`base.py`: read with the version read, head, put unconditional, create-only or compare-and-swap, stream a file up or down, delete one or many, list), one store per URI scheme from `registry.py::store_for` (`gcs.py`, `s3.py`, `azure.py`; `file.py` and `memory.py` for tests), the URI forms and destination rules (`uris.py`), and the conformance suite (`check.py`).
   - `observation/`, `schema/`, `kubernetes/`, `kafka/`, `scheduler/` — status interpretation, schema discovery from a topic sample, cluster/Kafka integration, scheduling helpers.
   - `settings/` — the settings catalog (what is overridable, bounds, sections) and effective-config resolution.
   - `protection/` — data protection: the kinds and their name rules (`catalog.py`, `rules.py`), the masks (`mask.py`), policies and a table's `materializer.protection` record (`policy.py`), the plan the writer and the tail mask with and how the committer records fields (`plan.py`), and the protection key (`secrets.py`). Delivery and rollout state: `services/protection.py`, `runtime_app/protection_state.py`.
   - `identity/` — permission catalog (each permission's scope: deployment or dataset) and built-in roles/groups, principals and their per-dataset grants, `authorize()`, session tokens, password hashing, federated access tokens and signed revocations (`access_tokens.py`), and sign-in providers (`providers/`: each domain verifies an Entra ID, Google or OpenID Connect ID token, or a GitHub token, itself). Datasets, dataset grants and table-name claims live in the directory too (`services/identity.py`, `storage/identity.py`, `web/datasets.py`).
 - `/python/tests/` — `unittest` suite; use these tests as the source of truth for behavior.
-- `/charts/midstream/` — the Helm chart: one domain's control plane, maintenance and tail apps (`domain.*`, `controlPlane.enabled`), and the shared console with its registry of every domain (`console.domains[]`), every resource, topic and table named after the release; a release can hold a domain, the console, or both. `templates/` holds the Kaspr CRs (agents, tasks, tables, webviews), the console's Deployment and the routes (with the redirect from old per-domain hostnames), `ci/` the values files the tests render, `docs/install.md` the installation guide.
-- `/console/` — Midstream Console: a self-contained Node BFF plus React client, one for every domain. It depends on each control plane only through its public HTTP API and is intended to be extractable into its own repository. `server/domains/` is the registry and each domain's client, live store and status; `server/auth/sso.ts` the providers' flows; `server/routes/catalog.ts` the catalogs. See `console/README.md`, and `console/docs/README.md` for the full 17-document handbook.
+- `/charts/midstream/` — the Helm chart: one domain's control plane, maintenance and tail apps (`domain.*`, `controlPlane.enabled`) with its lake's credentials (`storage.gcs`, `storage.s3`, `storage.azure`), and the shared console with its registry of every domain (`console.domains[]`) and its storage profiles (`console.storage[]`), every resource, topic and table named after the release; a release can hold a domain, the console, or both. `templates/` holds the Kaspr CRs (agents, tasks, tables, webviews), the console's Deployment and the routes (with the redirect from old per-domain hostnames), `ci/` the values files the tests render.
+- `/docs/install.md` — the installation guide: an empty namespace to a first materialization, with each storage backend's steps.
+- `/console/` — Midstream Console: a self-contained Node BFF plus React client, one for every domain. It depends on each control plane only through its public HTTP API and is intended to be extractable into its own repository. `server/domains/` is the registry and each domain's client, live store and status; `server/auth/sso.ts` the providers' flows; `server/routes/catalog.ts` the catalogs; `server/storage/` the storage profiles (one per destination prefix, the longest scope serving an object, each profile's DuckDB secret). See `console/README.md`, and `console/docs/README.md` for the full 17-document handbook.
 - `/docs/source-of-truth.md` — code-derived, end-to-end reference document for deep architecture and implementation context.
 - `/docs/handbook/` — 22-document deep reference manual. Load the specific document you need rather than the whole set:
   - `01` system overview · `02` deployment and the chart · `03` configuration · `04` HTTP API · `05` data models
@@ -84,7 +97,7 @@ python python/tests/console_fixture.py
   - `19` the live tail (the tail app, exactly once with the snapshot, ownership and forwarding, a table's states, the console's side)
   - `20` domains and the shared console (topologies, the registry, routes and redirects, sessions and single sign-on, federated access tokens, SQL across domains, the federated catalog, lake access)
   - `21` Kafka access and ACLs (the one Kafka user every app shares, the names its grants cover, required vs feature-only ACLs, what breaks without each, `kafka-acls.sh` and Strimzi examples)
-  - `22` data protection (kinds and rules, masks, the default and per-materialization policies, masking before staging, a table's `materializer.protection`, live policy edits, the protection key and the upgrade step, permissions)
+  - `22` data protection (kinds and rules, masks, the default and per-materialization policies, masking before staging, a table's `materializer.protection`, live policy edits, the protection key and adding it to an installation made without one, permissions)
   - Start at `docs/handbook/README.md` for the selection table.
 
 ## Code Style & Patterns
@@ -111,11 +124,12 @@ return process_request_event(table, request_event, config=cfg, work_id=work_id)
 - Preserve the `to_dict()` / `from_dict()` round-trip pattern for persisted models and emitted events.
 
 ## Guardrails & Boundaries
-- Never commit secrets, kube credentials, GCP credentials, SSH keys, or `.env`-style files.
+- Never commit secrets, kube credentials, GCP, AWS or Azure credentials, SSH keys, or `.env`-style files.
 - Never move core business logic into inline manifest Python; CRD YAML should stay as a thin harness over package code.
 - Never invent a new linter/test runner/build system; this repo currently uses `pip`, `unittest`, and `helm lint`/`helm template` for the Python and chart side, and npm + `tsc` + Vite inside `/console`. CI (`.github/workflows/ci.yml`) runs exactly these; a `v*` tag releases through `release.yml`; every branch push publishes its console image through `dev-images.yml` (handbook 16 §16.3).
 - Never change topic names, table names or Kaspr resource names without updating both the chart templates and the affected tests; every deployed name derives from the Helm release name.
 - Never write a materialization's Iceberg tables except through its committer, the maintenance app's compaction, expiry and reprotect (`maintenance_app/`), or the REST catalog with `catalog.write`: every commit goes through the catalog pointer's compare-and-swap, the committer's exactly-once accounting relies on the snapshot summaries it writes, and a maintenance commit carries those offsets forward unchanged. A commit that removes files holding plain text keeps no `deleted` manifest entry of them (`_RewriteFiles`): their column bounds hold that text.
+- Never import a storage SDK (google-cloud-storage, boto3/botocore, azure-storage-blob, azure-identity) in `python/src/` outside `lakehouse/store/`, nor `@google-cloud/storage`, `@aws-sdk/*` or `@azure/*` outside `console/server/storage/`: everything else reaches a bucket through `store_for(uri)` (the console: the profile covering the URI), so nothing above the store branches on the backend. A new storage operation goes into `ObjectStore`, every store and the conformance suite.
 - Never replace runtime package pinning with floating or implicit refs; runtime template/package revision behavior is intentional and covered by tests.
 - Never edit compiled/generated vendor content; this repo’s source of truth is `python/src/`, `python/tests/`, and `charts/midstream/`.
 - Always run the relevant `python -m unittest ...` command for touched Python code and `helm lint`/`helm template` plus the chart tests (`test_agent_manifests.py`) for touched templates before finishing.

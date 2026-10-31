@@ -16,8 +16,8 @@ aspirational design prose.
 |---|----------|------------------------|
 | — | [`README.md`](./README.md) (this file) | Where do I find X? What are the doc conventions? |
 | 01 | [System overview](./01-system-overview.md) | What is this thing? How do the pieces fit? What are the control loops? |
-| 02 | [Deployment and manifests](./02-deployment-and-manifests.md) | What Kubernetes resources exist? What do the values change? What RBAC/secrets are needed? |
-| 03 | [Configuration reference](./03-configuration-reference.md) | What environment variables exist? What are the defaults? Which are actually wired? |
+| 02 | [Deployment and manifests](./02-deployment-and-manifests.md) | What Kubernetes resources exist? What do the values change? What RBAC/secrets are needed? How does each storage backend get its credentials, and the console its storage profiles? |
+| 03 | [Configuration reference](./03-configuration-reference.md) | What environment variables exist, each storage backend's included? What are the defaults? Which are actually wired? |
 | 04 | [HTTP API reference](./04-http-api-reference.md) | What endpoints exist? Request/response shapes? Status codes? Error payloads? |
 | 05 | [Data model reference](./05-data-model-reference.md) | What are all the models and fields? What is persisted, under which key? |
 | 06 | [Event and topic contracts](./06-event-and-topic-contracts.md) | What topics exist? What is on them? What do routed outputs look like? |
@@ -25,7 +25,7 @@ aspirational design prose.
 | 08 | [Observation and status](./08-observation-and-status.md) | How is `observed_phase` derived? Backoff? Staleness? Sweeps? |
 | 09 | [Schema evolution and forks](./09-schema-evolution-and-forks.md) | Inference, the evolution rules, forks and collapses, the fork map, `_unmapped`, discovery, the control plane's projection. |
 | 10 | [Runtime internals](./10-runtime-internals.md) | The writer, batches and seals, the committer and exactly once, acknowledgement, the maintenance app, the heartbeat. |
-| 11 | [Iceberg tables and storage](./11-iceberg-tables-and-storage.md) | The table's layout, the catalog pointer, the table definition, snapshots, compaction and expiry, creating and dropping, the REST catalog, reading a table by hand. |
+| 11 | [Iceberg tables and storage](./11-iceberg-tables-and-storage.md) | The table's layout and destinations, the object store layer over GCS, S3 and Azure Blob Storage and its conformance suite, the catalog pointer, the table definition, snapshots, compaction and expiry, creating and dropping, the REST catalog, reading a table by hand. |
 | 12 | [Operations runbook](./12-operations-runbook.md) | How do I deploy, verify, and debug this in a cluster? |
 | 13 | [Testing and development](./13-testing-and-development.md) | Exact commands. Which test covers which behavior. How to add tests. |
 | 14 | [Known gaps and roadmap](./14-known-gaps-and-roadmap.md) | What is unfinished, inconsistent, or risky? Where would I extend it? |
@@ -36,7 +36,7 @@ aspirational design prose.
 | 19 | [The live tail](./19-live-tail.md) | How do a table's newest records reach the console within seconds? How is each shown exactly once with the committed snapshot? What does the tail app hold, which member serves a table, and who may read it? |
 | 20 | [Domains and the shared console](./20-domains-and-the-shared-console.md) | How do several deployments work as one? What does the console's registry say? How does single sign-on reach every domain? How does one access token work everywhere, a statement join domains, and the federated catalog route? |
 | 21 | [Kafka access and ACLs](./21-kafka-access.md) | What must the deployment's Kafka user be allowed to do, on which names? Which ACLs are required and which only for a feature? What breaks without each? How do I grant them with `kafka-acls.sh` or Strimzi? |
-| 22 | [Data protection](./22-data-protection.md) | Which fields are masked, and how? Where does masking happen, and what does each table record of it? How is the default chosen, a policy changed without a restart, and the protection key added on an upgrade? Who may choose? |
+| 22 | [Data protection](./22-data-protection.md) | Which fields are masked, and how? Where does masking happen, and what does each table record of it? How is the default chosen, a policy changed without a restart, and the protection key added to an installation made without one? Who may choose? |
 
 ---
 
@@ -47,7 +47,7 @@ aspirational design prose.
 | `/AGENTS.md` | Short always-on agent instructions: commands, project map, guardrails. Read first, kept under 300 lines. |
 | `/docs/source-of-truth.md` | Condensed single-file end-to-end narrative. Good for a one-shot overview; this handbook is the deep reference. |
 | `/console/docs/` | The Midstream Console's own handbook (17 documents), cited here as `console <n>`. |
-| `/docs/design/` | Design specifications: `few-second-freshness.md` (the live tail, built as handbook 19), `multi-domain.md` (domains and the shared console: any number of control planes under one console with single sign-on; built as handbook 20) and `data-protection.md` (masking sensitive values before they are staged; built as handbook 22, with the extensions still to build). |
+| `/docs/design/` | Design specifications: `few-second-freshness.md` (the live tail, built as handbook 19), `multi-domain.md` (domains and the shared console: any number of control planes under one console with single sign-on; built as handbook 20), `data-protection.md` (masking sensitive values before they are staged; built as handbook 22, with the extensions still to build) and `storage-backends.md` (the lake in GCS, Amazon S3 or Azure Blob Storage: the object store layer, its conformance suite and the console's storage profiles; built as handbook 11 §11.1a, 02 §2.9a and console 07 §07.10). |
 
 ---
 
@@ -73,7 +73,9 @@ explicitly (see [14 — Known gaps](./14-known-gaps-and-roadmap.md)).
 - **`<runtime-app>`**, or **`<rt>`**, is a placeholder for the resolved runtime KasprApp name,
   e.g. `midstream-mat-a1b2c3d4e5f6` for a release named `midstream`.
 - **`console <n>`** is document `<n>` of the console handbook, `console/docs/`.
-- **`<location>`** is a table's location, `<destination>/<storage prefix>/<materialization id>/<table>`.
+- **`<location>`** is a table's location, `<destination>/<storage prefix>/<materialization id>/<table>`,
+  where `<destination>` is `gs://<bucket>[/<prefix>]`, `s3://<bucket>[/<prefix>]` or
+  `abfss://<container>@<account>.dfs.core.windows.net[/<prefix>]`.
 - **Timestamps** are always UTC ISO-8601 with a `Z` suffix and second precision, e.g.
   `2026-01-15T10:30:00Z`. Produced by
   `datetime.now(tz=UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")`.
@@ -116,9 +118,13 @@ You rarely need the whole handbook. Load only what the task requires.
 | A runtime shown Unhealthy whose members keep restarting | `12 §12.3` → `08 §8.3` → `12 §12.10` |
 | Creating the Kafka user and its ACLs on a cluster that enforces them | `21` → `02 §2.3` → `/docs/install.md` |
 | An app that will not start, or a table that stays empty, on a cluster with ACLs | `21 §21.5` → `21 §21.7` → `12 §12.9` |
-| Upgrading to data protection: adding the protection key | `22 §22.9` → `22 §22.8` → `/docs/install.md` §8 |
+| Adding the protection key to an installation made without one | `22 §22.9` → `22 §22.8` → `/docs/install.md` §8 |
 | A column masked that should not be, or not masked that should | `22 §22.2` → `22 §22.6` → `22 §22.13` |
 | Changing the masking rules or adding a kind | `22 §22.2` → `22 §22.5` → `13 §13.3` |
+| Installing on GCS, S3 or Azure Blob Storage: the storage values, credentials and the pods' identity | `02 §2.9a` → `03 §3.3a` → `11 §11.1a` → `/docs/install.md` §2 |
+| Pointing a deployment at a new store, or checking an S3-compatible server | `11 §11.1a` (the conformance suite) → `12 §12.12a` → `03 §3.3a` |
+| A table the console cannot read: "no storage is configured for …" | `02 §2.9a` → console `03 §3.6a` → console `07 §07.10` |
+| Changing the object store layer or one of its stores | `11 §11.1a` → `11 §11.2` → `13 §13.3a` → `03 §3.3a` |
 
 ---
 
@@ -144,9 +150,10 @@ HTTP  ──▶ KasprWebView ──▶ materialization-requests
                          one member: committer ◀───────────────────┘
                               │   commit · schema · compaction · expiry · orphans
                               ▼
-      Iceberg table in GCS: data/ + metadata/ + catalog-pointer.json  ◀── engines (REST catalog,
-                              │                                            iceberg_scan) and
-                              ▼                                            the console
+      Iceberg table in GCS, S3 or Azure Blob Storage:                 ◀── engines (REST catalog,
+      data/ + metadata/ + catalog-pointer.json                             iceberg_scan) and
+                              │                                            the console
+                              ▼
               materialization-table-events ──▶ table-events agent ──▶ control-plane `state` table
       heartbeats ──▶ materialization-status ──▶ runtime-status agent ─┘   ▲
                                                  resource-observation agent + sweeps
@@ -183,6 +190,13 @@ them, by rules that recognise kinds of data from field names; each materializati
 from the deployment's default when it is created, reaches its runtime on the runtime control topic at
 every apply, and the committer records it in each table's `materializer.protection` property. See
 [22](./22-data-protection.md).
+
+Storage takes no path of its own: every app and runtime reads and writes the lake through the object
+store layer, `lakehouse/store/`, which picks a store by each object's URI scheme — `gs://`, `s3://`,
+`abfss://` — so nothing above it knows the backend, and every commit is that store's compare-and-swap
+on the table's pointer. The console reads tables through storage profiles of its own, one per
+destination prefix. See [11 §11.1a](./11-iceberg-tables-and-storage.md) and
+[02 §2.9a](./02-deployment-and-manifests.md).
 
 There is **no standalone HTTP server process** in this repository. The API only exists as
 `KasprWebView` custom resources attached to the control-plane app.

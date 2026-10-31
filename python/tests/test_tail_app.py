@@ -246,16 +246,13 @@ class SeedAndServeTests(TailCase):
         self.assertEqual([row["order_id"] for row in parquet], [row["order_id"] for row in as_json])
 
     async def test_the_schema_comes_from_the_table_when_the_control_plane_cannot_give_it(self) -> None:
-        from gcs_fakes import FakeGcs  # noqa: F401
         from lakehouse_support import LakeFixture
-
-        from midstream.lakehouse.gcs import set_shared_storage_client
 
         lake = LakeFixture({"order_id": "O", "amount": 1})
         self.addCleanup(lake.close)
         lake.commit(lake.write_seal(partition=0, after_offset=-1, offsets=[0, 1, 2]))
-        set_shared_storage_client(lake.client)
-        self.addCleanup(set_shared_storage_client, None)
+        # The seed finds the table's store by its location, as a tail member does (`store_for`).
+        lake.install()
         located = target(materialization_id=lake.materialization_id, table="orders")
         located = type(located)(**{**located.to_dict(), "location": lake.location, "dataset": "shop", "table_uuid": str(lake.load().metadata.table_uuid)})
         self.harness.table(located)
@@ -276,7 +273,7 @@ class SeedAndServeTests(TailCase):
         answer = await ask()
 
         table = owner.tables[f"tail:{lake.materialization_id}:orders"]
-        self.assertEqual("gcs", table.seed_source)
+        self.assertEqual("table", table.seed_source)
         self.assertEqual(2, table.committed[0], "the table's own committed offsets")
         self.assertEqual([(0, 3), (0, 4)], offsets_of(answer))
 

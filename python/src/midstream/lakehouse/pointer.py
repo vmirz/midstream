@@ -1,9 +1,14 @@
-"""The per-table catalog entry: one GCS object naming the table's current metadata file.
+"""The per-table catalog entry: one object naming the table's current metadata file.
 
 `<location>/metadata/catalog-pointer.json` is the whole catalog for a table. Committing writes a new
-metadata file (create-only) and then replaces the pointer on the condition that its object
-generation is still the one read: GCS's compare-and-swap. A pointer can therefore never move
-backwards, and two writers can never both win.
+metadata file (create-only) and then replaces the pointer on the condition that it is still at the
+version read: the store's compare-and-swap - a GCS generation precondition, an S3 or Azure If-Match
+(`lakehouse/store/`). A pointer can therefore never move backwards, and two writers can never both
+win.
+
+A version is the store's opaque string, compared for equality only. No two versions of a pointer
+can be equal even where a version is a hash of the content (S3's ETag): `TablePointer.sequence`
+rises by one on every advance (`advanced`), and nothing but this module writes a pointer.
 """
 
 from __future__ import annotations
@@ -15,12 +20,7 @@ import logging
 import re
 from typing import Any
 
-from midstream.lakehouse.gcs import (
-    gcs_uri,
-    is_not_found,
-    is_precondition_failed,
-    parse_gcs_uri,
-)
+from midstream.lakehouse.store import ABSENT, ObjectNotFoundError, ObjectStore, PreconditionFailedError
 
 LOGGER = logging.getLogger(__name__)
 
@@ -112,72 +112,60 @@ def version_hint_uri(location: str) -> str:
     return f"{location.rstrip('/')}/metadata/{VERSION_HINT_NAME}"
 
 
-def read_pointer(client: Any, location: str) -> tuple[TablePointer | None, int]:
-    """The table's pointer and its object generation; `(None, 0)` when there is none.
+def read_pointer(store: ObjectStore, location: str) -> tuple[TablePointer | None, str | None]:
+    """The table's pointer and the version it was read at; `(None, None)` when there is none.
 
-    One request: the download carries the generation it read, so the content and the generation
+    One request: the read carries the version of what it read, so the content and the version
     always belong together.
     """
-    bucket_name, name = parse_gcs_uri(pointer_uri(location))
-    blob = client.bucket(bucket_name).blob(name)
+    uri = pointer_uri(location)
     try:
-        raw = blob.download_as_bytes()
-    except Exception as exc:
-        if is_not_found(exc):
-            return None, 0
-        raise
-    generation = getattr(blob, "generation", None)
-    if generation is None:
-        # A client that did not record the generation of what it downloaded: ask for it.
-        fresh = client.bucket(bucket_name).get_blob(name)
-        if fresh is None:
-            return None, 0
-        generation = fresh.generation
+        raw, version = store.get(uri)
+    except ObjectNotFoundError:
+        return None, None
     payload = json.loads(raw)
     if not isinstance(payload, dict):
-        raise ValueError(f"table pointer {pointer_uri(location)} is not a JSON object")
-    return TablePointer.from_dict(payload), int(generation)
+        raise ValueError(f"table pointer {uri} is not a JSON object")
+    return TablePointer.from_dict(payload), version
 
 
-def write_pointer(client: Any, location: str, pointer: TablePointer, *, generation: int) -> int:
-    """Replace the pointer if its generation is still `generation` (0: create it); return the new one."""
-    bucket_name, name = parse_gcs_uri(pointer_uri(location))
-    blob = client.bucket(bucket_name).blob(name)
+def pointer_bytes(pointer: TablePointer) -> bytes:
+    """The pointer as it is stored: compact JSON with sorted keys."""
+    return json.dumps(pointer.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def write_pointer(store: ObjectStore, location: str, pointer: TablePointer, *, expected_version: str | None) -> str:
+    """Write the pointer if it is still at `expected_version`; return the version written.
+
+    `expected_version=None` creates the pointer, only if the table has none yet. Raises
+    `PointerConflictError` when the condition does not hold: another writer got there first.
+    """
     try:
-        blob.upload_from_string(
-            json.dumps(pointer.to_dict(), sort_keys=True, separators=(",", ":")),
+        return store.put(
+            pointer_uri(location),
+            pointer_bytes(pointer),
+            if_version=ABSENT if expected_version is None else expected_version,
             content_type="application/json",
-            if_generation_match=generation,
         )
-    except Exception as exc:
-        if is_precondition_failed(exc):
-            raise PointerConflictError(
-                f"the pointer of table {pointer.materialization_id} moved past generation {generation}"
-            ) from exc
-        raise
-    new_generation = getattr(blob, "generation", None)
-    return 0 if new_generation is None else int(new_generation)
+    except PreconditionFailedError as exc:
+        if expected_version is None:
+            raise PointerConflictError(f"the table of {pointer.materialization_id} at {location} already has a pointer") from exc
+        raise PointerConflictError(
+            f"the pointer of table {pointer.materialization_id} moved past version {expected_version}"
+        ) from exc
 
 
-def delete_pointer(client: Any, location: str, *, generation: int | None = None) -> bool:
-    """Delete the pointer (optionally only at `generation`); False when it was already gone."""
-    bucket_name, name = parse_gcs_uri(pointer_uri(location))
-    blob = client.bucket(bucket_name).blob(name)
+def delete_pointer(store: ObjectStore, location: str, *, version: str | None = None) -> bool:
+    """Delete the pointer (only at `version` when given); False when the store knows it was already
+    gone. Raises `PointerConflictError` when it exists at another version. A store without
+    conditional deletes (S3) refuses `version` before any request."""
     try:
-        if generation is None:
-            blob.delete()
-        else:
-            blob.delete(if_generation_match=generation)
-    except Exception as exc:
-        if is_not_found(exc):
-            return False
-        if is_precondition_failed(exc):
-            raise PointerConflictError(f"the pointer at {location} moved before it could be deleted") from exc
-        raise
-    return True
+        return store.delete(pointer_uri(location), if_version=version)
+    except PreconditionFailedError as exc:
+        raise PointerConflictError(f"the pointer at {location} moved before it could be deleted") from exc
 
 
-def write_version_hint(client: Any, location: str, metadata_location: str) -> None:
+def write_version_hint(store: ObjectStore, location: str, metadata_location: str) -> None:
     """Best effort: name the current metadata file for readers that resolve a table by its root.
 
     DuckDB's `iceberg_scan('<table root>')` reads `metadata/version-hint.text` and opens
@@ -187,9 +175,8 @@ def write_version_hint(client: Any, location: str, metadata_location: str) -> No
     hint = metadata_location.rsplit("/", 1)[-1]
     if hint.endswith(".metadata.json"):
         hint = hint[: -len(".metadata.json")]
-    bucket_name, name = parse_gcs_uri(version_hint_uri(location))
     try:
-        client.bucket(bucket_name).blob(name).upload_from_string(hint, content_type="text/plain")
+        store.put(version_hint_uri(location), hint.encode("utf-8"), content_type="text/plain")
     except Exception as exc:  # noqa: BLE001 - convenience only
         LOGGER.warning("Could not write the version hint of %s: %s", location, exc)
 
@@ -200,27 +187,26 @@ def metadata_version(metadata_location: str) -> int:
     return -1 if match is None else int(match.group(1))
 
 
-def find_latest_metadata(client: Any, location: str, *, table_uuid: str | None = None) -> str | None:
+def find_latest_metadata(store: ObjectStore, location: str, *, table_uuid: str | None = None) -> str | None:
     """The newest `*.metadata.json` of a table, optionally only one whose `table-uuid` matches.
 
-    Used to repair a lost pointer (handbook 12 §12.13): metadata files are written before the pointer
+    Used to repair a lost pointer (handbook 12 §12.11): metadata files are written before the pointer
     moves, so the newest one with the table's uuid is at least as new as the lost pointer's.
     """
-    bucket_name, prefix = parse_gcs_uri(f"{location.rstrip('/')}/metadata/")
     candidates: list[tuple[int, str]] = []
-    for blob in client.list_blobs(bucket_name, prefix=prefix):
-        version = metadata_version(blob.name)
+    for item in store.list(f"{location.rstrip('/')}/metadata/"):
+        version = metadata_version(item.uri)
         if version >= 0:
-            candidates.append((version, blob.name))
-    for _, name in sorted(candidates, reverse=True):
+            candidates.append((version, item.uri))
+    for _, uri in sorted(candidates, reverse=True):
         if table_uuid is None:
-            return gcs_uri(bucket_name, name)
+            return uri
         try:
-            payload = json.loads(client.bucket(bucket_name).blob(name).download_as_bytes())
+            payload = json.loads(store.get(uri)[0])
         except Exception:  # noqa: BLE001 - an unreadable file is skipped
             continue
-        if str(payload.get("table-uuid")) == table_uuid:
-            return gcs_uri(bucket_name, name)
+        if isinstance(payload, dict) and str(payload.get("table-uuid")) == table_uuid:
+            return uri
     return None
 
 

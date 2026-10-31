@@ -415,7 +415,7 @@ counters over a rolling window. See [10 — Runtime internals](./10-runtime-inte
 Reading: the KasprApp is fully up and all three agents are running, but the runtime process has
 never emitted a heartbeat: the `emit-status` task is not running, or the members cannot reach
 Kafka. Check the runtime pods' logs. A runtime that heartbeats but cannot load its table reports
-`waiting_for_table` instead — check `metadata/catalog-pointer.json` and the pods' GCS credentials
+`waiting_for_table` instead — check `metadata/catalog-pointer.json` and the pods' storage credentials
 (11 §11.10).
 
 ```jsonc

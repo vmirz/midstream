@@ -1,8 +1,9 @@
 # 04 — Server Internals
 
 Everything in this document lives under `console/server/`. Reading tables and running queries —
-`iceberg/` (the pointer, metadata and manifests), `data/` (the snapshot's catalog, logical columns,
-DuckDB, GCS) and `runs/` (the run engine) — is in [06](./06-iceberg-tables.md) and
+`iceberg/` (the pointer, metadata and manifests), `storage/` (the storage profiles: GCS, S3 and
+Azure), `data/` (the snapshot's catalog, logical columns, DuckDB) and `runs/` (the run engine) — is in
+[06](./06-iceberg-tables.md) and
 [07](./07-data-access-and-duckdb.md); `schema/diff.ts` in 06 §6.4; `live/` in
 [05](./05-live-store-and-realtime.md). The domains the console serves (`domains/`, §4.10) are what
 nearly everything else hangs off: each has its own control-plane client, live store and topic
@@ -29,6 +30,7 @@ if (config.corsOrigin) await app.register(cors, { origin: config.corsOrigin, cre
 app.setErrorHandler(...);
 
 const served = domains();             // the registry; a registry that breaks a rule stops here
+const profiles = storage();           // the storage profiles (03 §3.6a), which stop it the same way
 await registerAuth(app);              // who is calling, in each domain, before every route
 
 // The console's own routes: config, the session everywhere, sign-in through a provider, the
@@ -66,6 +68,7 @@ served.start();                       // every domain's live store, topic catalo
 new RevocationSync(() => served.served()).start();
 process.on('SIGTERM', ...); process.on('SIGINT', ...);
 await app.listen({ port: config.port, host: config.host });
+logStorage(profiles);                 // a line per storage profile and its mode, and their warnings
 ```
 
 Notable decisions:
@@ -421,7 +424,7 @@ stores the overrides with the control plane too: the console keeps no durable st
 |--------|------|
 | `settings/catalog.ts` | `CONSOLE_SETTINGS`: each overridable console setting's key, env var, section, label, description, kind, unit, bounds and effect. `consoleSettingProblem` validates one value; `validConsoleOverrides` splits a stored set into valid and rejected |
 | `settings/store.ts` | `ConsoleSettingsStore`: reads the `console` scope from the settings home at start, every 30 s and after a save; installs the valid overrides with `applySettingOverrides`; applies a new log level to the logger; describes the scope for the page |
-| `config.ts` | `tunableDeployment` (the 29 overridable settings, as the environment sets them), `deploymentSettings`, and `config`, whose getters return the override in force |
+| `config.ts` | `tunableDeployment` (the 31 overridable settings, as the environment sets them), `deploymentSettings`, and `config`, whose getters return the override in force |
 | `routes/settings.ts` | `/api/settings` — the console scope, in the settings home — and `/api/d/:domain/settings` — a domain's control-plane and runtime scopes ([08 §8.24](./08-console-api-reference.md)) |
 
 There are two Settings pages, so two sets of routes: the console's own settings are one scope,

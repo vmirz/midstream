@@ -52,8 +52,9 @@ bound to, its `last_applied_spec_hash` and `last_apply_operation_id`, and the ma
 when every administrator is lost.
 
 **Catalog pointer** — `<table>/metadata/catalog-pointer.json`: names the table's current metadata
-file. Every commit replaces it with a GCS generation precondition — the compare-and-swap that makes
-the bucket a catalog ([11 §11.2](./11-iceberg-tables-and-storage.md)).
+file. Every commit replaces it on the condition that it has not moved since it was read — the object
+store's compare-and-swap, by GCS generation or by S3 or Azure ETag, that makes the store a catalog
+([11 §11.2](./11-iceberg-tables-and-storage.md)).
 
 **Collapse** — What a field family does past its limits (`max_forks_per_field`, `max_struct_fields`,
 `max_nesting_depth`): its values go to `<name>__json` as JSON text from then on
@@ -73,6 +74,13 @@ unchanged ([11 §11.6](./11-iceberg-tables-and-storage.md)).
 
 **Complete through** — `materializer.valid-through`: the instant up to which every partition's
 records are in the table. The console's Data tab shows it.
+
+**Conformance suite** — `python -m midstream.lakehouse.store.check <uri>` (`lakehouse/store/check.py`):
+sixteen checks that a live object store keeps the contract the tables rely on — create-only writes,
+compare-and-swap with exactly one winner per round among 16 concurrent writers, missing objects,
+ranges, listings, deletes — run under a scratch prefix it empties again. A store that fails it must
+not hold tables; CI runs it against emulators ([11 §11.1a](./11-iceberg-tables-and-storage.md),
+[12 §12.12a](./12-operations-runbook.md), [13 §13.3a](./13-testing-and-development.md)).
 
 **Control plane** — The single shared `KasprApp` that owns orchestration: intake, discovery, table
 creation, apply, observation, deletion, settings, identity, the REST catalog. One per environment.
@@ -107,6 +115,13 @@ masks each as the materialization's **policy** says ([22](./22-data-protection.m
 
 **Desired phase** — What the operator asked for (`running`, `stopped`, `deleting`, `deleted`;
 `paused` on records from before 0.4.0). Contrast with observed phase.
+
+**Destination** — Where new materializations' tables are created, `default_destination_uri`: a
+storage URI whose scheme names the object store for good — `gs://<bucket>[/<prefix>]`,
+`s3://<bucket>[/<prefix>]` or `abfss://<container>@<account>.dfs.core.windows.net[/<prefix>]`.
+A table's location is `<destination>/<storage prefix>/<materialization id>/<table>`, and a
+materialization keeps the destination it was created with
+([04 §4.5.2](./04-http-api-reference.md)).
 
 **Directory** — The people, groups, roles, access tokens, datasets, their grants and the claims of
 table names in the `directory` table (`identity` before 3.0). Its `revision` rises with every change,
@@ -231,6 +246,14 @@ catalog; what keeps a name unique across the deployment ([18 §18.16](./18-ident
 **Metadata columns** — `_kafka_timestamp`, `_kafka_partition`, `_kafka_offset`, `_kafka_key`,
 `_kafka_headers`, `_materialized_at`, `_unmapped` (field ids 1–7, the headers map's key and value 8–9).
 
+**Object store** — Where the tables live, and how every pod reaches it: `lakehouse/store/`'s
+`ObjectStore`, one store per URI scheme — `gs://` Google Cloud Storage, `s3://` Amazon S3 or an
+S3-compatible server, `abfss://` Azure Blob Storage, `file:///` for tests — each reading an object
+with the version it read, writing unconditionally, create-only or as a compare-and-swap on that
+version (a GCS generation, an S3 or Azure ETag), deleting one or many, and listing a prefix. Nothing
+above it knows the backend ([11 §11.1a](./11-iceberg-tables-and-storage.md),
+[12 §12.12a](./12-operations-runbook.md)).
+
 **Observation** — A control-plane read of a runtime's real state from two sources, the KasprApp's
 status and the members' heartbeats, merged into one observed phase ([08](./08-observation-and-status.md)).
 
@@ -285,7 +308,7 @@ table records the revision it masks under, each member reports the one it masks 
 file's name ends `-r<revision>` when it is not 0.
 
 **Purge (reprotect)** — A reprotect's option: once nothing is left to rewrite, expire every older
-snapshot and delete the files only they held, so the plain text leaves the bucket at once; time travel
+snapshot and delete the files only they held, so the plain text leaves storage at once; time travel
 to before the reprotect ends ([22 §22.14](./22-data-protection.md)).
 
 **Reprotect** — The maintenance app's job that masks rows written before a policy change: it rewrites
@@ -363,6 +386,12 @@ and why a change of a runtime's topics drains it.
 consumer group, volumes and tables stay, and the maintenance app goes on maintaining the tables;
 resume scales it back to its `replicas`.
 
+**Storage profile** — How the console reads one destination prefix (`console.storage`): a name, a
+`scope` ending with `/`, a kind (`gcs`, `s3`, `azure`), its endpoint, region and path style, and
+read-only credentials of its own. Every object is read with the profile whose scope is its longest
+prefix, as DuckDB picks among scoped secrets; a location no profile covers is never read
+([20 §20.11](./20-domains-and-the-shared-console.md)).
+
 **Sweep** — The `*/2 * * * *` cron task (`onLeader: true`) that reconciles drift and re-observes
 anything stale or stuck.
 
@@ -424,10 +453,27 @@ materialization's tables. Before 2.0 the committer member of each runtime did, s
 had to be sized for compaction's memory; now only the maintenance app is
 ([10 §10.10](./10-runtime-internals.md), [12 §12.10](./12-operations-runbook.md)).
 
-**Why a catalog pointer in the bucket instead of a catalog server?**
-Nothing to run, back up or keep available: a GCS object with a generation precondition is a
-compare-and-swap, which is all a single-writer Iceberg catalog needs. The control plane serves the
-REST protocol over it for engines that want a catalog (decision D1).
+**Why a catalog pointer in the object store instead of a catalog server?**
+Nothing to run, back up or keep available: one object replaced by the store's compare-and-swap — a
+GCS generation precondition, an S3 or Azure `If-Match` on its ETag — is all a single-writer Iceberg
+catalog needs, and every supported store provides one; the conformance suite proves it of a store
+before it holds tables ([12 §12.12a](./12-operations-runbook.md)). The control plane serves the REST
+protocol over it for engines that want a catalog (decision D1).
+
+**Which object stores can hold the tables?**
+Google Cloud Storage (`gs://`), Amazon S3 or an S3-compatible server that honours conditional writes
+(`s3://`), and Azure Blob Storage (`abfss://<container>@<account>.dfs.core.windows.net`), one form
+each, the one every engine reads ([04 §4.5.2](./04-http-api-reference.md)). `file:///` serves tests
+and a laptop, and the chart refuses it. S3 is verified against SeaweedFS and moto, Azure against
+Azurite, not yet against AWS or a real storage account
+([14 §14.20](./14-known-gaps-and-roadmap.md)).
+
+**Can one domain keep tables on two backends?**
+Yes. A store is chosen per object URI, and a materialization keeps the destination it was created
+with, so a changed destination puts new materializations on the new backend while the earlier ones
+stay where they are, given credentials for both (`storage.*`). One endpoint and one set of credentials
+serve each backend in a domain ([14 §14.20](./14-known-gaps-and-roadmap.md)), and a table never
+moves: a move is a new materialization.
 
 **Why does only one member commit?**
 Commits to one table must be ordered, and Iceberg's optimistic concurrency would make sixteen
@@ -555,7 +601,9 @@ A row with a null payload, unless `skip_tombstones` was set at creation. Nothing
 
 **Can I read the table without the console?**
 Yes: `iceberg_scan('<location>')` in DuckDB, or attach the REST catalog with an access token
-([11 §11.9](./11-iceberg-tables-and-storage.md)).
+([11 §11.9](./11-iceberg-tables-and-storage.md)). Either way the engine reads the data files with
+credentials of its own for the table's backend — the catalog vends none
+([04 §4.14](./04-http-api-reference.md)); the console's Connect panel prints the settings.
 
 ## 15.5 FAQ — operations
 
@@ -586,6 +634,17 @@ it only retires the pointer, and the table stays readable by path ([07 §7.10](.
 
 **The materialization reads `deleted` but is still listed.**
 Its table is still being dropped, a pass at a time; follow `control_plane_drop_table_progress`.
+
+**Is my S3-compatible server safe to use?**
+Only if it passes the conformance suite, `python -m midstream.lakehouse.store.check
+s3://<bucket>/_check`, run from a Midstream pod ([12 §12.12a](./12-operations-runbook.md)). Exactly
+once rests on the pointer's compare-and-swap: a server that fails `concurrent_writers` does not honour
+conditional writes and must not hold tables.
+
+**Why does the console say no storage is configured for a table?**
+No storage profile's scope covers the table's location: the console reads only through its profiles
+(`console.storage`), never guessing credentials. Add one for the destination's prefix, with read-only
+credentials ([20 §20.11](./20-domains-and-the-shared-console.md)).
 
 **Why does upgrading the control plane restart every runtime?**
 Runtime specs pin the package to a git commit; a new commit changes every spec hash, and the sweep
@@ -621,8 +680,13 @@ None is configured. Do not add one as a side effect of an unrelated change.
 
 **Where do I put a new test?**
 In the module that already owns the behavior ([13 §13.4](./13-testing-and-development.md)). Tests of
-the table go through `lakehouse_support.LakeFixture`, a fake bucket holding a real Iceberg table;
+the table go through `lakehouse_support.LakeFixture`, a `MemoryStore` holding a real Iceberg table;
 runtime tests through `runtime_support.RuntimeHarness`.
+
+**How do I test against a real object store?**
+`test_store_live.py`, with `STORAGE_LIVE_TESTS` naming base URIs and the store's own environment set;
+CI runs it against SeaweedFS, moto, Azurite and fake-gcs-server, and the same containers run on a
+laptop ([13 §13.3a](./13-testing-and-development.md)).
 
 **How do I build config in a test?**
 `ControlPlaneConfig(...)` or `RuntimeAppConfig(...)` directly; `get_config()` is cached.
@@ -657,12 +721,14 @@ Topic names live in `config.py` and the chart's templates, derived from the rele
 | Who may do what? | [18](./18-identity-and-access.md) |
 | What does this word mean? | this document |
 
-**Why are datasets not enforced in the bucket?**
+**Why are datasets not enforced in the object store?**
 Grants are enforced by the control plane, the REST catalog and the console (decision). The data files
-are read by engines themselves — DuckDB with an HMAC key, PyIceberg with Google credentials — and such
-credentials usually reach the whole bucket, whatever anyone's roles. Restricting a dataset restricts
-people who read through the catalog or the console without bucket credentials; table-scoped
-credentials vended by the catalog would close the gap ([14 §14.8](./14-known-gaps-and-roadmap.md)).
+are read by engines themselves, with credentials for the table's backend — an HMAC key or Google
+credentials on GCS, an access key or a role on S3, an account key, a SAS or a role on Azure — and
+such credentials usually reach a whole bucket or container, whatever anyone's roles; so do the
+console's storage profiles. Restricting a dataset restricts people who read through the catalog or
+the console without storage credentials; table-scoped credentials vended by the catalog would close
+the gap ([14 §14.8](./14-known-gaps-and-roadmap.md)).
 
 **Why can two materializations not both have `sales.orders`?**
 `<dataset>.<table>` is what every engine reads; two tables of one name would be one table to each of

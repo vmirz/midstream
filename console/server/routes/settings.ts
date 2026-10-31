@@ -1,13 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
-import { config, dataAccessMode } from '../config.ts';
+import { config } from '../config.ts';
 import type { Caller } from '../controlPlane/client.ts';
 import { callerOf, domainOf, permit, permitInHome } from '../auth/guard.ts';
 import { ConsoleError, badRequest } from '../errors.ts';
 import { consoleSettingDefinition, consoleSettingProblem } from '../settings/catalog.ts';
 import { consoleSettings, domains } from '../domains/index.ts';
 import type { Domain } from '../domains/domain.ts';
+import { storage } from '../storage/registry.ts';
 import { workerPoolSize } from '../workerPool.ts';
 import { parseBody } from './materializations.ts';
 import {
@@ -421,14 +422,7 @@ function consoleDeployment(): DeploymentSettingView[] {
     entry('settingsHome', 'Settings home', domains().home.id, 'CONSOLE_DOMAINS_FILE', 'The domain whose console scope stores these settings.'),
     entry('version', 'Version', config.version, 'CONSOLE_VERSION'),
     entry('listen', 'Listens on', `${config.host}:${config.port}`, 'HOST, PORT'),
-    entry(
-      'dataAccessMode',
-      'Object storage access',
-      dataAccessMode(),
-      null,
-      'direct reads gs:// in place with HMAC credentials; cached downloads objects first; disabled while the Data explorer is off.',
-    ),
-    entry('hmacCredentials', 'HMAC credentials', config.gcsHmacKeyId && config.gcsHmacSecret ? 'configured' : 'not configured', 'CONSOLE_GCS_HMAC_KEY_ID, CONSOLE_GCS_HMAC_SECRET'),
+    ...storageDeployment(),
     entry('duckdbMemoryLimit', 'DuckDB memory limit', config.duckdbMemoryLimit, 'CONSOLE_DUCKDB_MEMORY_LIMIT', 'Keep it below the pod’s memory limit.'),
     entry('duckdbThreads', 'DuckDB threads', config.duckdbThreads, 'CONSOLE_DUCKDB_THREADS'),
     entry('runConcurrency', 'Runs scanning at once', config.runConcurrency, 'CONSOLE_RUN_CONCURRENCY'),
@@ -479,6 +473,46 @@ function consoleDeployment(): DeploymentSettingView[] {
       config.cookieSecure,
       'CONSOLE_COOKIE_SECURE',
       'auto marks the session cookie Secure whenever the request arrived over HTTPS.',
+    ),
+  ];
+}
+
+/**
+ * Object storage access: every storage profile, which destination prefix it serves and how — read in
+ * place by DuckDB (direct) or downloaded first (cached) — and what it reads with, never a value.
+ */
+function storageDeployment(): DeploymentSettingView[] {
+  const profiles = storage().profiles.map((profile) => profile.describe());
+  const summary = !config.dataAccessEnabled
+    ? 'Off: the Data explorer is turned off'
+    : profiles.length === 0
+      ? 'None: no object storage is read'
+      : profiles.map((profile) => `${profile.name} (${profile.kind}, ${profile.mode})`).join(', ');
+  return [
+    deploymentEntry(
+      'storage',
+      'Object storage access',
+      summary,
+      config.storageFile ? 'CONSOLE_STORAGE_FILE' : 'CONSOLE_STORAGE',
+      'One storage profile per destination prefix; a table is read with the profile whose scope covers its location best. Direct: DuckDB reads ' +
+        'data files in place with the profile’s credentials, so give them read-only access — a statement’s sandbox does not stop a write ' +
+        'to a path it may read, only the SQL guard does. Cached: data files are downloaded first, within the cached-mode budgets.',
+    ),
+    ...profiles.map((profile) =>
+      deploymentEntry(
+        `storage.${profile.name}`,
+        `Storage profile ${profile.name}`,
+        `${profile.scope} · ${profile.mode}`,
+        profile.credentialVariables.join(', '),
+        [
+          profile.kind === 'gcs' ? 'Google Cloud Storage' : profile.kind === 's3' ? 'S3' : 'Azure Blob Storage',
+          profile.endpoint ? `at ${profile.endpoint}` : null,
+          profile.region ? `region ${profile.region}` : null,
+          profile.pathStyle ? 'path-style addressing' : null,
+        ]
+          .filter(Boolean)
+          .join(', ') + `; reads with ${profile.credentials}.`,
+      ),
     ),
   ];
 }

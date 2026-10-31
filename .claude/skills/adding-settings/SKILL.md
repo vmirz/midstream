@@ -55,7 +55,7 @@ and no test catches it — check the id. A new section is §6.
        "session_refresh_minutes",          # = the ControlPlaneConfig field; env var derived from it
        section="security",
        label="Session renewal interval",   # shown as written, in the reader's terms
-       kind="integer",                     # boolean | integer | gcs_uri | quantity
+       kind="integer",                     # boolean | integer | destination_uri | quantity | enum | domain_list | choice_map
        unit="minutes",
        minimum=1,
        maximum=60,
@@ -66,7 +66,7 @@ and no test catches it — check the id. A new section is §6.
    ```
 
    Pass `env_var=` only when the variable does not follow the `CONTROL_PLANE_` rule
-   (e.g. `PROTOCOL_LOGGING_ENABLED`). `nullable=True` lets a `gcs_uri` be empty.
+   (e.g. `PROTOCOL_LOGGING_ENABLED`). `nullable=True` lets a `destination_uri` be empty.
    A rule spanning settings goes in `validate_scope_values` (it receives every effective value of
    the scope) — raise `SettingValueError(message, key=<the setting to blame>)`. If two valid values
    can still disagree between an override and the deployment, also clamp in
@@ -145,7 +145,11 @@ Read it from the environment as in §2.1 (or `runtime_app/config.py`), with no c
 show it on the Deployment section, add a `DeploymentSetting(key, component, label, env_var,
 description)` to `DEPLOYMENT_SETTINGS` in `settings/catalog.py`; its value comes from
 `web/settings.py::_deployment_value`, which reads `getattr(config, key)` — add a branch there if the
-value lives elsewhere.
+value lives elsewhere. An object store's own setting is a `StoreSettings` field
+(`lakehouse/store/registry.py`), read from its `STORAGE_*` variable by the stores themselves, and
+shown through `_STORE_SETTINGS` in `web/settings.py`. A storage credential is in the SDK's own
+variables (`GOOGLE_APPLICATION_CREDENTIALS`, `AWS_*`, `AZURE_*`), read by the SDK or inside
+`lakehouse/store/` alone, and never shown.
 
 ### 5.2 Console
 

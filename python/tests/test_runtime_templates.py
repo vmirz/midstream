@@ -67,6 +67,18 @@ def shipped_runtime_app_spec() -> dict:
     return yaml.safe_load(value)
 
 
+def null_fields(value, path: str = "") -> list[str]:
+    """The paths of every null field of `value`'s mappings."""
+    if isinstance(value, dict):
+        found = []
+        for key, item in value.items():
+            found.extend([f"{path}.{key}"] if item is None else null_fields(item, f"{path}.{key}"))
+        return found
+    if isinstance(value, list):
+        return [found for index, item in enumerate(value) for found in null_fields(item, f"{path}[{index}]")]
+    return []
+
+
 def by_suffix(resources: list[dict], suffix: str) -> dict:
     return next(item for item in resources if item["metadata"]["name"].endswith(suffix))
 
@@ -400,6 +412,30 @@ class RuntimeTemplateTests(unittest.TestCase):
         self.assertNotEqual(spec_hash(stopped), spec_hash(rendered))
         defaults = render()["kaspr_app"]["spec"]
         self.assertEqual((defaults["replicas"], defaults["storage"]["size"]), (1, "64Mi"))
+
+    def test_a_null_in_the_deployment_spec_is_left_out_of_the_runtime(self) -> None:
+        # An empty block in the deployment's spec renders as null - template.pod with no labels,
+        # scheduling or volumes, the default on S3 - and the KasprApp CRD refuses a null object.
+        shipped = shipped_runtime_app_spec()
+        spec = {
+            **shipped,
+            "tls": None,
+            "template": {**shipped["template"], "pod": None},
+        }
+        rendered = render(config=ControlPlaneConfig(runtime_app_spec=spec))["kaspr_app"]["spec"]
+        self.assertNotIn("pod", rendered["template"])
+        self.assertNotIn("tls", rendered)
+        self.assertEqual([], null_fields(rendered))
+        self.assertEqual(
+            render(config=ControlPlaneConfig(runtime_app_spec=shipped))["kaspr_app"]["spec"]["template"]["kasprContainer"],
+            rendered["template"]["kasprContainer"],
+        )
+        # A spec without nulls renders as before: no running runtime is re-applied for this.
+        self.assertEqual([], null_fields(shipped))
+        self.assertEqual(
+            spec_hash(render(config=ControlPlaneConfig(runtime_app_spec=shipped))),
+            spec_hash(render(config=ControlPlaneConfig(runtime_app_spec={**shipped, "template": {**shipped["template"]}}))),
+        )
 
     def test_members_are_autoscaled_as_the_deployment_says(self) -> None:
         # The shipped runtime spec has a VerticalPodAutoscaler set each member's CPU request from its

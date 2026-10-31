@@ -143,9 +143,11 @@ parks: its buffer is dropped and its partitions leave the consumer. A table no t
 
 **Seeding.** The schema comes from the control plane (`GET …/tables/{table}/schema?raw=true`: the
 Iceberg schema, fork map, last column id, rejected paths and the table's `materializer.protection`) with the service credential, and from
-the table's GCS metadata when the control plane cannot answer (logged, `seed_source: gcs`). Each
-partition starts at the table's committed offset plus one — the newest the member knows from the
-tick, an event or the table — so the tail holds nothing the table holds already.
+the table itself when the control plane cannot answer — its pointer and metadata, read through the
+object store of its location's scheme as a runtime member reads them (11 §11.1a; logged,
+`seed_source: table`). Each partition starts at the table's committed offset plus one — the newest
+the member knows from the tick, an event or the table — so the tail holds nothing the table holds
+already.
 
 **Backlog.** A table seeded with more than `live_tail_max_rows_per_table` (250,000) records between
 its committed offsets and the head — a new materialization's backfill — is `backlogged` from the
@@ -343,7 +345,9 @@ In brief; console 07 §07.9 has the detail.
 | `TAIL_MEMBER_MAP_REFRESH_SECONDS` | 15 | §19.5 |
 | `RUNTIME_MEMBER_ID` | the pod's name | The member's name |
 
-Kafka is reached with Kaspr's own `K_KAFKA_*` variables. **The control plane's** nine settings
+Kafka is reached with Kaspr's own `K_KAFKA_*` variables, and the tables, which seeding reads when the
+control plane cannot answer, with the storage credentials and `STORAGE_*` settings the chart gives
+every app from `storage.*` (02 §2.9a, 11 §11.1a). **The control plane's** nine settings
 (`live_tail_*`, Settings › Live tail) are in handbook 17 §17.3; every tick carries them, so a change
 reaches the tail app within a minute. **The console's** four (`liveTailEnabled`,
 `liveTailRefreshMs`, `liveTailMaxRows`, `liveTailTimeoutMs`) are in console 03 §3.10.
@@ -369,7 +373,7 @@ reaches the tail app within a minute. **The console's** four (`liveTailEnabled`,
 | Members are added or removed | Tables move with their tick partitions; a request meanwhile is `409 tail_rebalancing`, retried on the next refresh |
 | A table was just created, activated or moved | `503 tail_not_ready` until it is answerable; the console's wait covers a quiet table's activation |
 | A partition loses its leader | Only that partition stops; `lag_ms` says for how long |
-| The control plane is unreachable, or restarting | Sessions are trusted for the grace; seeding falls back to GCS; ticks resume after. A restarted control plane answers `503 starting` until it has read its tables back (18 §18.7), which the tail and the console ride out the same way |
+| The control plane is unreachable, or restarting | Sessions are trusted for the grace; seeding falls back to reading the table from storage; ticks resume after. A restarted control plane answers `503 starting` until it has read its tables back (18 §18.7), which the tail and the console ride out the same way |
 | The source topic is deleted | `unavailable`, retried every 30 s; nothing else on the member is affected |
 | A burst beyond the bound, or a backlog | `truncated` (paused), or `backlogged` past twice the bound; the console says which and how far |
 | A schema change in flight | Rows settle: `_unmapped` until the change is committed, then rebuilt |

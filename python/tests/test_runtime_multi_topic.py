@@ -16,13 +16,12 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from google.api_core.exceptions import ServiceUnavailable  # noqa: E402
-
 from lakehouse_support import MATERIALIZATION_ID  # noqa: E402
 from runtime_support import MEMBER_ID, TP, RuntimeHarness, run  # noqa: E402
 
 from midstream.lakehouse.maintenance import live_data_files  # noqa: E402
 from midstream.lakehouse.offsets import committed_offsets  # noqa: E402
+from midstream.lakehouse.store import StoreError  # noqa: E402
 from midstream.runtime_app.handlers.status import build_runtime_heartbeat  # noqa: E402
 from midstream.runtime_app.pipeline import BatchPipeline, batch_pipeline  # noqa: E402
 from midstream.runtime_app.state import get_partition_state, list_partition_states  # noqa: E402
@@ -147,9 +146,9 @@ class MultiTopicFlowTests(unittest.TestCase):
         self.assertEqual(3, len(self.runtime.rows("payments")))
 
     def test_a_table_whose_commits_fail_does_not_hold_back_the_others(self) -> None:
-        def outage(operation, bucket, name):
-            if operation == "upload" and "/payments/metadata/" in name and name.endswith(".metadata.json"):
-                return ServiceUnavailable("GCS is down")
+        def outage(operation, uri):
+            if operation == "put" and "/payments/metadata/" in uri and uri.endswith(".metadata.json"):
+                return StoreError("the store is down", uri=uri, status=503)
             return None
 
         async def scenario():

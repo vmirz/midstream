@@ -27,7 +27,7 @@ repository without changes beyond its domain registry (`CONSOLE_DOMAINS`).
 | Materializations | Live searchable/sortable list (by label, id, topic, dataset or table), create — one or more source topics, each becoming a table in the dataset chosen for it and named after it unless renamed — stop, resume, edit the label, topics and replicas, delete |
 | Datasets | Every dataset with its owners and tables, locked ones marked; create (also inline while picking topics), edit the description, delete when empty; an Access tab where owners grant Dataset Reader, Writer and Owner to people and groups |
 | Detail | Live ingest and write rates, the tables' rows and size (the Data tab's counts) and how complete they are, a panel with each table (`dataset.table`, locked where the person cannot read its dataset) and its rows, size, lag, schema and state, throughput and consumer-lag charts with a catch-up estimate, reconciliation, per-member state with the committer marked, spec |
-| Table | Each Iceberg table: snapshots, maintenance history with **Run now**, files by partition, properties, and connection snippets for DuckDB, PyIceberg, Spark and Trino — PyIceberg and Spark through the federated catalog (`lake.<domain>.<dataset>.<table>`), DuckDB and Trino through the domain's own |
+| Table | Each Iceberg table: snapshots, maintenance history with **Run now**, files by partition, properties, and connection snippets for DuckDB, PyIceberg, Spark and Trino — PyIceberg and Spark through the federated catalog (`lake.<domain>.<dataset>.<table>`), DuckDB and Trino through the domain's own; each reads the data files as the table's backend — GCS, S3 or Azure — needs, filled from the console's storage profile for it, every credential a placeholder |
 | Runtime | KasprApp observation, readiness conditions, managed agent states, runtime binding |
 | Schema | Every schema each table has had — for the tables whose datasets the person may read — fork-aware field browser and tree with field ids, schema-to-schema diff by field id |
 | Data | Any of the materialization's tables the person may query, chosen with a picker, or in SQL any table of any domain they may query there (`<domain>.<dataset>.<table>`): the newest rows with an exact total at once — with live tail on, records seconds after they are produced, before the runtime commits them, followed by **Live** and each shown once; Splunk-style time ranges on the Kafka record time; searchable filters or SQL — over flat logical columns or the native tables, joining the materialization's tables — behind one **Run** button, with exact progress, instant paging and export of the finished result as CSV, nested or flat JSON, or Parquet, under **More actions** with **Share** and **Peek** |
@@ -48,7 +48,7 @@ browser ──SSE──┐                                  ┌─HTTP─▶ Dom
                ├─ console server (Fastify) ───────┼─HTTP─▶ Domain B's control plane (another cluster)
 browser ──HTTP─┘        │                         └─HTTP─▶ …
                         ├─ a live store per domain  poll + per-member rates + lag history + fan-out
-                        ├─ Iceberg reader           pointer → metadata → manifests, per snapshot (GCS)
+                        ├─ Iceberg reader           pointer → metadata → manifests, per snapshot (GCS, S3, Azure)
                         ├─ DuckDB                   runs over snapshots' files, across domains
                         ├─ sign-in providers        Entra ID, GitHub, Google, OpenID Connect
                         └─ /catalog                 one Iceberg REST catalog over every domain
@@ -71,6 +71,7 @@ browser ──HTTP─┘        │                         └─HTTP─▶ …
 ```bash
 npm install
 cp .env.example .env          # unset CONSOLE_DOMAINS: one domain, `local`, at localhost:6065
+                              # set CONSOLE_STORAGE and its credentials to read tables (docs/02 §2.2)
 
 # In another shell, expose the dev control plane:
 kubectl -n midstream port-forward svc/midstream-control-plane-app-api 6065:6065
@@ -105,23 +106,28 @@ override wins until it is reset ([docs/03](docs/03-configuration-reference.md)).
 | `CONSOLE_LIST_POLL_MS` | `2000` | Fleet refresh cadence while a client is connected |
 | `CONSOLE_DETAIL_POLL_MS` | `1500` | Refresh cadence for a materialization with an open detail view |
 | `CONSOLE_IDLE_POLL_MS` | `30000` | Cadence when no client is connected |
-| `CONSOLE_GCS_HMAC_KEY_ID` / `_SECRET` | unset | Enables direct `gs://` scans in DuckDB |
+| `CONSOLE_STORAGE_FILE` / `CONSOLE_STORAGE` | none: no object storage is read | The storage profiles: one per destination prefix (`gs://`, `s3://`, `abfss://`), with its kind, endpoint, region, path style, access and, for GCS, key file. The chart renders it from `console.storage[]` |
+| `CONSOLE_STORAGE_<NAME>_…` | unset | Each profile's credentials, `<NAME>` its name in upper case with `-` as `_`: `GCS_HMAC_KEY_ID` and `GCS_HMAC_SECRET`; `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY` and `SESSION_TOKEN`; `AZURE_CONNECTION_STRING`, `AZURE_ACCOUNT_KEY`, or `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_CLIENT_SECRET`. Read-only ones |
 | `CONSOLE_RUN_SCAN_CONCURRENCY` | `48` | Files one run reads in parallel; Node's worker pool is sized from it at startup |
 | `CONSOLE_RESULT_ROW_LIMIT` | `1000000` | Rows a statement's result keeps for paging and export; its total is always counted |
 | `CONSOLE_SNAPSHOT_CACHE_MS` / `CONSOLE_TABLE_METADATA_FRESH_MS` | `2000` / `5000` | How old a table's pointer may be for a run / for the summary |
 | `CONSOLE_DATA_DIR` | OS temp dir | Run results and the cached-mode file cache |
 
-### Data access modes
+### Storage profiles
+
+Each object is read with the storage profile whose scope is the longest prefix of its URI, as DuckDB
+picks among scoped secrets ([docs/07 §07.10](docs/07-data-access-and-duckdb.md)); a table outside every
+scope answers "no storage is configured for …".
 
 | Mode | When | Behaviour |
 |------|------|-----------|
-| `direct` | GCS HMAC credentials are configured | DuckDB reads `gs://` in place; nothing is downloaded |
-| `cached` | No HMAC credentials (uses ADC) | The pruned file set is mirrored to a local LRU cache first |
-| `disabled` | `CONSOLE_DATA_ACCESS_ENABLED=false` | The Data tab is unavailable |
+| `direct` | an S3 or Azure profile; a GCS profile with an HMAC key pair | DuckDB reads data files in place with the profile's scoped secret; nothing is downloaded |
+| `cached` | `"access": "cached"`; a GCS profile without an HMAC pair; an Azure profile with an emulator `endpoint` but neither a connection string nor the account key | Data files are mirrored to a local LRU cache first, under `<cache>/<profile>/<container>/…` |
 
-`cached` mode is bounded by `CONSOLE_CACHED_MODE_MAX_FILES` and `CONSOLE_CACHED_MODE_MAX_BYTES`
+`cached` profiles are bounded by `CONSOLE_CACHED_MODE_MAX_FILES` and `CONSOLE_CACHED_MODE_MAX_BYTES`
 per scan. Narrow the time range to stay inside them — files outside it are pruned on their manifest
-bounds *before* anything is downloaded. Pages read one file at a time and are never refused.
+bounds *before* anything is downloaded. Pages read one file at a time and are never refused. With
+`CONSOLE_DATA_ACCESS_ENABLED=false` the Data tab is unavailable.
 
 ## Query safety
 
@@ -131,8 +137,14 @@ The SQL console is deliberately powerful but sandboxed:
 - Statement kinds and file-access functions that could escape the prepared view are rejected
   (`ATTACH`, `COPY`, `INSTALL`, `read_csv`, `iceberg_scan`, `glob`, …). String literals and comments
   are stripped before keyword scanning so data cannot smuggle a keyword past the guard.
+- Calls to `duckdb_secrets()` and `which_secret()`, which list the secrets a statement could read
+  with, and to `query()` and `json_execute_serialized_sql()`, which run SQL given as a string, are
+  refused however they are spelled; a table or column of the same name stays queryable.
 - Every statement runs in a DuckDB sandbox of its own: external access off and configuration locked,
-  with only the run's snapshot files readable — whatever the guard misses, DuckDB refuses.
+  with only the run's snapshot files readable, and only the secrets of the storage profiles they are
+  read with — whatever file the guard misses, DuckDB refuses. The sandbox cannot tell a write to an
+  object path it may read from a read, so the guard's refusal of `COPY` is what stops one: give every
+  storage profile read-only credentials.
 - Queries read a view of each table they name, in any domain, by `<domain>.<dataset>.<table>`,
   and `<domain>_iceberg.<dataset>.<table>` with the native columns, scoped to the run's snapshot and
   time range. A statement naming a table in a dataset the person may not query in its domain is
@@ -175,7 +187,8 @@ server/
   live/store.ts          Polling, rate derivation, SSE fan-out
   iceberg/               Reading Iceberg tables: pointer, metadata, Avro manifests, snapshots, schema projection
   schema/                Schema diff engine
-  data/                  Snapshot catalog, logical columns, DuckDB and its sandbox, SQL guard, GCS
+  storage/               Storage profiles: the registry, GCS, S3 and Azure readers, DuckDB secrets, the cache
+  data/                  Snapshot catalog, logical columns, DuckDB and its sandbox, SQL guard
   runs/                  Runs: browse and statement execution, pages, exports, profiles
   routes/                HTTP surface, the domain-scoped routes under /api/d/<domain>, the catalogs
 src/

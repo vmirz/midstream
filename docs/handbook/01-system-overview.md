@@ -3,8 +3,9 @@
 ## 1.1 What the system does
 
 Midstream continuously materializes JSON records from Kafka topics into **Apache
-Iceberg tables — one per source topic — in Google Cloud Storage**, exactly once, with a self-service
-HTTP API, schemas that evolve by themselves, and an Iceberg REST catalog that any engine can attach.
+Iceberg tables — one per source topic — in Google Cloud Storage, Amazon S3 or an S3-compatible
+server, or Azure Blob Storage**, exactly once, with a self-service HTTP API, schemas that evolve by
+themselves, and an Iceberg REST catalog that any engine can attach.
 A materialization reads one or more topics with one runtime, each into a table in a **dataset**: a
 named group of tables and their Iceberg namespace, so SQL names a table `sales.orders`. A dataset
 holds tables from many materializations, a materialization may write into several datasets, and
@@ -23,8 +24,10 @@ and the system:
 1. Assigns a `materialization_id`, and claims each table's name in its dataset — `sales.orders`,
    `finance.invoices` — so no other table can take it (18 §18.16).
 2. Samples up to 200 records of each topic, all at once, and infers each table's schema 0 (09 §9.6).
-3. Creates the Iceberg tables under `gs://my-lake/<release>/<materialization id>/`,
-   one directory each, partitioned by the day of `_kafka_timestamp`, each with a catalog pointer (11).
+3. Creates the Iceberg tables under the deployment's destination, in
+   `<destination>/<release>/<materialization id>/` — `gs://example-lake/…`, `s3://example-lake/…` or
+   `abfss://lake@exampleaccount.dfs.core.windows.net/…` — one directory each, partitioned by the day
+   of `_kafka_timestamp`, each with a catalog pointer (11).
 4. Renders and applies **one dedicated Kaspr runtime application** for both into Kubernetes.
 5. That runtime's members consume both topics, mask the values of fields that look sensitive —
    emails, phone numbers and national identifiers hashed, secrets withheld, unless the
@@ -93,8 +96,8 @@ resources**, rendered from Jinja2 templates in
 
 Both planes run the **same Python package** (`midstream-platform`). The runtime side lives
 under `runtime_app/`, the maintenance app's under `maintenance_app/`, the Iceberg library they all
-use under `lakehouse/`, the control-plane side everywhere else. One wheel, one install, one version
-pin.
+use under `lakehouse/` — and under `lakehouse/store/` the object store layer they reach the lake
+through — the control-plane side everywhere else. One wheel, one install, one version pin.
 
 ### The maintenance app
 
@@ -116,11 +119,45 @@ the console as Parquet under `/tail/v1`. It keeps no state: the control plane na
 table each minute on `<release>-tail-requests`, keyed by table, so each member tails the tables
 of its partitions and forwards a request for another's. It never writes a table (19).
 
+### The object store layer
+
+Every app and runtime reaches the lake through `lakehouse/store/` (11 §11.1a): an `ObjectStore`
+protocol of the few operations Midstream asks of a bucket — read an object with the version read;
+read its size, version and age; write it unconditionally, create-only, or as a compare-and-swap on
+the version read; delete one or many; list a prefix — and one store per URI scheme, chosen by
+`store_for(uri)`:
+
+| Scheme | Store | Backend, through |
+|---|---|---|
+| `gs://` | `GcsStore` | Google Cloud Storage, google-cloud-storage |
+| `s3://` | `S3Store` | Amazon S3 or an S3-compatible server that honours conditional writes, boto3 |
+| `abfss://` | `AzureBlobStore` | Azure Blob Storage, azure-storage-blob, through the account's Blob endpoint |
+| `file://` | `FileStore` | the local disk: tests and a laptop only |
+
+The pointer catalog, PyIceberg's FileIO, the writer's uploads, the committer, the maintenance app,
+the tail app, table creation and drops and the REST catalog all go through it, and none of them
+knows which backend serves a table. A table's location names its backend for good, and the
+deployment's destination decides it for new materializations, so one deployment may hold tables on
+several backends. Each process keeps one store per scheme, with one identity — the SDK's own
+credential variables, or the pod's cloud identity — and Midstream's `STORAGE_*` variables: an S3
+endpoint, region and path style, an Azure emulator's endpoint (02 §2.9a, 03 §3.3a).
+
+The conformance suite, `python -m midstream.lakehouse.store.check <uri>`, checks a store's
+conditional writes — create-only, compare-and-swap, sixteen writers racing with exactly one winner
+per round — and is run against a store before a deployment is pointed at it (02 §2.11). CI runs it
+against SeaweedFS and moto for `s3://`, Azurite for `abfss://` and fake-gcs-server for `gs://`
+(02 §2.13). S3 is verified against SeaweedFS and moto, not against AWS itself, and Azure Blob Storage
+against Azurite, not yet against a real storage account.
+
 ### The console
 
 The Midstream Console (`/console`) is a Node BFF and a React client. It talks to the control plane
-over HTTP only, and reads tables itself: their pointers, metadata and manifests from GCS, and their
-data files through DuckDB (console 06, 07). It is meant to be extractable into its own repository.
+over HTTP only, and reads tables itself, through storage profiles of its own — one per destination
+prefix, each with credentials of its own, which should be read-only — the longest matching scope
+serving each object. It reads their pointers, metadata and manifests with each backend's SDK, and
+their data files through DuckDB, in place with a secret scoped to the profile or from a downloaded
+copy, so one statement may join tables on different backends (console 03 §3.6a, 06, 07); a location
+no profile covers is never read. It is meant to be extractable into its own repository.
 
 ## 1.3 Why "dedicated runtime" and not one shared consumer
 
@@ -318,8 +355,10 @@ members stage, seal, upload; the committer commits; table events keep the table 
 5. **Every commit goes through the pointer's compare-and-swap.** The control plane creates
    `metadata/catalog-pointer.json` and retires it on a drop; between the two only the runtime's
    committer, the maintenance app — and the REST facade, for an engine with `catalog.write` —
-   replace it, always with a GCS generation precondition, so no commit is ever lost to another
-   (11 §11.2).
+   replace it, always on the condition that it is still at the version read: a GCS generation
+   precondition, an S3 or Azure `If-Match` on its ETag. So no commit is ever lost to another, and a
+   write whose answer was lost is judged by the pointer read back: its staged metadata is deleted
+   only when the commit provably did not land (11 §11.2).
 6. **Exactly once into the table.** A partition's committed Kafka offset never passes a record
    whose row is not in the table, and the committer refuses a file the table already covers
    (10 §10.7). The E13 load test checked it on a test cluster with the committer deleted mid-commit and
@@ -342,7 +381,11 @@ members stage, seal, upload; the committer commits; table events keep the table 
 - Not a general ETL engine: no transformations, filters, joins or projections.
 - Not a CDC pipeline: a table is its topic's log — tombstones are rows and nothing is deleted or
   upserted (14 §14.1).
-- Not multi-cloud: the lake, the pointer's compare-and-swap and the console's reader are GCS-only.
+- Not for every object store: the pointer's compare-and-swap needs a store that keeps conditional
+  writes — Google Cloud Storage, Amazon S3 or an S3-compatible server that honours them, Azure Blob
+  Storage — which the conformance suite checks (11 §11.1a); `file://` serves tests and a laptop only.
+- Not a mover between stores: a table stays where it was created, since its metadata names every
+  file by its full URI; moving one to another bucket or backend is a new materialization.
 - Not a schema registry client: schemas are inferred from message content, and values must be JSON.
 
 ## 1.8 Technology stack
@@ -354,12 +397,12 @@ members stage, seal, upload; the committer commits; table events keep the table 
 | Stream framework | Kaspr (`kaspr.io/v1alpha1` CRDs), on twm-faust | operator-provided |
 | Table format | Apache Iceberg v2, through PyIceberg | `pyiceberg[pyarrow]>=0.12,<0.13` (pinned minor: the committer uses internal update APIs) |
 | Columnar format | pyarrow | `>=18.1.0` |
-| Object storage | google-cloud-storage | `>=2.18.0` |
+| Object storage | google-cloud-storage; boto3; azure-storage-blob and azure-identity | `>=2.18.0`; `>=1.36` (conditional `PutObject`); `>=12.31.0,<13` (from 12.31 a chunked upload's block ids are unique) and `>=1.19` |
 | Templating | Jinja2 | `>=3.1.0` |
 | Config parsing | PyYAML | `>=6.0.0` |
 | Kubernetes client | kubernetes-asyncio | `>=33.1.0` |
 | Kafka admin/consumer | aiokafka | **not declared**; provided by the Kaspr runtime image |
-| Console | Node 24+, React, DuckDB (`@duckdb/node-api` 1.5.5), avsc | `console/package.json` |
+| Console | Node 24+, React, DuckDB (`@duckdb/node-api` 1.5.5), avsc; `@google-cloud/storage`, `@aws-sdk/client-s3`, `@azure/storage-blob` and `@azure/identity` for its storage profiles | `console/package.json` |
 | Deployment | Helm (`charts/midstream`) | `helm` 3.12+ |
 | Tests | stdlib `unittest`; `node --test` in `/console` | — |
 
@@ -384,6 +427,7 @@ There is **no linter or formatter configured** in this repository. Do not introd
     handlers/                       Thin Kaspr-facing adapters
     web/                            WebView validation, mutations, responses; the REST catalog
     lakehouse/                      Iceberg: pointer catalog, table creation, commits, schema policy, maintenance, REST
+      store/                        The object store layer: a store per scheme (GCS, S3, Azure Blob, file, memory), the conformance suite
     identity/                       Permissions, principals, authorization, session and access tokens, passwords
     settings/                       Settings catalog and effective-configuration resolution
     observation/                    Status derivation, backoff, staleness
@@ -395,7 +439,7 @@ There is **no linter or formatter configured** in this repository. Do not introd
     kubernetes/                     Server-side apply client
     kafka/                          Topic/consumer-group admin, metadata
     scheduler/                      Routed-output builders
-  tests/                            52 unittest modules
+  tests/                            71 unittest modules
 /console/                           Midstream Console: BFF + React client (self-contained)
   docs/                             Console handbook (17 documents)
 ```
@@ -403,6 +447,7 @@ There is **no linter or formatter configured** in this repository. Do not introd
 ## 1.10 Where to go next
 
 - Deploying or reading manifests → [02 — Deployment and manifests](./02-deployment-and-manifests.md)
+- Where the lake lives, and each backend's credentials → [02 §2.9a](./02-deployment-and-manifests.md), [03 §3.3a](./03-configuration-reference.md)
 - Tuning behavior → [03 — Configuration reference](./03-configuration-reference.md)
 - Calling the API or attaching an engine → [04 — HTTP API reference](./04-http-api-reference.md)
 - Signing in, users, roles, access tokens → [18 — Identity and access](./18-identity-and-access.md)

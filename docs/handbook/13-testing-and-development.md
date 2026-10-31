@@ -24,19 +24,23 @@ dependencies — the suite is stdlib `unittest`.
 |---------|-------------------------------|-----------|
 | `pyiceberg[pyarrow]>=0.12,<0.13` | yes | `lakehouse/` and everything built on it: the catalog, commits, schema policy, maintenance, the REST protocol |
 | `pyarrow>=18.1.0` | yes | seals, compaction, footers (`test_runtime_seal`, `test_runtime_flow`, `test_lakehouse_*`) |
-| `google-cloud-storage>=2.18.0` | yes | its exceptions are what `gcs_fakes.py` raises; `test_batched_destination_deletes` runs the real client against a fake JSON API and is skipped without it |
+| `google-cloud-storage>=2.18.0` | yes | `GcsStore` (`lakehouse/store/gcs.py`); its exceptions are what `gcs_fakes.py`, the client double behind the GCS store's tests, raises; `test_store_gcs` and `test_batched_destination_deletes` run the real client against a fake JSON API |
+| `boto3>=1.36` | yes | `S3Store` (`lakehouse/store/s3.py`); `test_store_s3` runs a real boto3 client under botocore's `Stubber` |
+| `azure-storage-blob>=12.31.0,<13`, `azure-identity>=1.19` | yes | `AzureBlobStore` (`lakehouse/store/azure.py`); `test_store_azure` runs the real library over a transport double. 12.31 is the floor: before it, racing create-only uploads in blocks could commit mixed content |
 | `jinja2>=3.1.0`, `pyyaml>=6.0.0` | yes | `runtime/templates.py`, `test_runtime_templates`, `test_agent_manifests` |
 | `kubernetes-asyncio>=33.1.0` | yes | `kubernetes/client.py` |
 | `aiokafka` | **no** | `schema/discovery.py`, `kafka/admin.py` — imported lazily; `test_kafka_admin` asserts a clean failure when absent |
 | `faust` / Kaspr runtime | **no** | supplied by the Kaspr image at runtime; code has fallbacks. With twm-faust installed (plus `intervaltree` and `sortedcontainers`), `AckLedgerAgainstFaustTests` also runs the ack ledger's properties against Faust's own commit bookkeeping; without it they are skipped |
 
 The suite passes without `aiokafka` and without `faust`. Nothing needs network, a bucket or a
-cluster: GCS is an in-memory fake with object generations (§13.3).
+cluster: every table lives in `MemoryStore`, an in-memory object store with versions and conditional
+writes, and the live store tests are skipped unless `STORAGE_LIVE_TESTS` names stores to check
+(§13.3a).
 
 ## 13.2 Commands
 
 ```bash
-# full suite (1,248 tests, ~90 s)
+# full suite (1,948 tests, ~85 s; the live store tests skipped)
 python3 -m unittest discover -s python/tests -p 'test_*.py' -v
 
 # quiet
@@ -51,6 +55,11 @@ python3 -m unittest discover -s python/tests -p 'test_runtime_committer.py' -k a
 
 # stop on first failure
 python3 -m unittest discover -s python/tests -p 'test_*.py' -f
+
+# the object store layer; the conformance suite against a store you can reach, with your own
+# credentials (§13.3a; 12 §12.12a)
+python3 -m unittest discover -s python/tests -p 'test_store_*.py' -v
+python3 -m midstream.lakehouse.store.check s3://example-lake/_check
 
 # syntax smoke check (there is no linter configured)
 python3 -m compileall -q python/src
@@ -76,20 +85,35 @@ Validate locally with unit tests and `helm template`; validate end-to-end agains
 
 ## 13.3 Test suite map
 
-1,566 tests across 62 modules (the counts per module below were taken at different releases; the
-data protection and reprotect ones are current). Treat these as the executable specification — when prose and tests
-disagree, the tests win.
+1,948 tests across 71 modules (the counts per module below were taken at different releases; the
+data protection, reprotect and object store ones, and those of the modules the object store changed,
+are current). Treat these as the executable specification — when prose and tests disagree, the tests
+win.
 
 ### The Iceberg side
 
 | Module | Tests | Covers |
 |--------|-------|--------|
-| `test_lakehouse_catalog.py` | 17 | The GCS-pointer catalog: the pointer's compare-and-swap, table creation with fixed field ids, commits once and only once, drops |
+| `test_lakehouse_catalog.py` | 35 | The pointer catalog (`PointerCatalog`), over the memory store and again over the GCS store and its client double, where a version is the pointer's generation: the pointer's compare-and-swap, table creation with fixed field ids, commits once and only once, drops |
+| `test_lakehouse_lost_answers.py` | 19 | Conditional writes whose answer was lost, staged with a store that applies a write and then fails it: a pointer write that landed — its retry refused, or no answer at all — is the commit, a commit since included; one that provably did not land (a lost race, a table dropped) deletes its staged metadata file; when the pointer has not moved or the metadata log no longer reaches back, `CommitStateUnknownException` and nothing deleted; a staged metadata file or an upload already there at its size counted as written, another object at its name refused |
+| `test_lakehouse_schemes.py` | 2 | A table's whole life — created, committed to, compacted, expired, cleaned of orphans, reprotected and purged, dropped — on `gs://`, `s3://`, `abfss://` and `file://` locations, a `MemoryStore` installed for each scheme and the file store on a temporary directory, the compaction and reprotect children's store calls included |
 | `test_lakehouse_commits.py` | 30 | The committer's decisions (`plan_append`): a seal continuing the table accepted, skipped records no gap, covered and overlapping seals refused, a gap never jumped; pending files across sessions and processes — a restarted member heard whatever its generation, an older session of one process stale; appends carrying offsets, totals and valid-through; one file per day for a seal spanning days, and per month in a month table, its partition as Iceberg computes it; file naming; a file's protection lineage in its name, read back |
 | `test_lakehouse_schema_policy.py` | 28 | The schema policy row by row (09 §9.4): additions, deferrals, forks, collapses, the caps and `_unmapped`, key naming |
 | `test_lakehouse_conform.py` | 16 | Conforming records onto a schema, drift detection and the API projection agree on what fits |
-| `test_lakehouse_maintenance.py` | 35 | Compaction planning — inputs of different protection lineages never in one output, each output named with its inputs' lineage — the partition being written waits, this month's files settle one by one, a backfill's past partitions do not and a past month is compacted into files of its own, several small partitions in one job each into its own files, a partition only whole, a failed one alone — the worker — inputs read and written a budget at a time, outputs closed at the target size and sorted a row group at a time, a missing list kept null — the commit's per-partition checks; snapshot expiry; orphans |
+| `test_lakehouse_maintenance.py` | 38 | Compaction planning — inputs of different protection lineages never in one output, each output named with its inputs' lineage — the partition being written waits, this month's files settle one by one, a backfill's past partitions do not and a past month is compacted into files of its own, several small partitions in one job each into its own files, a partition only whole, a failed one alone — the worker — inputs read and written a budget at a time, outputs closed at the target size and sorted a row group at a time, a missing list kept null, an output whose create-only upload landed before its retry was refused counted, another object at an output's name failing the job — the commit's per-partition checks; snapshot expiry; orphans, a file whose store cannot tell its age never one |
 | `test_catalog.py` | 18 | The REST catalog: config, a namespace per dataset the caller may read — locked ones hidden — its tables, whichever materialization writes them, kept ones included; names resolved through their claims; loads from each table's own location and a cache keyed by the table's UUID; commits through the pointer with `catalog.write` on the dataset, `409` on a stale commit, commits that would move files refused, `501`s, errors in the shape engines parse |
+
+### The object store
+
+| Module | Tests | Covers |
+|--------|-------|--------|
+| `test_store_contract.py` | 89 | The contract (`lakehouse/store/base.py`) over `MemoryStore` and `FileStore`: the conformance suite passing over both, and failing a store that breaks the contract; each store's own guarantees — create-only and compare-and-swap refusals, conditional deletes, versions never issued twice, the memory store's failure injection and call log, the file store's temporary files, versions and races between instances and between processes; the registry building one store per scheme, importing no cloud SDK until a scheme needs one, and reading `StoreSettings` from the environment |
+| `test_store_uris.py` | 15 | Every scheme parsed into its container, key and account and rebuilt to the same text; every destination pattern's edge cases by its backend's naming rules; a refusal naming the form to write instead |
+| `test_store_gcs.py` | 32 | `GcsStore` over the client double (`gcs_fakes.FakeGcs`): the conformance suite, conditional deletes included; every request pinned to its exact arguments (request parity, §13.3a); each library error mapped to the contract's, a missing bucket a configuration error, never a missing object; batch deletes through the real client against a fake JSON API, a hundred to a request, a request that fails failing every delete in it |
+| `test_store_s3.py` | 35 | `S3Store` over a real boto3 client under botocore's `Stubber`: `IfNoneMatch='*'` for create-only, the quoted ETag as `IfMatch`, `Range` as `bytes=a-b`, `DeleteObjects` of 1,000, quiet; versions without quotes; 412 and 409 `ConditionalRequestConflict` as lost races, a 404 under `If-Match` too, a HEAD's bare 404 as a missing object, `NoSuchBucket` as configuration, failures in transit with no status; botocore's checksum and signing defaults kept on a custom endpoint |
+| `test_store_azure.py` | 42 | `AzureBlobStore` over doubles of azure-storage-blob's clients, and through the real library over a transport double: uploads always `overwrite=True` with an explicit match condition, ranges, batch deletes of 256 without retries, errors classified by status and `x-ms-error-code` alone, the headers Azure reads, a blob changing under a chunked read read again, the credential each environment selects, the shared transport |
+| `test_store_live.py` | 11 | The conformance suite and each backend's own cases against live stores; skipped unless `STORAGE_LIVE_TESTS` names them (§13.3a) |
+| `test_chart_storage.py` | 53 | The chart's `storage.*`: each backend's credentials as Secret references in every app and the runtime spec, the GCS key mounted and named, the `STORAGE_*` values only when set, every backend at once; endpoints refused unless a server's URL; the destination's three forms, `file://` and the rest refused by each scheme's rule; the console's profiles — the registry without credentials, each profile's Secret by kind, a GCS key file mounted beside it, the console's own identity, a change rolling the console — and every rule a profile breaks, two `s3` profiles of one bucket on different endpoints included; `kaspr.*` and `console.*` labels and annotations for workload identities; the warnings in `NOTES.txt`; no Secret value in any rendered manifest |
 
 ### The runtime
 
@@ -115,13 +139,13 @@ disagree, the tests win.
 | `test_protection_mask.py` | 17 | Each mask: the keyed hash's length and determinism, a number and its text masking alike, each kind's partial fragment and the half-and-four bound, withheld dropping the key; nulls and booleans never masked; hashing without a key refused |
 | `test_protection_plan.py` | 45 | Plans and records: each field's state under every revision — recorded with the first, replaced within one, anchored at the record's revision for a record from before states, unknown before it, bounded at 100 —  recorded states holding against the rules, new families classified by the rules, a fork of a protected field protected, an edit classifying every family again (`until` for a kind that left), the review's `would_change`, the history bound, the policy's parsing and its reserved keys |
 | `test_runtime_protection.py` | 21 | Masking in the runtime (`RuntimeHarness`): rows holding only masked values, a policy delivered live — stored by the settings agent, recorded by the committer in one metadata commit, the writers rolling their batches and naming files with the new revision — the key missing or another than expected writing nothing and reporting degraded, the heartbeat's revisions and counters |
-| `test_reprotect.py` | 18 | Reprotect (22 §22.14) over real tables on a fake GCS (`ReprotectTable`): which files need rewriting from their lineage, the fields' states and births and the manifests' value counts — a key first met by a lagging writer judged by the rules, values masked before left as they are and a changed mask rewriting nothing, a number field moved into its family's text field or blocked until there is one, withheld kinds nulled, `_unmapped` text, and a family collapsed to JSON, walked as a record only when a kind it may hold became masked, files of unknown lineage counted, a plan's bounds — and the rewrite end to end: masked rows in order, the offsets carried, no trace of the plain text in the current snapshot's manifests, a rewritten lineage left alone, the purge, a key that is not the table's refused |
+| `test_reprotect.py` | 20 | Reprotect (22 §22.14) over real tables in a memory store (`ReprotectTable`): which files need rewriting from their lineage, the fields' states and births and the manifests' value counts — a key first met by a lagging writer judged by the rules, values masked before left as they are and a changed mask rewriting nothing, a number field moved into its family's text field or blocked until there is one, withheld kinds nulled, `_unmapped` text, and a family collapsed to JSON, walked as a record only when a kind it may hold became masked, files of unknown lineage counted, a plan's bounds — and the rewrite end to end: masked rows in order, the offsets carried, no trace of the plain text in the current snapshot's manifests, a rewritten lineage left alone, the purge, a key that is not the table's refused, an output whose create-only upload landed before its retry was refused counted and another object at its name failing the job |
 
 ### The maintenance app
 
 | Module | Tests | Covers |
 |--------|-------|--------|
-| `test_maintenance_app.py` | 37 | The app over real tables on a fake GCS (`MaintenanceHarness`): a compaction rewriting small files with every row kept, the partition being written left alone, a backfill's past days taken, small days in one job, a backlog a job a step, expiry not held up, the target file size, a failed multi-day job retried a day at a time, backoff and giving up, the deadline; the runtime committing meanwhile; expiry and orphans; the schedule from the ticks, abandoned and stale jobs, cancels, forgetting a table, settings that do not fit; one slot shared across tables, more slots; the handlers; reprotect (`ReprotectTests`): waiting for the table to record the revision, the rows masked and the request done — not before the batches open under the older revision can have committed — the purge — alone too, once every file is rewritten — nothing to rewrite, no key failing then given up, a new revision counted unasked |
+| `test_maintenance_app.py` | 41 | The app over real tables in a memory store (`MaintenanceHarness`): a compaction rewriting small files with every row kept, the partition being written left alone, a backfill's past days taken, small days in one job, a backlog a job a step, expiry not held up, the target file size, a failed multi-day job retried a day at a time, backoff and giving up, the deadline; the runtime committing meanwhile; expiry and orphans; the schedule from the ticks, abandoned and stale jobs, cancels, forgetting a table, settings that do not fit; one slot shared across tables, more slots; the handlers; reprotect (`ReprotectTests`): waiting for the table to record the revision, the rows masked and the request done — not before the batches open under the older revision can have committed — the purge — alone too, once every file is rewritten — nothing to rewrite, no key failing then given up, a new revision counted unasked; a compaction's or a reprotect's outputs kept when its commit may have landed, and a commit that landed standing when the table cannot be read back |
 | `test_table_maintenance.py` | 6 | What the control plane ticks: every written and kept table, stopped materializations' included, with the overridden settings and the last runs; cancels for tables being dropped or deleted; the scheduled step writing nothing; a tick carrying the reprotect asked and the revision the table records |
 
 ### The live tail
@@ -145,20 +169,20 @@ disagree, the tests win.
 | `test_datasets.py` | 40 | Datasets, grants and table-name claims in the directory agent: a dataset made with its owner and All Users grants, renamed never, deleted only empty; grants only by those who hold the roles, never Guest, gone with their person, group or role; claims all or none, with each refusal reason and the row it names, redeliveries, releases and the marker that refuses a late claim; the hourly sweep; authorization per dataset, and tokens limited to datasets; the dataset views |
 | `test_topic_changes.py` | 17 | Planning a change of topics: an added topic's table in its dataset and its name, tables kept or dropped as asked, a decision required for each removed topic, a kept table written again or dropped, names never reused, redeliveries |
 | `test_workflow_topic_changes.py` | 20 | The change end to end through the workflow, its new tables' names claimed first (`ClaimedTopicChangeTests`): discover, create, drain until the group is empty, offsets set for added topics, apply; a change whose discovery failed finished by a resume; a topic gone by its discovery starting empty, with a warning; a group that never empties; heartbeats and sweeps leaving the drain alone; live drops after the drain, with cleanup off, failing, waiting for a running maintenance job and for a maintenance app that never answers; a delete meanwhile |
-| `test_workflow.py` | 42 | Discovery masking its samples, a new table recording what it protects in metadata version 0, every apply delivering the policy and none for a materialization from before data protection, an apply of the spec a healthy runtime runs keeping it running (`ProtectionDiscoveryTests`, `RuntimeApplyTests`); a claim's answer — discovery once the names are claimed, a refused create marked deleted with its reason (`ClaimAnswerTests`) — discovery, the tables, the runtime, and deletion back to nothing: step dispatch, each topic's schema 0, a topic Kafka does not list failing the create (`source_topic_missing`) unless it was deleted meanwhile, `create_table` a table a pass, a destination that cannot hold a table, apply, a resumed create finishing its tables, delete ordering, Kafka cleanup, every table dropped under one operation and the drop resuming with its table; a job the maintenance app forgot, waited out once rather than before every pass |
+| `test_workflow.py` | 48 | Discovery masking its samples, a new table recording what it protects in metadata version 0, every apply delivering the policy and none for a materialization from before data protection, an apply of the spec a healthy runtime runs keeping it running (`ProtectionDiscoveryTests`, `RuntimeApplyTests`); a claim's answer — discovery once the names are claimed, a refused create marked deleted with its reason (`ClaimAnswerTests`) — discovery, the tables, the runtime, and deletion back to nothing: step dispatch, each topic's schema 0, a topic Kafka does not list failing the create (`source_topic_missing`) unless it was deleted meanwhile, `create_table` a table a pass, a destination that cannot hold a table, apply, a resumed create finishing its tables, delete ordering, Kafka cleanup, every table dropped under one operation and the drop resuming with its table — over the memory store, and again over the GCS store and its client double (`GcsStoreDeletionTests`); a job the maintenance app forgot, waited out once rather than before every pass |
 | `test_request_intake.py` | 45 | A create storing its policy at revision 1 and one from before data protection none; an edit applied only to the revision it was made from, a redelivery changing nothing, an overtaken one refused in the status, `apply_rules` (`ProtectionIntakeTests`); persisting requests, action → step, scale, tombstone handling, granularity, a live tail switch in a request from before 4.3 dropped; the claim a create sends, the pending change and claim an update adding tables sends, releases on a delete and a drop; a change of topics planned again at intake, and a raced one refused in the status; a reprotect on every kept table's record — a written one waiting for the revision, a kept one for none — one table, a newer request replacing one, none while deleting, an edit's waiting for its own revision, none for an overtaken edit (`ReprotectIntakeTests`) |
 | `test_table_events.py` | 28 | A recorded policy replacing the projection of the same schema, each protected field annotated; the table-events agent keeping each table's record and schema projection in step with the runtime and the maintenance app — the running job set and cleared, reports for tables being dropped or materializations being deleted ignored but for the end of a running job, which their drop waits for; a status degraded while any table has an error; a plain-text count kept unless an older one arrives later; a reprotect done clearing its own request and failure, not another's; an expiry's newer metadata taken at the same snapshot, an older one not |
 | `test_observation.py` | 56 | Backoff schedule, staleness, the phase-derivation rules, stops, runtime status events — one for a materialization the control plane does not hold dropped, each member's settings lineage kept — the async handlers; members that keep restarting: crash loops, memory kills and frequent restarts within the window, the message, a heartbeat unable to clear it until the restarts age out |
 | `test_schema_discovery.py` | 15 | Sampling both ends of every partition within its budget and deadlines; every topic at once by one small-fetching consumer; a topic the metadata does not list marked `missing`, an empty one not |
 | `test_table_names.py` | 15 | Dataset and table names — lowercase only, reserved words, DuckDB's own namespaces — labels, table names derived from topics (the vectors the console's port shares), suffixes in order, source-topic validation |
-| `test_web.py` | 143 | Data protection on create and update — the default resolved, list and map forms, unknown kinds and disallowed masks, reserved keys, `dataset.protect` on every dataset written into (those an edit adds included), `409` without the key, the revision, a repeated policy a no-op, `apply_rules`, the answer — the detail's rollout state, the review and its `would_change`, the system settings' catalog (`WebProtection*Tests`); autoscaling on create and update and in the detail and system settings; create validation (tables in datasets, names, labels, granularity; no materialization without a live tail; the destination, namespace, runtime name and storage refused, naming the deployment's, and no create without a destination), the claim previewed — `404`, `403`, `409 table_name_taken` naming the row — every topic asked of Kafka, a topic it does not list refused on its row (`400 source_topic_missing`) and a Kafka that does not answer a `503`, an update asking only about the topics it starts reading, list search and shaping, detail with each table's access for the caller, schema views refused without `dataset.view_schema` on the table's dataset, table views, maintenance, mutations and their refusals, a change of topics needing write access to every dataset it touches, topics; reprotect (`WebReprotectTests`): one request event routed to request intake, one table or all, every job answering a generator Kaspr sends value by value, `purge` only with it, `dataset.protect` on each table's dataset, the key, a materialization being deleted; an edit's `protection.reprotect`, alone with the policy repeated, refused without Run table maintenance; the review's plain-text counts, requests and last runs, kept tables included |
+| `test_web.py` | 146 | Data protection on create and update — the default resolved, list and map forms, unknown kinds and disallowed masks, reserved keys, `dataset.protect` on every dataset written into (those an edit adds included), `409` without the key, the revision, a repeated policy a no-op, `apply_rules`, the answer — the detail's rollout state, the review and its `would_change`, the system settings' catalog (`WebProtection*Tests`); autoscaling on create and update and in the detail and system settings; create validation (tables in datasets, names, labels, granularity; no materialization without a live tail; the destination, namespace, runtime name and storage refused, naming the deployment's, no create without a destination, a materialization created under a destination on any backend, a destination that cannot hold tables refused naming the forms it could take, and a `file://` one only where the deployment allows it), the claim previewed — `404`, `403`, `409 table_name_taken` naming the row — every topic asked of Kafka, a topic it does not list refused on its row (`400 source_topic_missing`) and a Kafka that does not answer a `503`, an update asking only about the topics it starts reading, list search and shaping, detail with each table's access for the caller, schema views refused without `dataset.view_schema` on the table's dataset, table views, maintenance, mutations and their refusals, a change of topics needing write access to every dataset it touches, topics; reprotect (`WebReprotectTests`): one request event routed to request intake, one table or all, every job answering a generator Kaspr sends value by value, `purge` only with it, `dataset.protect` on each table's dataset, the key, a materialization being deleted; an edit's `protection.reprotect`, alone with the policy repeated, refused without Run table maintenance; the review's plain-text counts, requests and last runs, kept tables included |
 | `test_autoscaling.py` | 24 | Runtime autoscaling: the decision (lag floor, pace, target, cap by partitions and maximum, health, cooldown, measurements since the last change, back once calm or switched off, a redelivered measurement), every render at the scaled count — the apply's and the sweep's, so a scaled runtime is not drift — the handler after a recorded lag, and requests: a create's switch, an update turning it off releasing the members at once, a stop forgetting it |
-| `test_maintenance.py` | 89 | Replica rules and the combined recommendation, list filters, cumulative progress, retention, the table drop in bounded passes, topic analysis, consumer lag per topic, the async maintenance handler, and shard routing: the scheduled steps write nothing on the `__system__` event and leave each record in its materialization's own shard (`ShardRoutingTests`) |
-| `test_batched_destination_deletes.py` | 14 | The drop's deletes through the real google-cloud-storage client over a fake GCS JSON API: batching, 404 counted as gone, retries, refusals left behind |
+| `test_maintenance.py` | 90 | Replica rules and the combined recommendation, list filters, cumulative progress, retention, the table drop in bounded passes — the same prefixes for a table in any store, progress however slow the store, a store that cannot batch keeping the per-object budget — topic analysis, consumer lag per topic, the async maintenance handler, and shard routing: the scheduled steps write nothing on the `__system__` event and leave each record in its materialization's own shard (`ShardRoutingTests`) |
+| `test_batched_destination_deletes.py` | 56 | The drop's pass over each kind of store it deletes through: `GcsStore` with the real google-cloud-storage client over a fake GCS JSON API — batches of 100, 404 counted as gone, retries, refusals left behind, a request turned away as a whole ending the pass — and `MemoryStore` in chunks of 100 and of 1,000 (as S3's `DeleteObjects`) and one object per request, each pass's budget scaled to its store's batch size; tables on `gs://`, `s3://`, `abfss://` and `file://` locations |
 | `test_scheduler_routing.py` | 10 | Scheduler headers, `REPLACE` semantics, routed outputs |
 | `test_storage.py` | 33 | Key layout, envelopes, persistence, schema-projection history per table, bounded listings, records an earlier release left that this one cannot read |
 | `test_models.py` | 33 | `to_dict`/`from_dict` round trips and validation for every persisted model, a pending change of topics, a claim's answer, the settings lineage and the live tail's messages included, and the live tail switch of a record from before 4.3 read and dropped |
-| `test_settings.py` | 57 | The protection default as a `choice_map` stored as text, refused unknown kinds and masks, and its own permission to set or reset; the settings catalog against config and env vars, precedence, applying changes, views — the runtime view saying how members are autoscaled — the runtime settings' lineage begun at startup (the task's own code run) and carried by every delivery, the runtime rollout by lineage and revision, a runtime upgraded from before lineages included |
+| `test_settings.py` | 60 | A destination any of the three storage URIs, a `file://` one only where the deployment allows it, and the deployment settings reporting the object stores' own; the protection default as a `choice_map` stored as text, refused unknown kinds and masks, and its own permission to set or reset; the settings catalog against config and env vars, precedence, applying changes, views — the runtime view saying how members are autoscaled — the runtime settings' lineage begun at startup (the task's own code run) and carried by every delivery, the runtime rollout by lineage and revision, a runtime upgraded from before lineages included |
 | `test_identity.py` | 86 | `dataset.protect` (Dataset Owner) and `settings.manage_protection` (administrators only); permissions, their scopes and built-in roles, passwords, session and access tokens, authorization, bootstrap, every directory rule, sign-in and lockout, the views; `503 starting` for every caller, the session view and sign-in while a restarted control plane reads its tables back (`StartingTests`) |
 | `test_sso.py` | 37 | Sign-in through a provider (18 §18.17), against a fake of each provider's endpoints: Entra ID by tenant, client and key, Google's verified emails and hosted domains, a generic issuer's discovery, GitHub's token check with the App's secret; nonces used once, old and unsigned tokens refused, an unknown key read again at most once a minute, a provider that cannot be reached; then each domain's side — linking by email, `open` making one account for two sign-ins at once, `invited` refusing without counting towards a lockout, allowed email domains first, a deactivated account, a provider session needing no password change; password sign-in off for everyone but administrators |
 | `test_federated_tokens.py` | 16 | Federated access tokens and revocations (20 §20.8): the format, any change breaking the signature, the previous key still checking; a token made in one domain read in another as its owner there, never with more than they hold there, dataset limits per domain, the owner found by provider account before email, refused where the owner has no account; a revocation signed, forged ones refused by the view and the agent, listed for the console to hand on, kept until its token has expired |
@@ -168,7 +192,7 @@ disagree, the tests win.
 | `test_topic_catalog.py` | 24 | The topic list: classification, the shared cache, the metadata client's deadlines, analysis off the loop; no metadata request naming a topic, nor a topic left tracked by an offset lookup |
 | `test_kafka_tls.py` | 8 | Kafka over TLS: the context Kaspr gives its own clients, for `SSL` and `SASL_SSL` and none for plaintext; every client the control plane and the tail app make — the topic list and offsets, admin, schema discovery, the tail's consumers — built from the environment for each protocol the operator sets, against a stand-in held to aiokafka's rule, and against aiokafka itself where it is installed |
 | `test_kafka_admin.py`, `test_kubernetes_client.py` | 19, 11 | Adapter deadlines and loops; a group's state and its offsets committed from outside it; a runtime's pods read for their restarts, and an observation without them when they cannot be; graceful behaviour without `aiokafka` |
-| `test_config.py`, `test_package_layout.py` | 10, 2 | Config contract defaults and env parsing; every subpackage imports |
+| `test_config.py`, `test_package_layout.py` | 15, 2 | Config contract defaults and env parsing, a destination on any backend read from the environment and a `file://` one only where allowed; every subpackage imports |
 
 ### Test doubles
 
@@ -176,23 +200,128 @@ The suite uses hand-written fakes, not mocks. Reusing them is the fastest way to
 
 | Fake | Defined in | Emulates |
 |------|-----------|----------|
-| `FakeGcs`, `FakeClient`, `FakeBucket`, `FakeBlob` | `gcs_fakes.py` | GCS in memory with object generations: `if_generation_match` honoured as GCS does (0: must not exist), the library's own `PreconditionFailed` and `NotFound`, range downloads, prefix listings, failures injected per operation |
-| `LakeFixture` | `lakehouse_support.py` | A bucket holding one materializer table, with helpers to write seals as data files and commit them |
-| `RuntimeHarness` | `runtime_support.py` | One runtime member, its committer and its tables — one per topic in `topics`, each seeded from `seeds_by_topic` — in one process: the writer's own staging, the batch pipeline, the committer, the outbox's messages passed on as the commits topic would; Faust modelled by `FakeConsumer` |
+| `MemoryStore` | `lakehouse/store/memory.py` | An object store in memory, the store behind every table in the suite (§13.3a): one instance serves any scheme, versions are never reused, conditions hold under one lock; `fail(operation, uri)` injects a failure, `calls` records each operation, `clock` stamps writes, `read`/`write`/`names` arrange and inspect |
+| `FileStore` | `lakehouse/store/file.py` | `file:///` objects on the local disk: create-only by an atomic link, compare-and-swap under a lock; `test_store_contract` and `test_lakehouse_schemes` run over it |
+| `FakeGcs`, `FakeClient`, `FakeBucket`, `FakeBlob` | `gcs_fakes.py` | The google-cloud-storage client in memory, with object generations — the client double behind `GcsStore(client=FakeGcs().client())`: `if_generation_match` honoured as GCS does (0: must not exist), the library's own `PreconditionFailed` and `NotFound`, range downloads, prefix listings, failures injected per operation |
+| `LakeFixture` | `lakehouse_support.py` | An object store — a `MemoryStore` unless given another — holding one materializer table, with helpers to write seals as data files and commit them; `install()` makes it the process's store for the location's scheme |
+| `RuntimeHarness` | `runtime_support.py` | One runtime member, its committer and its tables — one per topic in `topics`, each seeded from `seeds_by_topic`, all in one store, a `MemoryStore` unless given another — in one process: the writer's own staging, the batch pipeline, the committer, the outbox's messages passed on as the commits topic would; Faust modelled by `FakeConsumer` |
 | `build_table_record` | `table_records.py` | A table record as `create_table` stores it |
 | `FakeTable` | most modules, `runtime_support.py` | Kaspr table: `get`/`__setitem__`/`__delitem__`/`prefix_scan` over a dict |
 | `FakeKasprAppClient`, `FailingKasprAppClient` | `test_workflow`, `test_observation`, `test_scheduler_routing` | Kubernetes apply/delete/read; records calls, or always raises |
 | `FakeKafkaAdminClient` | `test_workflow` | Topic and consumer-group deletion, `ConsumerGroupNotEmptyError` |
-| `FakeGcsJsonApi` | `test_batched_destination_deletes` | The GCS JSON API behind `requests.Session.request`, for the real client |
+| `FakeGcsJsonApi`, `FakeJsonApi` | `test_batched_destination_deletes`, `test_store_gcs` | The GCS JSON API behind `requests.Session.request`, for the real client: listings, the batch endpoint, scripted failures, missing buckets |
+| `LostAnswerStore` | `test_lakehouse_lost_answers` | A `MemoryStore` that applies a write and then fails it, as a lost answer and a refused retry do |
 | `LoopHandshake`, `AwaitingMetadataClient` | `test_topic_catalog`, `test_maintenance` | Prove the event loop ran while a call was in flight; Kafka lookups that suspend and let another agent write meanwhile |
 | `TailHarness`, `FakeKafka`, `FakeConsumer`, `FakeAdmin`, `FakeControlPlane`, `Clock` | `tail_support.py` | Tail app members in one process: topics with offsets that hold no record, a consumer that fetches and seeks as aiokafka does, the group as `DescribeGroups` reports it, the control plane's sessions, schemas and tables, and a clock the test moves |
 
 `console_fixture.py` is not a test: it writes the console's fixture tables — `orders` and
 `payments`, the two tables of one materialization `shop` (`console/testdata/iceberg/{orders,payments}`) —
-with the library, `python python/tests/console_fixture.py` (console 14 §14.2). With
-`--protection-only` it writes only `console/testdata/protection.json`, a table's
-`materializer.protection` and masked rows produced by the control plane's own code, which the
-console's tests parse as its reader does.
+with the library, in a `MemoryStore` or any `ObjectStore` it is given, `python
+python/tests/console_fixture.py` (console 14 §14.2). With `--protection-only` it writes only
+`console/testdata/protection.json`, a table's `materializer.protection` and masked rows produced by
+the control plane's own code, which the console's tests parse as its reader does.
+
+## 13.3a The object store in tests
+
+**One store behind every table.** Every test that holds a table — the catalog's, the runtime's, the
+maintenance app's, the control plane's create and drop, the REST catalog's — keeps it in a
+`MemoryStore` (`lakehouse/store/memory.py`): objects in a dict keyed by URI, versions from a counter
+never reused, conditions under one lock. Code finds its store by URI (`store_for`), so a test installs
+one for a scheme with `set_store(scheme, store)` and removes it with `set_store(scheme, None)` or
+`reset_stores()`; `LakeFixture.install()` and `RuntimeHarness` do it for their tables. A
+`MemoryStore` serves any scheme, which is how `test_lakehouse_schemes` takes one table through its
+life on `gs://`, `s3://`, `abfss://` and `file://` locations; its `fail` hook stages a backend's
+answers (§13.7). The GCS client double (`gcs_fakes.FakeGcs`) stays behind `GcsStore` only: in
+`test_store_gcs`, and where `test_lakehouse_catalog`, `test_workflow` and `test_maintenance` run their
+cases again through the GCS store.
+
+**The store unit suites** (§13.3, *The object store*) run each backend's store over its own SDK with
+no network: the real google-cloud-storage client over a double and a fake JSON API, a real boto3
+client under botocore's `Stubber`, azure-storage-blob over client doubles and a transport double. Each
+pins the exact arguments it sends and maps every answer of its backend to the contract's errors.
+
+**Request parity on GCS.** On GCS every operation makes the requests the test-cluster runs of §13.8
+verified, with the same arguments: create-only `if_generation_match=0`, the generation read for a
+compare-and-swap, nothing for an unconditional write; a read is one `download_as_bytes`, whose answer
+names the generation read, never a second request for it; deletes go a hundred to a batch request of
+the JSON API. `GcsRequestTests` and `GcsBatchDeleteTests` (`test_store_gcs.py`) pin each call, and
+`test_batched_destination_deletes.py` runs the library's own batching. A change to
+`lakehouse/store/gcs.py` that adds, drops or alters a request fails them: a regression to explain,
+never a side effect.
+
+**The live suite.** `test_store_live.py` runs the conformance suite (`check.py`; 11 §11.1a) and each
+backend's own cases against live stores. It is skipped unless `STORAGE_LIVE_TESTS` names base URIs,
+comma-separated; each store reads its environment as a pod does, and a process has one S3 endpoint,
+so run once per endpoint:
+
+| Variable | Meaning |
+|---|---|
+| `STORAGE_LIVE_TESTS` | the base URIs, such as `s3://live-check`, `abfss://live@devstoreaccount1.dfs.core.windows.net`, `gs://live-check`; each bucket or container is created first when missing, through the store's own client |
+| `STORAGE_LIVE_ROUNDS` | compare-and-swaps per writer, 20 unless set; the racing creators race as many new keys, at most six |
+| The store's own | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `STORAGE_S3_ENDPOINT`, `STORAGE_S3_PATH_STYLE` for S3; `AZURE_STORAGE_CONNECTION_STRING` for Azure; `STORAGE_EMULATOR_HOST` for fake-gcs-server |
+
+It runs every check with 16 writers, a listing of 1,050 objects and a 20 MiB streamed file — past
+the 8 MiB that azure-storage-blob and google-cloud-storage send in one request, so its race of
+create-only uploads races Azure's blocks and GCS's resumable uploads — and prints each result. Then each backend's
+own cases, under a fresh prefix they empty again: ranges from the size or past it refused with 416; on
+S3, `DeleteObjects` over 1,050 keys in two requests and a 64 MiB file in one `PutObject`; on Azure, a
+create-only upload in blocks refused with no block left staged, six such uploads racing for each of
+four keys, deletes 256 to a batch, also through the emulator's address under a name other than
+`localhost`, and a 64 MiB file in 8 MiB blocks. S3's `conditional_delete` is skipped: its store offers
+none. Against fake-gcs-server (`STORAGE_EMULATOR_HOST` set) the run skips conditional deletes, whose
+condition the emulator ignores, and batch deletes, which the library cannot read back from it — the
+registry's store deletes one object per request there — and says so; `test_store_gcs.py` covers both
+against GCS's own answers.
+
+**CI's Object stores job** (`object-stores` in `.github/workflows/ci.yml`) starts SeaweedFS 4.51,
+Azurite 3.37.0 and fake-gcs-server 1.56.1 in containers and moto 5.2.5 in server mode, waits until each
+answers — SeaweedFS's S3 gateway answers before its filer is ready, so the wait is a signed listing —
+and runs the live suite against each in turn, within ten minutes; SeaweedFS is the slowest, at about
+70 s. On a failure it prints the emulators' logs. The same, on a laptop with Docker or Podman:
+
+```bash
+export AWS_ACCESS_KEY_ID=midstream-ci AWS_SECRET_ACCESS_KEY=midstream-ci-secret   # throwaway keys
+docker run -d --name seaweedfs -p 8333:8333 -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
+  chrislusf/seaweedfs:4.51 mini -dir=/data
+docker run -d --name azurite -p 10000:10000 mcr.microsoft.com/azure-storage/azurite:3.37.0 \
+  azurite-blob --blobHost 0.0.0.0 --blobPort 10000 --inMemoryPersistence --skipApiVersionCheck --disableProductStyleUrl
+docker run -d --name fake-gcs-server -p 4443:4443 fsouza/fake-gcs-server:1.56.1 \
+  -scheme http -port 4443 -public-host localhost:4443
+python3 -m pip install 'moto[server]==5.2.5'
+nohup moto_server -H 127.0.0.1 -p 5055 > moto.log 2>&1 &
+# SeaweedFS is ready once a signed listing answers
+until python3 -c "import boto3; boto3.client('s3', endpoint_url='http://localhost:8333', region_name='us-east-1').list_buckets()" 2>/dev/null; do sleep 1; done
+
+STORAGE_S3_ENDPOINT=http://localhost:8333 STORAGE_S3_PATH_STYLE=true STORAGE_LIVE_TESTS=s3://live-seaweedfs \
+  python3 -m unittest discover -s python/tests -p 'test_store_live.py' -v
+STORAGE_S3_ENDPOINT=http://localhost:5055 STORAGE_S3_PATH_STYLE=true STORAGE_LIVE_TESTS=s3://live-moto \
+  python3 -m unittest discover -s python/tests -p 'test_store_live.py' -v
+AZURE_STORAGE_CONNECTION_STRING='DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=<the published development key, as in ci.yml>;BlobEndpoint=http://localhost:10000/devstoreaccount1;' \
+  STORAGE_LIVE_TESTS=abfss://live@devstoreaccount1.dfs.core.windows.net \
+  python3 -m unittest discover -s python/tests -p 'test_store_live.py' -v
+STORAGE_EMULATOR_HOST=http://localhost:4443 STORAGE_LIVE_TESTS=gs://live-gcs \
+  python3 -m unittest discover -s python/tests -p 'test_store_live.py' -v
+```
+
+The same module checks a real bucket by hand: point `STORAGE_LIVE_TESTS` at a scratch prefix and give
+the environment the credentials a pod would have.
+
+**The console's live storage test**, `CONSOLE_STORAGE_LIVE=1 node --test server/storage/live.test.ts`
+in `console/`, reads through every kind of storage profile against the same emulators: a Parquet
+fixture uploaded with each SDK, read back through a direct and a cached profile per backend, queried
+with DuckDB on the shared instance and in a sandbox, and one statement joining S3, Azure and GCS
+(console 14 §14.6). It expects SeaweedFS's identity `midstreamdev` / `midstreamdevsecret`;
+`CONSOLE_STORAGE_LIVE_S3_ACCESS_KEY_ID` and `_S3_SECRET_ACCESS_KEY` give it the keys above instead,
+and `_S3_ENDPOINT`, `_AZURE_ENDPOINT`, `_AZURE_ACCOUNT`, `_AZURE_ACCOUNT_KEY` and `_GCS_ENDPOINT` point it
+elsewhere. CI does not run it.
+
+**What is verified where.**
+
+| Backend | Verified against | Not yet |
+|---|---|---|
+| Google Cloud Storage | fake-gcs-server 1.56.1 in CI; GCS itself through request parity: the store makes the requests the test-cluster runs of §13.8 verified | — |
+| Amazon S3 | SeaweedFS 4.51 and moto 5.2.5 in CI. moto models AWS's answers — a stale `If-Match` 412, `If-Match` on a missing key 404 — not its atomicity | AWS itself (14 §14.20) |
+| Azure Blob Storage | Azurite 3.37.0 in CI | a real storage account (14 §14.20) |
 
 ## 13.4 Adding a test
 
@@ -210,7 +339,12 @@ adding a genuinely new subsystem.
 | Compaction, expiry, orphans | `test_lakehouse_maintenance.py`; through the maintenance app `test_maintenance_app.py`; what it is ticked `test_table_maintenance.py` |
 | Reprotect | planning and rewriting `test_reprotect.py`; through the maintenance app `ReprotectTests` in `test_maintenance_app.py`; asking for it `test_web.py` and `test_request_intake.py` |
 | A change of topics: the plan, the drain, the drops | `test_topic_changes.py`, `test_workflow_topic_changes.py` |
-| The pointer catalog | `test_lakehouse_catalog.py`; the REST catalog `test_catalog.py` |
+| The pointer catalog | `test_lakehouse_catalog.py`; a write whose answer was lost `test_lakehouse_lost_answers.py`; the REST catalog `test_catalog.py` |
+| What every store must do | `test_store_contract.py`, and a check in `lakehouse/store/check.py` when a live store must prove it too |
+| One backend's store: the requests it sends, its error mapping | `test_store_gcs.py`, `test_store_s3.py`, `test_store_azure.py`; against a live store, `test_store_live.py` |
+| A destination's rules | `test_store_uris.py`; through the API, the settings and the configuration `test_web.py`, `test_settings.py`, `test_config.py` |
+| Storage in a table's life, on every scheme | `test_lakehouse_schemes.py` |
+| The chart's storage values, a console storage profile's rules | `test_chart_storage.py` |
 | A setting: catalog entry, precedence, applying a change | `test_settings.py` (runtime: also `test_runtime_settings.py`) |
 | A permission, a directory rule, sign-in or sessions, an identity view | `test_identity.py` |
 | A new WebView | `test_agent_manifests.py` checks it authorizes, and that an operation without an `entrypoint` does not sit behind an `init` that binds a callable; add its behavior to the module that owns it |
@@ -317,6 +451,10 @@ checkout, say; 10 §10.13): patch `installed_package_source` as the tests do.
 | A control-plane agent | `charts/midstream/templates/agents/*.yaml`, `handlers/`, RBAC if needed |
 | What the table holds: field ids, partitioning, a summary property | `lakehouse/`, the console's reader (`console/server/iceberg/`), the fixture table (`console_fixture.py`), [11](./11-iceberg-tables-and-storage.md) |
 | A derived name's form | `charts/midstream/templates/_helpers.tpl` and the templates that use it |
+| What a store does, or an operation of the `ObjectStore` protocol | `lakehouse/store/base.py` and every store, `memory.py` first, which the whole suite runs on; `check.py`; `test_store_contract.py` and each backend's `test_store_*.py`; then the live suite against the emulators (§13.3a) |
+| A request the GCS store makes | the request-parity cases of `test_store_gcs.py`, which fail by design (§13.3a): explain the change in its commit |
+| A storage backend | a store in `lakehouse/store/` with its scheme in `uris.py` and a builder in `registry.py`; its credentials and settings in the chart (`storage.*`, `midstream.storageEnv` in `_helpers.tpl`, `test_chart_storage.py`) and the settings catalog's deployment settings; a profile kind in the console (`console/server/storage/`, console 15); an emulator in CI's Object stores job; 12 §12.12a |
+| A destination's rules | `lakehouse/store/uris.py`, the chart's `midstream.defaultDestinationUri` and the console's `src/features/settings/values.ts`, which check the same patterns; `test_store_uris.py`, `test_chart_storage.py` |
 | An overridable setting | its config field and env var, its entry in `settings/catalog.py` (runtime: also the live fields), `test_settings.py` (`.claude/skills/adding-settings/SKILL.md`) |
 | An operation that reads configuration | bind the `settings` table in its template (`SettingsWiringTests`) |
 | The topics or tables of a Kaspr app | plan one forced consumer-group rebalance per environment at deploy ([14 §14.3](./14-known-gaps-and-roadmap.md)) |
@@ -340,6 +478,12 @@ summaries' `materializer.offsets` show what each commit covered.
 
 **Check a spec hash drift.** Render twice with the same inputs and compare `spec_hash`.
 
+**Reproduce a store's answer.** Make `MemoryStore.fail` return the exception the backend's store
+raises for it — `PreconditionFailedError` for a refused condition, a `StoreError` with no status for a
+request that got no answer, `StoreConfigurationError` for a missing bucket — or apply the write first
+and fail it after, as a lost answer does (`LostAnswerStore`, §13.3a). What a real store answers, its
+own unit suite and the live suite say (12 §12.12a).
+
 **Verify exactly once on a cluster**, for any change to acknowledgement, batching, the pipeline or
 the committer — the E13 method (§13.8):
 
@@ -351,8 +495,9 @@ the committer — the E13 method (§13.8):
 3. Once every partition's committed offset is its end offset and nothing is pending, compute the
    same aggregates per `_kafka_partition` from the table. Equal counts and sums mean every offset
    is there exactly once; a duplicate or a gap changes the sum of squares.
-4. List the current snapshot's live data files and check each exists in the bucket. A dangling
-   reference is data the table claims and cannot serve — what run 1 found.
+4. List the current snapshot's live data files and check each exists in the object store
+   (`lake_ls`, 12 §12.0). A dangling reference is data the table claims and cannot serve — what run 1
+   found.
 
 ## 13.8 Verified on a test cluster: the E13 load test
 
@@ -570,7 +715,7 @@ listener), `scale.t01`–`scale.t50` (3 partitions, 5 records a second each), `b
 | 12. Bursts | At the default bound, 50,000 records in 10 s: the table read at its ceiling of 5,000 a second, partitions paused, *the newest records are not shown yet*, then live holding all 50,000; the burst's records carried a field the table did not have yet, so the console also counted them *waiting for a schema change* until the runtime committed it. Then 1,000,000 records in 38 s: backlogged 20 s later, its buffer dropped, *The runtime is 517,755 records behind; the live tail starts once it catches up* with **Peek**; once the runtime was within 75 % of the bound, catching up, *Live tail is 241 s behind*, and live with 143,122 rows, 4 minutes after the burst. Exactly once at all 666 polls — each partition's rows contiguous from offset 0, none twice — up to 1,064,356 rows across 18 snapshots. No other table of that member was receiving records, so the isolation of one table's burst from the others rests on `test_tail_app` (a table above the ceiling read at it, the others keeping up) |
 | 13. Parking | Unwatched, the table parked at 600–611 s and its member's consumer let its 3 partitions go; the Data tab's first run brought it back, *Live · through now* with no *warming up*, 3–4 s after the page opened. With `live_tail_idle_seconds` 0 it was still live 803 s after its last request |
 | 14. Broker restart | Broker 1, which leads `fresh.orders`' partition 0 (every topic has one replica on a test cluster), rolled by Strimzi while the probe ran, away 28 s. The tail's `lag_ms` rose to 13 s and returned to 0 by itself, no member restarted, no `tail_routing_mismatch`; exactly once at all 283 polls across 17 commits; the console showed the stalled probes as soon as the producer, which waits for each acknowledgement, could send them |
-| 15. Control plane restart | Its pod deleted while the probe, a Live tab and the poller ran, away for about 35 s: the tail app kept serving on the sessions it had checked; a parked table asked for meanwhile seeded from GCS (`seed_source: gcs`) and was live in 2 s; ticks went on each minute; exactly once at every poll. The first run found every console user signed out: the restarted control plane answered from a directory it had not read back yet ("invalid session"), and the console cleared its cookie. Fixed in f382b0a (`503 starting` until the tables are read back, 18 §18.7); on the fix, the Live tab followed through the restart and resumed by itself |
+| 15. Control plane restart | Its pod deleted while the probe, a Live tab and the poller ran, away for about 35 s: the tail app kept serving on the sessions it had checked; a parked table asked for meanwhile seeded from the table itself, on GCS, and was live in 2 s; ticks went on each minute; exactly once at every poll. The first run found every console user signed out: the restarted control plane answered from a directory it had not read back yet ("invalid session"), and the console cleared its cookie. Fixed in f382b0a (`503 starting` until the tables are read back, 18 §18.7); on the fix, the Live tab followed through the restart and resumed by itself |
 | 16. A member killed mid-burst | The owner deleted 20 s into the 50,000: back 19 s later, it seeded the table again from the committed offsets and read the window again — *catching up*, paused at the ceiling, then *live* 47 s after the kill; the console said *unavailable*, *moving between members*, *warming up*, *the newest 13,380 records are not shown yet*, then *Live*, in that order. No record twice across the kill (step 12's polls) |
 | 17. Console restart | Two Live tabs open, the console stopped for 4 s: each tab ran its view again and followed the tail 6 s after the stop; all 230 probes of the window once in both, the three produced while it was down within 7.5 s; nothing at warning level in the restarted console or the tail app |
 | 18. An hour's soak | The probe at one record a second with two Live tabs: 3,540 probes each, p50 1.13 s, p95 1.9 s, p99 2.7 s (5 of 7,080 over 5 s, at most 6.7 s); exactly once at all 2,827 polls across 102 commits; the 50 tables of step 10 watched in rotation — 180 visits, parked tables among them, every one *Live* p50 1.2 s and p95 2.0 s after the page opened. After the first ten minutes each member's RSS stayed within 5.7 % and 2.7 % of its value then (212–225 and 184–189 MiB), at 0.042 and 0.032 cores; `tail_served` 9,779 answers, p50 2 ms, p95 48 ms, p99 525 ms. No browser errors. It also found *Newer data available* on screen 57 % of the time Live followed a table (console 14 §14.5, 29) |
@@ -761,6 +906,10 @@ git status --short                                             # no stray files,
 
 If `console/` changed: `cd console && npm test && npm run typecheck && npm run build`, and check the
 change in a browser in both themes ([console 14](../../console/docs/14-testing-and-verification.md)).
+
+If `lakehouse/store/` changed, or a store's dependency moved: run the live suite against the four
+emulators as CI's Object stores job does (§13.3a), and the console's live storage test if
+`console/server/storage/` changed.
 
 A values file added under `charts/midstream/ci/` is rendered by `ValuesWiringTests` and
 `VerticalPodAutoscalingTests` too. Keep an environment's real values out of the repository.

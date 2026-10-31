@@ -13,9 +13,10 @@ outputs, each with the input it replaces, as JSON.
 
 Like compaction, nothing here touches the table: the outputs are only files until the maintenance
 app commits a `replace` snapshot naming them, and a worker killed at any point leaves the table as
-it was. Hashes are made with `PROTECTION_KEY`, read from the environment as the maintenance app
-reads it; a key whose id is not the one the table's hashes were made with is refused, as is a job
-whose table moved to another revision since it was planned.
+it was; an output whose create-only upload is refused is checked as compaction checks one
+(`upload_output`). Hashes are made with `PROTECTION_KEY`, read from the environment as the
+maintenance app reads it; a key whose id is not the one the table's hashes were made with is
+refused, as is a job whose table moved to another revision since it was planned.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from midstream.maintenance_app.compact_worker import (
     _die_with_parent,
     compaction_work_root,
     confined_path,
+    upload_output,
 )
 
 
@@ -45,12 +47,12 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
     from pyiceberg.io.pyarrow import pyarrow_to_schema
 
     from midstream.lakehouse.files import partition_text_of, reprotected_file_uri
-    from midstream.lakehouse.gcs import parse_gcs_uri, shared_storage_client
     from midstream.lakehouse.lifecycle import schema_from_json
     from midstream.lakehouse.parquet import arrow_schema, project_batch
     from midstream.lakehouse.reprotect import ReprotectDecider, ReprotectPlan, label_rewrite
     from midstream.lakehouse.schema.forkmap import ForkMap
     from midstream.lakehouse.schema.index import build_index
+    from midstream.lakehouse.store import store_for
     from midstream.protection.catalog import MASK_HASH
     from midstream.protection.mask import MissingProtectionKey
     from midstream.protection.policy import TableProtection
@@ -83,7 +85,6 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
         secret = key.secret
     target = arrow_schema(schema)
     row_group_rows = int(job.get("row_group_rows") or DEFAULT_ROW_GROUP_ROWS)
-    client = shared_storage_client()
     rewrites: dict[tuple[int, ...], Any] = {}
     outputs: list[dict[str, Any]] = []
     for position, item in enumerate(plan.inputs):
@@ -91,10 +92,9 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
         rewrite = rewrites.get(label)
         if rewrite is None:
             rewrite = rewrites[label] = label_rewrite(decider.program(label), decider, secret=secret)
-        bucket_name, name = parse_gcs_uri(item.path)
         local_input = confined_path(work_dir, f"input-{position}.parquet")
         local_output = confined_path(work_dir, f"output-{position}.parquet")
-        client.bucket(bucket_name).blob(name).download_to_filename(str(local_input))
+        store_for(item.path).get_to_file(item.path, str(local_input))
         rows = 0
         low = high = None
         pending: list[Any] = []
@@ -126,8 +126,7 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
             unique=f"{plan.job_id[:16]}-{position}-{uuid.uuid4().hex[:8]}",
             protection_label=output_label,
         )
-        out_bucket, out_name = parse_gcs_uri(uri)
-        client.bucket(out_bucket).blob(out_name).upload_from_filename(str(local_output), if_generation_match=0)
+        upload_output(uri, local_output)
         outputs.append(
             {
                 "input": item.path,

@@ -18,10 +18,11 @@ from typing import Any
 from midstream.config import (
     PARTITION_GRANULARITIES,
     SSO_FIRST_SIGN_IN_POLICIES,
-    is_gcs_destination_uri,
+    destination_problem,
     normalize_destination_uri,
     normalize_email_domains,
 )
+from midstream.lakehouse.store.uris import DEPLOYABLE_SCHEMES, DESTINATION_FORMS
 from midstream.protection.catalog import (
     MASK_LABELS,
     ProtectionTextError,
@@ -34,7 +35,7 @@ from midstream.scale import InvalidScaleError, normalize_storage_size
 #: Value kinds a catalog setting can have. The console renders a control for each. A `choice_map`
 #: maps some of its `choice_options` each to one of the choices that option allows, stored as text
 #: (`email=hash,phone=partial`), the way a `domain_list` is.
-SETTING_KINDS = ("boolean", "integer", "gcs_uri", "quantity", "enum", "domain_list", "choice_map")
+SETTING_KINDS = ("boolean", "integer", "destination_uri", "quantity", "enum", "domain_list", "choice_map")
 
 
 
@@ -138,12 +139,14 @@ CONTROL_PLANE_SETTINGS: tuple[SettingDefinition, ...] = (
         "default_destination_uri",
         section="materializations",
         label="Destination",
-        kind="gcs_uri",
+        kind="destination_uri",
         nullable=True,
         description=(
-            "Where every new materialization's tables are created: a gs://bucket[/prefix]. A "
-            "materialization keeps the destination it was created with. Empty, no materialization "
-            "can be created until one is set."
+            "Where every new materialization's tables are created: gs://<bucket>[/<prefix>] in Google "
+            "Cloud Storage, s3://<bucket>[/<prefix>] in Amazon S3 or an S3-compatible store, or "
+            "abfss://<container>@<account>.dfs.core.windows.net[/<prefix>] in Azure Blob Storage. A "
+            "materialization keeps the destination it was created with. Empty, no materialization can "
+            "be created until one is set."
         ),
         effect="new materializations",
     ),
@@ -1249,6 +1252,45 @@ DEPLOYMENT_SETTINGS: tuple[DeploymentSetting, ...] = (
         "keeps deployments sharing a bucket apart. Not a namespace: datasets are.",
     ),
     DeploymentSetting(
+        "storage_s3_endpoint",
+        "control-plane",
+        "S3 endpoint",
+        "STORAGE_S3_ENDPOINT",
+        "The S3-compatible server that s3:// destinations are reached at, by every app and runtime. "
+        "Unset: Amazon S3.",
+    ),
+    DeploymentSetting(
+        "storage_s3_region",
+        "control-plane",
+        "S3 region",
+        "STORAGE_S3_REGION",
+        "The region requests to s3:// destinations are signed for.",
+    ),
+    DeploymentSetting(
+        "storage_s3_path_style",
+        "control-plane",
+        "S3 path-style addressing",
+        "STORAGE_S3_PATH_STYLE",
+        "Whether requests to s3:// destinations name the bucket in the path rather than the host "
+        "name, as most S3-compatible servers want.",
+    ),
+    DeploymentSetting(
+        "storage_azure_endpoint",
+        "control-plane",
+        "Azure Blob endpoint",
+        "STORAGE_AZURE_ENDPOINT",
+        "An emulator's Blob endpoint that abfss:// destinations are reached at, with the account "
+        "appended. Unset: each account's own, https://<account>.blob.core.windows.net.",
+    ),
+    DeploymentSetting(
+        "allow_file_destinations",
+        "control-plane",
+        "Local file destinations",
+        "CONTROL_PLANE_ALLOW_FILE_DESTINATIONS",
+        "Whether a destination may be a file:/// path on the local disk. For tests only: every app "
+        "and runtime would need the same disk. Never set by the chart.",
+    ),
+    DeploymentSetting(
         "catalog_base_url",
         "control-plane",
         "Catalog URL",
@@ -1401,8 +1443,12 @@ def definition_for(scope: str, key: str) -> SettingDefinition | None:
     return None
 
 
-def coerce_setting_value(definition: SettingDefinition, raw: Any) -> Any:
-    """Validate a value for a setting and return it in its stored form."""
+def coerce_setting_value(definition: SettingDefinition, raw: Any, *, allow_file_destinations: bool = False) -> Any:
+    """Validate a value for a setting and return it in its stored form.
+
+    A `destination_uri` may be a `file:///` path only with `allow_file_destinations` (tests), as
+    `ControlPlaneConfig.allow_file_destinations` decides.
+    """
     key = definition.key
     if definition.kind == "boolean":
         if not isinstance(raw, bool):
@@ -1419,19 +1465,17 @@ def coerce_setting_value(definition: SettingDefinition, raw: Any) -> Any:
         if definition.maximum is not None and raw > definition.maximum:
             raise SettingValueError(f"{definition.label} must be at most {definition.maximum}", key=key)
         return raw
-    if definition.kind == "gcs_uri":
+    if definition.kind == "destination_uri":
         if raw is None or (isinstance(raw, str) and not raw.strip()):
             if definition.nullable:
                 return None
             raise SettingValueError(f"{definition.label} is required", key=key)
         if not isinstance(raw, str):
-            raise SettingValueError(f"{definition.label} must be a gs:// URI", key=key)
+            raise SettingValueError(f"{definition.label} must be a storage URI such as {_destination_forms()}", key=key)
         value = normalize_destination_uri(raw)
-        if not is_gcs_destination_uri(value):
-            raise SettingValueError(
-                f"{definition.label} must be a gs:// URI such as gs://bucket/prefix",
-                key=key,
-            )
+        problem = destination_problem(value, allow_file=allow_file_destinations)
+        if problem is not None:
+            raise SettingValueError(f"{definition.label}: {problem}", key=key)
         return value
     if definition.kind == "enum":
         if not isinstance(raw, str) or raw not in (definition.options or ()):
@@ -1469,6 +1513,11 @@ def coerce_setting_value(definition: SettingDefinition, raw: Any) -> Any:
                 key=key,
             ) from error
     raise SettingValueError(f"{definition.label} has an unsupported kind", key=key)
+
+
+def _destination_forms() -> str:
+    forms = [DESTINATION_FORMS[scheme] for scheme in DEPLOYABLE_SCHEMES]
+    return ", ".join(forms[:-1]) + f" or {forms[-1]}"
 
 
 def validate_scope_values(scope: str, values: dict[str, Any]) -> None:

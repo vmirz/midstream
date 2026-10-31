@@ -37,9 +37,8 @@ spec:
   pythonPackages:
     {{- include "midstream.pythonPackages" . | nindent 4 }}
   template:
-    pod:
-      {{- include "midstream.podScheduling" (dict "root" . "own" .Values.tail) | nindent 6 }}
-      {{- include "midstream.gcsVolumes" . | nindent 6 }}
+    {{- include "midstream.kasprServiceAccount" . | nindent 4 }}
+    {{- include "midstream.kasprPod" (dict "root" . "own" .Values.tail) | nindent 4 }}
     kasprContainer:
       env:
         # Names the member in its answers, logs and the members view.
@@ -70,11 +69,11 @@ spec:
         # largest table pauses (handbook 19 §19.8).
         - name: TAIL_MEMORY_BUDGET_BYTES
           value: {{ .Values.tail.memoryBudgetBytes | int64 | quote }}
-        {{- include "midstream.gcsEnv" . | nindent 8 }}
+        {{- include "midstream.storageEnv" . | nindent 8 }}
         - name: PROTOCOL_LOGGING_ENABLED
           value: {{ .Values.tail.protocolLogging | quote }}
         {{- with .Values.tail.extraEnv }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- include "midstream.gcsVolumeMounts" . | nindent 6 }}
+      {{- include "midstream.storageVolumeMounts" . | nindent 6 }}
 {{- end }}

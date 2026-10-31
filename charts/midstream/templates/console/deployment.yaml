@@ -1,7 +1,9 @@
 {{- if .Values.console.enabled }}
 {{- $domains := include "midstream.consoleDomains" . | fromJsonArray }}
-# The console's domains (handbook 20): who they are and how to reach each. Their service tokens come
-# from Secrets, as CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN below, never from here.
+{{- $storage := include "midstream.consoleStorage" . | fromJsonArray }}
+# The console's registries: its domains (handbook 20), who they are and how to reach each, and its
+# storage profiles (console.storage), which destination prefix is read how. Credentials come from
+# Secrets, as CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN and CONSOLE_STORAGE_<NAME>_* below, never from here.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -13,10 +15,27 @@ metadata:
 data:
   domains.json: |
     {{- $domains | toPrettyJson | nindent 4 }}
+  storage.json: |
+    {{- $storage | toPrettyJson | nindent 4 }}
+---
+# The console's own ServiceAccount: the cloud identity a storage profile without a Secret reads as, given
+# by console.serviceAccountAnnotations (IRSA's role, AKS workload identity's client id).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "midstream.console" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "midstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+  {{- with .Values.console.serviceAccountAnnotations }}
+  annotations:
+    {{- include "midstream.metadataMap" (dict "map" . "what" "console.serviceAccountAnnotations") | trim | nindent 4 }}
+  {{- end }}
 ---
 # The shared console (console/docs): a Node backend-for-frontend and a React client in one process.
-# It reaches every domain's control plane and tail app, reads every domain's tables with the GCS
-# credentials, and holds a browser's sessions, one per domain, in cookies.
+# It reaches every domain's control plane and tail app, reads every domain's tables through its
+# storage profiles, and holds a browser's sessions, one per domain, in cookies.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -37,10 +56,15 @@ spec:
       labels:
         {{- include "midstream.labels" . | nindent 8 }}
         app.kubernetes.io/component: console
+        {{- with .Values.console.podLabels }}
+        {{- include "midstream.metadataMap" (dict "map" . "what" "console.podLabels" "root" $) | trim | nindent 8 }}
+        {{- end }}
       annotations:
-        # A change of domains restarts the console, which reads them once.
+        # A change of domains or storage profiles restarts the console, which reads them once.
         checksum/domains: {{ $domains | toJson | sha256sum }}
+        checksum/storage: {{ $storage | toJson | sha256sum }}
     spec:
+      serviceAccountName: {{ include "midstream.console" . }}
       {{- with .Values.console.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -79,6 +103,9 @@ spec:
               value: {{ include "midstream.consoleUrl" . | quote }}
             - name: CONSOLE_DOMAINS_FILE
               value: /etc/midstream/domains.json
+            # The storage profiles: which destination prefix is read with which credentials.
+            - name: CONSOLE_STORAGE_FILE
+              value: /etc/midstream/storage.json
             # Each domain's service token: the console reads its live views with it.
             {{- range $domains }}
             - name: {{ include "midstream.domainTokenEnv" .id }}
@@ -94,21 +121,19 @@ spec:
                   key: {{ $secret.key }}
                   {{- end }}
             {{- end }}
+            {{- with (include "midstream.consoleStorageEnv" . | trim) }}
+            # Each storage profile's credentials, from its Secret: every key optional.
+            {{- . | nindent 12 }}
+            {{- end }}
             {{- with (include "midstream.consoleSsoEnv" . | trim) }}
             {{- . | nindent 12 }}
             {{- end }}
             - name: CONSOLE_DATA_DIR
               value: /var/lib/midstream-console
-            {{- include "midstream.gcsEnv" . | nindent 12 }}
             {{- range $name, $value := .Values.console.env }}
             - name: {{ $name }}
               value: {{ $value | quote }}
             {{- end }}
-          {{- with .Values.console.hmacSecret }}
-          envFrom:
-            - secretRef:
-                name: {{ . }}
-          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.console.port }}
@@ -131,10 +156,13 @@ spec:
             - name: domains
               mountPath: /etc/midstream
               readOnly: true
-            {{- if .Values.gcs.credentialsSecret }}
-            - name: gcp-credentials
-              mountPath: /app/gcp
+            {{- /* A gcs profile's service-account key: beside the registries' volume, not inside it. */}}
+            {{- range .Values.console.storage }}
+            {{- if and (eq (toString .kind) "gcs") .credentialsSecret }}
+            - name: {{ include "midstream.consoleStorageVolume" .name }}
+              mountPath: /etc/midstream-storage/{{ .name }}
               readOnly: true
+            {{- end }}
             {{- end }}
       volumes:
         - name: domains
@@ -147,13 +175,16 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
-        {{- with .Values.gcs.credentialsSecret }}
-        - name: gcp-credentials
+        {{- range .Values.console.storage }}
+        {{- if and (eq (toString .kind) "gcs") .credentialsSecret }}
+        - name: {{ include "midstream.consoleStorageVolume" .name }}
           secret:
-            secretName: {{ . }}
+            secretName: {{ .credentialsSecret }}
+            optional: true
             items:
-              - key: {{ $.Values.gcs.credentialsKey }}
-                path: google_application_credentials.json
+              - key: service-account.json
+                path: service-account.json
+        {{- end }}
         {{- end }}
 ---
 apiVersion: v1

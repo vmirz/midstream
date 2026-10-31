@@ -36,6 +36,7 @@ from midstream.lakehouse.lifecycle import schema_from_json, schema_to_json, tabl
 from midstream.lakehouse.offsets import CommittedOffsets, committed_offsets
 from midstream.lakehouse.schema.forkmap import ForkMap
 from midstream.lakehouse.schema.index import SchemaIndex, build_index
+from midstream.lakehouse.store import ObjectStore
 from midstream.lakehouse.tables import TableIdentity, partition_granularity_of
 from midstream.protection.plan import ProtectionPlan
 from midstream.protection.policy import TableProtection
@@ -330,10 +331,10 @@ def current_view(state_table: Any, table: str) -> SchemaView | None:
     return view
 
 
-async def ensure_view(state_table: Any, context: TableContext, *, app: Any = None, client: Any = None) -> SchemaView:
+async def ensure_view(state_table: Any, context: TableContext, *, app: Any = None, store: ObjectStore | None = None) -> SchemaView:
     """`current_view` of the context's table, loading the table once when there is no schema anywhere yet.
 
-    Retries until GCS answers: a record cannot be staged for a table this member cannot read.
+    Retries until the store answers: a record cannot be staged for a table this member cannot read.
     """
     view = current_view(state_table, context.name)
     if view is not None:
@@ -342,7 +343,7 @@ async def ensure_view(state_table: Any, context: TableContext, *, app: Any = Non
     attempt = 0
     while True:
         try:
-            table = await loop.run_in_executor(_EXECUTOR, load_table, context, client)
+            table = await loop.run_in_executor(_EXECUTOR, load_table, context, store)
             break
         except Exception as exc:
             if getattr(app, "should_stop", False):
@@ -365,21 +366,22 @@ async def ensure_view(state_table: Any, context: TableContext, *, app: Any = Non
     return view
 
 
-def load_table(context: TableContext, client: Any = None, *, writer: str = "runtime") -> Table:
-    """The table, freshly loaded through its pointer. Blocking: call it off the event loop."""
-    return table_catalog(context.identity, client=client, writer=writer).load_table(context.identity.identifier)
+def load_table(context: TableContext, store: ObjectStore | None = None, *, writer: str = "runtime") -> Table:
+    """The table, freshly loaded through its pointer - through `store`, else its location's own.
+    Blocking: call it off the event loop."""
+    return table_catalog(context.identity, store=store, writer=writer).load_table(context.identity.identifier)
 
 
-async def load_table_offsets(context: TableContext, *, app: Any = None, client: Any = None) -> CommittedOffsets:
-    """The table's committed offsets as of its current snapshot, read from GCS (spec §7.8).
+async def load_table_offsets(context: TableContext, *, app: Any = None, store: ObjectStore | None = None) -> CommittedOffsets:
+    """The table's committed offsets as of its current snapshot, read from the table (spec §7.8).
 
-    A partition's session starts from this. Retries until GCS answers.
+    A partition's session starts from this. Retries until the store answers.
     """
     loop = asyncio.get_running_loop()
     attempt = 0
     while True:
         try:
-            table = await loop.run_in_executor(_EXECUTOR, load_table, context, client)
+            table = await loop.run_in_executor(_EXECUTOR, load_table, context, store)
             _LOADED[context.name] = SchemaRecord.from_table(table)
             return committed_offsets(table.metadata)
         except Exception as exc:

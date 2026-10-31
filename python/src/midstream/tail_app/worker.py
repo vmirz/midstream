@@ -317,7 +317,7 @@ class TailWorker:
         except (ControlPlaneError, KeyError, TypeError, ValueError) as error:
             LOGGER.warning("Could not fetch the schema of %s from the control plane (%s); reading the table instead", table.key, error)
             schema, committed, table_uuid = await self._schema_from_table(target)
-            source = "gcs"
+            source = "table"
             if table_uuid and target.table_uuid and table_uuid != target.table_uuid:
                 raise RuntimeError(f"the table at {target.location} is another incarnation ({table_uuid}) than ticked ({target.table_uuid})")
         metadata = await self._metadata_consumer()

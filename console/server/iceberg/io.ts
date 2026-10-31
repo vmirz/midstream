@@ -1,17 +1,19 @@
 /**
  * Reading a table's metadata objects: the pointer, metadata files, manifest lists and manifests.
  *
- * These are small and are read whole, through the console's own GCS credentials (ADC), whatever
- * the data access mode: cached mode mirrors data files because DuckDB cannot read `gs://` without
- * HMAC keys, but the console itself always can. A path that is not a `gs://` URI is read from
- * local disk, and tests swap the reader for one over checked-in fixtures (`setObjectReader`).
+ * These are small and are read whole, through the storage profile whose scope covers each one
+ * (`storage/registry.ts`) — its SDK and credentials, whether its data files are read in place or
+ * cached. An object no profile covers is refused (`storage_not_configured`), never guessed at. A
+ * local path or `file://` URI is read from disk, and tests swap the reader for one over checked-in
+ * fixtures (`setObjectReader`).
  */
 
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-import { downloadObject, parseGcsUri } from '../data/gcs.ts';
 import { unavailable } from '../errors.ts';
+import { storage } from '../storage/registry.ts';
+import { isLocalUri } from '../storage/uris.ts';
 
 export type ObjectReader = (uri: string) => Promise<Buffer>;
 
@@ -28,11 +30,8 @@ export class ObjectMissingError extends Error {
 
 async function readStoredObject(uri: string): Promise<Buffer> {
   try {
-    if (uri.startsWith('gs://')) {
-      const { bucket, prefix } = parseGcsUri(uri);
-      return await downloadObject(bucket, prefix);
-    }
-    return await readFile(uri.startsWith('file://') ? fileURLToPath(uri) : uri);
+    if (isLocalUri(uri)) return await readFile(uri.startsWith('file://') ? fileURLToPath(uri) : uri);
+    return await storage().profileFor(uri).readObject(uri);
   } catch (cause) {
     if (isNotFound(cause)) throw new ObjectMissingError(uri);
     throw cause;
@@ -83,7 +82,7 @@ export function assertUnderLocation(uri: string, location: string, what: string)
   });
 }
 
-/** `gs://bucket/a/b` + `c/d.json` → `gs://bucket/a/b/c/d.json`. */
+/** `s3://bucket/a/b` + `c/d.json` → `s3://bucket/a/b/c/d.json`, whatever the scheme. */
 export function joinLocation(location: string, path: string): string {
   return `${location.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;
 }

@@ -116,13 +116,13 @@ async def stage_source_record(
         if source_record is None:
             return
         config = get_runtime_app_config()
-        view = await ensure_view(state_table, table_context, app=app, client=batch_pipeline.storage_client)
+        view = await ensure_view(state_table, table_context, app=app, store=batch_pipeline.store)
         plan = view.plan
         if plan.hashes and key_problem(get_protection_key(), get_expected_key_id()) is not None:
             # Never stage a value the table protects as it arrived: without the key the deployment
             # hashes with, wait until the runtime is re-applied with it.
             await _wait_for_protection_key(app, table_context.name, materialization_id=materialization_id)
-            view = await ensure_view(state_table, table_context, app=app, client=batch_pipeline.storage_client)
+            view = await ensure_view(state_table, table_context, app=app, store=batch_pipeline.store)
             plan = view.plan
         partition_state = await batch_pipeline.ensure_partition_session(
             app=app,

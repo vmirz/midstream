@@ -1,6 +1,6 @@
 """Creating a materialization's table: what the control plane's `create_table` step does (spec §9.1).
 
-Blocking GCS calls throughout; the workflow runs this on a worker thread.
+Blocking storage calls throughout; the workflow runs this on a worker thread.
 """
 
 from __future__ import annotations
@@ -12,8 +12,9 @@ from typing import Any
 from pyiceberg.schema import Schema
 from pyiceberg.table import Table
 
-from midstream.lakehouse.catalog import GcsPointerCatalog, StaticTableDirectory, TableEntry
+from midstream.lakehouse.catalog import PointerCatalog, StaticTableDirectory, TableEntry
 from midstream.lakehouse.schema.forkmap import ForkMap
+from midstream.lakehouse.store import ObjectStore
 from midstream.lakehouse.tables import TableIdentity, new_table_metadata
 
 
@@ -26,12 +27,12 @@ class CreatedTable:
     last_column_id: int
 
 
-def table_catalog(identity: TableIdentity, *, client: Any = None, writer: str = "control-plane") -> GcsPointerCatalog:
-    """A catalog that knows exactly one table: `identity`'s."""
+def table_catalog(identity: TableIdentity, *, store: ObjectStore | None = None, writer: str = "control-plane") -> PointerCatalog:
+    """A catalog that knows exactly one table: `identity`'s, through `store` or its location's own."""
     directory = StaticTableDirectory(
         [TableEntry(identifier=identity.identifier, location=identity.location, materialization_id=identity.materialization_id)]
     )
-    return GcsPointerCatalog(directory=directory, client=client, writer=writer)
+    return PointerCatalog(directory=directory, store=store, writer=writer)
 
 
 def create_materializer_table(
@@ -41,14 +42,14 @@ def create_materializer_table(
     fork_map: ForkMap,
     granularity: str,
     properties: dict[str, str],
-    client: Any = None,
+    store: ObjectStore | None = None,
     writer: str = "control-plane",
 ) -> CreatedTable:
     """Create the table, or find it created by an earlier attempt for the same materialization.
 
     Raises `TableAlreadyExistsError` when the location holds another materialization's table.
     """
-    catalog = table_catalog(identity, client=client, writer=writer)
+    catalog = table_catalog(identity, store=store, writer=writer)
     resolved_properties = dict(properties)
     resolved_properties.setdefault("materializer.fork-map", fork_map.to_json())
     metadata = new_table_metadata(

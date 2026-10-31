@@ -1,0 +1,27 @@
+# A domain on Azure Blob Storage with AKS workload identity: no Secret for the apps and the runtimes, whose
+# pods carry the label and their ServiceAccounts the identity's client id. The console reads with a
+# service principal of its own.
+kaspr:
+  bootstrapServers: kafka:9092
+  authentication:
+    type: scram-sha-512
+    username: midstream
+    passwordSecret:
+      secretName: midstream-kafka
+      passwordKey: password
+  podLabels:
+    azure.workload.identity/use: "true"
+  serviceAccountAnnotations:
+    azure.workload.identity/client-id: 00000000-0000-0000-0000-000000000000
+storage:
+  azure:
+    credentialsSecret: ""       # workload identity
+controlPlane:
+  settings:
+    defaultDestinationUri: abfss://lake@exampleaccount.dfs.core.windows.net
+console:
+  storage:
+    - name: lake
+      scope: abfss://lake@exampleaccount.dfs.core.windows.net/
+      kind: azure
+      credentialsSecret: midstream-azure-reader

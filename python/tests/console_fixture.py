@@ -9,6 +9,8 @@ They are the two tables of one materialization, `shop`, reading the topics `orde
 
 Every object of a table is written under `<out>/<table>/` with its path below the table's `gs://`
 location kept, which the console's tests read it back from (`console/server/iceberg/testing.ts`).
+The tables are built in a `MemoryStore`, or in the store `write_fixture` is given (any `ObjectStore`,
+such as `GcsStore(client=FakeGcs().client())`): the table format is the same in every store.
 Each `expected.json` records what PyIceberg itself says the current snapshot holds and the control
 plane's projection of each schema (E5).
 
@@ -45,7 +47,6 @@ from pyiceberg.typedef import Record  # noqa: E402
 
 from midstream.lakehouse.commits import commit_schema  # noqa: E402
 from midstream.lakehouse.files import build_data_file, read_parquet_footer  # noqa: E402
-from midstream.lakehouse.gcs import set_shared_storage_client  # noqa: E402
 from midstream.lakehouse.lifecycle import schema_to_json  # noqa: E402
 from midstream.lakehouse.maintenance import commit_compaction, live_data_files, plan_compaction  # noqa: E402
 from midstream.lakehouse.offsets import committed_offsets  # noqa: E402
@@ -53,6 +54,7 @@ from midstream.lakehouse.schema.forkmap import ForkMap  # noqa: E402
 from midstream.lakehouse.schema.infer import infer  # noqa: E402
 from midstream.lakehouse.schema.policy import evolve  # noqa: E402
 from midstream.lakehouse.schema.render import render_schema  # noqa: E402
+from midstream.lakehouse.store import ObjectStore  # noqa: E402
 from midstream.maintenance_app.compact_worker import run as compact  # noqa: E402
 from midstream.tail_app.buffer import TableBuffer  # noqa: E402
 from midstream.tail_app.ingest import TailSchema, build, decode_value, epoch_ms, stage  # noqa: E402
@@ -164,10 +166,11 @@ def finish(target: Path, expected: dict) -> dict:
     return expected
 
 
-def write_payments(out: Path) -> dict:
-    """The `payments` table: one append of six payments. Return its `expected.json`."""
-    lake = LakeFixture(payment(0), granularity="day", location=PAYMENTS_LOCATION, identifier=(NAMESPACE, "payments"), source_topic="payments")
-    set_shared_storage_client(lake.client)
+def write_payments(out: Path, *, store: ObjectStore | None = None) -> dict:
+    """The `payments` table: one append of six payments, in `store` (a new `MemoryStore` when None).
+    Return its `expected.json`."""
+    lake = LakeFixture(payment(0), granularity="day", location=PAYMENTS_LOCATION, identifier=(NAMESPACE, "payments"), source_topic="payments", store=store)
+    lake.install()
     try:
         offsets = list(range(6))
         lake.commit(
@@ -192,11 +195,13 @@ def write_payments(out: Path) -> dict:
         lake.close()
 
 
-def write_fixture(out: Path) -> dict:
-    """Build both tables in memory, copy their objects under `out/<table>`, and return orders' `expected.json`."""
-    write_payments(out)
-    lake = LakeFixture(value(0), granularity="day")
-    set_shared_storage_client(lake.client)
+def write_fixture(out: Path, *, store: ObjectStore | None = None) -> dict:
+    """Build both tables in `store` (each in a new `MemoryStore` when None), copy their objects under
+    `out/<table>`, and return orders' `expected.json`."""
+    write_payments(out, store=store)
+    lake = LakeFixture(value(0), granularity="day", store=store)
+    # The compaction worker finds its store by URI, as in its own process.
+    lake.install()
     try:
         after = -1
         for offsets, day in (([0, 1, 2, 3], DAY1), ([4, 5, 6], DAY1), ([7, 8, 9], DAY2)):
@@ -252,7 +257,7 @@ def write_fixture(out: Path) -> dict:
             shutil.rmtree(work_root, ignore_errors=True)
         outputs = []
         for output in result["outputs"]:
-            footer, size = read_parquet_footer(lake.client, output["uri"])
+            footer, size = read_parquet_footer(lake.store, output["uri"])
             outputs.append(
                 build_data_file(
                     table.metadata,
@@ -295,14 +300,12 @@ def copy_table(lake: LakeFixture, target: Path, location: str) -> dict:
     table = lake.load()
     if target.exists():
         shutil.rmtree(target)
-    prefix = location.removeprefix("gs://")
-    for (bucket, name), stored in lake.store.objects.items():
-        path = f"{bucket}/{name}"
-        if not path.startswith(f"{prefix}/"):
-            continue
-        destination = target / path[len(prefix) + 1 :]
+    prefix = f"{location.rstrip('/')}/"
+    for item in lake.store.list(prefix):
+        destination = target / item.uri[len(prefix) :]
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(stored.data)
+        data, _ = lake.store.get(item.uri)
+        destination.write_bytes(data)
 
     files = [
         {

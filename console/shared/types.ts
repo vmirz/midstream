@@ -642,6 +642,38 @@ export interface CatalogConnection {
 }
 
 /** `GET /api/materializations/{id}/tables/{table}`: the Table tab, for one table. */
+/* ---------------------------------------------------------------- Storage */
+
+/** The backends the console reads object storage from (design 5.8): one per URI scheme. */
+export type StorageKind = 'gcs' | 's3' | 'azure';
+
+/** `direct`: DuckDB reads data files in place with the profile's secret; `cached`: downloaded first. */
+export type StorageMode = 'direct' | 'cached';
+
+/** One storage profile of the console, as the Settings page shows it: never a credential's value. */
+export interface StorageProfileView {
+  name: string;
+  kind: StorageKind;
+  /** The destination prefix it serves, ending with `/`. */
+  scope: string;
+  /** An S3-compatible server or an emulator; null for the cloud itself. */
+  endpoint: string | null;
+  region: string | null;
+  pathStyle: boolean | null;
+  mode: StorageMode;
+  /** Azure: the storage account its scope names. */
+  account: string | null;
+  /** What the console reads it with, in words: `access key`, `default credential chain`, `HMAC key pair`. */
+  credentials: string;
+  /** Whether the environment gave it credentials of its own (rather than the platform's defaults). */
+  credentialsFound: boolean;
+  /** The environment variables its credentials are read from. */
+  credentialVariables: string[];
+}
+
+/** The storage a table's location is read from, for the Connect panel: its profile, without credentials. */
+export type TableStorage = Omit<StorageProfileView, 'credentials' | 'credentialsFound' | 'credentialVariables'>;
+
 export interface TableView {
   materializationId: string;
   table: string;
@@ -651,6 +683,8 @@ export interface TableView {
   /** Why `metadata` is missing, when it is. */
   metadataError: string | null;
   connection: CatalogConnection | null;
+  /** The console's storage profile for the table's location; null when none covers it. */
+  storage: TableStorage | null;
 }
 
 export interface CpMaintenanceAccepted {
@@ -1460,7 +1494,8 @@ export interface ConsoleConfig {
    * and a token made in one domain is refused in another. Null while fewer than two can say.
    */
   federationKeysAgree: boolean | null;
-  dataAccessMode: 'direct' | 'cached' | 'disabled';
+  /** The Data explorer switch: off, no table's data is read (Settings › Data explorer). */
+  dataAccessEnabled: boolean;
   /** Most rows one page request may return. */
   pageRowLimit: number;
   /** Most rows an export may contain. */
@@ -1523,7 +1558,8 @@ export const SETTINGS_SCOPES = ['control-plane', 'runtime', 'console'] as const;
 export type SettingsScope = (typeof SETTINGS_SCOPES)[number];
 /** `domain_list`: email domains, comma-separated, such as `example.com,corp.example.org`; empty for any. */
 /** `choice_map`: some of `choice_options`, each with one of its choices, as text: `email=hash,phone=partial`. */
-export type SettingKind = 'boolean' | 'integer' | 'gcs_uri' | 'quantity' | 'enum' | 'string' | 'domain_list' | 'choice_map';
+/** `destination_uri`: `gs://bucket[/prefix]`, `s3://bucket[/prefix]` or `abfss://container@account.dfs.core.windows.net[/prefix]`. */
+export type SettingKind = 'boolean' | 'integer' | 'destination_uri' | 'quantity' | 'enum' | 'string' | 'domain_list' | 'choice_map';
 
 /** One option of a `choice_map` setting: a kind of sensitive data, say, and the masks it allows. */
 export interface SettingChoiceOption {

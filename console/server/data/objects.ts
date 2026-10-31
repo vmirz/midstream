@@ -1,16 +1,24 @@
 /**
  * Where DuckDB reads a table's data files from.
  *
- * Data files are immutable — the runtime uploads with `if_generation_match=0`, and a file is never
- * rewritten, only replaced in a later snapshot — so anything learned about one can be kept for the
- * life of the process. That is what makes per-file reads cheap enough to page a large table one
- * file at a time.
+ * Every object resolves to the storage profile whose scope covers it (`storage/registry.ts`): a
+ * direct profile's objects are read in place, by the path DuckDB is given for them
+ * (`duckdbSource`, the `az://` form for Azure), with the profile's secret; a cached profile's are
+ * mirrored to local disk first. An object no profile covers never reaches DuckDB — it would send an
+ * uncovered `s3://` path anonymously to AWS — and is refused with `storage_not_configured`.
+ *
+ * Data files are immutable — written create-only, never rewritten, only replaced in a later
+ * snapshot — so anything learned about one can be kept for the life of the process. That is what
+ * makes per-file reads cheap enough to page a large table one file at a time.
  */
 
-import { config, dataAccessMode } from '../config.ts';
+import { config } from '../config.ts';
 import { badRequest } from '../errors.ts';
-import { ensureLocalCopies } from './gcs.ts';
-import { runQuery } from './duckdb.ts';
+import { ensureLocalCopies, type MirrorTarget } from '../storage/cache.ts';
+import type { StorageProfile } from '../storage/profile.ts';
+import { storage } from '../storage/registry.ts';
+import { isLocalUri } from '../storage/uris.ts';
+import { prepareStorageAccess, runQuery } from './duckdb.ts';
 import { quoteLiteral } from './sql.ts';
 import type { DataObject } from '../iceberg/snapshot.ts';
 
@@ -25,48 +33,85 @@ export function setObjectPathResolver(next: ObjectPathResolver | null): void {
 }
 
 /**
- * Where DuckDB should read each object from: `gs://` in place, or a local mirror in cached mode.
- *
- * Cached mode exists for deployments without HMAC credentials, where DuckDB cannot read object
- * storage itself. An object is downloaded once and kept; the cache evicts by age past its budget.
+ * Where DuckDB should read each object from: in place for a direct profile, from the local mirror for
+ * a cached one, as it is for a local file (the live tail's, in the run's directory). Before any path
+ * is handed out, the direct profiles' secrets exist on the shared instance.
  */
 export async function objectSources(objects: DataObject[]): Promise<Map<string, string>> {
   const sources = new Map<string, string>();
-  const remote: DataObject[] = [];
+  const mirror: MirrorTarget[] = [];
+  const direct = new Set<StorageProfile>();
   for (const object of objects) {
     const local = resolver?.(object.uri) ?? null;
-    // Only object storage needs mirroring; anything else is already a path DuckDB can open.
-    if (local !== null) sources.set(object.uri, local);
-    else if (dataAccessMode() === 'direct' || !object.uri.startsWith('gs://')) sources.set(object.uri, object.uri);
-    else remote.push(object);
+    if (local !== null) {
+      sources.set(object.uri, local);
+      continue;
+    }
+    if (isLocalUri(object.uri)) {
+      sources.set(object.uri, object.uri);
+      continue;
+    }
+    const profile = storage().profileFor(object.uri);
+    if (profile.mode === 'direct') {
+      sources.set(object.uri, profile.duckdbSource(object.uri));
+      direct.add(profile);
+    } else {
+      mirror.push({ uri: object.uri, profile });
+    }
   }
-  if (remote.length > 0) {
-    for (const [uri, path] of await ensureLocalCopies(remote.map(({ uri, name }) => ({ uri, name })))) sources.set(uri, path);
+  if (direct.size > 0) await prepareStorageAccess([...direct]);
+  if (mirror.length > 0) {
+    for (const [uri, path] of await ensureLocalCopies(mirror)) sources.set(uri, path);
   }
   return sources;
 }
 
 export async function objectSource(object: DataObject): Promise<string> {
-  return (await objectSources([object])).get(object.uri) ?? object.uri;
+  const source = (await objectSources([object])).get(object.uri);
+  if (source === undefined) throw badRequest(`no source for ${object.uri}`);
+  return source;
 }
 
 /**
- * Refuse a scan cached mode would have to download wholesale.
+ * Refuse a scan that would download more of cached profiles' files than one query may.
  *
- * Only scans across many objects can hit it; a page reads one object at a time.
+ * Only scans across many objects can hit it; a page reads one object at a time. Direct profiles'
+ * objects, local files and objects no profile covers (refused when they are read) do not count.
  */
 export function assertWithinCachedBudget(candidates: DataObject[]): void {
-  if (dataAccessMode() !== 'cached') return;
-  const objects = candidates.filter((object) => object.uri.startsWith('gs://') && resolver?.(object.uri) == null);
-  const bytes = objects.reduce((sum, object) => sum + object.bytes, 0);
-  if (objects.length > config.cachedModeMaxFiles || bytes > config.cachedModeMaxBytes) {
+  const profiles = new Set<StorageProfile>();
+  let files = 0;
+  let bytes = 0;
+  for (const object of candidates) {
+    if (resolver?.(object.uri) != null || isLocalUri(object.uri)) continue;
+    const profile = storage().find(object.uri);
+    if (!profile || profile.mode !== 'cached') continue;
+    profiles.add(profile);
+    files += 1;
+    bytes += object.bytes;
+  }
+  if (files > config.cachedModeMaxFiles || bytes > config.cachedModeMaxBytes) {
+    const names = [...profiles].map((profile) => profile.name);
+    const named = names.length === 1 ? `profile ${names[0]}` : `profiles ${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
     throw badRequest(
-      `This time range covers ${objects.length.toLocaleString('en-US')} files (${Math.round(bytes / 1e6).toLocaleString('en-US')} MB), ` +
-        `more than this console can download for one query. Narrow the time range, or configure GCS ` +
-        `HMAC credentials so files are read in place.`,
-      { objects: objects.length, bytes },
+      `This time range covers ${files.toLocaleString('en-US')} files (${Math.round(bytes / 1e6).toLocaleString('en-US')} MB), ` +
+        `more than this console can download for one query. Narrow the time range, or configure direct access for ` +
+        `storage ${named} so files are read in place.`,
+      { objects: files, bytes, profiles: names },
     );
   }
+}
+
+/**
+ * The path DuckDB reads one object by, when its profile reads in place, with the profile's secret in
+ * place; null for anything else (cached, local, or no profile at all).
+ */
+export async function directSource(uri: string): Promise<string | null> {
+  if (isLocalUri(uri)) return null;
+  const profile = storage().find(uri);
+  if (!profile || profile.mode !== 'direct') return null;
+  await prepareStorageAccess([profile]);
+  return profile.duckdbSource(uri);
 }
 
 /** Read one data file's footer into DuckDB's metadata cache, so the next scan of it starts at once. */

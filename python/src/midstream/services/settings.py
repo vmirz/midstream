@@ -105,7 +105,7 @@ def apply_settings_change(
         return []
 
     try:
-        values = _apply_patch(document, request, now=now)
+        values = _apply_patch(document, request, now=now, config=cfg)
         changes = _describe_changes(document, values, request, config=cfg, environ=environ)
     except SettingValueError as error:
         _reject(
@@ -297,9 +297,10 @@ def validate_change(
     The API runs this before accepting a request, so most mistakes come back as a 400 instead of
     a refusal found later.
     """
+    cfg = get_config() if config is None else config
     current = document or SettingsDocument(scope=request.scope)
-    values = _apply_patch(current, request, now=request.submitted_at)
-    _describe_changes(current, values, request, config=config, environ=environ)
+    values = _apply_patch(current, request, now=request.submitted_at, config=cfg)
+    _describe_changes(current, values, request, config=cfg, environ=environ)
 
 
 def _apply_patch(
@@ -307,6 +308,7 @@ def _apply_patch(
     request: SettingsChangeRequest,
     *,
     now: str,
+    config: ControlPlaneConfig,
 ) -> dict[str, SettingOverride]:
     values = dict(document.values)
     for key in request.reset:
@@ -317,7 +319,7 @@ def _apply_patch(
             value = _validate_console_value(key, raw)
         else:
             definition = _require_known(request.scope, key)
-            value = coerce_setting_value(definition, raw)
+            value = coerce_setting_value(definition, raw, allow_file_destinations=config.allow_file_destinations)
         current = values.get(key)
         if current is not None and current.value == value:
             continue

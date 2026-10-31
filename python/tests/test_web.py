@@ -483,12 +483,67 @@ class WebCreateTests(unittest.TestCase):
         self.assertEqual("gs://lake", accepted.materialization.destination_uri)
 
     def test_no_materialization_is_created_without_a_destination_for_its_tables(self) -> None:
-        for destination in (None, "abfs://lakehouse/orders", "s3://lake/orders", "/data/lake", "gs://"):
+        for destination in (
+            None,
+            "abfs://lakehouse/orders",
+            "abfss://lake@acme.blob.core.windows.net/orders",
+            "s3://ab",
+            "/data/lake",
+            "gs://",
+            "file:///tmp/lake",
+        ):
             with self.subTest(destination=destination):
-                error = self._refused({"tables": tables("orders")}, config=ControlPlaneConfig(default_destination_uri=destination))
+                error = self._refused(
+                    {"tables": tables("orders")},
+                    config=ControlPlaneConfig(default_destination_uri=destination, default_namespace="midstream"),
+                )
                 self.assertEqual(409, error.status_code)
                 self.assertEqual("destination_not_configured", error.details["reason"])
                 self.assertIn("Settings page", error.message)
+
+    def test_a_materialization_is_created_under_a_destination_on_any_backend(self) -> None:
+        for destination in ("gs://lake/prod", "s3://lake/prod", "abfss://lake@acme.dfs.core.windows.net/prod"):
+            with self.subTest(destination=destination):
+                acceptance = self._create(
+                    {"tables": tables("orders")},
+                    config=ControlPlaneConfig(default_destination_uri=destination, default_namespace="midstream"),
+                )
+                self.assertEqual(destination, acceptance.materialization.destination_uri)
+                self.assertEqual(destination, acceptance.request_event.spec.destination_uri)
+
+    def test_a_refused_destination_names_the_forms_it_could_take(self) -> None:
+        forms = (
+            "gs://<bucket>[/<prefix>], s3://<bucket>[/<prefix>] or "
+            "abfss://<container>@<account>.dfs.core.windows.net[/<prefix>]"
+        )
+        for destination, says in (
+            ("ftp://lake", forms),
+            ("s3a://lake", "s3a:// destinations are written s3://<bucket>[/<prefix>]"),
+            ("s3://My_Lake", "s3:// destinations look like s3://<bucket>[/<prefix>]"),
+            ("abfss://lake@acme.blob.core.windows.net", "abfss:// destinations look like abfss://<container>@<account>.dfs.core.windows.net"),
+            ("file:///tmp/lake", f"file:// destinations serve tests only: give one as {forms}"),
+        ):
+            with self.subTest(destination=destination):
+                error = self._refused(
+                    {"tables": tables("orders")},
+                    config=ControlPlaneConfig(default_destination_uri=destination, default_namespace="midstream"),
+                )
+                self.assertIn(f"the destination for tables, {destination}, cannot hold them: ", error.message)
+                self.assertIn(says, error.message)
+                self.assertNotIn("gs:// URI", error.message)
+
+    def test_a_file_destination_serves_only_a_deployment_that_allows_one(self) -> None:
+        refused = self._refused(
+            {"tables": tables("orders")},
+            config=ControlPlaneConfig(default_destination_uri="file:///tmp/lake", default_namespace="midstream"),
+        )
+        self.assertEqual(("destination_not_configured", 409), (refused.details["reason"], refused.status_code))
+
+        acceptance = self._create(
+            {"tables": tables("orders")},
+            config=ControlPlaneConfig(default_destination_uri="file:///tmp/lake", default_namespace="midstream", allow_file_destinations=True),
+        )
+        self.assertEqual("file:///tmp/lake", acceptance.materialization.destination_uri)
 
     def test_create_materialization_bounds_long_runtime_name(self) -> None:
         acceptance = self._create(

@@ -27,12 +27,33 @@ The console{{ with include "midstream.consoleUrl" . }} at {{ . }}{{ end }}, serv
 
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "midstream.console" . }} {{ .Values.console.port }}:{{ .Values.console.port }}
   open http://localhost:{{ .Values.console.port }}
+{{- $profiles := include "midstream.consoleStorage" . | fromJsonArray }}
+{{- if not $profiles }}
+
+WARNING: console.storage names no storage profile, so the console can list every domain's materializations
+but read none of their tables. Add a profile, with read-only credentials, for each destination prefix it
+should read (values.yaml documents console.storage; docs/install.md has the steps).
+{{- else if .Values.controlPlane.enabled }}
+{{- $destination := regexReplaceAll "/+$" (include "midstream.defaultDestinationUri" .) "" }}
+{{- $servesLocal := not .Values.console.domains }}
+{{- range .Values.console.domains }}{{ if .local }}{{ $servesLocal = true }}{{ end }}{{ end }}
+{{- if and $destination $servesLocal }}
+{{- $tables := printf "%s/%s/" $destination (include "midstream.storagePrefix" .) }}
+{{- $served := false }}
+{{- range $profiles }}{{ if hasPrefix .scope $tables }}{{ $served = true }}{{ end }}{{ end }}
+{{- if not $served }}
+
+WARNING: no console.storage profile serves this domain's destination, so the console cannot read its tables.
+Add a profile whose scope is a prefix of {{ $destination }}/ (the tables live under {{ $tables }}).
+{{- end }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- if .Values.controlPlane.enabled }}
 
 Sign in as the bootstrap administrator named in Secret {{ include "midstream.authSecret" . }}; the first sign-in asks for a
 new password. Then create a dataset and a materialization. docs/install.md in the repository has every step.
-{{- if not .Values.controlPlane.settings.defaultDestinationUri }}
+{{- if not (include "midstream.defaultDestinationUri" .) }}
 
 No destination is configured yet: set controlPlane.settings.defaultDestinationUri, or Settings › Materializations ›
 Destination in the console, before creating a materialization.

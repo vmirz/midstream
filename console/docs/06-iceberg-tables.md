@@ -1,10 +1,12 @@
 # 06 — Reading Iceberg Tables and Schemas
 
 Sources: `server/iceberg/{json,io,pointer,metadata,manifests,snapshot,table,schema}.ts`,
-`server/data/{catalog,logical}.ts`, `server/schema/diff.ts`, `server/routes/{schema,table}.ts`.
+`server/storage/{registry,gcs,s3,azure,profile,uris}.ts`, `server/data/{catalog,logical}.ts`,
+`server/schema/diff.ts`, `server/routes/{schema,table}.ts`.
 
 The console reads each of a materialization's Iceberg tables itself — one per source topic: its
-pointer, metadata and manifests from GCS — and its data files through DuckDB (07). It needs the
+pointer, metadata and manifests from object storage, through the storage profile that covers its
+location (GCS, S3 or Azure, 07 §07.10) — and its data files through DuckDB (07). It needs the
 control plane only to learn the tables and where each is (`GET /materializations/{id}` →
 `materialization.tables` and `tables[].location`) and for the schema projections. Experiment E5 checked the reader against PyIceberg: identical file sets, row counts,
 sizes, bounds, offsets and projections.
@@ -20,23 +22,30 @@ each manifest (Avro)                        → data files, with counts and colu
 
 | Step | Module | Notes |
 |---|---|---|
-| Read an object | `io.ts::readObject` | `gs://` with a GET of GCS's JSON API (`data/gcs.ts::downloadObject`), anything else from local disk (the test fixtures). `setObjectReader` is the test seam |
+| Read an object | `io.ts::readObject` | `gs://`, `s3://` or `abfss://` through the storage profile whose scope is the longest prefix of the URI (`storage/registry.ts::profileFor`) — GCS's JSON API, S3's `GetObject`, Azure's blob download; a local path or `file://` from disk (the test fixtures). An object no profile covers is a `503 storage_not_configured`, never read. `setObjectReader` is the test seam, and each profile takes reader seams of its own |
 | The pointer | `pointer.ts::readPointer` | `null` when there is none: not created yet, or dropped |
 | The metadata file | `metadata.ts::readMetadata` | Parsed with `json.ts::parseJson`, which keeps every `snapshot-id` exact (below). A metadata file never changes, so each is parsed once (`table.ts::metadataAt`, 256 kept) |
 | The manifest list and manifests | `manifests.ts` | Decoded with `avsc`: 64-bit `long`s as `BigInt`, null/deflate/zstandard codecs; status, sequence number and snapshot id inherited per the spec when a manifest entry leaves them out |
 | A snapshot's files | `snapshot.ts::snapshotCatalog` | Every live data file as a `DataObject` (below); cached per snapshot (64), and the manifests behind it per path (5,000), so the next snapshot reads only the manifests it added |
 
-**Reading GCS.** Objects are read with a plain GET of GCS's JSON API (`?alt=media`), through
-`data/gcs.ts::readFromGcs`, with the GCS client library's endpoint and credentials — and, as the
-library does, without credentials for an emulator (`STORAGE_EMULATOR_HOST`). A read is retried on
-`408`, `429` and `5xx` answers, failed connections and a checksum that does not hold, three
-attempts in all, and its bytes are checked against the CRC32C GCS stored. A `404` is final: the
-table reader takes it as a table not created yet. Not the library's `download()`: its stream
-plumbing gave every download more listeners than Node allows by default, and printed
-`MaxListenersExceededWarning` twice for every object — every few seconds while a Data tab follows a
-table. Cached mode's data files go the same way, into a file beside their place in the cache that
-is renamed into it once its checksum holds, so an interrupted download never leaves part of a file
-that the next scan would read as all of it.
+**Reading object storage.** Every backend reads alike (`storage/profile.ts::withRetries`): a read is
+retried on `408`, `429` and `5xx` answers, failed connections and a checksum that does not hold,
+three attempts in all, each given 30 s for a metadata object and 10 minutes for a data file; a `404`
+is final, and the table reader takes it as a table not created yet. The SDKs' own retries are off,
+so attempts never multiply.
+
+| Profile | Reads with | Checked against |
+|---------|------------|-----------------|
+| `gcs` | a plain GET of GCS's JSON API (`?alt=media`, `Cache-Control: no-store`) with the client library's endpoint and credentials — the profile's key file, else ADC — and, as the library does, without credentials for an emulator (`endpoint`) | the CRC32C GCS stored, for every object not stored compressed |
+| `s3` | `@aws-sdk/client-s3` `GetObject` with `ChecksumMode: ENABLED`, the profile's keys or the SDK's default chain | the object's checksum when it carries one, verified by the SDK as the body is read |
+| `azure` | `@azure/storage-blob` download: a connection string, the account key, a service principal or `DefaultAzureCredential`; an emulator's `endpoint`, the account appended (`<endpoint>/<account>`), as the account URL | the blob's MD5 when it carries one |
+
+Not GCS's library `download()`: its stream plumbing gave every download more listeners than Node
+allows by default, and printed `MaxListenersExceededWarning` twice for every object — every few
+seconds while a Data tab follows a table. A cached profile's data files go the same way, into a file
+beside their place in the cache that is renamed into it once its checksum holds
+(`storage/profile.ts::writeWhole`), so an interrupted download never leaves part of a file that the
+next scan would read as all of it.
 
 **64-bit snapshot ids.** Iceberg snapshot ids use all 64 bits, and `JSON.parse` turns them into
 doubles that differ from the real id. `parseJson` uses `JSON.parse`'s source-text access to keep
@@ -195,6 +204,7 @@ the table itself:
 | `metadata` | the table: the newest 200 snapshots with their operation and summary, partitions with files, bytes, records and small files (`compactionDue` once a partition has `compaction_min_input_files` of them that the maintenance app's planner would take now: what is still being written waits for the hot partition delay, `server/iceberg/compaction.ts`), totals, the partition spec and sort order as text, properties — without the fork map, `materializer.protection` and `schema.*` for someone who may not see the dataset's schemas |
 | `metadataError` | why the table could not be read, when it could not |
 | `connection` | the catalog URI for the Connect panel, whose snippets name the table `lake.<dataset>.<table>`; the panel shows only for someone with `catalog.read` on the table's dataset |
+| `storage` | the console's storage profile for the table's location (`routes/table.ts::tableStorage`): its name, kind, scope, endpoint, region, path style, mode and Azure account — never a credential, nor which ones the console holds; `null` when no profile covers the location. The Connect panel's snippets follow the location's scheme with it: DuckDB's `s3` secret with the endpoint, path style and TLS the profile says, an `azure` secret, or a `gcs` HMAC secret; PyIceberg's `s3.*` or `adls.*` properties; Spark's `S3FileIO`, `ADLSFileIO` or `GCSFileIO`; Trino's native S3, Azure or GCS file system — every credential a placeholder (`src/features/detail/connect.ts`) |
 
 Small-file thresholds come from the runtime settings (`compaction_small_file_bytes`,
 `compaction_min_input_files`, `compaction_hot_partition_delay_minutes`), the catalog URI from the control plane's `catalog_base_url`, both

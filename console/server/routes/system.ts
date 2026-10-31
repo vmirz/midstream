@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 
-import { config, dataAccessMode } from '../config.ts';
+import { config } from '../config.ts';
 import { can } from '../auth/principal.ts';
 import { domains } from '../domains/index.ts';
 import type { Domain } from '../domains/domain.ts';
@@ -80,7 +80,7 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
       domains: described,
       settingsHome: domains().home.id,
       federationKeysAgree: federationKeysAgree(all),
-      dataAccessMode: dataAccessMode(),
+      dataAccessEnabled: config.dataAccessEnabled,
       pageRowLimit: config.pageRowLimit,
       exportRowLimit: config.exportRowLimit,
       resultRowLimit: config.resultRowLimit,

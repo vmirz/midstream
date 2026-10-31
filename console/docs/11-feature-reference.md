@@ -512,7 +512,7 @@ names a run (after a refresh, say), the tab re-attaches to it instead, progress 
 |---|---|
 | Loading | Skeletons |
 | Nothing committed yet | "No data to query yet" + *Rows appear here once the first records are saved* + **Check again** — unless live tail is on: the tab then runs at once, its rows from the tail until the first commit |
-| The table cannot be read | "Object storage is not reachable" + the reason + **Retry** |
+| The table cannot be read | *<table> is not readable* + why — *no storage is configured for …* when no storage profile covers its location, else what storage answered — + **Retry** |
 
 With the live tail on — every materialization has one — every run also holds the records past its
 snapshot that the runtime has not committed yet, from the tail app ([07 §07.9](./07-data-access-and-duckdb.md)): the
@@ -795,7 +795,12 @@ above the rows says so: nothing can be hashed, so a create that keeps a default 
 refused until the key is added (control-plane handbook
 [22](../../docs/handbook/22-data-protection.md) §22.9). The
 domain's **Deployment** section shows the protection key's id, or *not configured: nothing can be
-hashed*.
+hashed*, and the storage its apps and runtimes write with: the S3 endpoint, region and path-style
+addressing and the Azure Blob endpoint, never a credential. The console's own **Deployment** section
+names its storage profiles in **Object storage access** — each one's name, kind and mode, direct or
+cached — and gives each a row, **Storage profile <name>**: its scope, endpoint, region and path
+style, what it reads with, and the variables its credentials come from, never a value
+([03 §3.6a](./03-configuration-reference.md)).
 
 A section with unsaved edits carries a dot (a `•` in the picker). Settings marked advanced sit in a
 collapsed **Advanced** panel, which opens by itself when one of them has an edit.
@@ -815,7 +820,8 @@ collapsed **Advanced** panel, which opens by itself when one of them has an edit
 
 Edits are drafts until saved. A bar at the foot counts them and names their sections, and offers
 **Discard** and **Save changes**. Save stays disabled while an edit is invalid: the field says why
-(`At least 1`, `A gs:// URI such as gs://bucket/prefix`). One save covers every section and scope.
+(`At least 1`, `A destination such as gs://bucket/prefix, s3://bucket/prefix or
+abfss://container@account.dfs.core.windows.net/prefix`). One save covers every section and scope.
 
 | Outcome | What the page does |
 |---------|--------------------|
@@ -969,7 +975,7 @@ topic and the dataset, a link to the dataset's page.
 | Maintenance | **Compaction**, **Snapshot expiry** and **Orphan cleanup**: each job's last run — when, its outcome, its partitions, `32 files → 1`, bytes, snapshots expired and kept, orphans deleted of those listed, how long it took; a skipped run's note in muted text and a failure's in amber; the job running now. The maintenance app runs them on its own schedule, whether or not the runtime runs, kept tables included. **Run now** (`materializations.maintain`) asks it to run one on this table next; the panel follows the result. Once a reprotect has been asked for, a **Reprotect** row too — *requested*, running, or its last run: files rewritten, values masked, snapshots expired — asked from the Protection tab, not here |
 | Files by partition | Every partition, newest first — `2026-10-23`, `2026-10-23-14` or `2026-10` by the table's partitioning: files, bytes, records and small files, with a mark (*compact*) on a partition the next compaction takes, by the maintenance app's own rule: what is still being written waits for the hot partition delay (06 §6.5); **Files / Bytes** switches the bars. Rows without a timestamp read *no timestamp* |
 | Properties | Identifier, location, metadata file, format version, schema id, partition spec, sort order, current snapshot, table UUID, and the table properties — without the fork map, `materializer.protection` and `schema.*` for someone who may not see the dataset's schemas |
-| Connect | With `catalog.read` on the table's dataset: snippets for **DuckDB**, **PyIceberg**, **Spark**, **Trino** and **By path** (DuckDB's `iceberg_scan` on the location), filled with this deployment's catalog URI and `lake.<dataset>.<table>`, each with **Copy**; a link to make an access token |
+| Connect | With `catalog.read` on the table's dataset: snippets for **DuckDB**, **PyIceberg**, **Spark**, **Trino** and **By path** (DuckDB's `iceberg_scan` on the location), filled with this deployment's catalog URI and `lake.<dataset>.<table>`, each with **Copy**; a link to make an access token. How each engine reads the data files follows the location's scheme, from the console's storage profile for it: an `s3` secret or `s3.*` properties with the endpoint, region and path style; an `azure` secret or `adls.*` properties with the account; a GCS HMAC secret, `GCSFileIO` or Google credentials. Every credential is a placeholder. Without a profile for the location, a note says the snippet names no endpoint, region or account of its own |
 
 The tab reads the table itself, so it works while the runtime is stopped. A table that cannot be read
 shows why (*The table could not be read*), and one not created yet says so.
@@ -1013,7 +1019,7 @@ table — the dialog says so and only closes; once empty, its grants go with it 
 | Tab | Shows |
 |---|---|
 | Tables | Every table in it, `sales.orders` above its topic: the materialization writing it (its label and id), its state — **being created**, **written**, **kept · read-only**, **being dropped** — and its last commit. A table links to its Table tab for someone who may read the dataset. Locked to the person: a note that they see the names, not the schemas or data |
-| Access | Its owners only. **Who may use it**: each person and group with a role on it, their roles as badges, **Change** (roles as checkboxes) and **Remove**; below, **Add a person or group…** with the roles to grant. Reader sees schemas, queries, exports and reads through the catalog; Writer also adds and drops tables; Owner also manages the dataset and its access. An owner grants only roles they hold on it themselves, and cannot take away a role they could not grant. A note says plainly what access does not do: anyone holding credentials that read the bucket reads every table in it |
+| Access | Its owners only. **Who may use it**: each person and group with a role on it, their roles as badges, **Change** (roles as checkboxes) and **Remove**; below, **Add a person or group…** with the roles to grant. Reader sees schemas, queries, exports and reads through the catalog; Writer also adds and drops tables; Owner also manages the dataset and its access. An owner grants only roles they hold on it themselves, and cannot take away a role they could not grant. A note says plainly what access does not do: anyone holding credentials that read the destination — an S3 or Azure key, or a GCS HMAC key for DuckDB — reads every table in it |
 
 A change of access reloads the person's own session, since what they may do may have changed with it;
 open detail pages of others pick it up within 30 seconds (08 §8.22).

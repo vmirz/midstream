@@ -19,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lakehouse_support import BASE_TIME, LOCATION, LakeFixture  # noqa: E402
 
 from midstream.lakehouse.files import build_data_file, read_parquet_footer  # noqa: E402
-from midstream.lakehouse.gcs import set_shared_storage_client  # noqa: E402
 from midstream.lakehouse.lifecycle import schema_to_json  # noqa: E402
 from midstream.lakehouse.maintenance import (  # noqa: E402
     CompactionInputGone,
@@ -35,6 +34,7 @@ from midstream.lakehouse.maintenance import (  # noqa: E402
 )
 from midstream.lakehouse.offsets import committed_offsets  # noqa: E402
 from midstream.lakehouse.pointer import POINTER_NAME  # noqa: E402
+from midstream.lakehouse.store import PreconditionFailedError  # noqa: E402
 from midstream.maintenance_app import compact_worker  # noqa: E402
 from midstream.maintenance_app.compact_worker import run as run_compaction  # noqa: E402
 import pyarrow as pa  # noqa: E402
@@ -60,8 +60,8 @@ class CompactionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.lake = LakeFixture({"order_id": "O-0", "amount": 1})
         self.addCleanup(self.lake.close)
-        set_shared_storage_client(self.lake.client)
-        self.addCleanup(set_shared_storage_client, None)
+        # The compaction worker finds its store by URI, as in the maintenance app.
+        self.lake.install()
         self.work = tempfile.TemporaryDirectory()
         self.addCleanup(self.work.cleanup)
         # As the runner makes one: a directory of the job's own, inside the compaction work root.
@@ -123,7 +123,7 @@ class CompactionTests(unittest.TestCase):
         )
         data_files = []
         for output in result["outputs"]:
-            footer, size = read_parquet_footer(self.lake.client, output["uri"])
+            footer, size = read_parquet_footer(self.lake.store, output["uri"])
             data_files.append(
                 build_data_file(
                     table.metadata,
@@ -241,7 +241,7 @@ class CompactionTests(unittest.TestCase):
     def test_a_past_month_is_compacted_into_files_of_its_own_month(self) -> None:
         self.lake = LakeFixture({"order_id": "O-0", "amount": 1}, granularity="month")
         self.addCleanup(self.lake.close)
-        set_shared_storage_client(self.lake.client)
+        self.lake.install()
         # August, written a moment ago by a backfill: the month is over, so it has settled.
         self.commit_files(4, day_offset=-60)
         before = self.rows()
@@ -284,8 +284,8 @@ class CompactionTests(unittest.TestCase):
         self.assertEqual(before, self.rows())
 
     def output_table(self, output):
-        bucket, _, name = output["uri"].removeprefix("gs://").partition("/")
-        return pq.ParquetFile(pa.BufferReader(self.lake.client.bucket(bucket).blob(name).download_as_bytes()))
+        data, _ = self.lake.store.get(output["uri"])
+        return pq.ParquetFile(pa.BufferReader(data))
 
     def seal_newest_first(self) -> list:
         """Six rows written newest first, then two smaller files: three inputs of one day."""
@@ -379,20 +379,60 @@ class CompactionTests(unittest.TestCase):
     def test_the_worker_writes_only_directly_inside_its_work_directory(self) -> None:
         # Every local file is named by the worker alone, by its position in the job.
         job = self.job(self.job_dir)
-        blob_type = type(self.lake.client.bucket("lake").blob("x"))
+        store = self.lake.store
         written: list[str] = []
-        download = blob_type.download_to_filename
+        download = store.get_to_file
 
-        def recording(blob, filename, **kwargs):
-            written.append(filename)
-            return download(blob, filename, **kwargs)
+        def recording(uri, path):
+            written.append(path)
+            return download(uri, path)
 
-        with patch.object(blob_type, "download_to_filename", recording):
+        with patch.object(store, "get_to_file", recording):
             result = run_compaction(job, work_root=self.work.name)
         self.assertEqual(1, len(result["outputs"]))
         self.assertEqual(3, len(written))
         self.assertEqual({os.path.realpath(self.job_dir)}, {os.path.dirname(os.path.realpath(path)) for path in written})
         self.assertEqual([], os.listdir(self.job_dir))
+
+    def test_an_output_whose_first_upload_landed_before_its_retry_was_refused_counts(self) -> None:
+        # The store's library lost the answer to a create-only upload and sent it again: the first
+        # landed, so the retry is refused. Only this job's own write can be at an output's fresh name.
+        store = self.lake.store
+        upload = store.put_file
+        refused: list[str] = []
+
+        def landed_then_refused(uri, path, **kwargs):
+            upload(uri, path, **kwargs)
+            refused.append(uri)
+            raise PreconditionFailedError(f"{uri}: the object already exists", uri=uri)
+
+        self.commit_files(3)
+        before = self.rows()
+        with patch.object(store, "put_file", landed_then_refused):
+            snapshot_id, result = self.compact(plan(self.lake.load()))
+        (output,) = result["outputs"]
+        self.assertEqual([output["uri"]], refused)
+        self.assertEqual(output["file_size"], store.head(output["uri"]).size)
+        self.assertEqual(snapshot_id, self.lake.load().metadata.current_snapshot_id)
+        self.assertEqual([output["uri"]], [item.path for item in live_data_files(self.lake.load())])
+        self.assertEqual(before, self.rows())
+
+    def test_an_output_name_that_holds_another_object_fails_the_job(self) -> None:
+        store = self.lake.store
+        for name, stage, refusal in (
+            ("another object", lambda uri: store.put(uri, b"not this output"), "a different object already exists at gs://.*: 15 bytes, not this output's"),
+            ("nothing", lambda uri: None, "was refused, yet no object is there"),
+        ):
+            with self.subTest(found=name):
+                job = self.job(self.job_dir)
+
+                def refused(uri, path, **kwargs):
+                    stage(uri)
+                    raise PreconditionFailedError(f"{uri}: the object already exists", uri=uri)
+
+                with patch.object(store, "put_file", refused):
+                    with self.assertRaisesRegex(RuntimeError, refusal):
+                        run_compaction(job, work_root=self.work.name)
 
     def test_the_command_line_worker_refuses_a_job_outside_its_work_root(self) -> None:
         outside = tempfile.TemporaryDirectory()
@@ -411,7 +451,7 @@ class CompactionTests(unittest.TestCase):
         # compaction must not tell them apart any differently from the files it rewrites.
         lake = LakeFixture({"order_id": "O-0", "items": [{"sku": "S-0", "qty": 1}], "fulfillment": {"type": "ship", "shipments": [{"id": "SH-0"}]}})
         self.addCleanup(lake.close)
-        set_shared_storage_client(lake.client)
+        lake.install()
         values = [
             {"order_id": "O-1", "items": [{"sku": "S-1", "qty": 2}], "fulfillment": {"type": "ship", "shipments": [{"id": "SH-1"}]}},
             {"order_id": "O-2"},
@@ -474,7 +514,7 @@ class CompactionTests(unittest.TestCase):
         # Every output claimed for the first partition: its row count is wrong, and so is the second's.
         mislabelled = []
         for output in result["outputs"]:
-            footer, size = read_parquet_footer(self.lake.client, output["uri"])
+            footer, size = read_parquet_footer(self.lake.store, output["uri"])
             mislabelled.append(
                 build_data_file(
                     table.metadata,
@@ -539,7 +579,7 @@ class CompactionTests(unittest.TestCase):
         ids = plan_expiry(table.metadata, now=datetime.now(tz=UTC) + timedelta(hours=100), retention_hours=72, min_snapshots_to_keep=1, keep_all_minutes=60)
         expire_snapshots(table, ids)
         table = self.lake.load()
-        orphans = find_orphans(self.lake.client, LOCATION, referenced_files(table), now=datetime.now(tz=UTC) + timedelta(hours=25), min_age_hours=24)
+        orphans = find_orphans(self.lake.store, LOCATION, referenced_files(table), now=datetime.now(tz=UTC) + timedelta(hours=25), min_age_hours=24)
         self.assertTrue(inputs <= set(orphans.candidates))
         self.assertFalse({item.path for item in live_data_files(table)} & set(orphans.candidates))
 
@@ -615,7 +655,7 @@ class OrphanTests(unittest.TestCase):
         uri = f"{LOCATION}/data/ts_day=2026-10-18/{name}"
         self.lake.store.clock = lambda: datetime.now(tz=UTC) - timedelta(hours=age_hours)
         try:
-            self.lake.store.put(uri, b"orphan")
+            self.lake.store.write(uri, b"orphan")
         finally:
             self.lake.store.clock = lambda: datetime.now(tz=UTC)
         return uri
@@ -624,13 +664,28 @@ class OrphanTests(unittest.TestCase):
         values = dict(now=datetime.now(tz=UTC), min_age_hours=24)
         values.update(overrides)
         table = self.lake.load()
-        return find_orphans(self.lake.client, LOCATION, referenced_files(table), **values)
+        return find_orphans(self.lake.store, LOCATION, referenced_files(table), **values)
 
     def test_only_unreferenced_files_older_than_the_guard_are_orphans(self) -> None:
         old = self.stray("old.parquet", age_hours=48)
         self.stray("young.parquet", age_hours=1)
         result = self.scan()
         self.assertEqual((old,), result.candidates)
+
+    def test_a_file_whose_store_cannot_tell_its_age_is_never_an_orphan(self) -> None:
+        old = self.stray("old.parquet", age_hours=48)
+        store = self.lake.store
+        listing = store.list
+
+        def undated(prefix):
+            return iter([replace(item, last_modified=None) for item in listing(prefix)])
+
+        with patch.object(store, "list", undated):
+            result = self.scan(now=datetime.now(tz=UTC) + timedelta(days=30))
+        self.assertEqual((), result.candidates)
+        self.assertGreater(result.listed, 3)
+        # Dated, the same file is one.
+        self.assertEqual((old,), self.scan().candidates)
 
     def test_referenced_files_the_pointer_and_pending_files_are_never_orphans(self) -> None:
         pending = self.stray("pending.parquet", age_hours=48)

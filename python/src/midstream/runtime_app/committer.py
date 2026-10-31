@@ -31,7 +31,7 @@ file again until a commit covers it, so a new committer rebuilds the set from no
 committer decides goes to the runtime's state table - each table's schema, committed offsets,
 decisions members act on - and to `materialization-table-events` for the control plane.
 
-The GCS work of each commit runs on a thread, so the member's event loop - its writer, its Kafka
+The storage work of each commit runs on a thread, so the member's event loop - its writer, its Kafka
 consumer - keeps going. Commits refresh the table, decide, and commit once; a lost race refreshes
 and decides again, which is what makes a stale committer harmless (spec §7.8).
 """
@@ -70,7 +70,7 @@ from midstream.lakehouse.commits import (
     protection_json_of,
     table_totals,
 )
-from midstream.lakehouse.gcs import delete_object
+from midstream.lakehouse.store import ObjectStore, store_for
 from midstream.lakehouse.offsets import CommittedOffsets, committed_offsets
 from midstream.lakehouse.schema.index import build_index
 from midstream.lakehouse.schema.policy import Evolution, evolve, limits_of
@@ -100,7 +100,8 @@ from midstream.storage.keys import materialization_routing_key
 
 LOGGER = logging.getLogger(__name__)
 
-#: GCS takes about one update a second to one object (experiment E11): commits are spaced by this.
+#: GCS takes about one update a second to one object (experiment E11), and every commit updates the
+#: table's pointer: commits are spaced by this, on every backend.
 COMMIT_SPACING_SECONDS = 1.0
 #: Refresh-and-decide-again attempts within one commit cycle before it is retried at a later tick.
 COMMIT_ATTEMPTS = 5
@@ -136,11 +137,12 @@ class _AppendCycle:
 class Committer:
     """One table's committer, part of its runtime's `RuntimeCommitter`."""
 
-    def __init__(self, context: TableContext, *, runtime: "RuntimeCommitter", client: Any = None) -> None:
+    def __init__(self, context: TableContext, *, runtime: "RuntimeCommitter", store: ObjectStore | None = None) -> None:
         self.context = context
         self.runtime = runtime
         self.runtime_app_ref = runtime.runtime_app_ref
-        self.client = client
+        #: The object store of the table; None: its location's own (`store_for`).
+        self.store = store
         self.pending = PendingFiles()
         self.window: _SchemaWindow | None = None
         self.table: Table | None = None
@@ -270,7 +272,10 @@ class Committer:
         return True
 
     def _load(self) -> Table:
-        return load_table(self.context, self.client, writer=f"runtime:{current_member_id()}")
+        return load_table(self.context, self.store, writer=f"runtime:{current_member_id()}")
+
+    def _object_store(self) -> ObjectStore:
+        return store_for(self.context.location) if self.store is None else self.store
 
     def _publish_state(self, state_table: Any) -> list[dict[str, Any]]:
         """Keep the state table's schema and offsets in step with the table (a new committer seeds them)."""
@@ -672,7 +677,7 @@ class Committer:
                     table,
                     plan,
                     runtime=self.runtime_app_ref,
-                    client=self.client or _shared_client(),
+                    store=self._object_store(),
                     footer_pool=self.footer_pool,
                 )
             except CommitFailedException as error:
@@ -703,7 +708,7 @@ class Committer:
                 if not candidates:
                     return cycle
                 continue
-            except Exception as error:  # noqa: BLE001 - a GCS outage, say: retried at a later tick
+            except Exception as error:  # noqa: BLE001 - a storage outage, say: retried at a later tick
                 cycle.error = error
                 return cycle
             cycle.error = None
@@ -722,10 +727,10 @@ class Committer:
         or a duplicate of rows the table holds under another name, which orphan cleanup removes once
         no snapshot references it and it is older than `orphan_min_age_hours`.
         """
-        client = self.client or _shared_client()
+        store = self._object_store()
         for decision in decisions:
             try:
-                delete_object(client, decision.file_path)
+                store.delete(decision.file_path)
             except Exception as error:  # noqa: BLE001 - orphan cleanup collects what is left
                 LOGGER.info("Could not delete the rejected file %s: %s", decision.file_path, error)
 
@@ -832,19 +837,19 @@ class RuntimeCommitter:
     there are: their commits run one at a time on one thread, the table waiting longest first.
     """
 
-    def __init__(self, contexts: tuple[TableContext, ...], *, runtime_app_ref: str, client: Any = None) -> None:
+    def __init__(self, contexts: tuple[TableContext, ...], *, runtime_app_ref: str, store: ObjectStore | None = None) -> None:
         if not contexts:
             raise ValueError("a runtime commits to at least one table")
         self.contexts = tuple(contexts)
         self.materialization_id = contexts[0].materialization_id
         self.runtime_app_ref = runtime_app_ref
-        self.client = client
+        self.store = store
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="committer")
         self.footer_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="committer-footers")
         self.last_event_at: float | None = None
         self._wakeup: asyncio.TimerHandle | None = None
         self.tables: dict[str, Committer] = {
-            context.name: Committer(context, runtime=self, client=client) for context in self.contexts
+            context.name: Committer(context, runtime=self, store=store) for context in self.contexts
         }
 
     def committer(self, name: str | None) -> Committer | None:
@@ -1011,11 +1016,6 @@ def _hashing_key_id() -> str | None:
     key = get_protection_key()
     return None if key is None else key.key_id
 
-
-def _shared_client():
-    from midstream.lakehouse.gcs import shared_storage_client
-
-    return shared_storage_client()
 
 
 def _millis_text(value: int) -> str:

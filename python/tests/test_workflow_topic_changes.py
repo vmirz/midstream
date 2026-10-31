@@ -10,8 +10,6 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from google.api_core.exceptions import ServiceUnavailable  # noqa: E402
-
 from test_workflow import (  # noqa: E402
     LOCATION,
     MATERIALIZATION_ID,
@@ -24,6 +22,7 @@ from test_workflow import (  # noqa: E402
 from midstream.handlers import handle_work_event_for_routed_output  # noqa: E402
 from midstream.kafka.metadata import TopicMetadata  # noqa: E402
 from midstream.lakehouse.pointer import POINTER_NAME  # noqa: E402
+from midstream.lakehouse.store import StoreError  # noqa: E402
 from midstream.models import (  # noqa: E402
     EventCause,
     IdentityRequestOutcome,
@@ -302,7 +301,7 @@ class AddingTopicsTests(TopicChangeTestCase):
                 self.discovery,
                 kaspr_app_client=self.kaspr,
                 kafka_admin_client=self.group,
-                object_store_client=self.client,
+                object_store=self.store,
                 config=self.config,
                 metadata_client=self.metadata,
             )
@@ -365,7 +364,7 @@ class RemovingTopicsTests(TopicChangeTestCase):
     def setUp(self) -> None:
         super().setUp()
         for location in (LOCATION, PAYMENTS_LOCATION):
-            self.store.put(f"{location}/data/ts_day=2026-07-12/p00-o0000000000-m-0.parquet", b"rows")
+            self.store.write(f"{location}/data/ts_day=2026-07-12/p00-o0000000000-m-0.parquet", b"rows")
 
     def finish(self, event) -> list[MaterializationWorkEvent]:
         """Run the chain to its end, every follow-up of every step; return the events in order."""
@@ -395,7 +394,7 @@ class RemovingTopicsTests(TopicChangeTestCase):
         self.assertIsNone(get_materialization_schema(self.table, MATERIALIZATION_ID, "payments"))
         self.assertEqual([], list_schema_versions(self.table, MATERIALIZATION_ID, "payments"))
         self.assertEqual([], [name for name in self.store.names() if name.startswith(PAYMENTS_LOCATION)])
-        self.assertIsNotNone(self.store.get(f"{LOCATION}/metadata/{POINTER_NAME}"))
+        self.assertIsNotNone(self.store.read(f"{LOCATION}/metadata/{POINTER_NAME}"))
         self.assertIsNotNone(get_materialization(self.table, MATERIALIZATION_ID), "a live drop purges nothing else")
 
     def test_with_cleanup_off_a_dropped_table_keeps_its_files_and_its_name(self) -> None:
@@ -404,8 +403,8 @@ class RemovingTopicsTests(TopicChangeTestCase):
         self.finish(self.change(["orders"], {"payments": "drop"}))
 
         self.assertEqual({"orders": "active", "payments": "dropped"}, self.states())
-        self.assertIsNotNone(self.store.get(f"{PAYMENTS_LOCATION}/data/ts_day=2026-07-12/p00-o0000000000-m-0.parquet"))
-        self.assertIsNone(self.store.get(f"{PAYMENTS_LOCATION}/metadata/{POINTER_NAME}"))
+        self.assertIsNotNone(self.store.read(f"{PAYMENTS_LOCATION}/data/ts_day=2026-07-12/p00-o0000000000-m-0.parquet"))
+        self.assertIsNone(self.store.read(f"{PAYMENTS_LOCATION}/metadata/{POINTER_NAME}"))
         # Adding the topic back makes a new table, which cannot take the dropped one's name: its
         # location, under the materialization's, is never used again.
         self.assertIsNone(self.change(["orders", "payments"], request_id="req-taken"))
@@ -421,7 +420,7 @@ class RemovingTopicsTests(TopicChangeTestCase):
         self.finish(self.change(["orders"], {"payments": "keep"}))
 
         self.assertEqual({"orders": "active", "payments": "retired"}, self.states())
-        self.assertIsNotNone(self.store.get(f"{PAYMENTS_LOCATION}/metadata/{POINTER_NAME}"))
+        self.assertIsNotNone(self.store.read(f"{PAYMENTS_LOCATION}/metadata/{POINTER_NAME}"))
         self.assertEqual("orders", self.writer_topics())
 
         self.finish(self.change(["orders", "payments"], request_id="req-resume"))
@@ -448,7 +447,7 @@ class RemovingTopicsTests(TopicChangeTestCase):
         drop = self.change(["orders"], {"payments": "drop"}, request_id="req-drop")
 
         self.assertEqual("apply_runtime", drop.step)
-        self.assertIsNotNone(self.store.get(f"{PAYMENTS_LOCATION}/metadata/{POINTER_NAME}"))
+        self.assertIsNotNone(self.store.read(f"{PAYMENTS_LOCATION}/metadata/{POINTER_NAME}"))
         self.assertEqual("await_runtime_drained", self.process(drop).step, "it waits on the same drain")
         steps = [item.step for item in self.finish(wait)]
         self.assertEqual(["await_runtime_drained", "apply_runtime", "observe_runtime", "drop_table"], steps)
@@ -458,7 +457,7 @@ class RemovingTopicsTests(TopicChangeTestCase):
     def test_a_drop_that_keeps_failing_leaves_the_table_dropping_with_its_error(self) -> None:
         self.finish(self.change(["orders"], {"payments": "keep"}))
         drop = self.change(["orders"], {"payments": "drop"}, request_id="req-drop")
-        self.store.fail = lambda operation, bucket, name: ServiceUnavailable("GCS is down") if operation == "list_blobs" else None
+        self.store.fail = lambda operation, uri: StoreError("the store is down", uri=uri, status=503) if operation == "list" else None
 
         event, attempts = drop, 0
         while event is not None:
@@ -491,7 +490,7 @@ class RemovingTopicsTests(TopicChangeTestCase):
 
         self.assertEqual(("drop_table", drop.work_id), (wait.step, wait.work_id))
         self.assertIsNotNone(wait.observation_policy.scheduled_for)
-        self.assertIsNotNone(self.store.get(f"{PAYMENTS_LOCATION}/metadata/{POINTER_NAME}"), "nothing deleted yet")
+        self.assertIsNotNone(self.store.read(f"{PAYMENTS_LOCATION}/metadata/{POINTER_NAME}"), "nothing deleted yet")
         operation = get_operation_record(self.table, materialization_id=MATERIALIZATION_ID, operation_id=drop.work_id)
         self.assertEqual("payments", operation["payload"]["maintenance_wait"]["table"])
 
@@ -544,7 +543,7 @@ class RemovingTopicsTests(TopicChangeTestCase):
                     self.discovery,
                     kaspr_app_client=self.kaspr,
                     kafka_admin_client=self.group,
-                    object_store_client=self.client,
+                    object_store=self.store,
                     config=self.config,
                 )
             )

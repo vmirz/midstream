@@ -102,7 +102,9 @@ def apply_control_plane_overrides(base: ControlPlaneConfig, document: SettingsDo
         if override is None:
             continue
         try:
-            overrides[definition.key] = coerce_setting_value(definition, override.value)
+            overrides[definition.key] = coerce_setting_value(
+                definition, override.value, allow_file_destinations=base.allow_file_destinations
+            )
         except SettingValueError as error:
             # Stored before a rule tightened, perhaps; the deployment value applies instead.
             LOGGER.warning("Ignoring stored override for %s: %s", definition.key, error)
@@ -192,7 +194,10 @@ def describe_settings(
         value, source = fallback, fallback_source
         if override is not None:
             try:
-                value, source = coerce_setting_value(definition, override.value), "override"
+                value = coerce_setting_value(
+                    definition, override.value, allow_file_destinations=base_config.allow_file_destinations
+                )
+                source = "override"
             except SettingValueError:
                 override = None
         settings.append(
