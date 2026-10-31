@@ -254,17 +254,24 @@ class PointerCatalog(MetastoreCatalog):
                 )
             return self._table_from_pointer(entry, existing)
         metadata_location = f"{location.rstrip('/')}/metadata/00000-{metadata.table_uuid}.metadata.json"
+        payload = metadata.model_dump_json(exclude_none=True).encode("utf-8")
         try:
-            store.put(
-                metadata_location,
-                metadata.model_dump_json(exclude_none=True).encode("utf-8"),
-                if_version=ABSENT,
-                content_type="application/json",
-            )
-        except PreconditionFailedError:
-            # An earlier attempt wrote this very file (same uuid) and died before the pointer, or
-            # this attempt's write landed and its retry was refused.
-            pass
+            store.put(metadata_location, payload, if_version=ABSENT, content_type="application/json")
+        except PreconditionFailedError as exc:
+            # The name carries this table's uuid: only this write, retried after its answer was lost,
+            # or an earlier attempt with the same metadata can have put an object there. A refusal is
+            # not proof one is there - S3 answers a conflicting write still in flight with 409 and
+            # writes nothing - so the pointer is written only over a file of the size sent.
+            existing = store.head(metadata_location)
+            if existing is None:
+                raise CommitStateUnknownException(
+                    f"the create-only write of {metadata_location} was refused, yet no object is there: "
+                    "a write may still be in flight"
+                ) from exc
+            if existing.size != len(payload):
+                raise TableAlreadyExistsError(
+                    f"{metadata_location} holds another object ({existing.size} bytes, not {len(payload)})"
+                ) from exc
         pointer = TablePointer(
             table_uuid=str(metadata.table_uuid),
             identifier=tuple(identifier),

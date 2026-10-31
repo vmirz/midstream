@@ -346,6 +346,33 @@ class LostPointerAnswerTests(unittest.TestCase):
 
         self.assert_readable(rows=0)
 
+    def test_creating_a_table_whose_metadata_write_was_refused_without_writing_is_unknown(self) -> None:
+        # S3 answers a create-only write that meets another in flight with 409 and writes nothing.
+        store = MemoryStore()
+        location = LOCATION.replace("/orders", "/payments")
+        prefix = f"{location}/metadata/00000-"
+        store.fail = lambda operation, uri: (
+            PreconditionFailedError(f"{uri}: in progress", uri=uri, status=409) if operation == "put" and uri.startswith(prefix) else None
+        )
+
+        with self.assertRaises(CommitStateUnknownException):
+            LakeFixture({"payment_id": "P-0"}, store=store, location=location, identifier=(IDENTIFIER[0], "payments"), source_topic="payments")
+
+        store.fail = None
+        self.assertIsNone(read_pointer(store, location)[0], "no pointer names a file that is not there")
+
+    def test_creating_a_table_whose_metadata_write_landed_finds_it_created(self) -> None:
+        store = LostAnswerStore()
+        location = LOCATION.replace("/orders", "/payments")
+        store.lose = lambda uri: uri.startswith(f"{location}/metadata/00000-")
+
+        lake = LakeFixture({"payment_id": "P-0"}, store=store, location=location, identifier=(IDENTIFIER[0], "payments"), source_topic="payments")
+        self.addCleanup(lake.close)
+
+        pointer, _ = read_pointer(store, location)
+        self.assertEqual(store.landed, [pointer.metadata_location])
+        self.assertIsNotNone(store.read(pointer.metadata_location))
+
     def test_creating_a_table_refused_with_no_pointer_is_unknown(self) -> None:
         store = MemoryStore()
         location = LOCATION.replace("/orders", "/payments")
