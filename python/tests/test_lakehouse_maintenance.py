@@ -34,6 +34,7 @@ from midstream.lakehouse.maintenance import (  # noqa: E402
 )
 from midstream.lakehouse.offsets import committed_offsets  # noqa: E402
 from midstream.lakehouse.pointer import POINTER_NAME  # noqa: E402
+from midstream.lakehouse.store import PreconditionFailedError  # noqa: E402
 from midstream.maintenance_app import compact_worker  # noqa: E402
 from midstream.maintenance_app.compact_worker import run as run_compaction  # noqa: E402
 import pyarrow as pa  # noqa: E402
@@ -392,6 +393,46 @@ class CompactionTests(unittest.TestCase):
         self.assertEqual(3, len(written))
         self.assertEqual({os.path.realpath(self.job_dir)}, {os.path.dirname(os.path.realpath(path)) for path in written})
         self.assertEqual([], os.listdir(self.job_dir))
+
+    def test_an_output_whose_first_upload_landed_before_its_retry_was_refused_counts(self) -> None:
+        # The store's library lost the answer to a create-only upload and sent it again: the first
+        # landed, so the retry is refused. Only this job's own write can be at an output's fresh name.
+        store = self.lake.store
+        upload = store.put_file
+        refused: list[str] = []
+
+        def landed_then_refused(uri, path, **kwargs):
+            upload(uri, path, **kwargs)
+            refused.append(uri)
+            raise PreconditionFailedError(f"{uri}: the object already exists", uri=uri)
+
+        self.commit_files(3)
+        before = self.rows()
+        with patch.object(store, "put_file", landed_then_refused):
+            snapshot_id, result = self.compact(plan(self.lake.load()))
+        (output,) = result["outputs"]
+        self.assertEqual([output["uri"]], refused)
+        self.assertEqual(output["file_size"], store.head(output["uri"]).size)
+        self.assertEqual(snapshot_id, self.lake.load().metadata.current_snapshot_id)
+        self.assertEqual([output["uri"]], [item.path for item in live_data_files(self.lake.load())])
+        self.assertEqual(before, self.rows())
+
+    def test_an_output_name_that_holds_another_object_fails_the_job(self) -> None:
+        store = self.lake.store
+        for name, stage, refusal in (
+            ("another object", lambda uri: store.put(uri, b"not this output"), "a different object already exists at gs://.*: 15 bytes, not this output's"),
+            ("nothing", lambda uri: None, "was refused, yet no object is there"),
+        ):
+            with self.subTest(found=name):
+                job = self.job(self.job_dir)
+
+                def refused(uri, path, **kwargs):
+                    stage(uri)
+                    raise PreconditionFailedError(f"{uri}: the object already exists", uri=uri)
+
+                with patch.object(store, "put_file", refused):
+                    with self.assertRaisesRegex(RuntimeError, refusal):
+                        run_compaction(job, work_root=self.work.name)
 
     def test_the_command_line_worker_refuses_a_job_outside_its_work_root(self) -> None:
         outside = tempfile.TemporaryDirectory()

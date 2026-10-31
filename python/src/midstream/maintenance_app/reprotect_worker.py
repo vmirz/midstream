@@ -13,9 +13,10 @@ outputs, each with the input it replaces, as JSON.
 
 Like compaction, nothing here touches the table: the outputs are only files until the maintenance
 app commits a `replace` snapshot naming them, and a worker killed at any point leaves the table as
-it was. Hashes are made with `PROTECTION_KEY`, read from the environment as the maintenance app
-reads it; a key whose id is not the one the table's hashes were made with is refused, as is a job
-whose table moved to another revision since it was planned.
+it was; an output whose create-only upload is refused is checked as compaction checks one
+(`upload_output`). Hashes are made with `PROTECTION_KEY`, read from the environment as the
+maintenance app reads it; a key whose id is not the one the table's hashes were made with is
+refused, as is a job whose table moved to another revision since it was planned.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from midstream.maintenance_app.compact_worker import (
     _die_with_parent,
     compaction_work_root,
     confined_path,
+    upload_output,
 )
 
 
@@ -50,7 +52,7 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
     from midstream.lakehouse.reprotect import ReprotectDecider, ReprotectPlan, label_rewrite
     from midstream.lakehouse.schema.forkmap import ForkMap
     from midstream.lakehouse.schema.index import build_index
-    from midstream.lakehouse.store import ABSENT, store_for
+    from midstream.lakehouse.store import store_for
     from midstream.protection.catalog import MASK_HASH
     from midstream.protection.mask import MissingProtectionKey
     from midstream.protection.policy import TableProtection
@@ -124,7 +126,7 @@ def run(job: dict[str, Any], *, work_root: str | os.PathLike[str] | None = None)
             unique=f"{plan.job_id[:16]}-{position}-{uuid.uuid4().hex[:8]}",
             protection_label=output_label,
         )
-        store_for(uri).put_file(uri, str(local_output), if_version=ABSENT)
+        upload_output(uri, local_output)
         outputs.append(
             {
                 "input": item.path,
