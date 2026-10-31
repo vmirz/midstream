@@ -267,6 +267,19 @@ class AppsAndRuntimesTests(unittest.TestCase):
                 self.assertEqual(expected, env["CONTROL_PLANE_STORAGE_PREFIX"]["value"])
 
 
+class PodBlockTests(unittest.TestCase):
+    """A KasprApp's template.pod is a mapping or left out: never null, which the KasprApp CRD refuses."""
+
+    def test_no_kaspr_app_and_no_runtime_spec_renders_a_null_pod(self) -> None:
+        # S3 mounts nothing, so with no pod labels and no scheduling the pod block has nothing in it.
+        cases = [(values, ()) for values in VALUES_FILES] + [(S3, ()), (AZURE, ("kaspr.podLabels=null",))]
+        for values, settings in cases:
+            for name, spec in kaspr_specs(render_with(values, *settings)).items():
+                with self.subTest(values=values.name, settings=settings, app=name):
+                    template = spec.get("template") or {}
+                    self.assertTrue("pod" not in template or isinstance(template["pod"], dict), f"template.pod is {template.get('pod')!r}")
+
+
 class EndpointTests(unittest.TestCase):
     """An endpoint is an http:// or https:// URL naming a server, as the stores and the console require."""
 

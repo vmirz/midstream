@@ -707,6 +707,19 @@ storage-{{ . }}-key
 {{- end -}}
 
 {{/*
+A KasprApp's template.pod - its pods' labels, scheduling and storage volumes - or nothing when it has
+none of them: an empty block would render a null pod, which the KasprApp CRD refuses. `own` holds the
+app's own scheduling values, as for midstream.podScheduling.
+*/}}
+{{- define "midstream.kasprPod" -}}
+{{- $body := printf "%s%s%s" (include "midstream.kasprPodMetadata" .root) (include "midstream.podScheduling" (dict "root" .root "own" .own)) (include "midstream.storageVolumes" .root) -}}
+{{- if trim $body }}
+pod:
+  {{- $body | nindent 2 }}
+{{- end }}
+{{- end -}}
+
+{{/*
 The spec every materialization's runtime is rendered from (handbook 10 §10.1). The control plane
 sets each runtime's replicas, storage size and package pin on top of it.
 */}}
@@ -731,10 +744,7 @@ pythonPackages:
   {{- include "midstream.pythonPackages" . | nindent 2 }}
 template:
   {{- include "midstream.kasprServiceAccount" . | nindent 2 }}
-  pod:
-    {{- include "midstream.kasprPodMetadata" . | nindent 4 }}
-    {{- include "midstream.podScheduling" (dict "root" . "own" .Values.controlPlane.runtime) | nindent 4 }}
-    {{- include "midstream.storageVolumes" . | nindent 4 }}
+  {{- include "midstream.kasprPod" (dict "root" . "own" .Values.controlPlane.runtime) | nindent 2 }}
   kasprContainer:
     env:
       - name: RUNTIME_MEMBER_ID

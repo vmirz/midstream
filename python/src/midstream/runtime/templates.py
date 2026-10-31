@@ -105,18 +105,20 @@ def build_dedicated_runtime_template_input(
         "schema_authority_updates_topic": cfg.schema_authority_updates_topic,
         "table_events_topic": cfg.table_events_topic,
         "package_revision": package_source.reference,
-        "runtime_spec": _pin_runtime_package(
-            _merge_runtime_spec(
+        "runtime_spec": _without_nulls(
+            _pin_runtime_package(
                 _merge_runtime_spec(
                     _merge_runtime_spec(
-                        _default_runtime_spec(cfg),
-                        cfg.runtime_app_spec,
+                        _merge_runtime_spec(
+                            _default_runtime_spec(cfg),
+                            cfg.runtime_app_spec,
+                        ),
+                        _runtime_scale_spec(materialization, scaled_to_zero=scaled_to_zero),
                     ),
-                    _runtime_scale_spec(materialization, scaled_to_zero=scaled_to_zero),
+                    _protection_key_spec(),
                 ),
-                _protection_key_spec(),
-            ),
-            package_source.requirement,
+                package_source.requirement,
+            )
         ),
         "template_version": cfg.default_runtime_template_version,
     }
@@ -333,6 +335,21 @@ def _default_runtime_spec(config: ControlPlaneConfig) -> dict[str, Any]:
             }
         },
     }
+
+
+def _without_nulls(value: Any) -> Any:
+    """`value` without the null fields of its mappings, at every depth.
+
+    The KasprApp CRD refuses a null field where it expects an object, and an empty block in the
+    deployment's spec renders as one (a `template.pod` with no labels, scheduling or volumes); a field
+    left out takes the operator's default. A spec with no null in it is returned as it is, so its
+    hash, and every running runtime's, stays the same.
+    """
+    if isinstance(value, dict):
+        return {key: _without_nulls(item) for key, item in value.items() if item is not None}
+    if isinstance(value, list):
+        return [_without_nulls(item) for item in value]
+    return value
 
 
 def _merge_runtime_spec(

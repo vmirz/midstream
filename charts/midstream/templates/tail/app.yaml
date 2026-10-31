@@ -38,10 +38,7 @@ spec:
     {{- include "midstream.pythonPackages" . | nindent 4 }}
   template:
     {{- include "midstream.kasprServiceAccount" . | nindent 4 }}
-    pod:
-      {{- include "midstream.kasprPodMetadata" . | nindent 6 }}
-      {{- include "midstream.podScheduling" (dict "root" . "own" .Values.tail) | nindent 6 }}
-      {{- include "midstream.storageVolumes" . | nindent 6 }}
+    {{- include "midstream.kasprPod" (dict "root" . "own" .Values.tail) | nindent 4 }}
     kasprContainer:
       env:
         # Names the member in its answers, logs and the members view.
