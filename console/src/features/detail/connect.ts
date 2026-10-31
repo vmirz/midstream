@@ -102,7 +102,9 @@ function pyicebergStorage(target: Target): { comment: string; properties: Array<
     case 's3': {
       const properties: Array<[string, string]> = [];
       if (target.endpoint) properties.push(['s3.endpoint', target.endpoint]);
-      if (target.endpoint && target.pathStyle) properties.push(['s3.path-style-access', 'true']);
+      // PyIceberg's pyarrow FileIO addresses a bucket by path whenever an endpoint is given, and takes
+      // no path-style property: a server addressed by virtual host needs it forced.
+      if (target.endpoint && !target.pathStyle) properties.push(['s3.force-virtual-addressing', 'true']);
       properties.push(['s3.region', target.region], ['s3.access-key-id', '<access key id>'], ['s3.secret-access-key', '<secret access key>']);
       return { comment: 'Data files are read with an access key that can read the bucket.', properties };
     }

@@ -44,10 +44,19 @@ describe('the Connect snippets', () => {
     );
     assert.match(text.duckdb, /ATTACH 'warehouse' AS lake \(TYPE ICEBERG, SECRET midstream, ENDPOINT 'https:\/\/console\.example\.com\/d\/domain_a\/catalog'\);/);
     assert.match(text['duckdb-path'], /CREATE SECRET s3 \(TYPE S3, .*URL_STYLE 'path'\);\n\nSELECT count\(\*\) FROM iceberg_scan\('s3:\/\/example-lake\/sales\/orders'\);/);
-    assert.match(text.pyiceberg, /"s3\.endpoint": "http:\/\/seaweedfs-s3\.seaweedfs\.svc:8333",\n {8}"s3\.path-style-access": "true",\n {8}"s3\.region": "us-east-1",/);
+    assert.match(text.pyiceberg, /"s3\.endpoint": "http:\/\/seaweedfs-s3\.seaweedfs\.svc:8333",\n {8}"s3\.region": "us-east-1",/);
+    // PyIceberg reads no path-style property: with an endpoint it addresses buckets by path already.
+    assert.doesNotMatch(text.pyiceberg, /path-style|virtual-addressing/);
     assert.match(text.pyiceberg, /table = catalog\.load_table\("domain_a\.sales\.orders"\)/);
     assert.match(text.spark, /spark\.sql\.catalog\.lake\.io-impl=org\.apache\.iceberg\.aws\.s3\.S3FileIO\nspark\.sql\.catalog\.lake\.s3\.endpoint=http:\/\/seaweedfs-s3\.seaweedfs\.svc:8333\nspark\.sql\.catalog\.lake\.s3\.path-style-access=true\nspark\.sql\.catalog\.lake\.client\.region=us-east-1/);
     assert.match(text.trino, /fs\.native-s3\.enabled=true\ns3\.endpoint=http:\/\/seaweedfs-s3\.seaweedfs\.svc:8333\ns3\.path-style-access=true\ns3\.region=us-east-1/);
+  });
+
+  it('force virtual addressing on PyIceberg for an endpoint that is not path style', () => {
+    const virtual: TableStorage = { ...seaweed, name: 'virtual', endpoint: 'https://s3.example.com', pathStyle: false };
+    const text = all(S3, virtual);
+    assert.match(text.pyiceberg, /"s3\.endpoint": "https:\/\/s3\.example\.com",\n {8}"s3\.force-virtual-addressing": "true",\n {8}"s3\.region": "us-east-1",/);
+    for (const engine of engines) assert.doesNotMatch(text[engine], /path-style|URL_STYLE/, engine);
   });
 
   it('leave AWS its own endpoint and addressing', () => {
