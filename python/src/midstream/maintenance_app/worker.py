@@ -25,7 +25,10 @@ Fault tolerance (spec §7.9.1):
 
 - compaction runs in a child process (`compact_worker.py`) that only *adds* files, as does reprotect
   (`reprotect_worker.py`); this member then commits one `replace` snapshot. A job that dies before
-  that commit leaves orphans; one that dies after it is done;
+  that commit leaves orphans; one that dies after it is done. A commit that provably did not land
+  deletes the job's outputs; one whose outcome is unknown (`CommitStateUnknownException`) keeps them,
+  since the table may reference them, and orphan cleanup removes them if it does not; a commit that
+  landed counts as done even when the table cannot be read back after it;
 - a job is bounded by `compaction_timeout_minutes`, after which the child is killed; it is also
   killed when the table is cancelled (dropped, or its materialization deleted), forgotten, or the
   member stops;
@@ -59,7 +62,7 @@ import time
 from typing import Any
 import uuid
 
-from pyiceberg.exceptions import CommitFailedException
+from pyiceberg.exceptions import CommitFailedException, CommitStateUnknownException
 from pyiceberg.typedef import Record
 
 from midstream.lakehouse.commits import fork_map_of, protection_json_of, table_totals
@@ -595,7 +598,17 @@ class TableMaintenance:
             self._delete_outputs(ready)
             LOGGER.info("Abandoned compaction %s of table %s %s: %s", ready.plan.job_id, self.target.table, ready.plan.label, error)
             return [self._completed(ready, snapshot_id=None, outcome="abandoned", message=str(error))]
-        except Exception as error:  # noqa: BLE001 - CompactionMismatch, storage errors, lost races
+        except CommitStateUnknownException as error:
+            LOGGER.warning(
+                "The commit of compaction %s of table %s %s may have landed; its %d outputs are kept: %s",
+                ready.plan.job_id,
+                self.target.table,
+                ready.plan.label,
+                len(ready.outputs),
+                error,
+            )
+            return self._compaction_failed(ready.plan, _unknown_outcome(error), started_wall=ready.started_wall)
+        except Exception as error:  # noqa: BLE001 - CompactionMismatch, storage errors before the commit, lost races
             self._delete_outputs(ready)
             return self._compaction_failed(ready.plan, str(error), started_wall=ready.started_wall)
         for key in ready.plan.partition_keys:
@@ -646,8 +659,18 @@ class TableMaintenance:
                 last_error = error
                 time.sleep(REPLACE_RETRY_SECONDS)
                 continue
-            return load_table(self.context, self.store), snapshot_id
+            return self._read_back(table), snapshot_id
         raise RuntimeError(f"the replace commit kept losing to other commits: {last_error}")
+
+    def _read_back(self, committed: Any) -> Any:
+        """The table as it is after a commit that landed; `committed`, the table the commit updated,
+        when it cannot be read: the commit stands, and is never reported failed - its outputs
+        deleted - for a failed read."""
+        try:
+            return load_table(self.context, self.store)
+        except Exception as error:  # noqa: BLE001 - the commit landed
+            LOGGER.warning("Reading table %s back after a commit failed; going on with it as committed: %s", self.target.table, error)
+            return committed
 
     def _delete_outputs(self, ready: "_Finished | _ReprotectReady") -> None:
         store = self._object_store()
@@ -913,7 +936,16 @@ class TableMaintenance:
             self._delete_outputs(ready)
             LOGGER.info("Abandoned reprotect %s of table %s: %s", ready.plan.job_id, self.target.table, error)
             return [self._reprotect_completed(ready.request, ready, snapshot_id=None, outcome="abandoned", message=str(error), done=False)]
-        except Exception as error:  # noqa: BLE001 - CompactionMismatch, storage errors, lost races
+        except CommitStateUnknownException as error:
+            LOGGER.warning(
+                "The commit of reprotect %s of table %s may have landed; its %d outputs are kept: %s",
+                ready.plan.job_id,
+                self.target.table,
+                len(ready.outputs),
+                error,
+            )
+            return self._reprotect_failed(ready.request, _unknown_outcome(error), started_wall=ready.started_wall)
+        except Exception as error:  # noqa: BLE001 - CompactionMismatch, storage errors before the commit, lost races
             self._delete_outputs(ready)
             return self._reprotect_failed(ready.request, str(error), started_wall=ready.started_wall)
         self.reprotect_failure = _Failure()
@@ -975,7 +1007,7 @@ class TableMaintenance:
                 last_error = error
                 time.sleep(REPLACE_RETRY_SECONDS)
                 continue
-            return load_table(self.context, self.store), snapshot_id
+            return self._read_back(table), snapshot_id
         raise RuntimeError(f"the replace commit kept losing to other commits: {last_error}")
 
     async def _finish_reprotect(
@@ -1231,7 +1263,7 @@ class TableMaintenance:
             except CommitFailedException:
                 time.sleep(REPLACE_RETRY_SECONDS)
                 continue
-            return load_table(self.context, self.store), expired
+            return self._read_back(table), expired
         raise RuntimeError("snapshot expiry kept losing to other commits")
 
     # -- orphan cleanup --------------------------------------------------------------------------
@@ -1495,6 +1527,14 @@ def _pass_counts(ready: _ReprotectReady) -> dict[str, int]:
         "withheld": int(ready.counts.get("withheld", 0)),
         "moved": int(ready.counts.get("moved", 0)),
     }
+
+
+def _unknown_outcome(error: BaseException) -> str:
+    """What a job whose commit may or may not have landed reports."""
+    return (
+        "The commit's outcome is unknown, so the job's outputs are kept; orphan cleanup removes them if "
+        f"the table never took them: {error}"
+    )
 
 
 def _wall_clock() -> float:

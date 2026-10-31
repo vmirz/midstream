@@ -20,6 +20,8 @@ from runtime_support import PROTECTION_KEY, RuntimeHarness, run  # noqa: E402
 
 from midstream.lakehouse.maintenance import live_data_files  # noqa: E402
 from midstream.lakehouse.offsets import committed_offsets  # noqa: E402
+from midstream.lakehouse.pointer import pointer_uri  # noqa: E402
+from midstream.lakehouse.store import StoreError  # noqa: E402
 from midstream.maintenance_app import worker as worker_module  # noqa: E402
 from midstream.maintenance_app.compact_worker import compaction_work_root  # noqa: E402
 from midstream.maintenance_app.config import MaintenanceAppConfig, get_maintenance_app_config  # noqa: E402
@@ -108,6 +110,41 @@ class MaintenanceHarness:
         table.last_runs["expire_snapshots"] = table.last_runs["orphan_cleanup"] = time.time()
 
 
+def unanswered_pointer_write(location: str):
+    """A store hook: the next write of the table's pointer gets no answer, and is not applied."""
+    pointer = pointer_uri(location)
+    failed = False
+
+    def hook(operation: str, uri: str):
+        nonlocal failed
+        if operation == "put" and uri == pointer and not failed:
+            failed = True
+            return StoreError(f"{uri}: the connection was reset", uri=uri, status=None, code="ConnectionError")
+        return None
+
+    return hook
+
+
+def unanswered_read_after_pointer_write(location: str):
+    """A store hook: the next write of the table's pointer lands, and the read of the pointer after
+    it gets no answer."""
+    pointer = pointer_uri(location)
+    written = failed = False
+
+    def hook(operation: str, uri: str):
+        nonlocal written, failed
+        if uri != pointer or failed:
+            return None
+        if operation == "put":
+            written = True
+        elif operation == "get" and written:
+            failed = True
+            return StoreError(f"{uri}: the connection was reset", uri=uri, status=None, code="ConnectionError")
+        return None
+
+    return hook
+
+
 def events(outputs: list[dict]) -> list[dict]:
     return [output["value"] for output in outputs if output.get("route") == "events"]
 
@@ -171,6 +208,52 @@ class CompactionTests(MaintenanceAppTestCase):
         # The runtime's exactly-once accounting is carried through the replace.
         self.assertEqual({0: 11}, committed_offsets(table.metadata).offsets)
         self.assertEqual("test-maintenance", table.current_snapshot().summary.additional_properties["materializer.runtime"])
+
+    def test_a_compaction_whose_commit_may_have_landed_keeps_its_outputs(self) -> None:
+        location = self.maintenance.target().location
+        store = self.runtime.store
+
+        async def scenario():
+            await self.commit_batches(4)
+            before = set(store.names(f"{location}/data/"))
+            await self.maintenance.request("compaction")
+            store.fail = unanswered_pointer_write(location)
+            try:
+                finished = await self.maintenance.settle()
+            finally:
+                store.fail = None
+            return before, finished
+
+        before, finished = run(scenario())
+        (done,) = completed(finished)
+        self.assertEqual(("compaction", "failed"), (done["job"], done["outcome"]))
+        self.assertIn("outcome is unknown", done["message"])
+        # The table may reference the output: it is kept, for orphan cleanup to judge.
+        kept = set(store.names(f"{location}/data/")) - before
+        self.assertEqual(1, len(kept))
+        self.assertTrue(before <= set(store.names(f"{location}/data/")))
+        self.assertEqual(4, len(live_data_files(self.runtime.table())))
+
+    def test_a_compaction_that_landed_stands_when_the_table_cannot_be_read_back(self) -> None:
+        location = self.maintenance.target().location
+        store = self.runtime.store
+
+        async def scenario():
+            await self.commit_batches(4)
+            before = self.runtime.rows()
+            await self.maintenance.request("compaction")
+            store.fail = unanswered_read_after_pointer_write(location)
+            try:
+                finished = await self.maintenance.settle()
+            finally:
+                store.fail = None
+            return before, finished
+
+        before, finished = run(scenario())
+        (done,) = completed(finished)
+        self.assertEqual(("compaction", "succeeded"), (done["job"], done["outcome"]))
+        self.assertEqual(1, len(live_data_files(self.runtime.table())))
+        self.assertEqual(before, self.runtime.rows())
 
     def test_scheduled_compaction_leaves_the_partition_being_written_alone(self) -> None:
         async def scenario():
@@ -720,6 +803,46 @@ class ReprotectTests(unittest.TestCase):
         # The ticks carry the request until the record is cleared: it is not run again.
         again = run(self.maintenance.tick(reprotect=self.asked(), protection_revision=2))
         self.assertFalse([event for event in again if event["kind"] == "maintenance_started"])
+
+    def test_a_reprotect_whose_commit_may_have_landed_keeps_its_outputs(self) -> None:
+        location = self.maintenance.target().location
+        store = self.runtime.store
+
+        async def scenario():
+            await self.phones_written_plain()
+            before = set(store.names(f"{location}/data/"))
+            store.fail = unanswered_pointer_write(location)
+            try:
+                await self.maintenance.tick(reprotect=self.asked(), protection_revision=2)
+                settled = await self.maintenance.settle()
+            finally:
+                store.fail = None
+            return before, settled
+
+        before, settled = run(scenario())
+        (done,) = completed(settled)
+        self.assertEqual(("reprotect", "failed"), (done["job"], done["outcome"]))
+        self.assertIn("outcome is unknown", done["message"])
+        after = set(store.names(f"{location}/data/"))
+        self.assertTrue(before < after, "the rewritten files are kept, for orphan cleanup to judge")
+        self.assertEqual([f"540-948-{offset:04d}" for offset in range(3)], [row["phone"] for row in self.runtime.rows()])
+
+    def test_a_reprotect_that_landed_stands_when_the_table_cannot_be_read_back(self) -> None:
+        location = self.maintenance.target().location
+        store = self.runtime.store
+
+        async def scenario():
+            await self.phones_written_plain()
+            store.fail = unanswered_read_after_pointer_write(location)
+            try:
+                await self.maintenance.tick(reprotect=self.asked(), protection_revision=2)
+                return await self.maintenance.settle()
+            finally:
+                store.fail = None
+
+        (done,) = completed(run(scenario()))
+        self.assertEqual(("reprotect", "succeeded"), (done["job"], done["outcome"]))
+        self.assertEqual([h(f"540-948-{offset:04d}") for offset in range(3)], [row["phone"] for row in self.runtime.rows()])
 
     def test_a_purge_leaves_only_the_snapshot_holding_no_plain_text(self) -> None:
         async def scenario():
