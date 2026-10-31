@@ -575,7 +575,10 @@ when that leaves nothing. The control plane gets it as rendered here, and NOTES.
 
 {{/*
 The console's storage profiles (console.storage; console/docs/07), as JSON, every rule checked: one per
-destination prefix, matched to every object by the longest scope. Credentials never reach the file: they
+destination prefix, matched to every object by the longest scope. An s3:// path names no endpoint, so
+the s3 profiles of one bucket must share one endpoint, compared as the console compares them
+(registry.ts::assertEndpointsDistinguishable): scheme and host in lower case, a default port dropped,
+no endpoint meaning AWS. Credentials never reach the file: they
 come from each profile's Secret as CONSOLE_STORAGE_<NAME>_* (midstream.consoleStorageEnv) and, for gcs,
 as the key file mounted at /etc/midstream-storage/<name>, named by the profile's keyFile.
 */}}
@@ -586,6 +589,7 @@ as the key file mounted at /etc/midstream-storage/<name>, named by the profile's
 {{- $out := list -}}
 {{- $names := dict -}}
 {{- $scopes := dict -}}
+{{- $s3Buckets := dict -}}
 {{- range $index, $profile := .Values.console.storage | default list -}}
 {{- $where := printf "console.storage[%d]" $index -}}
 {{- if not (kindIs "map" $profile) -}}
@@ -628,8 +632,21 @@ as the key file mounted at /etc/midstream-storage/<name>, named by the profile's
 {{- end -}}
 {{- $_ := set $scopes $scope $name -}}
 {{- $entry := dict "name" $name "scope" $scope "kind" $kind -}}
-{{- with include "midstream.endpoint" (dict "value" $profile.endpoint "what" (printf "%s: endpoint" $where)) -}}
+{{- $endpoint := include "midstream.endpoint" (dict "value" $profile.endpoint "what" (printf "%s: endpoint" $where)) -}}
+{{- with $endpoint -}}
 {{- $_ := set $entry "endpoint" . -}}
+{{- end -}}
+{{- if eq $kind "s3" -}}
+{{- $server := "AWS" -}}
+{{- if $endpoint -}}
+{{- $server = regexReplaceAll `^(https://.*):443$` (regexReplaceAll `^(http://.*):80$` (lower $endpoint) "${1}") "${1}" -}}
+{{- end -}}
+{{- $other := get $s3Buckets $container -}}
+{{- if not $other -}}
+{{- $_ := set $s3Buckets $container (list $name $server) -}}
+{{- else if ne (index $other 1) $server -}}
+{{- fail (printf "%s: profile %s serves the bucket s3://%s/ through %s, this one through %s: an s3:// path names no endpoint, so neither DuckDB nor the console could tell their objects apart" $where (index $other 0) $container (index $other 1) $server) -}}
+{{- end -}}
 {{- end -}}
 {{- with $profile.region -}}
 {{- $_ := set $entry "region" (toString .) -}}

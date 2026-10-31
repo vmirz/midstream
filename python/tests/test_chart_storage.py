@@ -599,6 +599,43 @@ class ConsoleProfileRefusalTests(unittest.TestCase):
         message = render_failure(DEFAULT, "console.storage[1].name=other", "console.storage[1].scope=gs://example-lake/", "console.storage[1].kind=gcs")
         self.assertIn('console.storage[1] (other): scope "gs://example-lake/" is already served by profile lake', message)
 
+    def test_the_s3_profiles_of_one_bucket_share_its_endpoint(self) -> None:
+        # An s3:// path names no endpoint, so DuckDB and the console could not tell two servers' objects
+        # apart: the console refuses such profiles at boot (registry.ts::assertEndpointsDistinguishable),
+        # and the chart before the install. In s3-values.yaml, lake serves s3://example-lake/ through
+        # http://s3.example.com:8333.
+        archive = ("console.storage[1].name=archive", "console.storage[1].scope=s3://example-lake/archive/", "console.storage[1].kind=s3")
+        for endpoint in ("http://other.example.com:8333", "http://s3.example.com:9000", None):
+            with self.subTest(endpoint=endpoint):
+                settings = archive + (() if endpoint is None else (f"console.storage[1].endpoint={endpoint}",))
+                self.assertIn(
+                    f"console.storage[1] (archive): profile lake serves the bucket s3://example-lake/ through http://s3.example.com:8333, "
+                    f"this one through {endpoint or 'AWS'}: an s3:// path names no endpoint",
+                    render_failure(S3, *settings),
+                )
+        # The same server however it is written - case, a trailing slash, a default port - is one endpoint,
+        # as the console compares them; another bucket may live on another server; and AWS is one endpoint.
+        for settings in (
+            archive + ("console.storage[1].endpoint=HTTP://S3.Example.COM:8333/",),
+            ("console.storage[1].name=other", "console.storage[1].scope=s3://other-lake/", "console.storage[1].kind=s3", "console.storage[1].endpoint=http://other.example.com"),
+        ):
+            with self.subTest(settings=settings):
+                self.assertEqual(2, len(storage_registry(render_with(S3, *settings))))
+        aws = {"name": "lake", "scope": "s3://example-lake/", "kind": "s3"}
+        for second in (
+            {"name": "archive", "scope": "s3://example-lake/archive/", "kind": "s3"},
+            {"name": "eu", "scope": "s3://example-lake/eu/", "kind": "s3", "endpoint": "https://s3.example.com"},
+        ):
+            first = aws if "endpoint" not in second else {**aws, "endpoint": "https://s3.example.com:443"}
+            with self.subTest(second=second):
+                self.assertEqual(2, len(storage_registry(render_with(S3, overrides={"console": {"storage": [first, second]}}))))
+        # A default port is dropped only for its own scheme: http and https are two endpoints.
+        both = [{**aws, "endpoint": "https://s3.example.com:443"}, {**aws, "name": "plain", "scope": "s3://example-lake/plain/", "endpoint": "http://s3.example.com:80"}]
+        self.assertIn(
+            "console.storage[1] (plain): profile lake serves the bucket s3://example-lake/ through https://s3.example.com, this one through http://s3.example.com: an s3://",
+            render_failure(S3, overrides={"console": {"storage": both}}),
+        )
+
     def test_unknown_fields_and_mistyped_values_are_refused(self) -> None:
         self.assertIn('unknown field "credentialSecret"', render_failure(DEFAULT, "console.storage[0].credentialSecret=lake-reader"))
         self.assertIn("pathStyle must be true or false", render_failure(DEFAULT, "console.storage[0].pathStyle=yes"))

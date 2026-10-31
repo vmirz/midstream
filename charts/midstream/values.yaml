@@ -368,7 +368,8 @@ console:
   #                      s3://example-lake/prod/, abfss://lake@exampleaccount.dfs.core.windows.net/
   #   kind               gcs, s3 or azure, matching the scope's scheme: gs://, s3://, abfss://
   #   endpoint           s3: an S3-compatible server; azure: an emulator's blob endpoint; either
-  #                      http(s)://host[:port] with no path. Empty: the cloud's
+  #                      http(s)://host[:port] with no path. Empty: the cloud's. The s3 profiles of
+  #                      one bucket name one endpoint: an s3:// path names none
   #   region             s3: the bucket's region; empty: us-east-1
   #   pathStyle          s3: path-style addressing, which most S3-compatible servers need
   #   access             direct (the default): DuckDB scans the objects in place; cached: the console
