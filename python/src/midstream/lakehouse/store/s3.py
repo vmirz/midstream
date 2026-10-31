@@ -69,7 +69,9 @@ DELETE_BATCH_SIZE: Final = 1000
 #: Retries of a failed request under botocore's standard mode. A botocore `Config` counts its
 #: `max_attempts` without the first attempt: six attempts in all.
 MAX_RETRIES: Final = 5
-#: Connections the client keeps per host: as many as the threads a runtime uploads with.
+#: Connections the client keeps per host: room, with some to spare, for every thread of a runtime that
+#: reaches the store at once - its uploads, the committer's footer reads, its table reads - where
+#: botocore keeps 10.
 MAX_POOL_CONNECTIONS: Final = 32
 CONNECT_TIMEOUT_SECONDS: Final = 10
 READ_TIMEOUT_SECONDS: Final = 120

@@ -190,7 +190,7 @@ def metadata_version(metadata_location: str) -> int:
 def find_latest_metadata(store: ObjectStore, location: str, *, table_uuid: str | None = None) -> str | None:
     """The newest `*.metadata.json` of a table, optionally only one whose `table-uuid` matches.
 
-    Used to repair a lost pointer (handbook 12 §12.13): metadata files are written before the pointer
+    Used to repair a lost pointer (handbook 12 §12.11): metadata files are written before the pointer
     moves, so the newest one with the table's uuid is at least as new as the lost pointer's.
     """
     candidates: list[tuple[int, str]] = []

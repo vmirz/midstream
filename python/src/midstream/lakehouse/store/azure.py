@@ -86,8 +86,9 @@ READ_ATTEMPTS: Final = 3
 RETRY_TOTAL: Final = 3
 RETRY_INITIAL_BACKOFF_SECONDS: Final = 1
 RETRY_INCREMENT_BASE: Final = 2
-#: Pooled connections per host in the shared transport: as many as a runtime's upload threads, and
-#: more than urllib3's default of 10, which logs "Connection pool is full" and halves throughput.
+#: Pooled connections per host in the shared transport: room, with some to spare, for every thread of
+#: a runtime that reaches the store at once - its uploads, the committer's footer reads, its table
+#: reads - where urllib3 keeps 10, logging "Connection pool is full" and halving throughput.
 POOL_SIZE: Final = 32
 CONNECT_TIMEOUT_SECONDS: Final = 10
 READ_TIMEOUT_SECONDS: Final = 120
