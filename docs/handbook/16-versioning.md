@@ -394,3 +394,27 @@ upgrade; no topic or table is added to an app, so no consumer-group rebalance is
 | A runtime taken to another spec and back — release, commit, release — is re-applied; before, the sweep skipped it as a duplicate, and it stayed on the other spec | deployments that ran a commit between releases |
 | Every push to a branch publishes that commit's console image, `ghcr.io/vmirz/midstream-console-dev:sha-<commit>`; with `package.source: git` at the same commit, a whole deployment runs one commit (§16.3) | contributors |
 | A snapshot expiry's report, and a reprotect purge's, move the table record's metadata file and snapshot count forward; before, the record kept them until the next commit | none |
+
+## 16.17 What 1.1.0 changed: storage backends
+
+1.1.0 puts a domain's lake in Google Cloud Storage, Amazon S3 or an S3-compatible server, or Azure Blob
+Storage: every read and write of a table goes through one object-store layer (11), chosen by the
+destination's scheme, and the console reads tables on any of them through storage profiles of its own,
+in one statement too (console 07). **There is no upgrade from 1.0.0-rc.5 or earlier: every installation
+of 1.1.0 is new** (`docs/install.md`), with `storage.*` and `console.storage` written for it; nothing
+converts the values, tables or records an earlier installation left. The S3 store is verified against
+SeaweedFS and moto, not yet against AWS itself, and the Azure store against Azurite, not yet a real
+account (14).
+
+| Change | Who must care |
+|---|---|
+| **The lake's values are `storage.gcs`, `storage.s3` and `storage.azure`.** `gcs.credentialsSecret` and `gcs.credentialsKey` are gone: a GCS key is `service-account.json` in `storage.gcs.credentialsSecret`. S3 takes `access-key-id`, `secret-access-key` and optionally `session-token`, with `region`, `endpoint` and `pathStyle`; Azure a `connection-string`, an `account-key` or a service principal, with an emulator's `endpoint` (02, `docs/install.md` §2.1) | every deployer |
+| **The console reads through `console.storage`**, one profile per destination prefix of every domain it serves, each with read-only credentials of its own; `console.hmacSecret` and `CONSOLE_GCS_HMAC_*` are gone, and a gcs profile scans in place with its `hmac-key-id` and `hmac-secret`. A table no profile serves answers "no storage is configured for <location>" (console 03, 07) | every console deployer |
+| **The destination setting is a `destination_uri`**: `gs://bucket[/prefix]`, `s3://bucket[/prefix]` or `abfss://container@account.dfs.core.windows.net[/prefix]`. The chart refuses any other form, `file://` included, which only `CONTROL_PLANE_ALLOW_FILE_DESTINATIONS` admits, for tests (17) | administrators; scripts that read settings |
+| The S3 endpoint, region and path style and the Azure endpoint are fixed by the deployment, `STORAGE_S3_ENDPOINT`, `STORAGE_S3_REGION`, `STORAGE_S3_PATH_STYLE` and `STORAGE_AZURE_ENDPOINT`, and shown read-only on the Settings page (03) | deployers of S3-compatible servers and emulators |
+| **Cloud identities without a Secret**: `kaspr.podLabels` and `kaspr.serviceAccountAnnotations` reach every app's and runtime's pods and ServiceAccount (`<app>-app`), and `console.podLabels` and `console.serviceAccountAnnotations` the console's, whose ServiceAccount `<release>-console` the chart now creates. AKS workload identity and EKS Pod Identity need trust for each new runtime's ServiceAccount (02, 12) | deployers using IRSA, workload identity or Pod Identity |
+| `python -m midstream.lakehouse.store.check <destination>/_check` checks a store before it is used: conditional writes, listing, deletes and transfers (12). It can report a correct store as failing when a library's retry turns a write that landed into a refusal: run it again | deployers choosing a store |
+| A pointer write whose answer was lost no longer counts as a lost race (which deleted the metadata file the pointer already named); creating a table writes its pointer only over a metadata file that is there; the maintenance app keeps a job's outputs when its commit may have landed; a KasprApp no longer renders an empty, null `template.pod`, which refused a runtime with no key to mount (11, 10) | none |
+| Console statements may not call `duckdb_secrets()`, `which_secret()`, `query()`, `json_execute_serialized_sql()` or `enable_logging()`, nor read DuckDB's log (`duckdb_logs`, `duckdb_logs_parsed()`, `duckdb_log_contexts`): each could show a storage profile's key id or run SQL from a string (console 07) | people writing console statements |
+| The Connect panel's DuckDB, PyIceberg, Spark and Trino snippets follow the table's backend and its profile's endpoint and addressing | console users |
+| CI's Object stores job runs the conformance suite against SeaweedFS, moto, Azurite and fake-gcs-server (13) | contributors |
