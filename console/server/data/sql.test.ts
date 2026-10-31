@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { FORBIDDEN_FUNCTIONS, assertReadOnlyStatement, forbiddenCall } from './sql.ts';
+import { FORBIDDEN_FUNCTIONS, FORBIDDEN_RELATIONS, assertReadOnlyStatement, forbiddenCall } from './sql.ts';
 
 const refused = (sql: string, name: string): void => {
   assert.throws(
@@ -37,6 +37,30 @@ describe('the statement guard', () => {
     refused('SELECT * FROM duckdb_secrets --x\r\n()', 'duckdb_secrets');
   });
 
+  it('refuses turning on DuckDB’s log, whose HTTP entries carry a profile’s key id, and reading it', () => {
+    refused("SELECT * FROM enable_logging('HTTP')", 'enable_logging');
+    refused('SELECT * FROM "enable_logging"()', 'enable_logging');
+    refused("FROM main.enable_logging /* x */ ('HTTP')", 'enable_logging');
+    refused("SELECT * FROM duckdb_logs_parsed('HTTP')", 'duckdb_logs_parsed');
+    refused('SELECT message FROM duckdb_logs', 'duckdb_logs');
+    refused('SELECT message FROM duckdb_logs\nWHERE true', 'duckdb_logs');
+    refused('SELECT message FROM main."duckdb_logs" AS l', 'duckdb_logs');
+    refused('SELECT * FROM duckdb_logs()', 'duckdb_logs');
+    refused('SELECT * FROM system.main.duckdb_log_contexts', 'duckdb_log_contexts');
+    refused('SELECT count(*) FROM domain_a.sales.orders o, (SELECT 1 FROM duckdb_logs) AS x', 'duckdb_logs');
+  });
+
+  it('lets a column or value that only contains a log’s name through', () => {
+    for (const sql of [
+      "SELECT * FROM domain_a.sales.orders WHERE note = 'duckdb_logs'",
+      'SELECT duckdb_logs_seen FROM domain_a.sales.audits',
+      'SELECT * FROM domain_a.sales.my_duckdb_logs',
+      "SELECT 1 -- duckdb_logs\n",
+    ]) {
+      assert.equal(assertReadOnlyStatement(sql), sql.trim(), sql);
+    }
+  });
+
   it('refuses the functions that run SQL given as a string', () => {
     refused("SELECT * FROM query('SELECT 1')", 'query');
     refused("SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT 1'))", 'json_execute_serialized_sql');
@@ -57,7 +81,17 @@ describe('the statement guard', () => {
   });
 
   it('names each function it refuses', () => {
-    assert.deepEqual(FORBIDDEN_FUNCTIONS, ['duckdb_secrets', 'which_secret', 'query', 'json_execute_serialized_sql']);
+    assert.deepEqual(FORBIDDEN_FUNCTIONS, [
+      'duckdb_secrets',
+      'which_secret',
+      'query',
+      'json_execute_serialized_sql',
+      'enable_logging',
+      'duckdb_logs',
+      'duckdb_logs_parsed',
+      'duckdb_log_contexts',
+    ]);
+    assert.deepEqual(FORBIDDEN_RELATIONS, ['duckdb_logs', 'duckdb_log_contexts']);
     assert.equal(forbiddenCall('SELECT 1'), null);
     assert.equal(forbiddenCall('SELECT * FROM which_secret(\'s3://x/\', \'s3\')'), 'which_secret');
   });

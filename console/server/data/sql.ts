@@ -65,11 +65,31 @@ export const FORBIDDEN_TOKENS = [
  * storage profile's name, scope, endpoint, region and key id (the secret values are redacted). The
  * statement's sandbox cannot refuse them, because they open no file, so the guard must. `query()` and
  * `json_execute_serialized_sql()` run SQL handed to them as a string, which no keyword check sees.
- * (`duckdb_settings()` and `current_setting()` were checked and name no profile: secrets are not
- * settings.) Matched as calls only — the name followed by `(` — so a table, column or alias of the
- * same name stays queryable, and no table name needs reserving for them.
+ * `enable_logging()` turns on DuckDB's own log, whose HTTP entries carry each request's
+ * Authorization header - a storage profile's key id with it - and `duckdb_logs`,
+ * `duckdb_logs_parsed()` and `duckdb_log_contexts` read it back. (`duckdb_settings()` and
+ * `current_setting()` were checked and name no profile: secrets are not settings.) Matched as calls
+ * only - the name followed by `(` - so a table, column or alias of the same name stays queryable, and
+ * no table name needs reserving for them.
  */
-export const FORBIDDEN_FUNCTIONS = ['duckdb_secrets', 'which_secret', 'query', 'json_execute_serialized_sql'] as const;
+export const FORBIDDEN_FUNCTIONS = [
+  'duckdb_secrets',
+  'which_secret',
+  'query',
+  'json_execute_serialized_sql',
+  'enable_logging',
+  'duckdb_logs',
+  'duckdb_logs_parsed',
+  'duckdb_log_contexts',
+] as const;
+
+/**
+ * DuckDB's log, read as a table rather than called: refused wherever the name stands as a whole
+ * identifier, quoted or not, qualified or not - as a column or alias too, which no table of a lake
+ * needs. Logging stays off, since nothing may turn it on (`enable_logging` above, and SET, PRAGMA and
+ * CALL among the forbidden tokens); refusing the reads as well leaves nothing to rely on.
+ */
+export const FORBIDDEN_RELATIONS = ['duckdb_logs', 'duckdb_log_contexts'] as const;
 
 const IDENTIFIER_CHAR = /[a-z0-9_$]/;
 /** Whitespace and invisible formatting characters, which separate tokens as whitespace does. */
@@ -157,7 +177,22 @@ export function assertReadOnlyStatement(sql: string): string {
   }
   const call = forbiddenCall(trimmed);
   if (call) throw badRequest(`"${call}" is not allowed in console queries`, { field: 'sql', token: call });
+  const relation = forbiddenRelation(trimmed);
+  if (relation) throw badRequest(`"${relation}" is not allowed in console queries`, { field: 'sql', token: relation });
   return trimmed;
+}
+
+/** The forbidden relation `sql` names, if any, outside string literals and comments. */
+export function forbiddenRelation(sql: string): string | null {
+  const lowered = stripStringsAndComments(sql, { keepLength: true }).toLowerCase();
+  for (const name of FORBIDDEN_RELATIONS) {
+    for (let at = lowered.indexOf(name); at !== -1; at = lowered.indexOf(name, at + 1)) {
+      if (at > 0 && IDENTIFIER_CHAR.test(lowered[at - 1] as string)) continue;
+      if (IDENTIFIER_CHAR.test(lowered[at + name.length] ?? '')) continue;
+      return name;
+    }
+  }
+  return null;
 }
 
 /**
