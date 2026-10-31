@@ -20,6 +20,7 @@ from midstream.lakehouse.store.base import (
     ObjectNotFoundError,
     ObjectStore,
     PreconditionFailedError,
+    StoreConfigurationError,
     StoreError,
     is_retryable_status,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "ObjectNotFoundError",
     "ObjectStore",
     "PreconditionFailedError",
+    "StoreConfigurationError",
     "StoreError",
     "StoreSettings",
     "is_retryable_status",

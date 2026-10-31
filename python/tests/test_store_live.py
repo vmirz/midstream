@@ -15,9 +15,9 @@ Each URI's bucket or container is created first when it is missing, through the 
 16 writers racing for `STORAGE_LIVE_ROUNDS` rounds (20 unless set), with a 20 MiB streamed file - past
 the 8 MiB that azure-storage-blob and google-cloud-storage still send in one request, so its race of
 create-only uploads races Azure's blocks and GCS's resumable uploads - and each result is printed. A
-store that declares no conditional deletes (S3's) has that check skipped, and says why. SeaweedFS
-takes about 0.6 s per writer to settle create-only writes racing for one key (16 racers: ten seconds a
-round), so CI checks it with fewer rounds.
+store that declares no conditional deletes (S3's) has that check skipped, and says why. The racing
+creators race at most `check.RACE_ROUNDS` keys: SeaweedFS takes about 0.6 s per writer to settle
+create-only writes racing for one key (16 racers: ten seconds a key).
 
 Then each backend's own cases, under a fresh prefix they empty again: on both, ranges from the size
 or past it refused with 416, and any range of an empty object; on S3, `DeleteObjects` over 1,050 keys
@@ -30,8 +30,9 @@ through the emulator's address under a name other than `localhost`, as a cluster
 
 fake-gcs-server differs from GCS in two places the store does not bend to, so against it (when
 `STORAGE_EMULATOR_HOST` is set) the run skips exactly those, and says so: conditional deletes, whose
-precondition it ignores, and batch deletes, which the library cannot read back from it - deletes go
-one per request there. `test_store_gcs.py` covers both against GCS's own answers.
+precondition it ignores, and batch deletes, which the library cannot read back from it - the registry
+builds the store to delete one object per request there. `test_store_gcs.py` covers both against GCS's
+own answers.
 """
 
 from __future__ import annotations
@@ -55,13 +56,12 @@ from midstream.lakehouse.store import (
     parse_object_uri,
     reset_stores,
     scheme_of,
-    set_store,
     store_for,
 )
 from midstream.lakehouse.store.check import format_result, run_checks, run_root
 
 LIVE_URIS = [uri.strip() for uri in os.environ.get("STORAGE_LIVE_TESTS", "").split(",") if uri.strip()]
-#: Rounds each racing check runs: keys raced by the creators, compare-and-swaps per writer.
+#: Compare-and-swaps per writer; the racing creators race as many keys, but at most `check.RACE_ROUNDS`.
 ROUNDS = int(os.environ.get("STORAGE_LIVE_ROUNDS", "").strip() or 20)
 _MIB = 1024 * 1024
 #: The conformance suite's large file: three Azure blocks (8, 8 and 4 MiB) and a GCS resumable upload.
@@ -105,13 +105,12 @@ class LiveConformanceTests(unittest.TestCase):
         scheme = scheme_of(uri)
         skip: dict[str, str] = {}
         ensure_container(uri)
+        store = store_for(uri)
         if scheme == "gs" and os.environ.get("STORAGE_EMULATOR_HOST"):
-            from midstream.lakehouse.store.gcs import GcsStore
-
-            set_store("gs", GcsStore(batch_deletes=False))
+            # The registry's own store for an emulator: one delete per request.
+            self.assertEqual(store.delete_batch_size, 1)
             skip["conditional_delete"] = GCS_EMULATOR_CONDITIONAL_DELETE
             print(f"\n{uri}: against fake-gcs-server, {GCS_EMULATOR_BATCH}")
-        store = store_for(uri)
         if getattr(store, "supports_conditional_delete", True) is False:
             skip["conditional_delete"] = f"{type(store).__name__} declares no conditional deletes (supports_conditional_delete is False)"
         results = run_checks(store, uri, writers=16, rounds=ROUNDS, listing_objects=1050, large_bytes=LARGE_BYTES, skip=skip)

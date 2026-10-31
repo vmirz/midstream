@@ -11,19 +11,22 @@ and a compare-and-swap with it would overwrite the write in between. GCS and fak
 name it.
 
 Errors are mapped once, here: the library's `PreconditionFailed` (412) to `PreconditionFailedError`,
-`NotFound` (404) to `ObjectNotFoundError` or the operation's answer for a missing object, any other API
-error to `StoreError` with its HTTP status, and a failure in transit - a connection reset, a timeout,
-a corrupted download - to `StoreError` with no status. Doubles of the library are classified as the
-code before did: by class name, or by an HTTP status in an integer `code`.
+`NotFound` (404) to `ObjectNotFoundError` or the operation's answer for a missing object - unless GCS
+says the bucket itself does not exist, a `StoreConfigurationError` that must not make a table look
+missing - any other API error to `StoreError` with its HTTP status, and a failure in transit - a
+connection reset, a timeout, a corrupted download - to `StoreError` with no status. Doubles of the
+library are classified as the code before did: by class name, or by an HTTP status in an integer
+`code`.
 
 Credentials: `GOOGLE_APPLICATION_CREDENTIALS` (a mounted key), else application default credentials
 (workload identity); `STORAGE_EMULATOR_HOST` points the library at an emulator. A credential that
 cannot be found or refreshed raises google-auth's own error, as it did before the store.
 
-fake-gcs-server, the emulator CI checks against, differs from GCS in two places the store does not
-bend to: it ignores preconditions on DELETE (a stale conditional delete deletes), and the library's
-batch requests fail against it (`ValueError: Bad response: not multi-part`) having deleted nothing.
-`GcsStore(batch_deletes=False)` sends one request per delete for such a server.
+fake-gcs-server, the emulator CI checks against, differs from GCS in three places the store does not
+bend to: it ignores preconditions on DELETE (a stale conditional delete deletes), the library's batch
+requests fail against it (`ValueError: Bad response: not multi-part`) having deleted nothing, and it
+answers a missing bucket as it answers a missing object. `GcsStore(batch_deletes=False)` sends one
+request per delete for such a server; the registry builds it so when `STORAGE_EMULATOR_HOST` is set.
 """
 
 from __future__ import annotations
@@ -51,6 +54,7 @@ from midstream.lakehouse.store.base import (
     ObjectInfo,
     ObjectNotFoundError,
     PreconditionFailedError,
+    StoreConfigurationError,
     StoreError,
     as_utc,
     check_range,
@@ -61,6 +65,9 @@ from midstream.lakehouse.store.uris import require_object_uri, require_prefix_ur
 BATCH_SIZE: Final = 100
 #: Seconds to wait for a batch request's answer, which GCS sends once it has run every call in it.
 BATCH_REQUEST_TIMEOUT_SECONDS: Final = 30.0
+#: GCS's message - in place of "No such object: ..." - when the bucket itself does not exist,
+#: compared without case or the closing period.
+_NO_SUCH_BUCKET: Final = "the specified bucket does not exist"
 
 #: Failures in transit, which got no answer: the types google-cloud-storage itself retries as such.
 _TRANSPORT_ERRORS: Final = (
@@ -81,13 +88,25 @@ class GcsStore:
     """
 
     scheme = "gs"
-    delete_batch_size = BATCH_SIZE
     supports_conditional_delete = True
 
     def __init__(self, client: Any = None, *, batch_deletes: bool = True) -> None:
         self._client = client
         self._client_lock = threading.Lock()
         self.batch_deletes = batch_deletes
+
+    @property
+    def delete_batch_size(self) -> int:
+        """The deletes `delete_many` sends in one request: a hundred in a batch, or 1 when it deletes
+        one object per request - made with `batch_deletes=False`, or given a client that cannot batch
+        (a test double) - so a caller budgeting requests by it counts what it sends
+        (`storage/objects.py`). Asking builds no client: the library's own always batches."""
+        if not self.batch_deletes:
+            return 1
+        client = self._client
+        if client is not None and not callable(getattr(client, "batch", None)):
+            return 1
+        return BATCH_SIZE
 
     @property
     def client(self) -> Any:
@@ -190,11 +209,11 @@ class GcsStore:
     def delete_many(self, uris: Sequence[str]) -> DeleteOutcome:
         """Delete the objects, bucket by bucket, in batch requests of up to a hundred deletes.
 
-        Each call in a batch gets its own answer: 2xx and 404 mean the object is gone, anything else
-        is that object's failure with GCS's status and message. A batch request that fails itself -
-        no answer, or an error for the whole request - fails every delete in it. A client that cannot
-        batch (a test double), or a store made with `batch_deletes=False`, deletes one object per
-        request, each error taken like a call's answer.
+        Each call in a batch gets its own answer: 2xx and 404 mean the object is gone - unless the 404
+        says the bucket does not exist - anything else is that object's failure with GCS's status and
+        message. A batch request that fails itself - no answer, or an error for the whole request -
+        fails every delete in it. A client that cannot batch (a test double), or a store made with
+        `batch_deletes=False`, deletes one object per request, each error taken like a call's answer.
         """
         targets = [(uri, *_bucket_and_name(uri)) for uri in uris]
         by_bucket: dict[str, list[tuple[int, str, str]]] = {}
@@ -227,11 +246,15 @@ class GcsStore:
                 yield _info(f"gs://{bucket_name}/{blob.name}", blob)
 
     def _get_blob(self, bucket: Any, name: str, uri: str) -> Any | None:
+        # The request `bucket.get_blob(name)` makes, but its 404 judged here: the library's get_blob
+        # answers None for any 404, a missing bucket's too, which must not make a table look missing.
+        blob = bucket.blob(name)
         try:
             with _translated(uri):
-                return bucket.get_blob(name)
+                blob.reload()
         except ObjectNotFoundError:
             return None
+        return blob
 
 
 @contextmanager
@@ -271,6 +294,8 @@ def store_error(exc: BaseException, uri: str) -> StoreError | None:
     if status == 412 or _named(exc, "PreconditionFailed", api_exceptions.PreconditionFailed):
         return PreconditionFailedError(f"{uri}: {exc}", uri=uri, status=412, code=code)
     if status == 404 or _named(exc, "NotFound", api_exceptions.NotFound):
+        if _bucket_missing(exc):
+            return StoreConfigurationError(f"{uri}: the bucket does not exist ({exc})", uri=uri, status=404, code=code)
         return ObjectNotFoundError(f"{uri}: {exc}", uri=uri, status=404, code=code)
     if status is not None or isinstance(exc, api_exceptions.GoogleAPICallError):
         return StoreError(f"{uri}: {exc}", uri=uri, status=status, code=code)
@@ -285,6 +310,35 @@ def http_status(exc: BaseException) -> int | None:
     if isinstance(code, int) and not isinstance(code, bool) and 100 <= code < 600:
         return code
     return None
+
+
+def _bucket_missing(exc: BaseException) -> bool:
+    """Whether a 404 says the bucket itself does not exist, not the object: GCS's message is then "The
+    specified bucket does not exist." - in the error list of a JSON API answer, or the message of a
+    media download's body. Only the whole message counts, so an object's name never does."""
+    messages: list[object] = []
+    errors = getattr(exc, "errors", None)
+    if isinstance(errors, (list, tuple)):
+        messages.extend(item.get("message") for item in errors if isinstance(item, dict))
+    text = getattr(getattr(exc, "response", None), "text", None)
+    if isinstance(text, str):
+        messages.append(_body_message(text))
+    return any(isinstance(message, str) and _says_bucket_missing(message) for message in messages)
+
+
+def _body_message(text: str) -> str:
+    """The message of an error answer's body: its JSON error's message, else the text itself."""
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        return text
+    error = payload.get("error") if isinstance(payload, dict) else None
+    message = error.get("message") if isinstance(error, dict) else None
+    return message if isinstance(message, str) else text
+
+
+def _says_bucket_missing(message: str) -> bool:
+    return message.strip().rstrip(".").strip().lower() == _NO_SUCH_BUCKET
 
 
 def _named(exc: BaseException, name: str, kind: type[BaseException]) -> bool:
@@ -321,11 +375,20 @@ def _delete_batch(client: Any, bucket: Any, chunk: list[tuple[int, str, str]]) -
     failures: list[DeleteFailure | None] = []
     for (_, uri, _), response in zip(chunk, responses):
         status = response.status_code
-        if 200 <= status < 300 or status == 404:
+        if 200 <= status < 300 or (status == 404 and not _answer_says_bucket_missing(response)):
             failures.append(None)
         else:
+            # A missing bucket is configuration, as outside a batch: the delete failed, for good.
             failures.append(DeleteFailure(uri, status, _error_message(response)))
     return failures
+
+
+def _answer_says_bucket_missing(response: Any) -> bool:
+    """Whether one call's answer in a batch says the bucket does not exist."""
+    content = getattr(response, "content", None)
+    if isinstance(content, bytes):
+        content = content.decode("utf-8", errors="replace")
+    return isinstance(content, str) and _says_bucket_missing(_body_message(content))
 
 
 def _send_batch(client: Any, bucket: Any, names: list[str]) -> list[Any]:
@@ -351,6 +414,7 @@ def _delete_one(bucket: Any, uri: str, name: str) -> DeleteFailure | None:
         error = store_error(exc, uri)
         if isinstance(error, ObjectNotFoundError):
             return None
+        # A missing bucket (`StoreConfigurationError`) is a failure with its 404, never retried.
         status = None if error is None else error.status
         return DeleteFailure(uri, status, f"{type(exc).__name__}: {exc}", error=exc)
     return None

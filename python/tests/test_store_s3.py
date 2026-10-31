@@ -50,6 +50,7 @@ from midstream.lakehouse.store import (
     ObjectNotFoundError,
     ObjectStore,
     PreconditionFailedError,
+    StoreConfigurationError,
     StoreError,
     StoreSettings,
 )
@@ -557,7 +558,7 @@ class S3ErrorMappingTests(StubbedStoreTestCase):
         for method, attempt in cases:
             with self.subTest(method=method):
                 self.stub_error(method, "NoSuchBucket", 404)
-                error = self.assertMapped(attempt, StoreError, 404, "NoSuchBucket")
+                error = self.assertMapped(attempt, StoreConfigurationError, 404, "NoSuchBucket")
                 self.assertIn("bucket does not exist", str(error))
                 self.assertFalse(error.retryable)
 

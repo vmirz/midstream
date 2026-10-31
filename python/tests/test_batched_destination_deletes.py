@@ -192,8 +192,8 @@ class GcsStoreBatchRequestTests(unittest.TestCase):
         )
 
     def test_deletes_go_a_hundred_to_a_batch_request(self) -> None:
-        self.assertEqual(GcsStore.delete_batch_size, 100)
         api = FakeGcsJsonApi(owned(250) + owned(1, METADATA) + [POINTER, SIBLING])
+        self.assertEqual(self.store(api).delete_batch_size, 100)
 
         result = self.run_pass(api)
 
@@ -220,6 +220,19 @@ class GcsStoreBatchRequestTests(unittest.TestCase):
             result = self.run_pass(api)
         self.assertEqual((result.deleted_count, result.complete), (1_200, False))
         self.assertEqual(api.requests["batch"], 12)
+
+    def test_a_store_deleting_one_object_a_request_keeps_the_per_object_budget(self) -> None:
+        # Without batches - fake-gcs-server's case - a pass may make 1,000 delete requests, as before
+        # batches, not 100 x 100 = 10,000 single deletes.
+        api = FakeGcsJsonApi(owned(1_200))
+        store = GcsStore(client=self.store(api).client, batch_deletes=False)
+        self.assertEqual(store.delete_batch_size, 1)
+        self.assertEqual(pass_object_budget(store), CLEANUP_PASS_MAX_OBJECTS)
+
+        result = drop_table_objects_pass(location=LOCATION, materialization_id="mat-1", store=store, sleep=self.delays.append, max_seconds=None)
+
+        self.assertEqual((result.deleted_count, result.complete), (CLEANUP_PASS_MAX_OBJECTS, False))
+        self.assertEqual((api.requests["delete"], api.requests["batch"]), (CLEANUP_PASS_MAX_OBJECTS, 0))
 
     def test_a_missing_object_counts_as_gone(self) -> None:
         api = FakeGcsJsonApi(owned(5))
@@ -368,7 +381,7 @@ class GcsStoreBatchRequestTests(unittest.TestCase):
 
         result = self.run_pass(api, max_seconds=10, clock=clock)
 
-        self.assertEqual((result.deleted_count, result.complete), (GcsStore.delete_batch_size, False))
+        self.assertEqual((result.deleted_count, result.complete), (100, False))
         self.assertEqual(api.requests["batch"], 1)
 
     def test_a_full_delete_runs_batched_passes_until_nothing_is_left(self) -> None:

@@ -16,8 +16,8 @@ Errors are mapped once, here (design §6.2): 412 `PreconditionFailed` and 409
 `ConditionalRequestConflict` (another conditional write in flight) are `PreconditionFailedError`, and
 so is a 404 under `If-Match`, where S3 answers `NoSuchKey` and GCS and Azure answer 412. Any other 404
 is a missing object - judged by the status, since `HeadObject`'s answer has no body and its code is
-just `404` - except `NoSuchBucket`, a configuration problem that must not make a table look missing;
-a HEAD cannot tell it apart. Every other answer is a `StoreError` with its status and code, a failure
+just `404` - except `NoSuchBucket`, a configuration problem (`StoreConfigurationError`, never
+retryable) that must not make a table look missing; a HEAD cannot tell it apart. Every other answer is a `StoreError` with its status and code, a failure
 in transit one with no status.
 
 Deletes: S3 does not say whether a key existed, so `delete` answers True. Conditional deletes are not
@@ -55,6 +55,7 @@ from midstream.lakehouse.store.base import (
     ObjectInfo,
     ObjectNotFoundError,
     PreconditionFailedError,
+    StoreConfigurationError,
     StoreError,
     as_utc,
     check_range,
@@ -395,7 +396,7 @@ def store_error(exc: BaseException, uri: str, *, compare_and_swap: bool = False)
         if status == 412 or code in _PRECONDITION_CODES:
             return PreconditionFailedError(f"{uri}: {exc}", uri=uri, status=status or 412, code=code)
         if code == "NoSuchBucket":
-            return StoreError(
+            return StoreConfigurationError(
                 f"{uri}: the bucket does not exist, or STORAGE_S3_ENDPOINT or STORAGE_S3_REGION names the wrong "
                 f"server ({status} NoSuchBucket)",
                 uri=uri,

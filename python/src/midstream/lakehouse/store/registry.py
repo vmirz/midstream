@@ -8,7 +8,9 @@ client did; it is thread-safe and lives as long as the process.
 The backends' libraries are imported only when a store of their scheme is first built: importing
 this package imports no cloud SDK, and a scheme no table uses costs nothing. Credentials are the
 SDKs' own variables (`GOOGLE_APPLICATION_CREDENTIALS`, `AWS_*`, `AZURE_*`), which workload identities
-inject; Midstream's own knobs are the `STORAGE_*` variables `StoreSettings` reads.
+inject; Midstream's own knobs are the `STORAGE_*` variables `StoreSettings` reads. With
+`STORAGE_EMULATOR_HOST` set (google-cloud-storage's own variable), the GCS store deletes one object per
+request, as an emulator needs.
 
 Tests install a store with `set_store()` - a `MemoryStore` may stand in for any scheme - and remove it
 with `set_store(scheme, None)` or `reset_stores()`.
@@ -104,7 +106,9 @@ def _check_scheme(scheme: str) -> None:
 def _build_gcs() -> ObjectStore:
     from midstream.lakehouse.store.gcs import GcsStore
 
-    return GcsStore()
+    # `STORAGE_EMULATOR_HOST` points google-cloud-storage at an emulator; fake-gcs-server cannot
+    # answer the library's batch requests, so deletes go one per request there (`gcs.py`).
+    return GcsStore(batch_deletes=_text(os.environ, "STORAGE_EMULATOR_HOST") is None)
 
 
 def _build_s3() -> ObjectStore:

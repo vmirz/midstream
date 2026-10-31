@@ -70,6 +70,10 @@ WRITER_PAUSE_SECONDS: Final = 0.001
 FILE_TRANSFER_BYTES: Final = 256 * 1024
 #: How many create-only uploads of large files `large_object` races for one key.
 LARGE_RACERS: Final = 3
+#: The most new keys `racing_creators` races for unless told otherwise (the rounds, if fewer): a
+#: store may settle racing create-only writes slowly - SeaweedFS takes about ten seconds a key for 16
+#: racers, so 25 keys took four minutes - and six keys already race every writer six times.
+RACE_ROUNDS: Final = 6
 _MIB: Final = 1024 * 1024
 
 
@@ -98,6 +102,7 @@ def run_checks(
     *,
     writers: int = 16,
     rounds: int = 25,
+    race_rounds: int | None = None,
     listing_objects: int = 1050,
     large_bytes: int = 0,
     skip: Mapping[str, str] | None = None,
@@ -106,9 +111,10 @@ def run_checks(
     """Run every check against `store` under a fresh prefix of `base_uri`; one result per check.
 
     `writers` threads race `rounds` compare-and-swaps each on one object, and race to create each of
-    `rounds` new keys; `listing_objects` objects are listed back (more than a page: 1,000 on GCS and
-    S3); `large_bytes` > 0 adds a streamed upload and download of a file that size and a race of
-    create-only uploads of such files, and is reported skipped without a size. `skip` maps a check's
+    `race_rounds` new keys (`rounds`, but at most `RACE_ROUNDS`, unless given); `listing_objects`
+    objects are listed back (more than a page: 1,000 on GCS and S3); `large_bytes` > 0 adds a
+    streamed upload and download of a file that size and a race of create-only uploads of such files,
+    and is reported skipped without a size. `skip` maps a check's
     name to the reason it cannot run on this store - an emulator's known deviation - and reports it
     passed as skipped. The run deletes what it wrote whatever happens.
     """
@@ -118,13 +124,14 @@ def run_checks(
         raise ValueError(f"unknown checks {unknown}: the checks are {', '.join(CHECK_NAMES)}")
     if "cleanup" in skipped:
         raise ValueError("cleanup cannot be skipped: it removes what the run wrote")
-    if writers < 1 or rounds < 1 or listing_objects < 0 or large_bytes < 0:
-        raise ValueError("writers and rounds must be at least 1, listing_objects and large_bytes at least 0")
+    if writers < 1 or rounds < 1 or (race_rounds is not None and race_rounds < 1) or listing_objects < 0 or large_bytes < 0:
+        raise ValueError("writers, rounds and race_rounds must be at least 1, listing_objects and large_bytes at least 0")
     checks = _Checks(
         store,
         run_root(base_uri, run_id or uuid.uuid4().hex[:12]),
         writers=writers,
         rounds=rounds,
+        race_rounds=min(rounds, RACE_ROUNDS) if race_rounds is None else race_rounds,
         listing_objects=listing_objects,
         large_bytes=large_bytes,
     )
@@ -159,6 +166,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("uri", help="where the check may write, e.g. gs://my-lake/_check or s3://my-lake/_check")
     parser.add_argument("--writers", type=int, default=16, help="threads racing on one object (default 16)")
     parser.add_argument("--rounds", type=int, default=25, help="compare-and-swaps each writer attempts (default 25)")
+    parser.add_argument(
+        "--race-rounds",
+        type=int,
+        default=None,
+        help=f"new keys the writers race to create (default: --rounds, at most {RACE_ROUNDS})",
+    )
     parser.add_argument("--list-objects", type=int, default=1050, help="objects written and listed back (default 1050)")
     parser.add_argument("--large-mb", type=float, default=0.0, help="also stream files of this many MiB up and down, and race create-only uploads of them")
     parser.add_argument(
@@ -169,8 +182,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="a check not to run, such as one an emulator is known to fail (repeatable)",
     )
     args = parser.parse_args(argv)
-    if args.writers < 1 or args.rounds < 1 or args.list_objects < 0 or args.large_mb < 0:
-        parser.error("--writers and --rounds must be at least 1, --list-objects and --large-mb at least 0")
+    race_rounds_given = args.race_rounds is not None
+    if args.writers < 1 or args.rounds < 1 or (race_rounds_given and args.race_rounds < 1) or args.list_objects < 0 or args.large_mb < 0:
+        parser.error("--writers, --rounds and --race-rounds must be at least 1, --list-objects and --large-mb at least 0")
     for name in args.skip:
         if name not in CHECK_NAMES or name == "cleanup":
             parser.error(f"cannot skip {name!r}: choose from {', '.join(name for name in CHECK_NAMES if name != 'cleanup')}")
@@ -189,6 +203,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.uri,
         writers=args.writers,
         rounds=args.rounds,
+        race_rounds=args.race_rounds,
         listing_objects=args.list_objects,
         large_bytes=int(args.large_mb * _MIB),
         skip={name: "skipped on request" for name in args.skip},
@@ -282,11 +297,14 @@ def _creation_problem(attempts: Sequence[tuple[str, object]], stored: object | N
 class _Checks:
     """The checks, each a method returning its detail or raising; all under `root`."""
 
-    def __init__(self, store: ObjectStore, root: str, *, writers: int, rounds: int, listing_objects: int, large_bytes: int) -> None:
+    def __init__(
+        self, store: ObjectStore, root: str, *, writers: int, rounds: int, race_rounds: int, listing_objects: int, large_bytes: int
+    ) -> None:
         self.store = store
         self.root = root
         self.writers = writers
         self.rounds = rounds
+        self.race_rounds = race_rounds
         self.listing_objects = listing_objects
         self.large_bytes = large_bytes
         #: Every object URI a check named, so cleanup deletes them even if the listing misses some.
@@ -316,9 +334,10 @@ class _Checks:
         return f"created at version {first}; the second create was refused"
 
     def racing_creators(self) -> str:
-        """`writers` threads at once create each of `rounds` new keys: per key exactly one wins - for a
-        table's pointer, two winners would be two tables in one place - and the key holds its bytes."""
-        keys = [self.key(f"racing-creators/key-{index:04d}") for index in range(self.rounds)]
+        """`writers` threads at once create each of `race_rounds` new keys: per key exactly one wins -
+        for a table's pointer, two winners would be two tables in one place - and the key holds its
+        bytes."""
+        keys = [self.key(f"racing-creators/key-{index:04d}") for index in range(self.race_rounds)]
         barrier = threading.Barrier(self.writers)
         lock = threading.Lock()
         attempts: list[list[tuple[str, bytes]]] = [[] for _ in keys]

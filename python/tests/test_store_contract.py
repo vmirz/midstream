@@ -37,6 +37,7 @@ from midstream.lakehouse.store import (
     ObjectNotFoundError,
     ObjectStore,
     PreconditionFailedError,
+    StoreConfigurationError,
     StoreError,
     StoreSettings,
     is_retryable_status,
@@ -47,7 +48,7 @@ from midstream.lakehouse.store import (
 )
 from midstream.lakehouse.store import registry
 from midstream.lakehouse.store.base import normalize_version
-from midstream.lakehouse.store.check import CHECK_NAMES, format_result, main, run_checks
+from midstream.lakehouse.store.check import CHECK_NAMES, RACE_ROUNDS, format_result, main, run_checks
 from midstream.lakehouse.store.file import LOCK_FILE_NAME, TEMPORARY_PATTERN
 
 EVERY_CHECK = list(CHECK_NAMES)
@@ -181,6 +182,37 @@ class ConformanceTests(unittest.TestCase):
         self.assertTrue(result.passed)
         self.assertTrue(result.detail.startswith("skipped"))
         self.assertNotIn(("delete", "gs://contract/check"), store.calls)
+
+    def test_racing_creators_race_a_number_of_keys_of_their_own(self) -> None:
+        # Racing creators can be slow to settle (SeaweedFS: ten seconds a key), so unless told they
+        # race the rounds, at most RACE_ROUNDS keys; the compare-and-swaps keep every round.
+        self.assertEqual(RACE_ROUNDS, 6)
+        for rounds, race_rounds, keys in ((25, None, RACE_ROUNDS), (3, None, 3), (25, 2, 2), (2, 9, 9)):
+            with self.subTest(rounds=rounds, race_rounds=race_rounds):
+                store = MemoryStore()
+                results = run_checks(store, "gs://contract/check", writers=2, rounds=rounds, race_rounds=race_rounds, listing_objects=3)
+                self.assertEqual(failures(results), [])
+                raced = {uri for operation, uri in store.calls if operation == "put" and "/racing-creators/" in uri}
+                self.assertEqual(len(raced), keys)
+                details = {result.name: result.detail for result in results}
+                self.assertTrue(details["racing_creators"].startswith(f"{keys} new keys each won"), details["racing_creators"])
+                self.assertIn(f"2 writers x {rounds} rounds", details["concurrent_writers"])
+        with self.assertRaises(ValueError):
+            run_checks(MemoryStore(), "gs://contract/check", race_rounds=0)
+
+    def test_the_command_takes_the_racing_creators_keys(self) -> None:
+        reset_stores()
+        self.addCleanup(reset_stores)
+        with tempfile.TemporaryDirectory() as directory:
+            code, text = _capture(lambda: main([f"file://{directory}/cli", "--writers", "2", "--rounds", "9", "--race-rounds", "3", "--list-objects", "3"]))
+            self.assertEqual(code, 0, text)
+            (line,) = [line for line in text.splitlines() if " racing_creators " in line]
+            self.assertIn("3 new keys each won by one of 2 racing creators", line)
+            code, text = _capture(lambda: main([f"file://{directory}/cli", "--writers", "2", "--rounds", "9", "--list-objects", "3"]))
+            (line,) = [line for line in text.splitlines() if " racing_creators " in line]
+            self.assertIn(f"{RACE_ROUNDS} new keys each won", line)
+        with self.assertRaises(SystemExit):
+            _capture(lambda: main(["file:///tmp/cli", "--race-rounds", "0"]))
 
     def test_the_command_prints_a_line_per_check_and_exits_by_the_outcome(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -773,6 +805,38 @@ class BaseTypesTests(unittest.TestCase):
                 self.assertFalse(is_retryable_status(status))
                 self.assertFalse(DeleteFailure("gs://a/b", status, "x").retryable)
 
+    def test_a_configuration_error_is_never_retryable(self) -> None:
+        # A missing bucket, a refused credential: the same request fails until the configuration
+        # changes, whatever the status it came with, and it is never a missing object.
+        for status in (None, 403, 404, 503):
+            with self.subTest(status=status):
+                error = StoreConfigurationError("no such bucket", uri="s3://lake/x", status=status, code="NoSuchBucket")
+                self.assertFalse(error.retryable)
+                self.assertIsInstance(error, StoreError)
+                self.assertNotIsInstance(error, ObjectNotFoundError)
+                self.assertEqual((error.uri, error.status, error.code), ("s3://lake/x", status, "NoSuchBucket"))
+
+    def test_a_store_declares_whether_it_offers_conditional_deletes(self) -> None:
+        store = MemoryStore()
+        members = (
+            "scheme",
+            "delete_batch_size",
+            "supports_conditional_delete",
+            "get",
+            "head",
+            "put",
+            "put_file",
+            "get_to_file",
+            "delete",
+            "delete_many",
+            "list",
+        )
+        declared = {name: getattr(store, name) for name in members}
+        self.assertIsInstance(types.SimpleNamespace(**declared), ObjectStore)
+        del declared["supports_conditional_delete"]
+        self.assertNotIsInstance(types.SimpleNamespace(**declared), ObjectStore, "supports_conditional_delete is part of the contract")
+        self.assertIn("NotImplementedError", ObjectStore.delete.__doc__)
+
     def test_errors_carry_their_answer(self) -> None:
         error = StoreError("boom", uri="gs://a/b", status=503, code="backendError")
         self.assertIsInstance(error, RuntimeError)
@@ -828,6 +892,23 @@ class RegistryTests(unittest.TestCase):
             store_for("ftp://lake/x")
         with self.assertRaises(ValueError):
             store_for_scheme("gcs")
+
+    def test_the_gcs_store_deletes_one_object_a_request_behind_an_emulator(self) -> None:
+        # fake-gcs-server cannot answer the library's batch requests: behind STORAGE_EMULATOR_HOST the
+        # store sends a delete per object, and says so in its batch size.
+        for environment, batches, size in (
+            ({"STORAGE_EMULATOR_HOST": "http://localhost:4443"}, False, 1),
+            ({"STORAGE_EMULATOR_HOST": "  "}, True, 100),
+            ({}, True, 100),
+        ):
+            with self.subTest(environment=environment):
+                reset_stores()
+                with patch.dict(os.environ, environment):
+                    if not environment:
+                        os.environ.pop("STORAGE_EMULATOR_HOST", None)
+                    store = store_for("gs://lake/x")
+                self.assertEqual((store.batch_deletes, store.delete_batch_size), (batches, size))  # type: ignore[attr-defined]
+                self.assertIsNone(store._client, "no client is built until a request needs one")  # type: ignore[attr-defined]
 
     def test_s3_and_azure_are_imported_only_when_their_scheme_is_resolved(self) -> None:
         built: list[str] = []

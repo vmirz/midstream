@@ -17,6 +17,7 @@ from email.parser import BytesParser
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 import threading
@@ -41,12 +42,15 @@ from midstream.lakehouse.store import (  # noqa: E402
     ObjectNotFoundError,
     ObjectStore,
     PreconditionFailedError,
+    StoreConfigurationError,
     StoreError,
 )
 from midstream.lakehouse.store.check import format_result, run_checks  # noqa: E402
 from midstream.lakehouse.store.gcs import BATCH_REQUEST_TIMEOUT_SECONDS, BATCH_SIZE, GcsStore, _info  # noqa: E402
 
 ENDPOINT = "https://storage.test"
+#: What GCS says, in place of "No such object", when the bucket is not there.
+NO_SUCH_BUCKET = "The specified bucket does not exist."
 REASONS = {204: "No Content", 403: "Forbidden", 404: "Not Found", 429: "Too Many Requests", 500: "Internal Server Error", 503: "Service Unavailable"}
 BOUNDARY = "batch_pK7JBAk73-E=_AA5eFwv4m2Q="
 CREATED = "2026-10-30T12:00:00.123Z"
@@ -60,11 +64,14 @@ class FakeJsonApi:
     (a 2xx or 404 removes it), `batch_script` the outcome of the next batch requests themselves - a
     status, an exception to raise, `"not-multipart"` for the answer fake-gcs-server gives, or None to
     answer normally. The bucket metadata google-cloud-storage 3.x fetches for its telemetry is
-    answered but not counted.
+    answered but not counted. A request for an object in one of `missing_buckets` - any operation,
+    a batched delete too - is answered as GCS answers it: 404, "The specified bucket does not
+    exist.", a JSON error but for a media download's plain text.
     """
 
     def __init__(self, objects: dict[tuple[str, str], int]) -> None:
         self.objects = dict(objects)
+        self.missing_buckets: set[str] = set()
         self.script: dict[str, list[int]] = {}
         self.batch_script: list[int | Exception | str | None] = []
         self.requests: Counter = Counter()
@@ -77,6 +84,13 @@ class FakeJsonApi:
         if method == "GET" and path.startswith("/storage/v1/b/") and "/o" not in path:
             bucket = {"kind": "storage#bucket", "name": path.rsplit("/", 1)[1], "projectNumber": "1", "location": "US"}
             return _response(method, url, 200, json.dumps(bucket).encode())
+        named = re.search(r"/b/([^/]+)/o(?:/|$)", path)
+        if named is not None and named.group(1) in self.missing_buckets:
+            with self.lock:
+                self.requests["missing-bucket"] += 1
+            if path.startswith("/download/"):
+                return _response(method, url, 404, NO_SUCH_BUCKET.encode(), content_type="text/html; charset=UTF-8")
+            return _response(method, url, 404, _error_body(404, NO_SUCH_BUCKET))
         with self.lock:
             if method == "GET" and path.endswith("/o"):
                 self.requests["list"] += 1
@@ -84,6 +98,13 @@ class FakeJsonApi:
             if method == "POST" and path == "/batch/storage/v1":
                 self.requests["batch"] += 1
                 return self._batch(url, headers, data)
+            if method == "GET" and path.startswith("/storage/v1/b/") and "/o/" in path:
+                self.requests["get"] += 1
+                bucket, name = _bucket_and_name(path)
+                if (bucket, name) not in self.objects:
+                    return _response(method, url, 404, _error_body(404, f"No such object: {bucket}/{name}"))
+                item = {"name": name, "bucket": bucket, "size": str(self.objects[(bucket, name)]), "generation": "1000", "timeCreated": CREATED, "updated": CREATED}
+                return _response(method, url, 200, json.dumps(item).encode())
             if method == "DELETE":
                 self.requests["delete"] += 1
                 status = self._delete(*_bucket_and_name(path))
@@ -121,7 +142,7 @@ class FakeJsonApi:
             bucket, name = _bucket_and_name(urlparse(call_url).path)
             calls.append((bucket, name))
             status = self._delete(bucket, name)
-            body = b"" if status == 204 else _error_body(status)
+            body = b"" if status == 204 else _error_body(status, NO_SUCH_BUCKET if bucket in self.missing_buckets else None)
             inner = f"HTTP/1.1 {status} {REASONS[status]}\r\nContent-Type: application/json; charset=UTF-8\r\nContent-Length: {len(body)}\r\n\r\n"
             parts.append(f"--{BOUNDARY}\r\nContent-Type: application/http\r\nContent-ID: <response-{len(parts) + 1}>\r\n\r\n".encode() + inner.encode() + body + b"\r\n")
         self.batches.append(calls)
@@ -129,6 +150,8 @@ class FakeJsonApi:
         return _response("POST", url, 200, content, content_type=f"multipart/mixed; boundary={BOUNDARY}")
 
     def _delete(self, bucket: str, name: str) -> int:
+        if bucket in self.missing_buckets:
+            return 404
         planned = self.script.get(name)
         status = planned.pop(0) if planned else (204 if (bucket, name) in self.objects else 404)
         if 200 <= status < 300 or status == 404:
@@ -141,9 +164,11 @@ def _bucket_and_name(path: str) -> tuple[str, str]:
     return bucket_part.rsplit("/b/", 1)[1], unquote(name)
 
 
-def _error_body(status: int) -> bytes:
-    message = {403: "Object is under active Event-Based hold and cannot be deleted."}.get(status, REASONS.get(status, "error"))
-    return json.dumps({"error": {"code": status, "message": message}}).encode()
+def _error_body(status: int, message: str | None = None) -> bytes:
+    if message is None:
+        message = {403: "Object is under active Event-Based hold and cannot be deleted."}.get(status, REASONS.get(status, "error"))
+        return json.dumps({"error": {"code": status, "message": message}}).encode()
+    return json.dumps({"error": {"code": status, "message": message, "errors": [{"message": message, "domain": "global", "reason": "notFound"}]}}).encode()
 
 
 def _response(method: str, url: str, status: int, content: bytes, content_type: str = "application/json; charset=UTF-8"):
@@ -179,7 +204,8 @@ class GcsConformanceTests(unittest.TestCase):
         self.assertEqual([format_result(result) for result in results if not result.passed], [])
         conditional = next(result for result in results if result.name == "conditional_delete")
         self.assertFalse(conditional.detail.startswith("skipped"))
-        self.assertEqual((store.scheme, store.delete_batch_size), ("gs", 100))
+        # The double cannot batch: delete_many sends one request per object, and says so.
+        self.assertEqual((store.scheme, store.delete_batch_size), ("gs", 1))
 
 
 class GcsRequestTests(unittest.TestCase):
@@ -340,6 +366,84 @@ class GcsRequestTests(unittest.TestCase):
         self.assertTrue(all(client is built[0] for client in seen))
         given = FakeGcs().client()
         self.assertIs(GcsStore(given).client, given)
+
+
+class GcsMissingBucketTests(unittest.TestCase):
+    """A bucket that is not there is configuration, never a missing object - through the real client,
+    for every operation - while a missing object in a bucket that is stays a missing object."""
+
+    def setUp(self) -> None:
+        self.api = FakeJsonApi(objects_of(uris(2)))
+        self.api.missing_buckets = {"gone"}
+        self.store = GcsStore(real_client(self.api))
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = directory.name
+
+    def test_every_operation_on_a_missing_bucket_is_a_configuration_error(self) -> None:
+        source = os.path.join(self.directory, "source")
+        Path(source).write_bytes(b"x")
+        target = os.path.join(self.directory, "target")
+        for name, attempt in (
+            ("get", lambda: self.store.get("gs://gone/t/x")),
+            ("range", lambda: self.store.get("gs://gone/t/x", start=0, end=1)),
+            ("head", lambda: self.store.head("gs://gone/t/x")),
+            ("create-only put", lambda: self.store.put("gs://gone/t/x", b"x", if_version=ABSENT)),
+            ("compare-and-swap", lambda: self.store.put("gs://gone/t/x", b"x", if_version="1001")),
+            ("put_file", lambda: self.store.put_file("gs://gone/t/x", source, if_version=ABSENT)),
+            ("get_to_file", lambda: self.store.get_to_file("gs://gone/t/x", target)),
+            ("delete", lambda: self.store.delete("gs://gone/t/x")),
+            ("conditional delete", lambda: self.store.delete("gs://gone/t/x", if_version="1001")),
+            ("list", lambda: list(self.store.list("gs://gone/t/"))),
+        ):
+            with self.subTest(operation=name):
+                with self.assertRaises(StoreConfigurationError) as caught:
+                    attempt()
+                error = caught.exception
+                self.assertEqual((error.status, error.retryable, error.uri), (404, False, "gs://gone/t/" if name == "list" else "gs://gone/t/x"))
+                self.assertIn("the bucket does not exist", str(error))
+                self.assertIsNotNone(error.__cause__)
+                self.assertFalse(os.path.exists(target))
+        self.assertEqual(self.api.requests["missing-bucket"], 10)
+
+    def test_a_missing_object_in_a_bucket_that_exists_is_still_missing(self) -> None:
+        self.assertIsNone(self.store.head("gs://lake/t/missing"))
+        self.assertFalse(self.store.delete("gs://lake/t/missing"))
+        self.assertEqual(list(self.store.list("gs://lake/none/")), [])
+
+    def test_deletes_in_a_missing_bucket_fail_for_good_batched_or_not(self) -> None:
+        names = uris(2, bucket="gone") + uris(1)
+        for batch_deletes, requests_made in ((True, Counter({"batch": 2})), (False, Counter({"delete": 1}))):
+            with self.subTest(batch_deletes=batch_deletes):
+                api = FakeJsonApi(objects_of(uris(1)))
+                api.missing_buckets = {"gone"}
+                outcome = GcsStore(real_client(api), batch_deletes=batch_deletes).delete_many(names)
+                self.assertEqual(outcome.deleted, (names[2],))
+                self.assertEqual([(failure.uri, failure.status, failure.retryable) for failure in outcome.failed], [(names[0], 404, False), (names[1], 404, False)])
+                self.assertTrue(all("bucket does not exist" in failure.message for failure in outcome.failed))
+                self.assertEqual(api.requests - Counter({"missing-bucket": api.requests["missing-bucket"]}), requests_made)
+
+    def test_only_the_whole_message_says_the_bucket_is_missing(self) -> None:
+        # An object's name may hold any text: a message that merely contains GCS's words is no answer
+        # about the bucket.
+        fake = FakeGcs()
+        store = GcsStore(fake.client())
+        for message, kind in (
+            (NO_SUCH_BUCKET, StoreConfigurationError),
+            ("the specified bucket does not exist", StoreConfigurationError),
+            (f"No such object: lake/{NO_SUCH_BUCKET}", ObjectNotFoundError),
+            ("Not Found", ObjectNotFoundError),
+        ):
+            with self.subTest(message=message):
+                error = api_exceptions.NotFound(message, errors=[{"message": message, "reason": "notFound"}])
+                fake.fail = lambda operation, bucket, name, error=error: error
+                with self.assertRaises(kind):
+                    store.get("gs://lake/x")
+                if kind is ObjectNotFoundError:
+                    self.assertIsNone(store.head("gs://lake/x"))
+                else:
+                    with self.assertRaises(kind):
+                        store.head("gs://lake/x")
 
 
 class GcsErrorMappingTests(unittest.TestCase):
@@ -587,6 +691,21 @@ class GcsBatchDeleteTests(unittest.TestCase):
         )
         self.assertIs(outcome.failed[0].error, errors["b"])
         self.assertEqual(fake.names(), ["gs://lake/b", "gs://lake/c", "gs://lake/d", "gs://lake/e"])
+
+    def test_the_batch_size_is_what_one_request_deletes(self) -> None:
+        # A caller budgets its requests by it (storage/objects.py), so a store deleting one object per
+        # request - by choice or through a client that cannot batch - says 1.
+        api = FakeJsonApi(objects_of(uris(3)))
+        self.assertEqual(self.store_over(api).delete_batch_size, BATCH_SIZE)
+        unbatched = self.store_over(api, batch_deletes=False)
+        self.assertEqual(unbatched.delete_batch_size, 1)
+        self.assertEqual(GcsStore(FakeGcs().client()).delete_batch_size, 1)
+        lazy = GcsStore()
+        self.assertEqual(lazy.delete_batch_size, BATCH_SIZE)
+        self.assertIsNone(lazy._client, "asking builds no client")
+        self.assertEqual(GcsStore(batch_deletes=False).delete_batch_size, 1)
+        unbatched.batch_deletes = True
+        self.assertEqual(unbatched.delete_batch_size, BATCH_SIZE)
 
     def test_uris_are_checked_before_any_request(self) -> None:
         api = FakeJsonApi(objects_of(uris(2)))

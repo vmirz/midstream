@@ -194,6 +194,8 @@ class FakeBlob:
             del store.objects[self._key]
 
     def reload(self, **_: Any) -> None:
+        # The request `Bucket.get_blob` makes, so recorded and failed under its name.
+        self.bucket.store.check("get_blob", self.bucket.name, self.name)
         stored = self.bucket.store.objects.get(self._key)
         if stored is None:
             raise NotFound(self.name)

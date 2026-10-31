@@ -55,6 +55,7 @@ from midstream.lakehouse.store import (
     ObjectNotFoundError,
     ObjectStore,
     PreconditionFailedError,
+    StoreConfigurationError,
     StoreError,
     StoreSettings,
 )
@@ -557,6 +558,8 @@ class AzureErrorMappingTests(FakeStoreTestCase):
                 error = self.assertMapped(lambda: self.store.put(self.uri("t/x"), b"x", if_version=VERSION), AzureConfigurationError, status, code)
                 self.assertIn(hint, str(error))
                 self.assertFalse(error.retryable)
+                # The error every store raises for its configuration, so callers need not know Azure's.
+                self.assertIsInstance(error, StoreConfigurationError)
 
     def test_a_missing_blob_under_a_compare_and_swap_is_a_lost_race(self) -> None:
         self.calls.script["upload_blob"].append(http_error(404, "BlobNotFound", ResourceNotFoundError))

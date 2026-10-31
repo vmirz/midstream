@@ -137,13 +137,13 @@ jobs:
           wait_for fake-gcs-server "curl -sf -o /dev/null http://localhost:4443/storage/v1/b"
           wait_for moto "curl -sf -o /dev/null http://localhost:5055/moto-api/"
       - name: SeaweedFS (s3://)
+        # The slowest store, at about 70 seconds: SeaweedFS settles create-only writes racing for one
+        # key at about 0.6 s per writer, and the racing creators race check.RACE_ROUNDS keys whatever
+        # the rounds, which drive only the compare-and-swap writers (seconds at the default 20).
         env:
           STORAGE_S3_ENDPOINT: http://localhost:8333
           STORAGE_S3_PATH_STYLE: "true"
           STORAGE_LIVE_TESTS: s3://live-seaweedfs
-          # SeaweedFS settles create-only writes racing for one key at about 0.6 s per writer: 6 rounds
-          # of 16 racers take about a minute (20 take over three).
-          STORAGE_LIVE_ROUNDS: "6"
         run: python -m unittest discover -s python/tests -p 'test_store_live.py' -v
       - name: moto (s3://)
         env:

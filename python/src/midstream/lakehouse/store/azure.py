@@ -32,10 +32,11 @@ Errors are classified only by the HTTP status and the `x-ms-error-code` header, 
 exception's class or the library's `error_code` (design §6.2): (412, `ConditionNotMet`) and (409,
 `BlobAlreadyExists`) are `PreconditionFailedError`, and so is (404, `BlobNotFound`) under a
 condition; (404, `BlobNotFound`) alone is a missing object, and nothing else is - a missing container,
-a refused credential or an API version the server does not know is `AzureConfigurationError`, which
-must never make a table look missing. A failure in transit is a `StoreError` with no status - a
-download body cut short or reset included, which the library reads three times before it gives up;
-a credential that cannot be obtained raises azure-identity's own error.
+a refused credential or an API version the server does not know is `AzureConfigurationError` (a
+`StoreConfigurationError`, never retryable), which must never make a table look missing. A failure
+in transit is a `StoreError` with no status - a download body cut short or reset included, which the
+library reads three times before it gives up; a credential that cannot be obtained raises
+azure-identity's own error.
 
 Every client shares one transport per process - a requests session pooling 32 connections per host,
 with urllib3's retries off - and retries a failed request three times, 1 s apart and growing (the
@@ -64,6 +65,7 @@ from midstream.lakehouse.store.base import (
     ObjectInfo,
     ObjectNotFoundError,
     PreconditionFailedError,
+    StoreConfigurationError,
     StoreError,
     as_utc,
     check_range,
@@ -131,15 +133,10 @@ _TRANSPORT: Any = None
 _DEFAULT_CREDENTIAL: Any = None
 
 
-class AzureConfigurationError(StoreError):
-    """The store cannot serve the URI as configured: a container that does not exist, refused
-    credentials, a connection string for another account. Never retryable: the same request fails
-    until the configuration changes."""
-
-    @property
-    def retryable(self) -> bool:
-        """Never: the configuration has to change first."""
-        return False
+class AzureConfigurationError(StoreConfigurationError):
+    """The Azure store cannot serve the URI as configured: a container that does not exist, refused
+    credentials, a connection string for another account. A `StoreConfigurationError`: never
+    retryable, since the same request fails until the configuration changes."""
 
 
 class AzureBlobStore:

@@ -559,10 +559,12 @@ class DeleteOutcome:
 class StoreError(RuntimeError): status: int | None; code: str | None
 class ObjectNotFoundError(StoreError): ...
 class PreconditionFailedError(StoreError): ...
+class StoreConfigurationError(StoreError): ...   # never retryable, never "not found"
 
 class ObjectStore(Protocol):
     scheme: str
-    delete_batch_size: int
+    delete_batch_size: int                # what one request deletes: 1 when the store sends one per object
+    supports_conditional_delete: bool     # False: delete(if_version=...) raises NotImplementedError first
     def get(self, uri: str, *, start: int | None = None, end: int | None = None) -> tuple[bytes, str]: ...
     def head(self, uri: str) -> ObjectInfo | None: ...
     def put(self, uri: str, data: bytes, *, if_version: str | Absent | None = None,
@@ -586,9 +588,9 @@ def set_store(scheme: str, store: ObjectStore | None) -> None: ...  # the test s
 | S3 412 `PreconditionFailed`; 409 `ConditionalRequestConflict`; 404 `NoSuchKey` under a condition | `PreconditionFailedError` |
 | Azure (412, `ConditionNotMet`); (409, `BlobAlreadyExists`); (404, `BlobNotFound`) under a condition | `PreconditionFailedError` |
 | GCS 404; S3 404 (any code: a HEAD has none); Azure (404, `BlobNotFound`) | `ObjectNotFoundError`; `head` returns `None`, `delete` `False` |
-| Azure (404, `ContainerNotFound`), (404, `ResourceNotFound`), (403, `AuthorizationFailure`/`AuthenticationFailed`), (400, `InvalidHeaderValue`) | `StoreError` naming a configuration problem — never "not found", which would make a table look missing |
+| Azure (404, `ContainerNotFound`), (404, `ResourceNotFound`), (403, `AuthorizationFailure`/`AuthorizationPermissionMismatch`/`AuthenticationFailed`), (401, `InvalidAuthenticationInfo`/`NoAuthenticationInformation`), (400, `InvalidHeaderValue`); S3 404 `NoSuchBucket` (never on a HEAD, whose answer has no code: `head` returns `None`); GCS 404 "The specified bucket does not exist." | `StoreConfigurationError` naming the problem, never retryable — never "not found", which would make a table look missing |
 | 408, 429, 5xx after the SDK's own retries; no answer | `StoreError` with that status (`None` for no answer): retryable |
-| anything else | `StoreError` with its status and code |
+| anything else, a 403 from S3 or GCS included | `StoreError` with its status and code |
 
 ### 6.3 Environment
 

@@ -181,6 +181,23 @@ class StoreError(RuntimeError):
         return is_retryable_status(self.status)
 
 
+class StoreConfigurationError(StoreError):
+    """The store cannot serve the URI as configured, by an answer the backend recognises as that: a
+    bucket or container that does not exist, an endpoint or region naming the wrong server, refused
+    credentials. Never retryable - the same request fails until the configuration changes - and never
+    an `ObjectNotFoundError`: a missing bucket must not make a table look missing.
+
+    Only these answers raise it (design §6.2): S3's `NoSuchBucket`, which a HEAD's answer cannot
+    carry; Azure's container, endpoint, credential and API-version answers
+    (`AzureConfigurationError`); GCS's "The specified bucket does not exist.". Any other refusal - a
+    403 from S3 or GCS among them - is a plain `StoreError` with its status."""
+
+    @property
+    def retryable(self) -> bool:
+        """Never: the configuration has to change first."""
+        return False
+
+
 class ObjectNotFoundError(StoreError):
     """There is no object at the URI."""
 
@@ -217,10 +234,14 @@ class ObjectStore(Protocol):
     Every store implements these semantics exactly; `check.py` verifies them against a live store.
 
     Errors: a condition that does not hold raises `PreconditionFailedError`; a missing object raises
-    `ObjectNotFoundError` where an operation says so; any other failure of the store raises
-    `StoreError` with the HTTP status of the answer, None when there was none, the backend's
-    exception chained. A URI of another scheme, a malformed URI or an impossible range raises
-    `ValueError` before any request; a problem with a local file (`put_file`'s source,
+    `ObjectNotFoundError` where an operation says so; an answer the backend recognises as its
+    configuration's problem raises `StoreConfigurationError`, never retryable - S3's `NoSuchBucket`,
+    Azure's container, endpoint, credential and API-version answers, GCS's missing bucket, and no
+    other (see the class). A HEAD's answer carries no code, so S3's `head` of an object in a missing
+    bucket returns None. Any other failure of the store raises `StoreError` with the HTTP status of
+    the answer, None when there was none, the backend's exception chained - a 403 from S3 or GCS
+    included, whatever refused it. A URI of another scheme, a malformed URI or an impossible range
+    raises `ValueError` before any request; a problem with a local file (`put_file`'s source,
     `get_to_file`'s target) raises the `OSError` as it is. Transient failures are retried inside each
     operation by the backend's own library, as before; `delete_many` retries nothing.
 
@@ -232,6 +253,10 @@ class ObjectStore(Protocol):
     scheme: str
     #: The most deletes one request of the backend takes: what to hand `delete_many` at a time.
     delete_batch_size: int
+    #: Whether `delete(..., if_version=...)` is offered. A store declaring False (S3's) raises
+    #: `NotImplementedError` for a conditional delete before any request, rather than emulate it or
+    #: send a condition its server might ignore - deleting what it was asked to keep.
+    supports_conditional_delete: bool
 
     def get(self, uri: str, *, start: int | None = None, end: int | None = None) -> tuple[bytes, str]:
         """The object's bytes and the version they were read at, from one request.
@@ -291,7 +316,8 @@ class ObjectStore(Protocol):
 
         With `if_version`, only while the object is at that version: when it exists at another,
         nothing is deleted and `PreconditionFailedError` is raised. A missing object is never an
-        error, with or without `if_version`.
+        error, with or without `if_version`. A store whose `supports_conditional_delete` is False
+        raises `NotImplementedError` for any `if_version` before any request.
         """
         ...
 
