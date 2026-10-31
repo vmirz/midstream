@@ -164,7 +164,7 @@ console/
 ├── shared/types.ts      Wire contracts. Imported by both halves. Must stay dependency-free.
 ├── server/              Node BFF. No React, no DOM.
 │   ├── main.ts          Composition root — the only file that wires everything together.
-│   ├── config.ts        The only place that reads process.env.
+│   ├── config.ts        The only place that reads process.env, but for the registries' credentials and UV_THREADPOOL_SIZE.
 │   ├── errors.ts        The only error type crossing the HTTP boundary.
 │   ├── domains/         The registry: one Domain per control plane, its client, live store and tail target.
 │   ├── controlPlane/    Outbound: a domain's control plane.
@@ -172,7 +172,8 @@ console/
 │   ├── live/            Stateful: polling, snapshots, derived metrics, subscriptions, per domain.
 │   ├── iceberg/         Outbound: reading a table's pointer, metadata, manifests and snapshots.
 │   ├── schema/          Schema comparison.
-│   ├── data/            Outbound: object storage and DuckDB.
+│   ├── storage/         Outbound: object storage — the storage profiles, each backend's SDK, the cache.
+│   ├── data/            DuckDB and its sandbox, where each data file is read from, the snapshot catalog, logical columns, the SQL guard, the live tail's client.
 │   ├── runs/            Query execution: browse and statement runs, pages, exports.
 │   └── routes/          Inbound: HTTP surface. Thin — validation and delegation only.
 └── src/                 React SPA. No Node APIs.
@@ -181,9 +182,10 @@ console/
     └── features/        Screens. Compose components; own their local state.
 ```
 
-The layering rule is one-directional: `routes → services (live/schema/runs/data) → outbound clients (iceberg, controlPlane)`.
-Routes never talk to `@google-cloud/storage` or `fetch` the control plane directly, and services
-never import from `routes/`.
+The layering rule is one-directional: `routes → services (live/schema/runs/data) → outbound clients (iceberg, storage, controlPlane)`.
+Routes never talk to a storage SDK or `fetch` the control plane directly — only `storage/` imports
+`@google-cloud/storage`, `@aws-sdk/client-s3`, `@azure/storage-blob` and `@azure/identity` — and
+services never import from `routes/`.
 
 ## 1.8 What the console is not
 

@@ -438,10 +438,10 @@ The live storage tests need SeaweedFS's S3 gateway at `http://localhost:8333` wi
 started with `--skipApiVersionCheck --disableProductStyleUrl` — the SDKs send API versions newer than
 Azurite accepts, and without the second flag a dotted hostname is taken for the account — and
 fake-gcs-server at `http://localhost:4443` (`-scheme http`). `CONSOLE_STORAGE_LIVE_*` variables point
-them elsewhere (the file's header lists them). They write under a key of their own in a bucket and a
-container named `console-live`, and remove it after.
+them elsewhere (the file's header lists them). They make a bucket and a container named
+`console-live` where there is none, write under a key of their own, and remove what they wrote after.
 
-`node --test` runs the `.ts` files natively, so there is no transform step. **569 tests, 149 suites** — with `server/storage/live.test.ts` skipped unless `CONSOLE_STORAGE_LIVE` is set (20 more).
+`node --test` runs the `.ts` files natively, so there is no transform step. **575 tests, 152 suites** — with `server/storage/live.test.ts` skipped unless `CONSOLE_STORAGE_LIVE` is set (20 more).
 
 | File | Covers |
 |------|--------|

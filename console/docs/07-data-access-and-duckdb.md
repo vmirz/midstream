@@ -312,10 +312,12 @@ holding the panel open.
 Applies to user-authored SQL only (`sql.ts`). One statement; must start with `SELECT`, `WITH`,
 `DESCRIBE`, `SUMMARIZE`, `PIVOT`, `UNPIVOT`, `FROM`, `TABLE` or `VALUES`; no file-access functions
 (`read_parquet`, `read_csv`, `read_avro`, `iceberg_scan`, `iceberg_metadata`, `iceberg_snapshots`,
-`iceberg_table_properties`, …) or DDL/DML tokens outside strings and comments. For files it is
-defence in depth and a clear error message: the real control is the statement's sandbox (§07.6),
-which refuses every file but the run's own whatever the guard misses. A materialization cannot be
-named after any word the guard refuses, so a valid table is always queryable.
+`iceberg_table_properties`, …) or DDL/DML tokens outside strings and comments. For reading files it
+is defence in depth and a clear error message: the real control is the statement's sandbox
+(§07.6), which refuses every file but the run's own whatever the guard misses. For writing an
+object the sandbox may read, the guard's refusal of `COPY` is the console's only control, and
+read-only credentials the deployment's (§07.10). A materialization cannot be named after any word
+the guard refuses, so a valid table is always queryable.
 
 It also refuses calls to `duckdb_secrets()` and `which_secret()` — which list the sandbox's secrets:
 each storage profile's name, scope, endpoint, region and key id, the secret values redacted — and to
@@ -424,17 +426,22 @@ statement too: DuckDB picks each source's secret by its scope, so `runs/view.ts`
 | | gcs | s3 | azure |
 |---|---|---|---|
 | Metadata objects | JSON API GET, CRC32C-checked | `GetObject`, checksum when the object carries one | blob download, MD5 when the blob carries one |
-| Its DuckDB secret | `TYPE gcs` with the HMAC pair; for an emulator also `ENDPOINT`, `USE_SSL`, `URL_STYLE 'path'` | `TYPE s3` with the keys or `PROVIDER credential_chain, REFRESH 'auto'`; `REGION`; for an S3-compatible server `ENDPOINT` as `host:port` (never with the scheme: DuckDB adds `http://` itself), `USE_SSL` from the scheme and `URL_STYLE 'path'` when `pathStyle` | `TYPE azure` with a connection string — the deployment's, or one built from the account key with the emulator's endpoint as `BlobEndpoint` — or `PROVIDER service_principal`, or `PROVIDER credential_chain`, always with the account named |
+| Its DuckDB secret | `TYPE gcs` with the HMAC pair; for an emulator also `ENDPOINT`, `USE_SSL`, `URL_STYLE 'path'` | `TYPE s3` with the keys or `PROVIDER credential_chain, REFRESH 'auto'`; `REGION`; for an S3-compatible server `ENDPOINT` as `host:port` (never with the scheme: DuckDB adds `http://` itself), `USE_SSL` from the scheme and `URL_STYLE 'path'` when `pathStyle` | `TYPE azure` with a connection string — the deployment's, given the account and an emulator's `BlobEndpoint` where it lacks them, or one built from the account key, with an emulator's endpoint and the account as its `BlobEndpoint` — or `PROVIDER service_principal`, or `PROVIDER credential_chain`, always with the account named |
 | What DuckDB is given for a data file | the URI | the URI | `az://<account>.blob.core.windows.net/<container>/<key>` |
 | Extensions | `httpfs` | `httpfs` (+ `aws` for the chain) | `azure` |
 | Direct | with the HMAC pair | always | always, except an emulator reached without a connection string or key |
 
+A profile whose `access` is `cached` is cached whatever its kind, and gives DuckDB no secret at all.
+
 Each secret is `CREATE OR REPLACE TEMPORARY SECRET console_<name> (…, SCOPE '<scope>')` — never
 persistent. On the shared instance a profile's extensions are loaded and its secret created once,
 the first time its objects are read (`data/duckdb.ts::prepareStorageAccess`), one instance-wide change
-at a time; a failed attempt is not kept. So the Azure extension — about 13 ms per sandbox and 9 MB of
-download per pod on first use — is loaded only where an Azure profile is read. A statement's sandbox
-loads the extensions and creates the secrets of only the profiles whose scopes serve its sources,
+at a time; a failed attempt is not kept. So the Azure extension — about 13 ms per sandbox and 9 MB
+of download per pod on first use — is loaded only where an Azure profile is read. An extension is
+installed once per process, through the shared instance — DuckDB fetches it from its extension
+repository the first time a pod needs it — and every instance then only loads it; nothing but
+`httpfs`, `aws` and `azure` is ever installed (`STORAGE_EXTENSIONS`). A statement's sandbox loads
+the extensions and creates the secrets of only the profiles whose scopes serve its sources,
 before `enable_external_access = false` and `lock_configuration = true`: nothing can load after the
 lock, and a statement could list every secret its sandbox held (the guard refuses that, §07.8). A
 secret DuckDB refuses fails the read with `503 storage_unavailable` naming the profile, never with

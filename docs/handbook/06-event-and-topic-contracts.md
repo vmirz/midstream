@@ -177,7 +177,10 @@ the create view decided; a table's dataset and name are fixed for its life, as i
 `partition_granularity` (`hour`, `day`, `month`, `none`; null takes `default_partition_granularity`).
 `destination_uri`, `namespace`, `runtime_name` (the runtime's generated, length-bounded name) and
 `storage_size` are the deployment's, filled in by the API: a request chooses none of them since 4.0
-(04 §4.5.2).
+(04 §4.5.2). `destination_uri` is a `gs://`, `s3://` or `abfss://` URI (11 §11.1), and every
+location, metadata location and file path in this chapter's messages begins with the destination of
+its table: the examples' `gs://…` reads `s3://…`, or
+`abfss://<container>@<account>.dfs.core.windows.net/…`, for a table on those backends.
 `claim_request_id` is the id of the `claim_tables` request intake sends (§6.15); `label`, on an
 update, a new label. An event from before 4.3 may carry `live_tail`, on an update or in a create's
 spec; it is read and dropped. `action` ∈ `create`, `stop`, `resume`, `update`, `delete`,
@@ -412,7 +415,7 @@ record accumulates the deleted count across passes.
     "member_id": "midstream-mat-a1b2c3d4e5f6-app-0",
     "table": "orders",
     "source_topic": "orders",
-    "metadata_location": "gs://…/shop-a1b2c3d4e5f6/orders/metadata/00042-….metadata.json",
+    "metadata_location": "gs://…/mat-a1b2c3d4e5f6/orders/metadata/00042-….metadata.json",
     "current_snapshot_id": 8410567672455764292,
     "snapshot_at": "2026-10-18T10:34:41.512Z",
     "sequence_number": 41,
@@ -614,7 +617,7 @@ when that member goes away (10 §10.6). Every message is keyed `commits`.
  "member_id": "midstream-mat-a1b2c3d4e5f6-app-2", "session_generation": 12, "session_epoch": "9b0e…",
  "batch_id": "batch-…", "seal_id": "4f1c…", "file_count": 2,
  "partition": 3, "after_offset": 99, "offset_start": 100, "offset_end": 199,
- "file_path": "gs://…/shop-a1b2c3d4e5f6/orders/data/ts_day=2026-10-18/p03-o0000000100-0000000199-midstream-mat-a1b2c3d4e5f6-app-2-….parquet",
+ "file_path": "gs://…/mat-a1b2c3d4e5f6/orders/data/ts_day=2026-10-18/p03-o0000000100-0000000199-midstream-mat-a1b2c3d4e5f6-app-2-….parquet",
  "file_size": 10485760, "record_count": 61000,
  "partition_value": {"ts_day": "2026-10-18"},
  "event_time_min": "2026-10-18T09:58:01Z", "event_time_max": "2026-10-18T10:02:12Z",

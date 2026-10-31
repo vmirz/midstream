@@ -57,6 +57,11 @@ the deployment, the replica count (the autoscaled one while it is scaled), the t
 the protection key does (07 §7.7). The runtime is rendered only once every table
 exists, and with no members at all while its topics change (07 §7.9a).
 
+Members read and write each table through the object store of its location's scheme — GCS, S3 or
+Azure Blob (11 §11.1a) — with the credentials the deployment's runtime spec carries: the chart renders
+`storage.*` into it as Secret references and `STORAGE_*` settings, the same the control plane and the
+maintenance and tail apps get, and a pod with a cloud identity needs no Secret at all (02 §2.9a).
+
 Faust gives partition `i` of every source topic with the same partition count to the same member
 (co-partitioning), so the members a runtime keeps busy are the *distinct* partition counts summed:
 topics of 32, 32 and 8 partitions keep at most 40 members busy, not 72 (`scale.assignable_members`;
@@ -144,11 +149,14 @@ each file closes, or when a seal fails. A batch holding values the schema cannot
 to `seal_schema_wait_seconds` for an evolution first (09 §9.7).
 
 **Upload** (`writer/upload.py`, `upload_worker_count` 4 threads): each file goes to its final object,
-create-only (`if_generation_match=0`). File names carry the seal's id
+create-only, through the store of the table's location (`put_file` with `if_version=ABSENT`,
+11 §11.1a). File names carry the seal's id
 (`L/data/ts_day=2026-10-18/p03-o0000000100-0000000199-<member>-<seal>-<n>[-r<revision>].parquet`,
 the protection revision its rows were masked under when it is not 0, 22 §22.5), so an object
-already there is this very file from an earlier attempt, and a matching size makes the upload done.
-Failures back off from `upload_initial_backoff_seconds` (5 s) to 300 s and never give up.
+already there when the store refuses the upload is this very file: from an earlier attempt, or this
+attempt's own write, landed before the library's retry of it was refused (11 §11.2). The pipeline
+then reads the object's size (`head`): the file's size makes the upload done, anything else fails it
+(`a different object already exists`). Failures back off from `upload_initial_backoff_seconds` (5 s) to 300 s and never give up.
 
 **Announce**: each uploaded file becomes a `data_file_ready` message in the outbox
 (`outbox.py`), keyed so a newer message for the same file replaces an older one. The pipeline task's
@@ -183,8 +191,8 @@ member reads again whatever no commit covered. A table partition's state therefo
 
 - the first record of a partition after a rebalance starts a new session (`ensure_partition_session`):
   the old session's batches are abandoned and their files deleted, its held acknowledgements
-  dropped, and the table's committed offsets are read — from GCS once per rebalance generation, never
-  older than the state table's (`_offsets_for_session`; a member waits up to
+  dropped, and the table's committed offsets are read — from the table once per rebalance generation,
+  never older than the state table's (`_offsets_for_session`; a member waits up to
   `SESSION_START_WAIT_SECONDS` 120 for in-flight work on the partition first);
 - the first batch of a session continues the partition from the table's committed offset: its
   `after_offset` is that offset, which is what lets the committer refuse what is already in the table
@@ -276,16 +284,19 @@ On a commit, on a worker thread (the event loop keeps consuming and writing):
    | `offset_start <= c < offset_end` | **overlap** | part is in already; the member re-seals the rest and announces that; the files are deleted |
    | `after_offset <= c < offset_start` | **accepted** | continues exactly where the table is |
    | `after_offset > c` | deferred | a seal between them is missing (typically lost with a restarted committer); it waits for the re-announcement — accepting it would let `c` jump past records never committed |
-   | a file not in the bucket | **error** | the member seals again from its staged rows |
+   | a file missing from storage | **error** | the member seals again from its staged rows |
 
-3. read each accepted file's Parquet footer (two small range requests) and build its `DataFile`
-   with full statistics (`lakehouse/files.py`); commit them as **one merge-append snapshot** whose
-   summary carries the new committed offsets, event times, valid-through, commit id and runtime
-   (`commit_append`; 11 §11.4);
+3. read each accepted file's Parquet footer through the table's store (its size, then one or two
+   small range reads) and build its `DataFile` with full statistics (`lakehouse/files.py`); commit
+   them as **one merge-append snapshot** whose summary carries the new committed offsets, event times,
+   valid-through, commit id and runtime (`commit_append`; 11 §11.4);
 4. commit **once** through the pointer's compare-and-swap (`commit_once`: no PyIceberg retry, which
    would re-run the snapshot producer blindly); a lost race reloads the table and decides again, up to
-   `COMMIT_ATTEMPTS` (5), spaced by `COMMIT_SPACING_SECONDS` (1 s) — GCS throttles more than one update
-   per second on one object (E11);
+   `COMMIT_ATTEMPTS` (5), spaced by `COMMIT_SPACING_SECONDS` (1 s) on every backend — GCS throttles
+   more than one update per second on one object (E11), and every commit replaces the table's
+   pointer. A pointer write whose outcome cannot be told (`CommitStateUnknownException`, 11 §11.2)
+   ends the cycle with nothing deleted, and the next one's reload decides: the seals are covered if
+   the commit landed, accepted again if it did not;
 5. publish: `committed-offsets:<table>`, `file-decisions:<table>` (only what members must act on) and
    `table:<table>` in the state table; a `table_committed` event, naming the table, to
    `materialization-table-events`.
@@ -467,25 +478,34 @@ expiry with nothing to expire) runs once more after a restart.
   longer than a day, `LONG_PARTITION_MS`) each file waits for that age instead, so a month's files
   settle one by one rather than after the month ends. The first qualifying partition is taken up to `compaction_max_input_bytes` (1 GiB) and
   2,000 files, and the whole partitions after it join while they fit, so a backfill's past days go
-  several at a time. A child process (`maintenance_app/compact_worker.py`) reads the inputs oldest
-  first, a batch of 10,000 rows at a time, each projected onto the table's schema by field id
-  (`lakehouse/parquet.py::project_batch`, which keeps a null list a null list where PyIceberg's own
-  projection empties it). It accumulates up to a memory budget (128 MiB of Arrow data), sorts that
-  by `_kafka_timestamp, _kafka_partition, _kafka_offset`, and appends it to the partition's open
-  output a row group at a time; an output closes at `compaction_target_file_size_bytes` (256 MiB)
+  several at a time. A child process (`maintenance_app/compact_worker.py`) downloads the inputs
+  through the table's store (`get_to_file`) and reads them oldest first, a batch of 10,000 rows at a
+  time, each projected onto the table's schema by field id (`lakehouse/parquet.py::project_batch`,
+  which keeps a null list a null list where PyIceberg's own projection empties it). It accumulates
+  up to a memory budget (128 MiB of Arrow data), sorts that by
+  `_kafka_timestamp, _kafka_partition, _kafka_offset`, and appends it to the partition's open output
+  a row group at a time; an output closes at `compaction_target_file_size_bytes` (256 MiB)
   or when its partition ends. So the child holds about the budget plus a row group, and an output
   is a run of sorted row groups. Inputs of different protection lineages — told apart by their names
   (`lakehouse/files.py::protection_label_of`) — never share an output, and each output is named with
   its inputs' lineage (`compact-<unique>-r<revision>.parquet`, `…-r3p1.parquet` for rows a reprotect
-  rewrote), so a file's name keeps saying which policies masked its rows (22 §22.5). The member then commits one `replace` snapshot after checking
-  every input is still live and, per partition, that the outputs hold exactly the inputs' rows
-  inside their time bounds; the snapshot carries the committed offsets forward unchanged, so the
-  runtime's exactly-once accounting never notices it.
+  rewrote), so a file's name keeps saying which policies masked its rows (22 §22.5). Each output is
+  uploaded create-only (`upload_output`) under a name with a fresh id, so when the store refuses the
+  upload, an object of the local file's size at that name is the job's own write, landed before the
+  library's retry of it, and counts as written; anything else fails the job. The member then
+  commits one `replace` snapshot after checking every input is still live and, per partition, that
+  the outputs hold exactly the inputs' rows inside their time bounds; the snapshot carries the
+  committed offsets forward unchanged, so the runtime's exactly-once accounting never notices it.
 - **Two writers, one pointer.** The runtime's committer appends to the table while the app compacts
   and expires it. Both commit through the pointer's compare-and-swap (11 §11.2), and whichever lost
   reloads and tries again: the committer every commit attempt (§10.6), the app up to
   `REPLACE_ATTEMPTS` (8) times, a second apart. An input an append or an expiry removed meanwhile
-  makes the replace `abandoned`, and its outputs are deleted. Measured on a test cluster: a compaction of 9
+  makes the replace `abandoned`, and its outputs are deleted. Outputs are deleted only when the commit
+  provably did not land — a lost race, inputs gone, a mismatch, an error before the pointer write; a
+  commit whose outcome is unknown (`CommitStateUnknownException`, 11 §11.2) fails the job saying so,
+  *The commit's outcome is unknown, so the job's outputs are kept*, and orphan cleanup removes them if
+  the table never took them. A commit that landed stands even when the table cannot be read back
+  after it, and so does a snapshot expiry. Measured on a test cluster: a compaction of 9
   files (120,125 rows) took 6.6 s while the runtime went on committing.
 - **Fault tolerance** (spec §7.9.1): the child only *adds* files, so a job that dies before the
   replace commit leaves orphans for orphan cleanup, and one that dies after it is done. A job is
@@ -501,18 +521,23 @@ expiry with nothing to expire) runs once more after a restart.
   metadata commit and deletes no files (E7).
 - **Reprotect** (22 §22.14) rewrites the files holding in plain text what the table masks now, each
   into one output of its own with the same rows in the same order, in a child process
-  (`maintenance_app/reprotect_worker.py`) bounded like a compaction's, and commits each pass in one
+  (`maintenance_app/reprotect_worker.py`) bounded like a compaction's, which downloads each input and
+  uploads each output through the table's store as compaction's does, and commits each pass in one
   `replace` snapshot that keeps no manifest entry of the files it removes - their column bounds hold
   the plain text. It is done only once nothing is left to rewrite and the batch ceiling
   (`max_open_file_age_ceiling_seconds`, which the ticks carry for it) plus two minutes has passed since
   the table recorded its revision, so batches still open under the older revision have committed. With
-  `purge`, every older snapshot is then expired and the files only they held are deleted. A failed pass backs off like a partition's compaction and is given up after
+  `purge`, every older snapshot is then expired, the files only they held are deleted, and the
+  table's other orphans past `orphan_min_age_hours` are listed and deleted, all through the table's
+  store. Its outputs are kept or deleted as a compaction's are. A failed
+  pass backs off like a partition's compaction and is given up after
   `compaction_max_attempts`, with a `reprotect_failed` table error. The member also counts each
   table's plain text from the manifests when the table records a new revision, its compaction is
   planned or a reprotect commits, and reports it with `plaintext_counted` when it changed.
-- **Orphan cleanup** lists the table's `data/` and `metadata/` and deletes what no retained snapshot
-  references and is older than `orphan_min_age_hours` (24) — never a file of unknown age — at most
-  `ORPHAN_PASS_LIMIT` (1,000) per pass. The app cannot see the files a runtime uploaded and has not
+- **Orphan cleanup** lists the table's `data/` and `metadata/` through its store and deletes what no
+  retained snapshot references and is older than `orphan_min_age_hours` (24), by the time the store
+  reports (11 §11.1a) — never a file of unknown age — at most `ORPHAN_PASS_LIMIT` (1,000) per pass.
+  The app cannot see the files a runtime uploaded and has not
   committed yet, which the runtime's own maintenance used to spare; the age guard protects them,
   and a file that waited for its commit longer than that - a day's stall, by default - is resealed
   by its member when the committer finds it missing (§10.6).
@@ -612,10 +637,11 @@ members log one structured line per protocol event (`protocol_event {json}`):
 
 | Symptom | Likely cause | Where to look |
 |---|---|---|
-| Status `waiting_for_table` for minutes | the pointer is unreadable (permissions, a dropped table) | member logs: `load_table`; 11 §11.2 |
+| Status `waiting_for_table` for minutes | the pointer is unreadable (permissions, a dropped table); the runtime spec lacks the storage credentials the control plane has | member logs: `load_table`; 11 §11.1a, §11.2 |
 | `commits_stalled` | the committer is not committing: crash-looping, its member stuck, or every commit failing | the committer member's logs (`runtime_commit_failed`); the table record's `last_error` |
 | `commits_stalled`, the committer's log quiet and its table block's `pending_files` 0 while a member holds files | the committer ignores the member's announcements as stale (§10.6). A runtime that predates session epochs did this after a member restarted | the committer's `… from an older session` warnings, `stale_announcements`; 12 §12.3 |
 | `commits_stalled` right after disruptions, while commits flow | members held files uncommitted for 5 minutes during repeated committer restarts; clears on the next resource observation (08 §8.6) | — |
+| `commit_failed`: *Commits are failing: the pointer write of … failed …* | a pointer write failed and the pointer read back could not tell whether it landed (`CommitStateUnknownException`, 11 §11.2) | nothing to do: the files stay pending, and the next attempt's reload decides |
 | Consumption paused | the upload backlog is full: uploads failing, or seals slow | `Pausing N source partition(s) …` warnings |
 | `schema_evolution_failed` / `schema_field_limit` | 09 §9.12 | |
 | `compaction_failed` | a partition failed compaction 5 times | the maintenance app's `maintenance_compaction_failed` lines; ask for compaction again to retry |

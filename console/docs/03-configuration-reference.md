@@ -1,6 +1,9 @@
 # 03 — Configuration Reference
 
-Source: `server/config.ts`. This is the **only** module that reads `process.env`. Everything else
+Source: `server/config.ts`. This is the **only** module that reads `process.env`, but for the
+credentials the two registries read for their entries — each domain's service token
+(`domains/registry.ts`, §3.3) and each storage profile's credentials (`storage/registry.ts`, §3.6a)
+— and `UV_THREADPOOL_SIZE`, which `server/workerPool.ts` sets at startup (§3.6). Everything else
 imports the frozen `config` object. Adding a setting anywhere else is a layering violation.
 
 Since 0.13.0, these variables can also be overridden from the Settings page while the console
@@ -134,7 +137,7 @@ window to at least twice it.
 | Variable | Type | Default | Contents |
 |----------|------|---------|----------|
 | `CONSOLE_DATA_DIR` | string | `<os.tmpdir()>/midstream-console` | Parent directory for all local state |
-| `CONSOLE_PARQUET_CACHE_DIR` | string | `<CONSOLE_DATA_DIR>/parquet-cache` | Mirrored data files (cached mode only) |
+| `CONSOLE_PARQUET_CACHE_DIR` | string | `<CONSOLE_DATA_DIR>/parquet-cache` | Mirrored data files of cached storage profiles, under `<profile>/<container>/<key>` (§3.6a) |
 | `CONSOLE_PARQUET_CACHE_MAX_BYTES` | int | `8589934592` (8 GiB) | Eviction budget for the file cache |
 
 Nothing under `CONSOLE_DATA_DIR` needs to survive a restart: runs are discarded with the process,
@@ -147,7 +150,7 @@ old `schema-history/` directory can be deleted. See
 | Variable | Type | Default | Effect |
 |----------|------|---------|--------|
 | `CONSOLE_VERSION` | string | from `package.json` | Reported version; override only if a build system stamps something more specific |
-| `CONSOLE_DATA_ACCESS_ENABLED` | bool | `true` | Master switch for the Data tab |
+| `CONSOLE_DATA_ACCESS_ENABLED` | bool | `true` | Master switch for the Data tab; off, the console reads no object storage at all |
 | `CONSOLE_STORAGE_FILE` | string | unset | The storage profiles, a JSON file the chart renders from `console.storage[]` (§3.6a). Unset with `CONSOLE_STORAGE` unset too, the console reads no object storage |
 | `CONSOLE_STORAGE` | JSON | unset | The same profiles inline, for development; the file wins when both are set |
 | `CONSOLE_STORAGE_<NAME>_…` | string | unset | Each profile's credentials, never in the JSON (§3.6a) |
@@ -175,7 +178,7 @@ requests (a HEAD, two footer reads, then its column chunks in parallel), about 2
 What matters is how many objects are in flight, and three settings decide it.
 
 - **Node's worker pool.** `@duckdb/node-api` runs each query on a libuv worker thread and holds it
-  until the query finishes, including all the time it waits on GCS. The pool defaults to four
+  until the query finishes, including all the time it waits on object storage. The pool defaults to four
   threads, which silently capped every run at four objects in flight whatever the scan width said,
   and queued file reads and DNS lookups behind slow queries. `server/workerPool.ts` sizes it before
   anything starts it. Measured: 200 cold object counts took 12.8 s on the default pool, 4.9 s on 64.
@@ -204,12 +207,12 @@ it.
 ## 3.6a Storage profiles
 
 The console reads each table's objects with a **storage profile**: one per destination prefix
-(design 5.8; `server/storage/registry.ts`). An object is read with the profile whose `scope` is the
-longest prefix of its URI — a plain, case-sensitive string prefix, as DuckDB matches scoped
-secrets. A table outside every scope answers `503 storage_not_configured`: "no storage is configured
-for <uri>; add a storage profile whose scope covers it", which the Table and Data tabs show as they
-show any unreadable table. There is no global switch between direct and cached reading any more:
-each profile has its own mode.
+([design §5.8](../../docs/design/storage-backends.md); `server/storage/registry.ts`). An object is
+read with the profile whose `scope` is the longest prefix of its URI — a plain, case-sensitive
+string prefix, as DuckDB matches scoped secrets. A table outside every scope answers
+`503 storage_not_configured`: "no storage is configured for <uri>; add a storage profile whose scope
+covers it", which the Table and Data tabs show as they show any unreadable table. Each profile has
+its own mode, direct or cached; there is no console-wide one.
 
 ```json
 [
@@ -217,25 +220,26 @@ each profile has its own mode.
    "endpoint": "http://seaweedfs-s3.seaweedfs.svc:8333", "region": "us-east-1", "pathStyle": true},
   {"name": "archive", "scope": "gs://example-archive/", "kind": "gcs",
    "keyFile": "/etc/midstream-storage/archive/service-account.json"},
-  {"name": "azure-lake", "scope": "abfss://lake@exampleacct.dfs.core.windows.net/", "kind": "azure"}
+  {"name": "azure-lake", "scope": "abfss://lake@exampleaccount.dfs.core.windows.net/", "kind": "azure"}
 ]
 ```
 
 | Field | Rule |
 |-------|------|
 | `name` | `^[a-z][a-z0-9-]{0,39}$`, unique; names the DuckDB secret (`console_<name>`, `-` as `_`), the cache directory and the credential variables |
-| `scope` | ends with `/`; starts with the kind's scheme — `gs://`, `s3://`, `abfss://container@account.dfs.core.windows.net/`; unique |
+| `scope` | ends with `/`; starts with the kind's scheme — `gs://`, `s3://`, `abfss://container@account.dfs.core.windows.net/`; names a bucket, or a container at its account, and holds no whitespace; unique |
 | `kind` | `gcs`, `s3` or `azure` |
-| `endpoint` | an `http(s)://` URL: an S3-compatible server, an emulator. Unset, the cloud itself |
+| `endpoint` | `http(s)://host[:port]`, with no user, path, query or fragment: an S3-compatible server, or an emulator — GCS's JSON API is called there without credentials (DuckDB still signs with the HMAC pair), Azure's with the account appended (`<endpoint>/<account>`). Unset, the cloud itself |
 | `region` | S3's signing region; `us-east-1` when unset |
 | `pathStyle` | S3 path-style addressing (`http://host/bucket/key`), which S3-compatible servers usually need |
-| `access` | `direct` or `cached`; unset, direct where the profile can read in place |
-| `keyFile` | gcs: a service-account key for the JSON API; absent or missing, application default credentials |
+| `access` | `direct` (the default) or `cached`. A profile that cannot read in place is cached whatever it says (the modes below), and the boot log says why |
+| `keyFile` | gcs: a service-account key for the JSON API; absent or missing, application default credentials. The chart sets `/etc/midstream-storage/<name>/service-account.json` for a profile with a Secret |
 
 Unknown fields are refused, as the chart refuses them. So are two `s3` profiles serving one bucket
 through different endpoints: an `s3://` path names no endpoint, so DuckDB could not tell their
-objects apart (nested scopes on one endpoint are fine, the longest wins). A registry that breaks a
-rule stops the console at start, naming the rule.
+objects apart (nested scopes on one endpoint are fine, the longest wins). So is an `azure` profile
+whose connection string names another account than its scope. A registry that breaks a rule stops
+the console at start, naming the rule.
 
 **Credentials** come only from the environment, `CONSOLE_STORAGE_<NAME>_<KEY>` with the name in upper
 case and `-` as `_`, and are never logged — at most a variable's name:
@@ -338,7 +342,7 @@ on the Settings page, without a restart (§3.10).
 | Steadier or more responsive rates | Raise or lower `CONSOLE_INGEST_RATE_WINDOW_MS` |
 | Large fleet, slow refresh | Raise `CONSOLE_DETAIL_CONCURRENCY` — but that multiplies concurrent control-plane requests |
 | Bigger statement results or exports | Raise `CONSOLE_RESULT_ROW_LIMIT` / `CONSOLE_EXPORT_ROW_LIMIT`; results are stored on disk under `CONSOLE_RUN_DIR` |
-| Stop downloading Parquet | Give the profile direct access: an HMAC key pair for a `gcs` profile, or remove its `"access": "cached"` |
+| Stop downloading Parquet | Give the profile direct access: an HMAC key pair for a `gcs` profile, a connection string or the account key for an Azure emulator, or remove its `"access": "cached"` |
 | Faster cold scans far from the object store | Raise `CONSOLE_RUN_SCAN_CONCURRENCY` (64–96 counted the table above in 19–21 s instead of 25 s, with the first page ~0.5 s later) |
 | Read-only deployment | `CONSOLE_DATA_ACCESS_ENABLED=false` hides the Data tab entirely |
 
@@ -380,7 +384,7 @@ plane is unreachable. The Settings page is then read-only, because the overrides
 **Not overridable.** Everything that sizes the pod, wires it to its environment, or is read once
 at startup stays with the deployment. The Settings page lists these read-only under
 **Deployment**: `PORT`/`HOST`, `CONSOLE_URL`, the registry (its domains and the settings home), `CONSOLE_VERSION`, the storage
-profiles (under **Object storage access**, each with its scope, mode and what it reads with),
+profiles (**Object storage access**, then a row per profile: its scope, mode and what it reads with),
 `CONSOLE_DUCKDB_MEMORY_LIMIT`, `CONSOLE_DUCKDB_THREADS`, `CONSOLE_RUN_CONCURRENCY`,
 `CONSOLE_RUN_SCAN_CONCURRENCY` (they size `UV_THREADPOOL_SIZE` at start), `CONSOLE_DATA_DIR`,
 `CONSOLE_PARQUET_CACHE_MAX_BYTES`, `CONSOLE_CORS_ORIGIN`, `CONSOLE_SERVE_CLIENT`, and the
@@ -394,7 +398,7 @@ The console's settings are stored in its **settings home** and edited on `/setti
 control-plane and runtime settings are on that domain's page, `/d/<domain>/settings`. They are
 described in the main handbook, [17 — Settings](../../docs/handbook/17-settings.md).
 
-## 3.x Obtaining a gcs profile's HMAC credentials
+## 3.11 Obtaining a gcs profile's HMAC credentials
 
 A `gcs` profile reads in place only with both `CONSOLE_STORAGE_<NAME>_GCS_HMAC_KEY_ID` and
 `_GCS_HMAC_SECRET`; they are read once at start, so a restart is required.
@@ -420,6 +424,8 @@ and a project allows at most five keys per service account.
 > gcs profile serves, and only then — which of that profile's variables to check, dropping any hint
 > that blames the region. DuckDB's own S3 messages are accurate and are left as they are.
 
-For `s3` profiles an access key with `s3:GetObject` and `s3:ListBucket` on the destination is
-enough (a read-only SeaweedFS identity on a test cluster); for `azure` profiles, the "Storage Blob
-Data Reader" role or a read-and-list SAS in a connection string.
+For `s3` profiles, an access key allowed `s3:GetObject` on the destination's objects and
+`s3:ListBucket` on its bucket is enough — such as a read-only SeaweedFS identity on a test cluster.
+Without `s3:ListBucket`, S3 answers a missing object `403` rather than `404`, and a table not
+created yet reads as unreadable. For `azure` profiles, the "Storage Blob Data Reader" role or a
+read-and-list SAS in a connection string.

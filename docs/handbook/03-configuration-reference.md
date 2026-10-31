@@ -56,7 +56,8 @@ revision. With no settings table it returns `get_config()` unchanged.
 | `default_runtime_template_version` | `CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION` | `v1` | none |
 | `runtime_app_spec` | `CONTROL_PLANE_RUNTIME_APP_SPEC` | `{}` | must parse to a YAML mapping |
 | `default_list_limit` | `CONTROL_PLANE_DEFAULT_LIST_LIMIT` | `"30"` | one of `10`, `30`, `100`, `all` |
-| `default_destination_uri` | `CONTROL_PLANE_DEFAULT_DESTINATION_URI` | `None` | trimmed, trailing slashes dropped; blank is `None`. Where every new materialization's tables are created; a create request cannot name another. `None`, or a URI that is not `gs://`, refuses every create (`409 destination_not_configured`). Reported by `GET /system/settings` |
+| `default_destination_uri` | `CONTROL_PLANE_DEFAULT_DESTINATION_URI` | `None` | trimmed, trailing slashes dropped; blank is `None`. Where every new materialization's tables are created; a create request cannot name another, and a materialization keeps the one it was created with. `gs://<bucket>[/<prefix>]`, `s3://<bucket>[/<prefix>]` or `abfss://<container>@<account>.dfs.core.windows.net[/<prefix>]`, at most 1,024 characters (`lakehouse/store/uris.py::destination_problem`, 17 §17.3); `file:///<path>` only with `allow_file_destinations`. `None`, or any other value, refuses every create (`409 destination_not_configured`, saying why). Reported by `GET /system/settings` |
+| `allow_file_destinations` | `CONTROL_PLANE_ALLOW_FILE_DESTINATIONS` | `False` | boolean parse; on, a destination may also be `file:///<absolute path>` on the local disk: for tests and a laptop, where every app and runtime shares that disk. Never set by the chart, which refuses a `file://` destination |
 | `default_runtime_replicas` | `CONTROL_PLANE_DEFAULT_RUNTIME_REPLICAS` | `1` | integer, `>= 1`; replicas for a create request that names none |
 | `max_runtime_replicas` | `CONTROL_PLANE_MAX_RUNTIME_REPLICAS` | `64` | integer, `>= 1`; the most a create or update may ask for |
 | `runtime_autoscaling_enabled` | `CONTROL_PLANE_RUNTIME_AUTOSCALING_ENABLED` | `True` | boolean parse; on, a runtime far behind its topics gets more members until it has caught up, unless its materialization turned autoscaling off; off, none does, and scaled runtimes go back to their own count at the next lag measurement (07 §7.12a) |
@@ -79,7 +80,7 @@ revision. With no settings table it returns `get_config()` unchanged.
 | `materialization_status_topic` | `CONTROL_PLANE_MATERIALIZATION_STATUS_TOPIC` | `materialization-status` | none |
 | `schema_authority_updates_topic` | `CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC` | `materialization-schema-authority-updates` | none; the runtime control topic: runtime settings (06 §6.7) |
 | `table_events_topic` | `CONTROL_PLANE_TABLE_EVENTS_TOPIC` | `materialization-table-events` | none; what runtimes' committers and the maintenance app publish (06 §6.6) |
-| `storage_prefix` | `CONTROL_PLANE_STORAGE_PREFIX` | `materializer` | trimmed, slashes stripped; the directory under the destination that every materialization's tables are created in: `<destination>/<storage_prefix>/<materialization id>/<table>` (11 §11.1). Not a namespace — a table's namespace is its dataset. Fixed for the deployment; `iceberg_namespace` / `…_ICEBERG_NAMESPACE` before 3.0 |
+| `storage_prefix` | `CONTROL_PLANE_STORAGE_PREFIX` | `materializer` | trimmed, slashes stripped; the directory under the destination that every materialization's tables are created in: `<destination>/<storage_prefix>/<materialization id>/<table>` (11 §11.1). Not a namespace — a table's namespace is its dataset. Fixed for the deployment |
 | `catalog_base_url` | `CONTROL_PLANE_CATALOG_BASE_URL` | `None` | trimmed, trailing slash dropped; the address engines reach the REST catalog at, shown in the console's connection snippets |
 | `catalog_api_enabled` | `CONTROL_PLANE_CATALOG_API_ENABLED` | `true` | boolean parse; off, every `/catalog` endpoint answers `503` |
 | `catalog_metadata_cache_seconds` | `CONTROL_PLANE_CATALOG_METADATA_CACHE_SECONDS` | `5` | integer, `>= 1`; how long a loaded table is answered again from memory |
@@ -175,7 +176,8 @@ Set in `charts/midstream/templates/control-plane/app.yaml`:
 - `AUTH_SIGNING_KEY`, `…_PREVIOUS_SIGNING_KEY`, `…_SERVICE_TOKEN`,
   `…_BOOTSTRAP_ADMIN_EMAIL` and `…_BOOTSTRAP_ADMIN_PASSWORD`, from the `<release>-auth` Secret
 - `PROTOCOL_LOGGING_ENABLED` = `"true"`
-- `GOOGLE_APPLICATION_CREDENTIALS` (consumed by the GCS client, not by `ControlPlaneConfig`)
+- the lake's storage variables, from `storage.*`: each backend's credentials as Secret references and
+  the `STORAGE_*` settings (§3.3a; consumed by the object stores, not by `ControlPlaneConfig`)
 
 **Not set anywhere** (code defaults apply):
 
@@ -188,6 +190,8 @@ Set in `charts/midstream/templates/control-plane/app.yaml`:
   use, or the console's snippets show a placeholder — `…_CATALOG_API_ENABLED`,
   `…_CATALOG_METADATA_CACHE_SECONDS`
 - the seven session, password, lockout and audit settings (Settings page overrides apply instead)
+- `CONTROL_PLANE_ALLOW_FILE_DESTINATIONS`: `file://` destinations serve tests only, and the chart
+  refuses one
 
 Note that `control_plane_table_name` is a config field, but the table is bound by the Kaspr
 agent/webview `tables:` block (`name: <release>-state`), not by this variable.
@@ -197,7 +201,7 @@ and so on).
 
 ### 3.2.5 Which fields the Settings page can override
 
-37 fields, listed with their bounds in [17 — Settings](./17-settings.md) §17.3:
+48 fields, listed with their bounds in [17 — Settings](./17-settings.md) §17.3:
 
 | Section | Fields |
 |---|---|
@@ -210,11 +214,14 @@ and so on).
 | Topics | `topic_catalog_ttl_seconds`, `topic_catalog_min_refresh_seconds`, `topic_analysis_max_topics` |
 | Diagnostics | `protocol_logging_enabled` |
 | Security | `session_idle_timeout_minutes`, `session_max_lifetime_hours`, `session_refresh_minutes`, `password_min_length`, `sign_in_max_failed_attempts`, `sign_in_lockout_minutes`, `audit_log_retention_days` |
+| Sign-in | `sso_entra_enabled`, `sso_github_enabled`, `sso_google_enabled`, `sso_oidc_enabled`, `sso_first_sign_in`, `sso_allowed_email_domains`, `password_sign_in_enabled` |
 | Live tail | `live_tail_enabled`, `live_tail_max_rows_per_table`, `live_tail_max_bytes_per_table`, `live_tail_retention_seconds`, `live_tail_fetch_wait_ms`, `live_tail_max_records_per_second_per_table`, `live_tail_peek_max_rows`, `live_tail_idle_seconds` |
 
 The rest stay with the deployment — topic and table names, the namespace and runtime naming, the
-Iceberg namespace and the catalog's base URL, the runtime template and spec, and credentials, the
-identity secrets included — and the Settings page lists them read-only. `protocol_log_slow_wait_seconds`
+storage prefix and the catalog's base URL, how the object stores reach `s3://` and `abfss://`
+destinations and whether `file://` ones are allowed, the runtime template and spec, and credentials —
+and the Settings page lists them read-only, saying of an identity secret only whether it is
+configured and nothing of a storage credential (17 §17.3). `protocol_log_slow_wait_seconds`
 is not offered for the control plane because nothing there reads it; runtimes use it, and the
 Runtimes section offers it.
 
@@ -321,7 +328,7 @@ every child resource and the commits topic from the app name (02 §2.10).
 | Variable | Set by | Consumed by |
 |----------|--------|-------------|
 | `RUNTIME_MEMBER_ID` | Downward API (`metadata.name`) in the runtime app spec | `runtime_app/writer/context.py::current_member_id()` |
-| `GOOGLE_APPLICATION_CREDENTIALS` | runtime app spec | the GCS client and PyIceberg's FileIO |
+| The lake's storage variables (§3.3a) | the chart's runtime spec, from `storage.*` | the object stores that the writer's uploads, the committer and its FileIO (`ObjectStoreFileIO`) go through |
 | `K_STREAM_WAIT_EMPTY` | the generated runtime spec, `false` | Kaspr's `stream_wait_empty`: Faust does not wait, on a rebalance or at shutdown, for delivered records to be acknowledged. The writer holds acknowledgements until rows are in the table (10 §10.7), so waiting would stall both; a record left unacknowledged is read again |
 | `K_STORE_ROCKSDB_WRITE_BUFFER_SIZE`, `K_STORE_ROCKSDB_MAX_WRITE_BUFFER_NUMBER` | the generated runtime spec, `4194304` and `2` | Kaspr's RocksDB write buffer for the state table, the app's one store: flushing every 4 MiB keeps its write-ahead log under 8 MiB on a 64Mi volume (10 §10.8). Kaspr's own default is 64 MiB |
 | `PROTECTION_KEY` | the chart's runtime spec, from the auth Secret's `protection-key` (optional) | `protection/secrets.py`: the key the writer hashes with (22 §22.8) |
@@ -335,6 +342,43 @@ entries winning.
 `current_member_id()` stamps batch ids and data file names, and names the committer in the
 heartbeat. A member deletes the staging files it finds under its own id when it starts; nothing
 staged by an earlier process is resumed — it is read again from Kafka (10 §10.9).
+
+## 3.3a Object storage
+
+Every process that reads or writes the lake — the control plane, the maintenance and tail apps,
+every runtime, and `python -m midstream.lakehouse.store.check` — builds the store of a URI scheme from
+its environment the first time it meets that scheme (`lakehouse/store/registry.py`), and keeps it for
+its lifetime: a changed variable takes a restart. None of these variables is a `ControlPlaneConfig`
+field. The credential variables are each SDK's own, the names workload identities inject; Midstream's
+own are the `STORAGE_*` variables (`StoreSettings`), which the S3 and Azure stores read. A store whose
+credentials are absent is built all the same, since its SDK's default chain may find the pod's
+identity; its first request then fails with the SDK's own error. The chart sets them from `storage.*`
+(02 §2.9a); what each store does with them is 11 §11.1a.
+
+| Variable | Scheme | Unset | Meaning | From the chart |
+|---|---|---|---|---|
+| `GOOGLE_APPLICATION_CREDENTIALS` | `gs://` | application default credentials: GKE workload identity | the path of a Google service-account key | `/etc/midstream/gcs/service-account.json`, the key `service-account.json` of `storage.gcs.credentialsSecret` |
+| `STORAGE_EMULATOR_HOST` | `gs://` | GCS itself | google-cloud-storage's own: an emulator's address, such as fake-gcs-server's. Set, the GCS store deletes one object per request, since the emulator cannot answer batch requests | never set |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | `s3://` | the rest of boto3's default chain: IRSA, EKS Pod Identity, an instance role | a key pair | `access-key-id` and `secret-access-key` of `storage.s3.credentialsSecret`, both required |
+| `AWS_SESSION_TOKEN` | `s3://` | none | the token of temporary keys | `session-token`, optional |
+| `STORAGE_S3_ENDPOINT` | `s3://` | AWS | an S3-compatible server: an `http://` or `https://` URL, trailing slashes dropped. One endpoint serves every `s3://` URI of the process, so a deployment's `s3://` destinations share one server | `storage.s3.endpoint` |
+| `STORAGE_S3_REGION` | `s3://` | `us-east-1` | the region requests are signed for; the store hands it to boto3 itself, so `AWS_REGION` does not change it | `storage.s3.region` |
+| `STORAGE_S3_PATH_STYLE` | `s3://` | `false` | `1`/`0`, `true`/`false`, `yes`/`no`, `on`/`off`: the bucket in the path (`http://host/bucket/key`) rather than the host name, as most S3-compatible servers want | `"true"` when `storage.s3.pathStyle` is |
+| `AZURE_STORAGE_CONNECTION_STRING` | `abfss://` | the account key | a connection string, used first. It serves its own account only — a URI of another account is refused (`AccountMismatch`) — and its endpoints are used as written | `connection-string` of `storage.azure.credentialsSecret`, optional |
+| `AZURE_STORAGE_ACCOUNT_KEY` | `abfss://` | `DefaultAzureCredential` | without a connection string, the shared key of the account each URI names | `account-key`, optional |
+| `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_SECRET` | `abfss://` | the rest of the chain | read by `DefaultAzureCredential` (azure-identity), which signs when neither of the above is set: a service principal from these three, AKS workload identity (whose webhook injects variables of its own), a managed identity. Built once per process | `client-id`, `tenant-id`, `client-secret`, each optional |
+| `STORAGE_AZURE_ENDPOINT` | `abfss://` | `https://<account>.blob.core.windows.net` | an emulator's Blob endpoint, an `http://` or `https://` URL to which the account is appended: `http://azurite:10000` reaches `http://azurite:10000/<account>`. A connection string's own endpoints win over it | `storage.azure.endpoint` |
+
+A `STORAGE_*` value the stores cannot use — an endpoint that is no `http(s)://` URL, a path style
+that is no boolean — raises `ValueError` naming the variable when the S3 or Azure store is built, and
+the Settings page shows it as `invalid: …` (17 §17.3). `file://` URIs need nothing: the file store
+reads and writes the local disk, and a destination may be one only with `allow_file_destinations`
+(§3.2.1).
+
+The chart gives the console none of these. Its storage profiles come from `CONSOLE_STORAGE_FILE`,
+or `CONSOLE_STORAGE` inline for development, each profile's credentials from
+`CONSOLE_STORAGE_<NAME>_*`, and a profile without them reads as the console's own identity, through
+its SDK's default chain (console 03 §3.6a).
 
 ## 3.4 Constants that behave like configuration but are not configurable
 
@@ -383,6 +427,22 @@ change and a package release.
 | `HASH_HEX_LENGTH`, `PARTIAL_TAIL`, `HIDDEN` (`mask.py`) | `32`, `4`, `****` | a hashed value's hex characters (128 bits); the most significant characters a partial keeps; what hides the rest |
 | `MIN_PROTECTION_KEY_LENGTH` (`secrets.py`) | `32` | a shorter key is ignored and logged |
 | `HISTORY_LIMIT` (`policy.py`) | `100` | policies a table's `materializer.protection` keeps in its history |
+
+### Object stores — `lakehouse/store/`, `storage/objects.py`
+
+| Constant | Value | Meaning |
+|----------|-------|---------|
+| `BATCH_SIZE` (`gcs.py`), `DELETE_BATCH_SIZE` (`s3.py`), `BATCH_SIZE` (`azure.py`) | `100`, `1000`, `256` | deletes one request carries: a JSON API batch, a `DeleteObjects`, a blob batch. A GCS store that deletes one object per request (`STORAGE_EMULATOR_HOST` set) counts `1` |
+| `MAX_RETRIES` (`s3.py`) | `5` | retries of a failed S3 request in botocore's standard mode, six attempts in all |
+| `RETRY_TOTAL`, `RETRY_INITIAL_BACKOFF_SECONDS` (`azure.py`) | `3`, `1` | retries of a failed Azure request, the first after about a second, then growing |
+| `MAX_POOL_CONNECTIONS` (`s3.py`), `POOL_SIZE` (`azure.py`) | `32` | pooled connections per host, where botocore and requests keep 10 by default |
+| `CONNECT_TIMEOUT_SECONDS`, `READ_TIMEOUT_SECONDS` (`s3.py`, `azure.py`) | `10`, `120` | |
+| `TRANSFER_CHUNK_BYTES`, `TRANSFER_CONCURRENCY` (`azure.py`) | `8 MiB`, `4` | an Azure upload larger than a chunk goes in blocks, the block-list commit carrying the condition; a larger download in chunks, each after the first under `If-Match` |
+| `READ_ATTEMPTS` (`azure.py`) | `3` | whole reads of a blob that keeps changing under a chunked download |
+| `CLEANUP_PASS_MAX_OBJECTS`, `CLEANUP_PASS_MAX_REQUESTS`, `CLEANUP_PASS_MAX_SECONDS` (`storage/objects.py`) | `1000`, `100`, `10.0` | one drop pass lists and deletes at most `max(CLEANUP_PASS_MAX_OBJECTS, CLEANUP_PASS_MAX_REQUESTS × delete_batch_size)` objects — 1,000 through a store that deletes one object per request, 10,000 in GCS's batches of 100, 25,600 in Azure's of 256, 100,000 in S3's `DeleteObjects` of 1,000 — and stops after about 10 s, checked between requests |
+| `BATCH_RETRY_DELAYS_SECONDS` (`storage/objects.py`) | `(1.0, 2.0, 4.0)` | waits before a drop pass deletes again what failed in a way that may succeed later: `delete_many` retries nothing |
+
+GCS requests are retried by google-cloud-storage with its own defaults, except inside a batch.
 
 ### The maintenance app (`maintenance_app/config.py`)
 
@@ -455,15 +515,19 @@ Kaspr changelog topic suffixes.
 | Runtime control topic | `materialization-schema-authority-updates` | `<release>-materialization-schema-authority-updates` |
 | Table events topic | `materialization-table-events` | `<release>-materialization-table-events` |
 | Storage prefix | `materializer` | the release name |
+| Destination | none: no create | `controlPlane.settings.defaultDestinationUri`, checked (02 §2.9a); unset |
+| File destinations | off | off, never set |
+| S3 endpoint, region, path style | AWS, `us-east-1`, off | `storage.s3.endpoint`, `region`, `pathStyle`; unset |
+| Azure Blob endpoint | each account's own | `storage.azure.endpoint`; unset |
 | Catalog base URL | — | (unset) |
 | Protocol logging | `False` | `true` |
 | Slow-wait threshold | `30s` | (unset → 30) |
-| Table name | `state` | `state` | `<release>-state` |
-| Settings table | `settings` | `settings` | `<release>-settings` |
-| Settings request topic | `<release>-settings-requests` | same | `midstream-settings-requests` |
-| Runtime CPU | — | 0.5 request, 1 limit - too little on a busy topic ([12 §12.10](./12-operations-runbook.md)) | same |
-| Runtime memory | — | 1Gi request and limit - likewise | same |
-| Runtime `topicAllowDeclare` | — | `true` | (unset) |
+| Table name | `state` | the KasprTable `<release>-state`, its `spec.name` `state` |
+| Settings table | `settings` | the KasprTable `<release>-settings`, its `spec.name` `settings` |
+| Settings request topic | `materializer-settings-requests` | `<release>-settings-requests` |
+| Runtime CPU | — | 0.5 requested, 2 at most, the request then set from use ([02 §2.10c](./02-deployment-and-manifests.md)) |
+| Runtime memory | — | 1Gi requested and at most |
+| Runtime `topicAllowDeclare` | — | `true` |
 
 For every field the Settings page can override (§3.2.5, §3.3.1), an override sits above all three
 columns: **override → deployment value (the env var) → code default**. The page shows which one is
@@ -491,11 +555,23 @@ every runtime's spec hash, so the sweep re-applies, and restarts, every runtime.
 field (§3.3.2) still needs a package release, and runtimes pick it up only when their package pin
 advances.
 
+**Where new tables go** — the destination, on the Settings page or as
+`controlPlane.settings.defaultDestinationUri`. It decides new materializations only: each keeps the
+destination it was created with, so the apps and runtimes need credentials for every backend a
+destination of theirs has named (02 §2.9a). A table never moves between backends — its metadata
+names its files by their full URIs — so a move is a new materialization.
+
+**Storage credentials and endpoints** — change the Secret, or `storage.*`, and roll out. A Secret's
+new content reaches a pod when it next starts; a change of `storage.*` changes every runtime's spec,
+so the sweep re-applies, and restarts, every runtime. `STORAGE_S3_ENDPOINT` and
+`STORAGE_AZURE_ENDPOINT` are no part of any location, so a server that moves needs a values change
+and a rollout, nothing in the bucket.
+
 **Observation timing** — edit `observation/policy.py`. Affects the control plane only;
 no runtime redeploy needed.
 
-**The Iceberg namespace** is part of every table's location and identifier: change it only for a
-new deployment. Existing tables keep the namespace they were created in.
+**The storage prefix** (`CONTROL_PLANE_STORAGE_PREFIX`) is part of every table's location: change it
+only for a new deployment. Existing tables keep the location they were created with.
 
 ## 3.7 Protocol logging
 

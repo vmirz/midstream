@@ -130,6 +130,8 @@ with `403` (`reason: cross_site_request`).
 | `too_many_attempts` | 429 | Sign-in attempts from one address over `CONSOLE_SIGN_IN_ATTEMPTS_PER_MINUTE` (`retry-after` header), or the control plane's lockout |
 | `not_found` | 404 | Unknown materialization, a snapshot the table does not have, unmatched route, another person's run |
 | `unavailable` | 503 | Data access disabled; a table that cannot be read (§8.13) |
+| `storage_not_configured` | 503 | No storage profile covers the object a table names: `details.uri` (07 §07.10) |
+| `storage_unavailable` | 503 | DuckDB refused a storage profile's secret: `details.profile`; the message never holds the statement |
 | `control_plane_unreachable` | 503 | `fetch` to the control plane threw |
 | `control_plane_error` | pass-through | Control plane returned non-2xx |
 | `query_failed` | 400 | DuckDB rejected the statement or filter; `details.position` locates it when the engine said where |
@@ -662,7 +664,8 @@ id>` names an older one of that table.
 
 Errors: `503 unavailable` when data access is turned off, or when a table that exists cannot be
 read — object storage unreachable or refusing, a metadata file or manifest missing — with which in
-the message; `404 not_found` for an `asof` the table does not have ("it may have expired").
+the message; `503 storage_not_configured` when no storage profile covers the table's location;
+`404 not_found` for an `asof` the table does not have ("it may have expired").
 
 ## 8.14 `POST …/data/estimate`
 
@@ -912,7 +915,10 @@ and the main handbook's [17 — Settings](../../docs/handbook/17-settings.md).
 
 That is a domain's page, `GET /api/d/domain_b/settings`. The console's, `GET /api/settings`, has
 the same shape with only `console` set, `rollout` null, and the console's deployment — every
-domain it serves, the settings home, the console URL and its sign-in providers — in `deployment`.
+domain it serves, the settings home, the console URL, its sign-in providers and its storage
+profiles (`storage`: every profile's name, kind and mode; `storage.<name>`: its scope and mode, its
+endpoint, region and path style, what it reads with and the variables its credentials come from,
+never a value) — in `deployment`.
 
 A `SettingView` (`shared/types.ts`) is the same for every scope: `scope`, `key`, `section`,
 `label`, `description`, `kind` (`integer`, `boolean`, `destination_uri`, `quantity`, `enum`, `string`,

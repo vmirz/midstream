@@ -26,14 +26,6 @@ maintenance app serves every materialization (10 §10.10).
 by materialization, one committer per table on the runtime's `<rt>-commits` topic (one partition
 per table), and a binding model that maps N materializations to one app.
 
-### Google Cloud Storage only
-
-The lake is GCS: `lakehouse/gcs.py`, the PyIceberg FileIO in `lakehouse/io.py`, and the pointer's
-compare-and-swap, which is a GCS generation precondition (`if_generation_match`, 11 §11.2). The
-console reads `gs://` the same way (console 06). *To implement* another store: a FileIO, object
-listing for orphan cleanup, and a conditional write for the pointer — S3's `If-Match` /
-`If-None-Match`, Azure's ETags.
-
 ### Iceberg format version 2
 
 Tables are created with `format-version: 2` (`FORMAT_VERSION`, `lakehouse/tables.py`; decision
@@ -75,14 +67,15 @@ are not read at all.
 
 The facade answers `501` to table creation, drop and multi-table transactions — tables are made
 and dropped with materializations, datasets with `POST /datasets` — and vends no storage
-credentials, so every engine needs its own GCS access (11 §11.8). DuckDB and PyIceberg are verified against it;
-Spark and Trino speak the same protocol but have not been run against it.
+credentials, so every engine needs its own access to the table's backend: GCS, S3 or Azure (11
+§11.8, 04 §4.14). DuckDB and PyIceberg are verified against it; Spark and Trino speak the same
+protocol but have not been run against it.
 
 ### No warehouse index
 
 The spec's optional `<destination>/<namespace>/_catalog/tables.json` (spec §5.5) was not built.
 Finding a table needs the control plane — its API (`GET /datasets/{dataset}/tables/{table}`) or the
-REST facade — or a known location. The bucket knows nothing of datasets: tables are stored by
+REST facade — or a known location. The object store knows nothing of datasets: tables are stored by
 materialization (11 §11.1).
 
 ### An edit changes only the label, the scale, the topics and data protection
@@ -94,12 +87,14 @@ template replaced, which Kubernetes does not allow in place. The partition granu
 tables' partition spec and the destination their location, both fixed when the tables are created.
 A table's dataset and name are fixed too: a topic keeps the table it was given, and to move it to
 another dataset its table must be dropped first. A topic added back after its table was dropped
-with its files kept needs a new name, since the old one still names files in the bucket.
+with its files kept needs a new name, since the old one still names files in the object store.
 
 A create chooses less still since 4.0: its destination, namespace, runtime name and storage per
-member are the deployment's (04 §4.5.2). One deployment writes one place, under names it generates,
-with volumes sized for what they hold, the state table alone; a deployment that needs another
-destination is another deployment.
+member are the deployment's (04 §4.5.2). One deployment writes new tables to one place at a time,
+under names it generates, with volumes sized for what they hold, the state table alone. A changed
+destination applies to materializations created after it, which may then live on another backend
+while the earlier ones stay where they are (§14.20); a deployment that needs two destinations at once
+is two deployments.
 
 ### Changing the topics stops the runtime for about five minutes
 
@@ -128,6 +123,13 @@ destination's `ingest_date=…/`, `_manifest/` and `_runtime_state/` objects are
 to delete. 2.0 (several topics per materialization) is a fresh start too: a 1.0 materialization is
 deleted with the 1.0 control plane — which drops its table — and created again with 2.0, whose
 records and table layout 1.0's do not match.
+
+### No upgrade from an earlier release
+
+Every installation of this release is new (decision D10 of `docs/design/storage-backends.md`): there
+is no upgrade path from an earlier release, and nothing converts the values, tables or records an
+earlier installation left. Install anew, with `storage.*` and `console.storage` written for it
+(docs/install.md).
 
 ### The `repair_state` step
 
@@ -234,14 +236,16 @@ every other event on `materialization-work` — which the agent receives before 
 them — queues behind it, and once its 4,096-event buffer is full Faust stops delivering to every
 agent of the app. *To improve:* look the groups up concurrently.
 
-### Table drops are batched, but their speed on GCS is unmeasured
+### Table drops are batched, but their speed is unmeasured
 
-Dropping a table deletes its objects 100 per GCS batch request, in bounded passes on a worker
-thread (`drop_table_objects_pass`, `storage/objects.py`; 07 §7.10). How fast that is depends on how
-GCS runs a batch's calls, which it does not document: against a fake, ~1,700 objects a second when
-they run together, ~70 when they run one after another at 10 ms each. Until a large drop on GCS
-measures it (`pass_deleted_count`, `duration_ms`), plan on the slower figure. *To improve:* send
-two to four batches at once, minding the bucket's write rate, which the runtimes' uploads share.
+Dropping a table deletes its objects through the store's batch deletes — 100 to a GCS batch request,
+1,000 to an S3 `DeleteObjects`, 256 to an Azure blob batch — in bounded passes on a worker thread
+(`drop_table_objects_pass`, `storage/objects.py`; 07 §7.10). How fast that is depends on how each
+service runs a batch's deletes, which none documents: against a fake GCS, ~1,700 objects a second
+when they run together, ~70 when they run one after another at 10 ms each. Until a large drop on
+each backend measures it (`pass_deleted_count`, `duration_ms`), plan on the slower figure. *To
+improve:* send two to four batches at once, minding the store's write rate, which the runtimes'
+uploads share.
 
 ## 14.3 Kafka and Faust
 
@@ -564,8 +568,9 @@ A pass deletes at most 1,000 files (`ORPHAN_PASS_LIMIT`), one request each, olde
 a pass that hit the limit makes the next due at the next step. On the E13 table that was a pass
 every three minutes, about 5.5 files a second: its ~24,000 unreferenced files — compaction inputs
 whose snapshots had expired — took over an hour (13 §13.8). A busy table that replaces many small
-files a day spends that much of a maintenance app slot deleting them. *To improve:* batch the
-deletes, 100 to a request, as the table drop does (07 §7.10).
+files a day spends that much of a maintenance app slot deleting them. *To improve:* delete through
+the store's `delete_many` — 100 to a request on GCS, 1,000 on S3, 256 on Azure — as the table drop
+does (07 §7.10).
 
 ### `commits_stalled` lingers after disruptions
 
@@ -588,9 +593,9 @@ every snapshot of the last `snapshot_keep_all_minutes`, then one an hour, up to
 ### One object takes every commit
 
 Every commit replaces `metadata/catalog-pointer.json`, and GCS throttles a single object updated
-more than about once a second (E11). The runtime commits seconds apart; an external engine
-committing through the REST facade in a tight loop slows the runtime's commits, which then retry
-(11 §11.10).
+more than about once a second (E11). The runtime's commits stay at least a second apart on every
+backend (`COMMIT_SPACING_SECONDS`), and seconds apart in practice; an external engine committing
+through the REST facade in a tight loop slows the runtime's commits, which then retry (11 §11.10).
 
 ### No manifest rewrite job
 
@@ -637,12 +642,14 @@ and the facade filters no rows or columns. Access tokens carry `catalog.read` an
 some datasets (`_token_principal`, `identity/authorization.py`; 18 §18.15).
 
 The grants decide what the control plane, the REST catalog and the console show and serve, **not
-what the bucket serves**: DuckDB reads data files with an HMAC key, PyIceberg with Google
-credentials, and either usually reaches the whole bucket. Restricting a dataset therefore restricts
-only people without such credentials (decision; 18 §18.16). Table-scoped storage credentials vended
-by the REST catalog (`config` → `storage-credentials`, or GCS downscoped tokens per table location)
-would close the gap; the catalog's resolution of a name to one table's location is already in place
-for it.
+what the object store serves**: an engine reads data files with credentials of its own for the
+backend — an HMAC key or Google credentials on GCS, an access key or a role on S3, an account key, a
+SAS or a role on Azure — and such credentials usually reach a whole bucket or container. So do the
+console's storage profiles, each over its scope (20 §20.11). Restricting a dataset therefore
+restricts only people without such credentials (decision; 18 §18.16). Table-scoped storage
+credentials vended by the REST catalog (`config` → `storage-credentials`: GCS downscoped tokens, S3
+session policies, Azure SAS tokens, each for one table's location) would close the gap; the
+catalog's resolution of a name to one table's location is already in place for it.
 
 Names are not secret either: everyone who may see datasets sees every dataset's name, description,
 owners and table names, locked ones included.
@@ -708,6 +715,10 @@ Before "fixing" any of these, read the linked section.
 | A stopped materialization's tables get new snapshots | the maintenance app goes on compacting and expiring them (10 §10.10); nothing is appended |
 | A materialization shows `deploying` for minutes after an edit of its topics | the runtime drains until its consumer group is empty (§14.1, 07 §7.9a) |
 | A kept table's row count no longer changes | it is `retired`: read-only, still in the namespace and the catalog, still maintained (11 §11.7) |
+| A commit reported landed though its pointer write raised an error | the write landed and its retry was refused, or its answer was lost; the catalog reads the pointer back before it decides (11 §11.2) |
+| A compaction or reprotect reported failed while its outputs stay under `data/` | its commit's outcome was unknown — a pointer write with no answer, or one S3 refused while another was in flight — so nothing the table may reference is deleted; orphan cleanup removes the outputs if the table never took them (12 §12.12) |
+| On S3, orphan cleanup's `deleted` count includes files that were already gone | S3 does not say whether a key existed, so its store reports every delete done (`lakehouse/store/s3.py`) |
+| The conformance suite reports `conditional_delete` skipped on S3 | the S3 store offers no conditional deletes, and nothing in Midstream sends one (12 §12.12a) |
 
 ## 14.11 Extension points
 
@@ -724,7 +735,7 @@ Before "fixing" any of these, read the linked section.
 | A metadata column | `lakehouse/tables.py` (ids 1–9 are taken), `lakehouse/rows.py::build_row` (the seal's and the live tail's rows), the console's `METADATA_COLUMNS` |
 | A maintenance job | `lakehouse/maintenance.py` (planning, committing) + `maintenance_app/worker.py` (`TableMaintenance._next_job`) + `MAINTENANCE_JOBS` (`models/table.py`) + `services/table_maintenance.py` for a setting it needs |
 | A REST catalog endpoint | `lakehouse/rest.py`, `web/catalog.py`, a WebView |
-| A storage backend | `lakehouse/gcs.py`, `lakehouse/io.py`, `lakehouse/pointer.py` (§14.1) |
+| A storage backend | a store implementing `ObjectStore` (`lakehouse/store/base.py`), its scheme in `uris.py` and a builder in `registry.py`, proved by `check.py`; its credentials in the chart (`storage.*`) and a profile kind in the console (`console/server/storage/`) (13 §13.6) |
 | A runtime agent or task | a `.j2` in `runtime_app/templates/` + `runtime/templates.py` |
 | A runtime env var | `runtime_app/config.py` + the relevant `.j2` |
 | A persisted control-plane entity | `storage/keys.py` + `storage/envelopes.py` + a model + `test_storage.py` |
@@ -764,9 +775,11 @@ Before "fixing" any of these, read the linked section.
 
 13. A latest-per-key table for compacted topics, and delete files the console can read (§14.1).
 14. Spark and Trino verified against the REST facade, and vended storage credentials so an engine
-    needs no GCS key of its own (§14.1).
+    needs no storage key of its own (§14.1, §14.8).
 15. Iceberg v3 once PyIceberg writes it: `_unmapped` as a `variant` (§14.1).
-16. Other object stores behind the FileIO and the pointer's conditional write (§14.1).
+16. The conformance suite run against AWS and a real Azure storage account; stores keyed by
+    endpoint and credential, so one domain's destinations can span S3 servers and Azure identities
+    (§14.20).
 17. Avro and Protobuf topics.
 18. Data protection's extensions: per-field choices and per-table policies, value-based detection
     and the record key (§14.19).
@@ -842,7 +855,7 @@ Handbook 19 has the model; these are its limits as built in 4.1.
   of the control plane's settings), and each open Data tab reads the console's config every minute.
   A materialization's own switch, and a stop, show at once.
 - **Live re-reads the table's pointer.** Each refresh checks for a new snapshot, at most every 2 s per
-  table (`snapshotCacheMs`): one small GCS read.
+  table (`snapshotCacheMs`): one small read of its object store.
 - **Settling rows.** A record whose new fields await a schema change has them in `_unmapped` until
   the runtime commits the change — seconds to minutes; the console counts them.
 - **No metrics.** The tail app reports through its health view and log events only; nothing is
@@ -854,7 +867,7 @@ Handbook 19 has the model; these are its limits as built in 4.1.
 |-------|--------|
 | Settings revisions restarted if the `settings` table was lost, and runtimes ignored every delivery until the new revision passed theirs. A control plane installed afresh over a Kafka cluster that kept its delivery topic did the same to the runtimes created after it, and its rollout called them `current` (on a test cluster, a new runtime held revision 14 against the control plane's 3) | Runtime settings have a **lineage**, begun when the control plane first starts on settings without one (`settings-bootstrap`). Every delivery carries it; a runtime keeps the newest by lineage, then revision, and the rollout counts a member `current` only on the current lineage and revision (17 §17.7) |
 | On a broker that creates topics on demand (Kafka's default), deleted topics came back, empty, with one partition: the control plane described topics by name — for the lag refresh every minute, topic analysis, and edits, so describing a misspelt topic made it — and its and the tail app's offset lookups left aiokafka naming every topic they had looked up in each metadata refresh. On a test cluster, 52 topics deleted after their materializations came back at once | No request names a topic: topics are described from a read of every topic, and the clients that look up offsets track none (`kafka/metadata.py::track_no_topics`; 19 §19.7) |
-| The console's GCS reads printed `MaxListenersExceededWarning` twice per object — every few seconds while a Data tab follows a table, whose pointer it re-reads | The console reads objects with a plain GET through GCS's JSON API, with the client library's endpoint, credentials, retries and CRC32C check, not through its download stream (console 06) |
+| The console's GCS reads printed `MaxListenersExceededWarning` twice per object — every few seconds while a Data tab follows a table, whose pointer it re-reads | The console reads GCS objects with a plain GET through GCS's JSON API, with the client library's endpoint, credentials, retries and CRC32C check, not through its download stream (console 06) |
 
 ## 14.18 What 4.2 resolved
 
@@ -891,3 +904,40 @@ Masking rows already written is built: the maintenance app's `reprotect` (22 §2
   maintenance tools only.
 - **The default changes nothing that exists.** By design (22 §22.4): a deployment that raises its
   default must edit each existing materialization to follow it.
+
+## 14.20 Object stores: open items
+
+The object store layer as built (`lakehouse/store/`, 11 §11.1a; 12 §12.12a). Its design is
+`docs/design/storage-backends.md`.
+
+- **S3 is verified against SeaweedFS and moto, not against AWS itself.** CI runs the conformance
+  suite against SeaweedFS 4.51 and moto 5.2.5 (13 §13.3a). moto models AWS's answers — a stale
+  `If-Match` 412, `If-Match` on a missing key 404 — not its atomicity, and AWS's `409
+  ConditionalRequestConflict` for a conditional write that meets another in flight is covered by
+  unit tests alone. Run the suite against an AWS bucket (12 §12.12a) before relying on it there.
+- **Azure is verified against Azurite only**, until the suite runs against a real storage account.
+  Azurite has no DFS endpoint: Midstream and the console read through the Blob endpoint, and an engine
+  reading an `abfss://` table, which goes through the DFS endpoint, is untried.
+- **One S3 endpoint and one Azure endpoint per domain.** Each pod builds one store per scheme from its
+  environment (`lakehouse/store/registry.py`): every `s3://` destination of a domain goes through
+  `storage.s3.endpoint` (AWS when empty), with one region setting and one set of credentials, and every
+  `abfss://` destination through `storage.azure.endpoint` (each account's own when empty) with one
+  credential. A connection string serves its own account only and an account key signs for one, so
+  destinations in several accounts need `DefaultAzureCredential` with a data role on each. Tables on
+  two S3 servers, or in buckets that need different keys, take two domains. *To implement:* stores
+  keyed by endpoint and credential, chosen by destination prefix as the console's profiles are.
+- **A table never changes backend.** Its metadata names every file by its full URI: a materialization
+  keeps the destination it was created with, and moving a table is a new materialization.
+- **A new runtime needs its own trust under some cloud identities.** kaspr-operator gives every runtime
+  a ServiceAccount of its own, new with each materialization. AKS workload identity and EKS Pod Identity
+  trust ServiceAccounts one by one, so each new runtime needs a federated credential or an association
+  before it can read its table (12 §12.12a), and an Azure identity takes at most 20 federated
+  credentials; IRSA can trust every app's and runtime's ServiceAccount at once (`*-app`). *To
+  improve:* one ServiceAccount for every runtime, which kaspr-operator would have to allow.
+- **The console's storage profiles are its own.** A domain on a new bucket, prefix or backend needs a
+  profile in the console's release; and an `s3://` path names no endpoint, so one console cannot serve
+  one bucket name on two S3 servers (20 §20.16).
+- **Warm Azure reads cost the console HEAD requests**, 2–12 per file per query: DuckDB's HTTP metadata
+  cache does not cover its Azure extension (console 16).
+- **Measured on GCS only**: throughput, commit times and the console's timings (13 §13.8, 20 §20.15)
+  are still to be measured on S3 and Azure; the drop's speed, on any backend (§14.2).

@@ -172,7 +172,7 @@ and closed after it:
 
 | Setting | Effect |
 |---|---|
-| `allowed_paths` | the snapshot's data files in the run's time range — nothing else can be opened |
+| `allowed_paths` | the snapshot's data files in the run's time range, spelled as DuckDB opens them — the URI, the `az://` form for Azure, a cached profile's local copy — and nothing else can be opened |
 | `allowed_directories` | the run's own directory, `<CONSOLE_RUN_DIR>/<run id>/`, where its result is written |
 | `enable_external_access = false` | every other file, URL and object is refused, however the statement names it |
 | `lock_configuration = true` | the statement cannot change any of the above |
@@ -197,7 +197,8 @@ Browse runs, profiles and exports run only SQL the console writes, on the shared
 1. single statement (semicolons outside string literals are rejected)
 2. must start with SELECT | WITH | DESCRIBE | SUMMARIZE | PIVOT | UNPIVOT | FROM | TABLE | VALUES
 3. must not reference a forbidden token
-4. ≤ 20 000 characters
+4. must not call a forbidden function
+5. ≤ 20 000 characters
 ```
 
 Forbidden tokens cover both statement kinds and file-access functions:
@@ -210,7 +211,8 @@ iceberg_scan iceberg_metadata iceberg_snapshots iceberg_table_properties glob sn
 ```
 
 Forbidden functions are refused as calls, however the call is written — the name quoted or not, in
-any case, qualified with a catalog or schema or not — and whatever surrounds it:
+any case, qualified with a catalog or schema or not, with whitespace, invisible formatting
+characters or comments before its parenthesis — and wherever it stands, a string literal included:
 
 ```
 duckdb_secrets which_secret query json_execute_serialized_sql
@@ -219,12 +221,13 @@ duckdb_secrets which_secret query json_execute_serialized_sql
 `duckdb_secrets()` and `which_secret()` list the secrets of the instance a statement runs in — every
 storage profile's name, scope, endpoint, region and key id; the secret values are redacted, and
 `duckdb_secrets(redact := false)` is refused by DuckDB itself. They open no file, so the sandbox cannot
-refuse them, and before this check they passed the guard. `query()` and `json_execute_serialized_sql()`
-run SQL given as a string, which no keyword check sees into. Being calls only, these reserve no table
-name: `FROM sales.which_secret` and a column named `query` stay queryable. `duckdb_settings()` and
+refuse them: the guard does. `query()` and `json_execute_serialized_sql()` run SQL given as a string,
+which no keyword check sees into. Being calls only, these reserve no table name:
+`FROM sales.which_secret` and a column named `query` stay queryable. `duckdb_settings()` and
 `current_setting()` were checked against a sandbox holding every kind of secret and name no profile.
 
-String literals and comments are blanked before scanning, so:
+String literals and comments are blanked before scanning, a `--` comment up to the first carriage
+return or line feed as DuckDB ends it (nothing hides after `--x\r`), so:
 
 | Statement | Result |
 |-----------|--------|
@@ -252,7 +255,7 @@ after one (`update`) makes the table `update_topic` (`shared/tableNames.ts`, the
 | Wall clock | None while someone is watching — **Stop** interrupts every query a run has open. A run nobody has read for 30 min (`CONSOLE_RUN_RETENTION_MS`) is cancelled and its stored result deleted |
 | DuckDB memory | 4 GB per instance (`CONSOLE_DUCKDB_MEMORY_LIMIT`) |
 | DuckDB threads | 32 (`CONSOLE_DUCKDB_THREADS`) |
-| Cached-mode download | 400 files / 2 GiB per scan |
+| Cached profiles' downloads | 400 files / 2 GiB per scan (`CONSOLE_CACHED_MODE_MAX_FILES`, `_BYTES`) |
 
 ### Honest limitations
 
@@ -270,12 +273,14 @@ after one (`update`) makes the table `update_topic` (`shared/tableNames.ts`, the
   succeeds in a locked sandbox when the profile's credentials can write it; only the guard's refusal
   of `COPY` stops it. Give every storage profile read-only credentials — S3 `GetObject` and
   `ListBucket`, a read-only SeaweedFS identity, Azure's "Storage Blob Data Reader" or a read-and-list
-  SAS, GCS `objectViewer` for the HMAC key's service account. The console cannot tell whether a
-  profile's identity can write and does not try; it warns at start for every direct profile.
-- **The secret-listing functions passed the guard.** Until `FORBIDDEN_FUNCTIONS`, a statement could
-  call `duckdb_secrets()` and see the scope, endpoint, region and key id of every secret its sandbox
-  held — across domains, and the GCS HMAC key id. A sandbox now holds only the secrets its own sources
-  need, and the guard refuses the calls.
+  SAS, GCS `objectViewer` for the service accounts of the key file (or ADC) and of the HMAC key. The
+  console cannot tell whether a profile's identity can write and does not try; it warns at start
+  for every direct profile.
+- **What opens no file is the guard's alone.** `duckdb_secrets()` and `which_secret()` would show
+  the scope, endpoint, region and key id of every secret a statement's sandbox holds, across
+  domains; the sandbox cannot refuse them, so the guard does (`FORBIDDEN_FUNCTIONS`), and a sandbox
+  holds only the secrets its own sources are read with, so even a call that got past the guard
+  would show no other profile.
 
 If you extend the guard, keep the layering: never widen the sandbox to make validation simpler.
 
@@ -324,14 +329,15 @@ For a cached profile, `storage/cache.ts::cachePathFor` mirrors an object to
 
 ```ts
 const segments = location.key.split('/')
-  .filter((s) => s.length > 0 && s !== '.' && s !== '..')
-  .map((s) => s.replace(/[\0]/g, ''));
+  .map((s) => s.replace(/[\0]/g, ''))
+  .filter((s) => s.length > 0 && s !== '.' && s !== '..');
 ```
 
-Empty, `.`, and `..` segments are dropped and null bytes removed, so the join cannot escape the
-cache directory even for a name that passed the location check; a container of `.` or `..` is not
-one (`storage/uris.ts`). The profile's name and the container are the first segments, keeping
-destinations and buckets apart.
+Null bytes are removed first and empty, `.` and `..` segments dropped after — in that order, so a
+segment such as `.\0.` cannot pass the filter and become `..` — and the join cannot escape the cache
+directory even for a name that passed the location check. A container of `.` or `..` is not one
+(`storage/uris.ts`), and a key with no segment left is refused (`400`). The profile's name and the
+container are the first segments, keeping destinations and buckets apart.
 
 ## 12.7 Outbound request safety
 
@@ -358,7 +364,7 @@ destinations and buckets apart.
 |---------|---------|
 | Unexpected server errors | Fixed message `the console failed to handle this request`, empty details, 500. The real error is logged server-side only |
 | A table that cannot be read | `503` naming what failed — storage's status code, or the missing object — never storage's own message, which can name the console's service account |
-| `GET /api/config` | Exposes every domain's id, name, status, version, federation-key id and live-tail state, the mode, row limits, poll interval and versions to anyone; each domain's create defaults only with `materializations.create` there. No URLs, credentials or budgets: how each domain is reached is on its Settings page, with `settings.view` there |
+| `GET /api/config` | Exposes every domain's id, name, status, version, federation-key id and live-tail state, whether data access is on, row limits, poll interval and versions to anyone; each domain's create defaults only with `materializations.create` there. No URLs, credentials or budgets: how each domain is reached is on its Settings page, with `settings.view` there |
 | `GET /api/auth/sso/outcomes/:id` | What a provider's sign-in did in each domain — signed in, refused and why, unreachable — to whoever holds the id: an unguessable 18-byte value in the redirect, kept 5 minutes. No token, no email |
 | A domain that refuses a sign-in | Its reason (`no_account`, `email_not_allowed`, `provider_disabled`, `password_sign_in_disabled`, …) is shown to the person, since it is about them; a wrong password still says only that the email or password is wrong |
 | Logs | `authorization` and `cookie` headers are removed; per-request logging is disabled |
@@ -388,9 +394,12 @@ destinations and buckets apart.
   `gaxios` → `@google-cloud/storage`.
 - `@duckdb/node-api` is pinned to the exact version `1.5.5-r.4` because it publishes
   prerelease-tagged versions where a caret range would behave unpredictably.
+- The storage SDKs `@aws-sdk/client-s3` (`3.1160.0`), `@azure/storage-blob` (`12.34.0`) and
+  `@azure/identity` (`4.14.1`) are pinned to exact versions too; `@google-cloud/storage` takes a
+  caret range (`^8.0.1`).
 
 Re-run `npm audit` after any dependency change; the console pulls in native code
-(DuckDB) and a cloud SDK, both of which warrant attention.
+(DuckDB) and three cloud storage SDKs, all of which warrant attention.
 
 ## 12.11 Threat summary
 
@@ -398,10 +407,12 @@ Re-run `npm audit` after any dependency change; the console pulls in native code
 |--------|-----------|---------|
 | Path traversal via materialization id | Yes | `assertSafeIdentifier` |
 | A table naming files elsewhere | Yes | Every object confined to the recorded location; the REST catalog refuses commits that move files |
-| Path traversal via object name | Yes | The location check, then segment filtering in `localPathFor` |
+| Path traversal via object name | Yes | The location check, then segment filtering in `storage/cache.ts::cachePathFor` |
 | SQL injection via browse filters | Yes | Column pattern + identifier/literal quoting |
 | Arbitrary file read via SQL | Yes | The statement sandbox; the keyword guard only makes refusals clearer |
-| Data modification via SQL | Yes | Forbidden statements; files are read, never a database; the sandbox writes only its own directory |
+| Data modification via SQL | Yes | Forbidden statements, `COPY` among them; files are read, never a database. On disk the sandbox writes only its own directory, but it cannot tell a write to an object path it may read from a read: read-only storage credentials are the second layer (§12.4) |
+| Listing the storage profiles' secrets via SQL | Yes | `duckdb_secrets()` and `which_secret()` refused; a sandbox holds only the secrets its own sources are read with |
+| A path no storage profile covers sent to a public cloud | Yes | Every remote object resolved to its profile before DuckDB sees it; one no profile covers is `503 storage_not_configured` |
 | Header injection via forwarded address or user agent | Yes | Charset filter + length cap |
 | Invalid or out-of-range setting | Yes | Catalog validation in the console and the control plane; re-validated when read back |
 | Unauthorized settings change | Yes | `settings.manage`, checked by the console and again by the control plane |
@@ -423,5 +434,5 @@ Re-run `npm audit` after any dependency change; the console pulls in native code
 | Password guessing | Yes | Per-address limit here; per-email lockout in the control plane; scrypt hashes |
 | Another person's query results | Yes | Runs belong to their owner; a statement's sandbox reaches only its own run's directory |
 | Data or schemas of a dataset the person has no role on | Yes | Per-dataset checks on every schema, data and run route; `visibleDetail` on the detail and its stream; the control plane and its REST catalog check again |
-| **Reading a table's files with bucket credentials** | **No** | Storage enforces no dataset: anyone who can read the bucket reads every table in it |
+| **Reading a table's files with storage credentials** | **No** | Storage enforces no dataset: anyone who can read a bucket or container — a storage profile's credentials included — reads every table in it |
 | Denial of service by connection count | No | No per-IP SSE connection cap |

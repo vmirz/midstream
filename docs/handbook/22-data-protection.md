@@ -292,11 +292,11 @@ and rendered into every runtime's spec as `PROTECTION_KEY_ID`.
 columns join across domains only when the domains share the protection key — the same choice as the
 federation key, made by whoever installs them.
 
-## 22.9 Upgrading an existing deployment
+## 22.9 Adding the key to an installation made without one
 
-The default hashes, and hashing needs a key no installation has yet, so upgrading to the release that
-brings data protection takes **one step**: add `protection-key` to the auth Secret. Best before
-`helm upgrade`, which then starts every app with it:
+The default hashes, and hashing needs the key, which `docs/install.md` §2 puts in the auth Secret
+when it creates it. An installation made without one takes **one step**: add `protection-key` to the
+auth Secret, then restart the apps, which read it when they start:
 
 ```bash
 NS=midstream; RELEASE=midstream          # the deployment's namespace and release
@@ -305,12 +305,6 @@ NS=midstream; RELEASE=midstream          # the deployment's namespace and releas
 kubectl -n "$NS" patch secret "$RELEASE-auth" --type merge \
   -p "{\"stringData\":{\"protection-key\":\"$(openssl rand -base64 48)\"}}"
 
-helm upgrade "$RELEASE" oci://ghcr.io/vmirz/charts/midstream --version <version> -n "$NS" -f midstream-values.yaml
-```
-
-Added after the upgrade instead, the key reaches the apps once they restart:
-
-```bash
 kubectl -n "$NS" rollout restart statefulset "$RELEASE-control-plane-app" "$RELEASE-tail-app" "$RELEASE-maintenance-app"
 ```
 
@@ -457,15 +451,20 @@ counted with their reasons, and a reprotect asked once the cause is gone rewrite
 3. A pass plans the oldest files needing it, lineage by lineage, up to `compaction_max_input_bytes` and
    2,000 files, and rewrites each in a child process into one output of its own: the same rows in the
    same order, in the same partition, named `reprotect-<id>-r<current><lineage>.parquet`. The child
-   refuses a plan made at another revision than the table's, and a key other than the one the table's
-   hashes were made with.
+   downloads each input and uploads each output create-only through the table's object store
+   (11 §11.1a), as compaction's does: an output whose upload the store refuses counts as written when
+   the object at its name has the local file's size, since only the job's own write, retried after its
+   answer was lost, can be at a name with a fresh id. The child refuses a plan made at another revision
+   than the table's, and a key other than the one the table's hashes were made with.
 4. The member commits the pass in one `replace` snapshot (`commit_reprotect`) that checks every input is
    still live and each output holds exactly its input's rows, carries the committed offsets forward
    unchanged, and says `materializer.operation: reprotect`, `materializer.reprotect-job`,
    `materializer.reprotected-files` and `materializer.protection-revision`. It keeps **no manifest
    entry of the files it removes**: their column bounds hold the plain text, and the current snapshot
    would otherwise carry them on. The runtime's committer keeps appending meanwhile; both commit
-   through the catalog pointer's compare-and-swap.
+   through the catalog pointer's compare-and-swap. A pass whose commit provably did not land deletes
+   its outputs; one whose commit's outcome is unknown (11 §11.2) fails keeping them, and orphan cleanup
+   removes them if the table never took them.
 5. Pass follows pass until nothing is left to rewrite — and no sooner than the batch ceiling
    (`max_open_file_age_ceiling_seconds`, 600 s) plus two minutes after the table recorded its revision:
    a writer's batch keeps the revision it opened under, and one that takes no more records seals at

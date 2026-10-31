@@ -6,16 +6,18 @@ access token for every domain, SQL that joins tables of several domains, and one
 over all of them. Each domain keeps everything it had: its own control plane, runtimes, lake,
 directory and catalog; nothing about a domain moves to the console.
 
-Source: chart `charts/midstream/` (`values.yaml` `domain`, `console.domains`, `console.sso`,
-`auth.sso`, `route`, `ingress`; `templates/_helpers.tpl` `consoleDomains`, `ssoEnv`, `consoleSsoEnv`;
-`templates/route.yaml`; `templates/console/deployment.yaml`); control plane
+Source: chart `charts/midstream/` (`values.yaml` `domain`, `console.domains`, `console.storage`,
+`console.sso`, `auth.sso`, `route`, `ingress`; `templates/_helpers.tpl` `consoleDomains`,
+`consoleStorage`, `consoleStorageEnv`, `ssoEnv`, `consoleSsoEnv`; `templates/route.yaml`;
+`templates/console/deployment.yaml`); control plane
 `python/src/midstream/identity/providers/` (`oidc.py`, `github.py`, `keys.py`, `http.py`),
 `identity/access_tokens.py`, `identity/authorization.py`, `web/auth.py`, `web/tokens.py`,
 `services/identity.py`, `table_names.py`, `config.py`, `web/system.py`; console
-`console/server/domains/` (`registry.ts`, `domain.ts`, `index.ts`), `server/auth/` (`guard.ts`,
-`cookies.ts`, `sso.ts`, `revocations.ts`), `server/routes/` (`sso.ts`, `catalog.ts`, `search.ts`,
-`system.ts`, `data.ts`), `server/runs/names.ts`, `src/lib/domains.tsx`. Design:
-`docs/design/multi-domain.md`.
+`console/server/domains/` (`registry.ts`, `domain.ts`, `index.ts`), `server/storage/` (`registry.ts`,
+`profile.ts`), `server/auth/` (`guard.ts`, `cookies.ts`, `sso.ts`, `revocations.ts`), `server/routes/`
+(`sso.ts`, `catalog.ts`, `search.ts`, `system.ts`, `data.ts`), `server/runs/names.ts`,
+`src/lib/domains.tsx`. Design: `docs/design/multi-domain.md`, and for the storage profiles
+`docs/design/storage-backends.md`.
 
 ## 20.1 The model in one paragraph
 
@@ -71,7 +73,8 @@ Deployment carries the registry's checksum, so a change rolls the console. `cons
 
 **CI values.** `ci/test-values.yaml` (Domain A with the console serving Domain B, every provider on),
 `ci/domain-only-values.yaml` (a domain without a console), `ci/console-only-values.yaml` (the console
-alone) — rendered by `python/tests/test_chart_domains.py`.
+alone, reading one domain's lake on GCS and another's on an S3-compatible server) — rendered by
+`python/tests/test_chart_domains.py`, and their storage by `test_chart_storage.py`.
 
 ## 20.3 Hostnames, routes and redirects
 
@@ -355,13 +358,15 @@ The person must be allowed `data.query` on each table's dataset, as that domain 
 there is `401`, a missing grant `403`, each naming the dataset with its domain.
 
 **The sandbox.** As before, one DuckDB instance per statement, allowed to open exactly the run's
-files (console 12 §12.4); each domain named, and its native catalog, is attached as an in-memory
-database, a schema per dataset, a view per table (`server/runs/view.ts::statementViews`), so DuckDB
-resolves `domain_a.sales.orders` itself. Every table is read at its own current snapshot — the
-request's own table at `asOf` when given — bounded by the run's time range, and with its live tail read
-from its **own** domain's tail app with the person's session there. A run's `tables` say each table's
-domain, dataset and materialization; the status line names the domains a statement read; exporting
-needs `data.export` on every table it read, in each one's domain.
+files (console 12 §12.4) and holding the secrets of the storage profiles those files are read with,
+and no others (§20.11), so one statement joins tables on different backends; each domain named, and
+its native catalog, is attached as an in-memory database, a schema per dataset, a view per table
+(`server/runs/view.ts::statementViews`), so DuckDB resolves `domain_a.sales.orders` itself. Every
+table is read at its own current snapshot — the request's own table at `asOf` when given — bounded by
+the run's time range, and with its live tail read from its **own** domain's tail app with the
+person's session there. A run's `tables` say each table's domain, dataset and materialization; the
+status line names the domains a statement read; exporting needs `data.export` on every table it read,
+in each one's domain.
 
 **Masked columns across domains.** A hashed column joins another domain's only when both domains hash
 with the same protection key (22 §22.8): `GET /system/version` reports each domain's
@@ -398,13 +403,55 @@ Trino — which read one level of namespaces — the domain's own catalog, attac
 
 ## 20.11 Lake access
 
-The console reads every domain's lake with one read-only identity: a Google service account with
-`roles/storage.objectViewer` on each domain's bucket, given to the console as its key (listing and
-metadata, `gcs.credentialsSecret`) and as an HMAC key (`console.hmacSecret`, DuckDB's direct
-`gs://` scans). One GCS secret in a sandbox reads every bucket, so a new domain needs only a grant on
-its bucket. Each domain still writes its own lake with its own credentials. An engine on the
-federated catalog brings its own access, and whoever can read a bucket reads every table in it,
-whatever their roles (14 §14.8).
+Each domain writes its own lake, on its own backend, with its own credentials (`storage.*` in its
+release, 02 §2.9a; 12 §12.12a). The console reads every domain's lake through its **storage profiles**
+(`console.storage`, console 03 §3.6a): one per destination prefix, each with a kind — `gcs`, `s3` or
+`azure` — its endpoint, region and path style, and read-only credentials of its own, from a Secret as
+`CONSOLE_STORAGE_<NAME>_*` or from the console's cloud identity (`console.podLabels`,
+`console.serviceAccountAnnotations`). The profiles know nothing of domains: a table is read by its
+location alone.
+
+```yaml
+console:
+  storage:
+    - name: domain-a
+      scope: gs://example-lake/            # Domain A's destination
+      kind: gcs
+      credentialsSecret: domain-a-lake-reader
+    - name: domain-b
+      scope: s3://example-lake-b/          # Domain B's, on an S3-compatible server
+      kind: s3
+      endpoint: https://s3.example.com
+      pathStyle: true
+      credentialsSecret: domain-b-lake-reader
+```
+
+**Longest prefix wins.** Every object — a pointer, a manifest, a data file — is read with the profile
+whose `scope` is the longest prefix of its URI, a plain, case-sensitive string match, exactly as DuckDB
+picks among scoped secrets, so the console and DuckDB never disagree about which credentials read a
+file. Scopes end with `/` and are unique, and nested ones are allowed: `s3://example-lake/` for most
+tables and `s3://example-lake/finance/` with credentials of its own. A location no profile covers is
+never read — not even anonymously, as DuckDB would read an uncovered path from the public cloud — and
+its table answers `503 storage_not_configured`: "no storage is configured for <uri>; add a storage
+profile whose scope covers it". An `s3://` path names a bucket, not a server, so the console refuses
+two `s3` profiles that serve one bucket through different endpoints (§20.16).
+
+**Statements across backends.** A statement's sandbox gets the DuckDB secret, and for Azure the
+extension, of each direct profile its files are read with, and no other: a statement joining
+`domain_a.sales.orders` on GCS with `domain_b.finance.payments` on S3 reads each with its own
+profile, and `duckdb_secrets()`, which would list the secrets, is refused (console 07 §07.10,
+console 12 §12.4). A profile in cached mode — `"access": "cached"`, a GCS profile without an HMAC
+key, or an Azure profile on an emulator with neither a connection string nor the account key — has
+its files downloaded first, and the sandbox reads the local copies.
+
+**Engines bring their own.** The federated catalog, like each domain's own, vends no storage
+credentials: an engine on it reads each table's data files with credentials of its own for that
+table's backend — a GCS HMAC key or Google credentials, an S3 access key or role with the server's
+endpoint, an Azure account key, SAS or service principal — and an engine joining domains on different
+backends needs each one's (04 §4.14). The Table tab's Connect panel prints the settings for the
+table's backend, filled from the console's own profile for it: endpoint, region, path style, account,
+never a credential. Whoever can read a bucket or container reads every table in it, whatever their
+roles, and so does each storage profile over its scope (14 §14.8).
 
 ## 20.12 Security
 
@@ -417,6 +464,7 @@ whatever their roles (14 §14.8).
 | Federated tokens | Signed, owner-bound, intersected with the owner's grants in the answering domain, revocable everywhere; the federation key lives only in the auth Secrets |
 | API hostnames | Every view authorizes; `GET /system/version` is the only public view. Restrict them to the console's egress where possible |
 | The catalog proxy | Passes the caller's token through, stores nothing, rewrites only namespaces |
+| The lakes | Each domain writes only its own, with its own credentials; the console reads with read-only storage profiles, never a location no profile covers, and a statement's sandbox holds only the secrets of the profiles it reads (§20.11) |
 | A provider outage | New sign-ins through it fail; sessions run to their limits; administrators sign in with a password |
 | The console down | No pages for any domain; every domain's API and catalog keep working |
 
@@ -425,8 +473,11 @@ whatever their roles (14 §14.8).
 **Adding a domain.** Install its release with `domain.id`/`domain.name`, its API hostname
 (`route.hostnames`) and the shared `federation-key` in its auth Secret; copy its `service-token` into
 a Secret in the console's namespace; add it to the console release's `console.domains` (with
-`controlPlaneUrl`, `tailUrl`, `serviceTokenSecret`) and upgrade the console. Grant the console's lake
-identity read on its bucket. Its providers: the same `auth.sso` identities as the console's.
+`controlPlaneUrl`, `tailUrl`, `serviceTokenSecret`) and upgrade the console. Give the console read
+access to its lake: a `console.storage` profile whose scope covers the domain's destination, with
+read-only credentials for its backend — or, when an existing profile's scope covers it already, read
+access for that profile's credentials (§20.11). Its providers: the same `auth.sso` identities as the
+console's.
 
 **Redirect rules by hand.** Every request to the old hostname answers `301` with
 `Location: <console.url>/d/<domain id><original path and query>`:
@@ -503,8 +554,8 @@ refused elsewhere and vice versa. Put the same key in its auth Secret and restar
 
 | Level | Covers |
 |---|---|
-| Control plane (`unittest`) | `test_chart_domains.py` (the registry rules, routes and redirects, the three topologies); `test_sso.py` (each provider's check against a stub key set or GitHub API, account resolution, both policies, allowed domains, password sign-in off with the administrator exemption, provisioning and its wait); `test_federated_tokens.py` (sign, check, rotation, expiry, owners across domains, dataset limits per domain, revocation and its signature, forged revocations); `test_settings.py` (the Sign-in settings) |
-| Console (`node --test`) | `domains/*.test.ts` (the registry), `auth/auth.test.ts` (one cookie per domain, the session map), `routes/sso.test.ts` (the flow: PKCE, state bound to the browser, a callback once, the fan-out, GitHub's revocation), `auth/revocations.test.ts` (handing revocations on, the five-minute pass), `routes/sql.test.ts` (a join across two domains, full names, refusals per domain, tails from each domain's tail app), `routes/catalog.test.ts` (the federated catalog's listing, rewriting and pass-through), `src/lib/*.test.ts` (paths, the merged fleet, key agreement) |
+| Control plane (`unittest`) | `test_chart_domains.py` (the registry rules, routes and redirects, the three topologies); `test_chart_storage.py` (the console's storage profiles: the registry without credentials, each profile's Secret, the rules, one bucket on two endpoints refused); `test_sso.py` (each provider's check against a stub key set or GitHub API, account resolution, both policies, allowed domains, password sign-in off with the administrator exemption, provisioning and its wait); `test_federated_tokens.py` (sign, check, rotation, expiry, owners across domains, dataset limits per domain, revocation and its signature, forged revocations); `test_settings.py` (the Sign-in settings) |
+| Console (`node --test`) | `domains/*.test.ts` (the registry), `auth/auth.test.ts` (one cookie per domain, the session map), `routes/sso.test.ts` (the flow: PKCE, state bound to the browser, a callback once, the fan-out, GitHub's revocation), `auth/revocations.test.ts` (handing revocations on, the five-minute pass), `routes/sql.test.ts` (a join across two domains, full names, refusals per domain, tails from each domain's tail app), `routes/catalog.test.ts` (the federated catalog's listing, rewriting and pass-through), `src/lib/*.test.ts` (paths, the merged fleet, key agreement), `storage/*.test.ts` (the storage registry and its rules, the longest scope serving each object, a location no profile covers refused, a sandbox given only its sources' profiles' secrets; against SeaweedFS, Azurite and fake-gcs-server, one statement joining tables on three backends — 13 §13.3a) |
 | A test cluster | §20.15 |
 
 ## 20.15 Validated on a test cluster
@@ -586,3 +637,8 @@ and 68–98 MiB; the control plane 8 millicores and 139 MiB); Domain B's own app
   is the same limit.
 - `request`, a first-sign-in policy that makes a pending account for an administrator to approve, is
   not built.
+- The console's storage profiles are its own, not the domains': a domain on a new bucket, prefix or
+  backend is unreadable in the console until a profile covers its destination (§20.11).
+- An `s3://` path names no server, so one console cannot read two domains whose lakes are buckets of
+  the same name on different S3 servers: the console and the chart refuse two `s3` profiles that serve
+  one bucket through different endpoints (14 §14.20).

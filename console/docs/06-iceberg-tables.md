@@ -30,14 +30,15 @@ each manifest (Avro)                        → data files, with counts and colu
 
 **Reading object storage.** Every backend reads alike (`storage/profile.ts::withRetries`): a read is
 retried on `408`, `429` and `5xx` answers, failed connections and a checksum that does not hold,
-three attempts in all; a `404` is final, and the table reader takes it as a table not created yet.
-The SDKs' own retries are off, so attempts never multiply.
+three attempts in all, each given 30 s for a metadata object and 10 minutes for a data file; a `404`
+is final, and the table reader takes it as a table not created yet. The SDKs' own retries are off,
+so attempts never multiply.
 
 | Profile | Reads with | Checked against |
 |---------|------------|-----------------|
-| `gcs` | a plain GET of GCS's JSON API (`?alt=media`, `Cache-Control: no-store`) with the client library's endpoint and credentials — the profile's key file, else ADC — and, as the library does, without credentials for an emulator (`endpoint`) | the CRC32C GCS stored, always |
+| `gcs` | a plain GET of GCS's JSON API (`?alt=media`, `Cache-Control: no-store`) with the client library's endpoint and credentials — the profile's key file, else ADC — and, as the library does, without credentials for an emulator (`endpoint`) | the CRC32C GCS stored, for every object not stored compressed |
 | `s3` | `@aws-sdk/client-s3` `GetObject` with `ChecksumMode: ENABLED`, the profile's keys or the SDK's default chain | the object's checksum when it carries one, verified by the SDK as the body is read |
-| `azure` | `@azure/storage-blob` download: a connection string, the account key, a service principal or `DefaultAzureCredential`; an emulator's `endpoint` as the account URL | the blob's MD5 when it carries one |
+| `azure` | `@azure/storage-blob` download: a connection string, the account key, a service principal or `DefaultAzureCredential`; an emulator's `endpoint`, the account appended (`<endpoint>/<account>`), as the account URL | the blob's MD5 when it carries one |
 
 Not GCS's library `download()`: its stream plumbing gave every download more listeners than Node
 allows by default, and printed `MaxListenersExceededWarning` twice for every object — every few

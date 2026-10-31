@@ -273,6 +273,7 @@ features/
     topicChange.ts                          No React: what a choice of topics does to the tables (planTopicChange), and keepOrder
     TablesPanel.tsx                         The Overview's tables: written, kept, being dropped; what runs on each
     TableTab.tsx                            One table: figures, snapshots, maintenance and Run now, partitions, properties, Connect
+    connect.ts                              No React: the Connect snippets per engine, following the location's scheme and its storage profile (tested)
     OverviewTab.tsx                         Rates, committed data, throughput, reconciliation, lag, spec
     lagTrend.ts                             Which way consumer lag is heading, how fast, and the time left
     RuntimeTab.tsx                          KasprApp observation, agents, binding
@@ -444,6 +445,6 @@ Every asynchronous surface has four states, and all four are implemented:
 | Error | Inline panel (data) or an `EmptyState` variant (dataset), with a recovery action |
 | Success | The content |
 
-The distinction between "empty" and "error" is enforced: `DataTab` checks `datasetQuery.error`
-before falling back to `dataset.reason`, so "no data yet" and "object storage is unreachable" are
+The distinction between "empty" and "error" is enforced: `DataTab` checks `summaryQuery.error`
+before it says a table has no data yet, so *No data to query yet* and *<table> is not readable* are
 never confused. Getting this wrong was an actual bug caught during verification.

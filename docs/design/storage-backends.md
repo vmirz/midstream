@@ -1,9 +1,9 @@
 # Storage backends: the lake in GCS, Amazon S3, Azure Blob Storage or a local store
 
-**Status:** agreed (2026-10-30), being built. Written against `main` at 432a582 (1.0.0-rc.4 with data
+**Status:** agreed (2026-10-30), built. Written against `main` at 432a582 (1.0.0-rc.4 with data
 protection) and revised the same day with the owner's decisions (§15) and the results of experiments
-against SeaweedFS, Azurite, moto and fake-gcs-server (§3.5). §17 will list where the build departs
-from this design.
+against SeaweedFS, Azurite, moto and fake-gcs-server (§3.5). §17 lists where the build departs from
+this design.
 
 **Audience:** the owner, for review; then the implementer, who should be able to build from this
 without coming back to its author.
@@ -388,7 +388,7 @@ orphan log line; nothing calls the catalog's own `drop_table`, whose "no such ta
 | `lakehouse/io.py` | `ObjectStoreFileIO`: one FileIO over the store for every backend |
 | `lakehouse/catalog.py` | `PointerCatalog` (was `GcsPointerCatalog`); `client=` becomes `store=`, resolved per location when not given |
 | `lakehouse/files.py::read_parquet_footer`, `lakehouse/maintenance.py::find_orphans`, `lakehouse/commits.py`, `lakehouse/lifecycle.py`, `lakehouse/rest.py` | take `store=` |
-| `storage/objects.py` | the drop lists and deletes through `store.list`/`store.delete_many`; the retry, budget and deadline logic stays here, generic; the GCS batch request moves into `GcsStore.delete_many` |
+| `storage/objects.py` | the drop lists through `store.list` and deletes through `store.delete_many`, `delete_batch_size` objects to a request; the GCS batch request moves into `GcsStore.delete_many`. The retry, budget and deadline logic stays here, generic: a pass lists and deletes at most `max(CLEANUP_PASS_MAX_OBJECTS, CLEANUP_PASS_MAX_REQUESTS × delete_batch_size)` objects — 1,000 through a store that deletes one object per request, 10,000 in GCS's batches of 100, 25,600 in Azure's of 256, 100,000 in S3's `DeleteObjects` of 1,000 — and stops after about `CLEANUP_PASS_MAX_SECONDS` (10 s), checked between requests. A delete with no answer, 408, 429 or a 5xx is sent again after 1, 2 and 4 s while the pass has time, and ends the pass if it still fails; any other refusal leaves its object to the next pass, and a request the store turned away as a whole ends the pass (§17). A pass that deleted nothing raises `DestinationDeleteError`, which the workflow retries after its backoff |
 | `runtime_app/writer/upload.py`, `runtime_app/pipeline.py`, `runtime_app/committer.py`, `runtime_app/table_state.py` | `store` in place of `client` |
 | `maintenance_app/compact_worker.py`, `maintenance_app/worker.py` | `store.get_to_file`, `store.put_file(if_version=ABSENT)`, `store.delete` |
 | `tail_app/worker.py` | the fallback seed's source label `"gcs"` becomes `"table"` |
@@ -423,6 +423,10 @@ pointing a deployment at a new store.
 ### 5.7 The chart
 
 ```yaml
+kaspr:
+  podLabels: {}                 # on every Kaspr pod, the runtimes included: AKS workload identity's label
+  serviceAccountAnnotations: {} # on each app's and runtime's ServiceAccount, <app>-app: IRSA's role ARN,
+                                # AKS workload identity's client id
 storage:
   gcs:
     credentialsSecret: ""   # a Secret with service-account.json; empty: application default credentials
@@ -436,19 +440,43 @@ storage:
     credentialsSecret: ""   # a Secret with connection-string, or account-key, or client-id, tenant-id
                             # and client-secret; empty: workload identity
     endpoint: ""            # an emulator's blob endpoint (the account is appended); empty: Azure
+console:
+  storage: []                   # the console's storage profiles (§5.8, §6.4)
+  podLabels: {}                 # the console's own identity, for a profile without a Secret
+  serviceAccountAnnotations: {} # on <release>-console, the ServiceAccount the chart creates for it
 ```
 
 - `midstream.storageEnv` renders, for each backend with a Secret named, one `env` entry per key with
-  `valueFrom.secretKeyRef` — the pattern `midstream.protectionKeyEnv` uses — plus the plain `STORAGE_*`
-  entries; `midstream.storageVolumes`/`storageVolumeMounts` mount the GCS key as a file. Included
-  wherever the GCS helpers are today: the control plane, the maintenance and tail apps, the runtime spec
-  and the console.
+  `valueFrom.secretKeyRef` — the pattern `midstream.protectionKeyEnv` uses; S3's `session-token` and
+  every Azure key optional — plus the plain `STORAGE_*` entries; `midstream.storageVolumes`/
+  `storageVolumeMounts` mount the GCS key at `/etc/midstream/gcs`, which
+  `GOOGLE_APPLICATION_CREDENTIALS` names. Included in the control plane, the maintenance and tail apps
+  and the runtime spec; the console reads through its own profiles instead (below).
 - A rendered runtime spec names a Secret, never a value.
+- A backend without a Secret uses the pods' own cloud identity, which `kaspr.podLabels` and
+  `kaspr.serviceAccountAnnotations` give every Kaspr pod, the runtimes included: labels on each pod (a
+  KasprApp's `template.pod`, `midstream.kasprPodMetadata`) and annotations on the ServiceAccount
+  kaspr-operator makes for each app and each runtime, `<app>-app` (`template.serviceAccount`,
+  `midstream.kasprServiceAccount`). Every materialization brings a ServiceAccount of its own, so the
+  identity must trust them all: IRSA by a `StringLike` condition on
+  `system:serviceaccount:<namespace>:*-app`, which leaves the console's `<release>-console` out; AKS
+  workload identity by a federated credential for each, at most 20 per identity. EKS Pod Identity needs
+  an association for each ServiceAccount and GKE workload identity a role granted to the namespace,
+  the console's pods included unless the console runs in a namespace of its own; neither needs a
+  value. A label the chart sets itself is refused.
 - `controlPlane.settings.defaultDestinationUri` accepts the three forms; the chart fails a `file://`
+  destination. Every endpoint — `storage.s3.endpoint`, `storage.azure.endpoint`, a console profile's —
+  must be `http(s)://host[:port]` naming the server alone (`midstream.endpoint`).
+- The console's profiles are `console.storage[]` (§5.8), rendered to `storage.json`
+  (`CONSOLE_STORAGE_FILE`) with every rule of §6.4 checked, two `s3` profiles of one bucket on
+  different endpoints included (§17). Their credentials come as `CONSOLE_STORAGE_<NAME>_*` variables
+  from each profile's Secret, every key optional, and a gcs profile's key file is mounted at
+  `/etc/midstream-storage/<name>/service-account.json`, which its `keyFile` names. A profile without a
+  Secret reads as the console's own cloud identity: `console.podLabels` and
+  `console.serviceAccountAnnotations`, on the ServiceAccount the chart creates for the console,
+  `<release>-console`. A change of profiles restarts the console (a checksum annotation), which reads
+  them once. `NOTES.txt` warns when the console has no profile, or none for the release's own
   destination.
-- The console's profiles are `console.storage[]` (§5.8), rendered to a JSON file, their credentials as
-  `CONSOLE_STORAGE_<NAME>_*` variables from Secrets and, for GCS, a mounted key file. `NOTES.txt` warns
-  when the console has no profile, or none for the release's own destination.
 
 ### 5.8 The console
 
@@ -459,8 +487,8 @@ A **storage registry** (`server/storage/`), the twin of the domains registry:
   {"name": "lake", "scope": "s3://example-lake/", "kind": "s3",
    "endpoint": "http://seaweedfs-s3.seaweedfs.svc:8333", "region": "us-east-1", "pathStyle": true},
   {"name": "archive", "scope": "gs://example-archive/", "kind": "gcs",
-   "keyFile": "/etc/midstream/storage/archive/service-account.json"},
-  {"name": "azure-lake", "scope": "abfss://lake@exampleacct.dfs.core.windows.net/", "kind": "azure"}
+   "keyFile": "/etc/midstream-storage/archive/service-account.json"},
+  {"name": "azure-lake", "scope": "abfss://lake@exampleaccount.dfs.core.windows.net/", "kind": "azure"}
 ]
 ```
 
@@ -665,12 +693,15 @@ the profile its locations match.
   event names a credential. The console's registry file holds no secret, and no credential is logged:
   warnings name a variable, a length and a prefix at most.
 - **Least privilege.** The runtimes, the maintenance app and the control plane need read, write, delete
-  and list on the destination (S3: `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket`;
-  `If-Match` requires `s3:GetObject`); the tail app read and list; the console read and list only — and
-  for the console it matters: a locked DuckDB sandbox still allows `COPY … TO` a path it may read, so only
-  the SQL guard stands between a statement and an overwrite when the console's identity can write. The
-  installation guide gives one policy per cloud: a read-only SeaweedFS identity, an Azure "Storage Blob
-  Data Reader" role or a read-and-list SAS, S3 `GetObject` and `ListBucket`, GCS `objectViewer`.
+  and list on the destination (S3: `s3:GetObject`, `s3:PutObject` and `s3:DeleteObject` on its objects,
+  `arn:aws:s3:::<bucket>/<prefix>*`, and `s3:ListBucket` on the bucket itself, `arn:aws:s3:::<bucket>`,
+  without which S3 answers a missing object 403 rather than 404; a compare-and-swap, `PutObject` with
+  `If-Match`, needs `s3:GetObject` besides `s3:PutObject`); the tail app read and list; the console read
+  and list only — and for the console it matters: a locked DuckDB sandbox still allows `COPY … TO` a
+  path it may read, so only the SQL guard stands between a statement and an overwrite when the
+  console's identity can write. The installation guide gives one policy per cloud: a read-only
+  SeaweedFS identity, an Azure "Storage Blob Data Reader" role or a read-and-list SAS, S3 `GetObject`
+  and `ListBucket`, GCS `objectViewer`.
 - **What a table may make the console read** is unchanged: every path a table names is checked against
   its location (console 12 §12.6), the cache path drops `.`/`..` segments and null bytes and is keyed by
   profile and container, and a statement's sandbox allows exactly the run's sources. A location no
@@ -762,8 +793,8 @@ and moto and Azure against Azurite.
 
 ## 12. Rollout
 
-- **Version** 1.1.0 (D9). No migration and no aliases (D10): a GCS deployment of an earlier release is
-  reinstalled with the new values, its tables kept or re-materialized by its owner.
+- **Version** 1.1.0 (D9). No migration and no aliases (D10): every installation of this release is
+  new.
 - **Documentation**: this design in `docs/design/`; handbooks 01, 02, 03, 11, 12, 13, 14, 15, 16, 20;
   console handbooks 01, 03, 06, 07, 12, 13, 16; `docs/install.md` with one path per backend; `AGENTS.md`.
 - Release notes in handbook 16 for 1.1.0, written with the release.
@@ -829,3 +860,72 @@ moves its storage calls onto the store.
   `IfNoneMatch` expects `*`).
 - MinIO's repository, archived 2026-02-13; SeaweedFS releases and its S3 API and `weed mini` pages;
   Garage's known issues; the Azurite README; DuckDB's Azure extension and S3 API pages; moto's changelog.
+
+---
+
+## 17. Departures from the design
+
+What the build changed, each checked against the code it names:
+
+1. **Any failed pointer write is checked, refused or unanswered.** §3.3 item 4 re-reads the pointer on a
+   conflict; the catalog does so for every pointer write that fails, whether refused or left without an
+   answer (`catalog.py::_landed`). The pointer read back, and the current metadata's log as far back as
+   it reaches, tell which it was: the write landed, and the commit stands; it provably did not (another
+   commit moved on from where this one started, or the table was dropped), and the staged metadata file
+   is deleted and `CommitFailedException` raised; or nobody can tell (the pointer has not moved, as
+   under a write still in flight or S3's 409; it cannot be read; or it has moved on past the log's
+   reach), and `CommitStateUnknownException` is raised with nothing deleted. A table's creation refused while it
+   still has no pointer is unknown too. The staged metadata file's own create-only write counts as
+   landed when the object at its name, which carries a fresh uuid, has the size sent.
+2. **The maintenance app deletes a job's outputs only when its commit provably did not land**: a lost
+   race, inputs gone, a mismatch, an error before the pointer write. An unknown outcome fails the job and
+   keeps its outputs, which orphan cleanup removes if the table never took them; a commit that landed
+   stands even when the table cannot be read back after it, and so does a snapshot expiry.
+3. **A compaction or reprotect output whose create-only write was refused counts as written** when the
+   object at its name, which carries a fresh id, has the local file's size, as the writer counts a seal's
+   file (`compact_worker.py::upload_output`); any other object there fails the job.
+4. **`delete_many` marks the failures of a request the store turned away as a whole**
+   (`DeleteFailure.whole_request`): a GCS batch request, an S3 `DeleteObjects`, an Azure blob batch. The
+   drop pass ends on them, since every request like it would fare the same (§5.5).
+5. **`StoreConfigurationError`, never retryable and never read as a missing object**, is what S3's
+   `NoSuchBucket`, Azure's configuration answers (`AzureConfigurationError`: a missing container, a
+   refused credential or network, an unknown API version) and GCS's "The specified bucket does not
+   exist." raise (§6.2); the GCS store judges a 404 itself, since the library answers `None` for any.
+6. **A GCS store's `delete_batch_size` is per store**: 100, or 1 when it deletes one object per request
+   (`GcsStore(batch_deletes=False)`, or a client that cannot batch), so the drop pass budgets 1,000 single
+   deletes. The registry builds such a store when `STORAGE_EMULATOR_HOST` is set: fake-gcs-server cannot
+   answer the library's batch requests.
+7. **The conformance suite's racing creators race at most six keys** (`check.RACE_ROUNDS`, or
+   `--race-rounds`), whatever the compare-and-swap rounds: SeaweedFS settles create-only writes racing for
+   one key at about 0.6 s a writer, and six keys already race every writer six times.
+8. **The chart refuses two `s3` console profiles of one bucket on different endpoints**, comparing
+   endpoints as the console does — scheme and host in lower case, a default port dropped, none meaning
+   AWS: an `s3://` path names no endpoint, so neither DuckDB nor the console could tell their objects
+   apart. The console refuses them at start too.
+9. **Reprotect, merged while this was built, moved onto the store with everything else** (§13): its
+   child downloads each input and uploads each output create-only through the table's store, as
+   compaction's does, and its purge lists the orphans and deletes through the app's store.
+10. **The console's live tests run by hand, not in CI** (§11.2): `CONSOLE_STORAGE_LIVE=1 node --test
+    server/storage/live.test.ts` reads through a direct and a cached profile of each backend from
+    SeaweedFS, Azurite and fake-gcs-server, at their local addresses unless `CONSOLE_STORAGE_LIVE_*`
+    names others. The Object stores job runs `test_store_live.py` alone.
+11. **An Azure profile with an emulator `endpoint` but neither a connection string nor the account key
+    is cached** (§5.8 had every Azure profile read in place): DuckDB sends a read authenticated by a
+    token to the account's real host, never to an endpoint, so the console downloads its data files
+    through the SDK instead, and says so at start (`storage/azure.ts`).
+12. **The SQL guard also refuses `query()` and `json_execute_serialized_sql()`** (§5.8 named only
+    `duckdb_secrets()` and `which_secret()`): both run SQL handed to them as a string, which no keyword
+    check sees. All four are refused as calls, however spelled, so a table or column of the same name
+    stays queryable (`data/sql.ts::FORBIDDEN_FUNCTIONS`).
+13. **Azure transfers go in 8 MiB pieces** (§5.4 said 64 MiB): an upload larger than 8 MiB goes in
+    8 MiB blocks, four in flight for a file, with the condition on the block-list commit, and a
+    conditional one first reads the blob's ETag and stages no block when the condition already
+    fails; a download larger than 8 MiB goes in 8 MiB chunks, each after the first under `If-Match`,
+    and starts again, three reads at most, when the blob changes (`azure.py::TRANSFER_CHUNK_BYTES`).
+14. **S3-compatible servers need no checksum settings** (§5.4 pointed at some): the S3 store keeps
+    botocore's defaults, CRC32 request checksums and responses validated when supported, which
+    SeaweedFS 4.51 and moto accept as they are (`s3.py`).
+15. **The conformance suite has sixteen checks** (§5.6): besides the table's, `conditional_delete`,
+    reported skipped for a store that offers no conditional delete, as S3's does not
+    (`supports_conditional_delete`), and `large_object`, a file of `--large-mb` streamed up and down
+    and create-only uploads of such files racing for one key, skipped without a size.

@@ -16,11 +16,11 @@ Load the document you need. Each one is self-contained and cross-links the other
 |---|----------|---------------------------|
 | 01 | [Overview and architecture](./01-overview-and-architecture.md) | Understand what the console is, its two processes, and why a BFF exists |
 | 02 | [Getting started](./02-getting-started.md) | Run it locally, understand the dev loop, or build for production |
-| 03 | [Configuration reference](./03-configuration-reference.md) | Look up any environment variable, default, or derived setting, and which ones the Settings page can override |
+| 03 | [Configuration reference](./03-configuration-reference.md) | Look up any environment variable, default, or derived setting, the storage profiles, and which ones the Settings page can override |
 | 04 | [Server internals](./04-server-internals.md) | Understand bootstrap, error handling, routing, logging, the control-plane client |
 | 05 | [Live store and real time](./05-live-store-and-realtime.md) | Understand polling, cadence, throughput derivation, SSE fan-out |
 | 06 | [Reading Iceberg tables and schemas](./06-iceberg-tables.md) | Understand how the console reads a table — pointer, metadata, manifests, snapshots — its schema and logical columns, and schema diffs |
-| 07 | [Data access and DuckDB](./07-data-access-and-duckdb.md) | Understand runs over a snapshot, time pruning, paging, statements and their sandbox, exports |
+| 07 | [Data access and DuckDB](./07-data-access-and-duckdb.md) | Understand runs over a snapshot, time pruning, paging, statements and their sandbox, exports, and how each storage profile reaches DuckDB |
 | 08 | [Console API reference](./08-console-api-reference.md) | Call the console's own HTTP API: settings, sign-in, users, groups, roles and the audit log included |
 | 09 | [Client architecture](./09-client-architecture.md) | Understand the React app, routing, state, data flow, and how pages follow permissions |
 | 10 | [Design system](./10-design-system.md) | Change styling, add a component, or match the visual language |

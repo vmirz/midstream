@@ -142,20 +142,29 @@ case 'ends_with':
 
 The console reads GCS, S3 and Azure through **storage profiles** (`server/storage/`, 07 §07.10).
 Everything above the profiles — `iceberg/io.ts`, `data/objects.ts`, `data/duckdb.ts`, warming, runs —
-asks the registry for the profile covering a URI and never branches on the backend. A new backend is:
+asks the registry for the profile covering a URI and never branches on the backend, but for the
+messages `data/duckdb.ts` explains: a missing file in each backend's words, GCS's signature errors.
+A new backend is:
 
-1. A URI form in `storage/uris.ts` (one per backend: the form every engine reads), and its scheme in
-   `profile.ts::SCHEME_OF_KIND`, with its credential variables in `CREDENTIAL_SUFFIXES`.
+1. A URI form in `storage/uris.ts` (one per backend: the form every engine reads), its kind in
+   `shared/types.ts::StorageKind`, and its scheme in `profile.ts::SCHEME_OF_KIND`, with its
+   credential variables in `CREDENTIAL_SUFFIXES`.
 2. A `StorageProfile` (`profile.ts`, extending `BaseProfile`): `read(uri)` for metadata objects,
    retried with `withRetries` and checked against whatever checksum the object carries;
    `download(uri, target)` through `writeWhole`; its mode; `duckdbSecret()` — a `TEMPORARY` secret
-   scoped to `duckdbScope()`; `duckdbExtensions()`; and `duckdbSource(uri)`, what DuckDB is given for
-   a data file, spelled exactly as `duckdbScope()` spells the scope (the sandbox's `allowed_paths` is
-   an exact-string match).
+   scoped to `duckdbScope()`; `duckdbExtensions()`, each of which must also be in
+   `data/duckdb.ts::STORAGE_EXTENSIONS`, the only extensions ever installed; `duckdbSource(uri)`, what
+   DuckDB is given for a data file, spelled exactly as `duckdbScope()` spells the scope (the
+   sandbox's `allowed_paths` is an exact-string match); and `credentialsInUse()`,
+   `credentialsFound()` and `warnings()`, which the Settings page and the boot log show: they name
+   credentials by their variables only.
 3. Its kind in `registry.ts::createProfile` and `validateStorageRegistry`, with every rule the chart
    applies to `console.storage[]` — and any DuckDB cannot tell apart, as for two endpoints behind one
-   `s3://` bucket.
-4. Its spelling of a missing file in `data/duckdb.ts::explainMissingDataFile`, and its snippets in
+   `s3://` bucket — and the same kind in the chart, whose `midstream.consoleStorage` and
+   `midstream.consoleStorageEnv` render the profiles and their credentials
+   (`charts/midstream/templates/_helpers.tpl`).
+4. Its spelling of a missing file in `data/duckdb.ts::explainMissingDataFile`, its name on the
+   Settings page (`routes/settings.ts::storageDeployment`), and its snippets in
    `src/features/detail/connect.ts`.
 
 Keep `iceberg/io.ts::isUnderLocation` in front of every read, on the canonical URI, whatever the

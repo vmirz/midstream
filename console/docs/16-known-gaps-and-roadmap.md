@@ -7,7 +7,7 @@ bug. The control plane's own list is handbook [14](../../docs/handbook/14-known-
 
 | Gap | Impact | Notes |
 |-----|--------|-------|
-| **Access is not enforced by the storage** | Anyone holding credentials that read the bucket — the console's own included — reads every table in it, whatever their roles | Roles decide what the control plane, the REST catalog and the console serve (handbook 14 §14.8) |
+| **Access is not enforced by the storage** | Anyone holding credentials that read the destination — the console's storage profiles' included — reads every table in it, whatever their roles | Roles decide what the control plane, the REST catalog and the console serve (handbook 14 §14.8) |
 | Data access is per dataset, not per table or column | A Dataset Reader on `sales` reads every table in it, all of each | No per-table or per-column policy ([15 §15.4](./15-extending-the-console.md)) |
 | Lifecycle permissions are per action | Anyone who may stop or delete may stop or delete any materialization — deleting, editing the topics and dropping tables also need write access to the tables' datasets | A grant cannot be scoped to a materialization (handbook 14 §14.8) |
 | Names are not secret | Anyone who may see datasets sees every dataset's name and its tables' names, locked ones included; anyone who may see materializations sees their topics, totals and status | Schemas and data are what a dataset role guards |
@@ -36,6 +36,7 @@ bug. The control plane's own list is handbook [14](../../docs/handbook/14-known-
 | A `deleting` materialization is in no `FleetTotals` phase bucket | The four sub-counts do not always sum to `materializations` |
 | Schema dates are as precise as the table's files | Read from manifest statistics (06 §6.3): a UTC day in a day table, up to a month in a month table; in an unpartitioned table compaction merges files across the table's whole span, after which its changes read that wide. Exact dates would need a scan per field (handbook 14 §14.6) |
 | A version's date is its earliest field's | A version that only collapsed or forked fields is dated by the new members' first values; one whose fields hold no value yet keeps the commit time (*committed 2 days ago*) |
+| S3 and Azure are read against emulators only, so far | The console's live tests read through an `s3` profile from SeaweedFS and an `azure` profile from Azurite (`server/storage/live.test.ts`, 14 §14.6); neither profile has read Amazon S3 or a real storage account yet |
 
 ## 16.3 Data explorer
 
@@ -63,10 +64,10 @@ Until a day is compacted, a query over it reads its small files — correct, slo
 | All-time statements are slow from far away | A statement is one DuckDB query, bounded by `CONSOLE_DUCKDB_THREADS`. The time range is the lever; running the console near the bucket is the fix |
 | A cached profile downloads whole files | Bounded by `CONSOLE_CACHED_MODE_MAX_FILES` / `_BYTES` per scan; pages read one file at a time and are never refused. A direct profile avoids downloads entirely |
 | A table outside every storage profile is unreadable | It answers "no storage is configured for …" until a profile covers its location: the console never guesses credentials, and never hands DuckDB a path no secret covers (07 §07.10) |
+| One S3 bucket, one endpoint | Two `s3` profiles serving one bucket through different endpoints are refused at start: an `s3://` path names no endpoint, so DuckDB could not tell their objects apart (03 §3.6a) |
 | Warm Azure reads cost HEAD requests | 2–12 per file per query: DuckDB's `enable_http_metadata_cache` does not cover the Azure extension. S3 and GCS cost none. `validate_external_file_cache` is left alone, being instance-wide |
 | The sandbox does not tell reads from writes | `COPY … TO` an allowed object path succeeds in a locked sandbox; the SQL guard is what refuses it. Storage profiles must hold read-only credentials, which the console cannot check |
 | No query history or saved queries | A view lives in the address bar and can be shared, but nothing is kept server-side |
-| No cross-materialization queries | A statement reads and joins the tables of one materialization; another materialization's tables are not there, and `iceberg.<other>` is refused. Engines on the REST catalog can join any tables |
 | No result charting or timeline | Results render as a grid; the manifests already know where rows sit in time |
 
 ### The live tail

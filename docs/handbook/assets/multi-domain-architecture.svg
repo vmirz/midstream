@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 692" width="1000" role="img" aria-labelledby="title desc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13">
   <title id="title">Midstream: any number of domains, one console</title>
-  <desc id="desc">People, sign-in providers and engines reach one shared console. The console serves every domain from one URL and asks each domain's control plane, as the person, for everything it shows. Each domain is its own deployment with its own accounts, data and settings; every domain holds the same federation key.</desc>
+  <desc id="desc">People, sign-in providers and engines reach one shared console. The console serves every domain from one URL and asks each domain's control plane, as the person, for everything it shows. Each domain is its own deployment with its own accounts, data and settings, its tables in an object store of its own — Google Cloud Storage, Amazon S3 or Azure Blob Storage — which the console reads through read-only storage profiles; every domain holds the same federation key.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#57606a"/></marker>
   </defs>
@@ -98,7 +98,7 @@
     <text x="48" y="519">accounts, groups, dataset grants, settings</text>
     <text x="48" y="534">checks every sign-in and token itself</text>
     <text x="40" y="565">maintenance · tail · a runtime per materialization</text>
-    <text x="40" y="584">Kafka topics → Iceberg tables in its bucket</text>
+    <text x="40" y="584">Kafka topics → Iceberg tables on GCS</text>
 
     <rect x="350" y="430" width="300" height="170" rx="10" fill="#1a7f37" fill-opacity="0.06" stroke="#1a7f37" stroke-width="1.75"/>
     <text x="366" y="454" font-size="14" font-weight="600" fill="#1f2328">Domain B</text>
@@ -108,7 +108,7 @@
     <text x="374" y="519">accounts, groups, dataset grants, settings</text>
     <text x="374" y="534">checks every sign-in and token itself</text>
     <text x="366" y="565">maintenance · tail · a runtime per materialization</text>
-    <text x="366" y="584">Kafka topics → Iceberg tables in its bucket</text>
+    <text x="366" y="584">Kafka topics → Iceberg tables on S3</text>
 
     <rect x="676" y="430" width="300" height="170" rx="10" fill="#1a7f37" fill-opacity="0.06" stroke="#1a7f37" stroke-width="1.75"/>
     <text x="692" y="454" font-size="14" font-weight="600" fill="#1f2328">Domain C, and any more</text>
@@ -118,12 +118,12 @@
     <text x="700" y="519">accounts, groups, dataset grants, settings</text>
     <text x="700" y="534">checks every sign-in and token itself</text>
     <text x="692" y="565">maintenance · tail · a runtime per materialization</text>
-    <text x="692" y="584">Kafka topics → Iceberg tables in its bucket</text>
+    <text x="692" y="584">Kafka topics → Iceberg tables on Azure</text>
   </g>
 
   <!-- Row 4: what every domain shares -->
   <rect x="24" y="616" width="952" height="56" rx="8" fill="#9a6700" fill-opacity="0.08" stroke="#9a6700" stroke-width="1.5"/>
   <text x="40" y="639" font-weight="600" fill="#1f2328">Shared by every domain</text>
   <text x="206" y="639" font-size="11.5" fill="#57606a">one federation key: an access token made in any domain works in all of them, and a revocation reaches each</text>
-  <text x="206" y="658" font-size="11.5" fill="#57606a">one read-only identity: the console reads every domain's lake; each domain keeps its own bucket and writes only to it</text>
+  <text x="206" y="658" font-size="11.5" fill="#57606a">storage profiles: the console reads every domain's lake, whatever its backend, read-only; each domain writes only to its own</text>
 </svg>

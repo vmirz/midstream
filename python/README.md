@@ -1,8 +1,9 @@
 # midstream-platform
 
 The Python package of [Midstream](https://github.com/vmirz/midstream), a streaming platform on
-[Kaspr](https://kaspr.dev) that materializes Kafka topics into Apache Iceberg tables, exactly once,
-with schemas that evolve by themselves, an Iceberg REST catalog, accounts and permissions, and a web
+[Kaspr](https://kaspr.dev) that materializes Kafka topics into Apache Iceberg tables — in Google
+Cloud Storage, Amazon S3 or an S3-compatible server, or Azure Blob Storage — exactly once, with
+schemas that evolve by themselves, an Iceberg REST catalog, accounts and permissions, and a web
 console.
 
 One distribution holds every server-side part: the control plane, the per-materialization runtime,

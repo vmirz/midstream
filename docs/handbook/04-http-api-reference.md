@@ -345,8 +345,9 @@ generated from the id and length-bounded. Request intake records that name as th
    and not `null` → `invalid_request("<field> is not chosen per materialization: <why>", field="<field>")`,
    the reason naming the deployment's value — `storage_size is not chosen per materialization: every
    runtime member gets the deployment's storage, 64Mi`.
-4. The deployment has a destination, and it is a `gs://` URI → otherwise `409 conflict`,
-   `reason: destination_not_configured` (§4.5.2). Nothing else is checked: no create can succeed.
+4. The deployment has a destination, and it can hold tables: a `gs://`, `s3://` or `abfss://` URI of
+   §4.5.2 → otherwise `409 conflict`, `reason: destination_not_configured`, the message saying why
+   (§4.5.2). Nothing else is checked: no create can succeed.
 5. `tables` (§4.5.1): present, a list of at most `max_materialization_topics` objects; each with a
    `source_topic` that is a Kafka topic name (letters, digits, `.`, `_` and `-`, at most 249
    characters, not `.` or `..`) and chosen once, a `dataset` name that exists (`404`,
@@ -432,13 +433,34 @@ applies to materializations created after it.
 | `runtime_name` | `<runtime_name_prefix>-<materialization_id>`, bounded to a Kubernetes name (`runtime/naming.py`); the record's `resolved_runtime_name` | — |
 | `storage_size` | `default_runtime_storage_size` (`64Mi`): each runtime member's persistent volume, which holds only its state table (10 §10.8). The control plane's and the maintenance app's own volumes are their manifests' (1Gi) | Materializations › Storage per replica |
 
-The destination must be a `gs://bucket[/prefix]` (`config.py::is_gcs_destination_uri`, the rule the
-Settings page applies): tables live in Google Cloud Storage, and their pointer's compare-and-swap is a
-GCS precondition. With none configured, or one that is not `gs://`, no materialization can be
-created: `409 conflict`, `reason: destination_not_configured`, and the console's create dialog says
-so. A request that names any of the four is refused (`400`, step 3 above) rather than quietly
-overruled; 3.x let a request choose them (16 §16.8). An update may still repeat their current values
-(§4.8.1), as a client sends back what it read.
+The destination is a storage URI, and its scheme names the object store the tables live in, for good
+(11 §11.1):
+
+| Object store | Destination |
+|---|---|
+| Google Cloud Storage | `gs://<bucket>[/<prefix>]` |
+| Amazon S3, or an S3-compatible server that honours conditional writes | `s3://<bucket>[/<prefix>]` |
+| Azure Blob Storage | `abfss://<container>@<account>.dfs.core.windows.net[/<prefix>]` |
+
+`lakehouse/store/uris.py::destination_problem` checks it — the rule the Settings page applies, and the
+chart for `controlPlane.settings.defaultDestinationUri` — after trimming whitespace and trailing
+slashes: at most 1,024 characters, no whitespace, the scheme in lowercase, and the backend's naming
+rules — a GCS bucket of lowercase letters, digits, dots, hyphens and underscores, an S3 bucket of 3 to
+63 lowercase letters, digits, dots and hyphens, an Azure container of 3 to 63 lowercase letters,
+digits and single hyphens, each starting and ending with a letter or digit, in an account of 3 to 24
+lowercase letters and digits. `file:///<path>` is accepted only by a control plane run with
+`CONTROL_PLANE_ALLOW_FILE_DESTINATIONS=true`, for tests and a laptop; the chart never sets it.
+
+With none configured, or one that cannot hold tables, no materialization can be created: `409
+conflict`, `reason: destination_not_configured`, its message naming the destination and what is wrong
+with it — `No materialization can be created: the destination for tables, s3a://example-lake, cannot
+hold them: s3a:// destinations are written s3://<bucket>[/<prefix>] in Midstream, the form every
+engine reads. An administrator sets one on the Settings page, under Materializations.` — and the
+console's create dialog says so. A materialization keeps the destination it was created with: after a
+change, new ones go to the new destination, on another backend too when the deployment has
+credentials for both (`storage.*`, 02 §2.9a). A request that names any of the four is refused (`400`,
+step 3 above) rather than quietly overruled; 3.x let a request choose them (16 §16.8). An update may
+still repeat their current values (§4.8.1), as a client sends back what it read.
 
 ---
 
@@ -1294,8 +1316,8 @@ than guessing.
 }
 ```
 
-`default_destination_uri` is `null` when none is configured, and no materialization can then be
-created (`409`, `destination_not_configured`). `reserved_names` is the full lower-case list a name cannot be, and `reserved_namespace_names`
+`default_destination_uri` is a `gs://`, `s3://` or `abfss://` URI (§4.5.2), `null` when none is
+configured, and no materialization can then be created (`409`, `destination_not_configured`). `reserved_names` is the full lower-case list a name cannot be, and `reserved_namespace_names`
 the names a dataset cannot take besides (§4.5.1). `max_topics` is `max_materialization_topics`, the
 most topics one materialization reads; `table_name_max_length` the longest name a topic's table is
 given — with `reserved_names`, what a client needs to show the table names a create will produce.
@@ -1378,9 +1400,10 @@ value comes from, plus the deployment's read-only settings:
 | `lineage` | `runtime` only: the history its revisions belong to, begun at the control plane's first start (17 §17.7); `null` for the other scopes |
 | `value`, `source` | The value in force, and whether it is an `override`, the `deployment` value, or the `default` |
 | `deployment_set`, `deployment_value` | Whether the deployment's environment sets this, and to what. A reset returns to this, else to `default_value` |
-| `kind` | `integer`, `boolean`, `gcs_uri` or `quantity`, with `minimum`/`maximum` and `nullable` where they apply |
+| `kind` | `integer`, `boolean`, `quantity`, `destination_uri` (a storage URI of §4.5.2), `enum` (one of `options`), `domain_list` (email domains, comma-separated) or `choice_map` (some of `choice_options`, each mapped to one of its choices), with `minimum`/`maximum` and `nullable` where they apply |
 | `effect` | What the change applies to, e.g. `new materializations`; `null` when it applies at once |
 | `advanced`, `danger` | Rarely changed; changing it can remove data |
+| `deployment` | The settings the deployment fixes, read-only, each `{key, component, label, description, env_var, value}`. Among them the object stores' own, as this control plane's stores read them: `storage_s3_endpoint`, `storage_s3_region` (`us-east-1` unless set), `storage_s3_path_style` and `storage_azure_endpoint`, from the `STORAGE_*` variables, `invalid: <why>` for a value the stores cannot use; and `allow_file_destinations` (`CONTROL_PLANE_ALLOW_FILE_DESTINATIONS`) |
 
 `runtime` adds `rollout`, how far the current revision of the current lineage has reached the
 runtimes:
@@ -1437,6 +1460,26 @@ A change that alters nothing applies without a new revision.
 { "error": { "code": "invalid_request",
              "message": "Default replicas (20) cannot exceed maximum replicas (16)",
              "details": { "field": "default_runtime_replicas" } } }
+```
+
+A `destination_uri` value goes through the rule of §4.5.2. Blank or `null` clears it —
+`default_destination_uri` is nullable — and anything else that cannot hold tables is a `400` whose
+message says what to write instead, `details.field` naming the setting:
+
+| Value | Message |
+|---|---|
+| A scheme in capitals, `S3://example-lake` | `Destination: write the scheme in lowercase: s3://, as in s3://<bucket>[/<prefix>]` |
+| Another spelling of a backend: `s3a://`, `s3n://`; `gcs://`; `az://`, `abfs://`, `wasb://`, `wasbs://`, `adl://` | `Destination: az:// destinations are written abfss://<container>@<account>.dfs.core.windows.net[/<prefix>] in Midstream, the form every engine reads`, naming the one form of its backend |
+| A web address, `http://…` or `https://…` | `Destination: a destination names its bucket by URI, not by web address: give one as gs://<bucket>[/<prefix>], s3://<bucket>[/<prefix>] or abfss://<container>@<account>.dfs.core.windows.net[/<prefix>]` |
+| A name its backend refuses: `s3://Example-Lake`, an `abfss://` URI on a `blob.core.windows.net` host | `Destination: s3:// destinations look like s3://<bucket>[/<prefix>], the bucket of 3 to 63 lowercase letters, digits, dots and hyphens, starting and ending with a letter or digit`, the backend's own rule |
+| `file:///…` on a control plane without `CONTROL_PLANE_ALLOW_FILE_DESTINATIONS` | `Destination: file:// destinations serve tests only: give one as …` |
+| Another scheme, no scheme, whitespace, more than 1,024 characters | `Destination: ftp:// is not a storage scheme Midstream writes to: give one as …`, and the like |
+| Not text | `Destination must be a storage URI such as gs://<bucket>[/<prefix>], s3://<bucket>[/<prefix>] or abfss://<container>@<account>.dfs.core.windows.net[/<prefix>]` |
+
+```json
+{ "error": { "code": "invalid_request",
+             "message": "Destination: s3a:// destinations are written s3://<bucket>[/<prefix>] in Midstream, the form every engine reads",
+             "details": { "field": "default_destination_uri" } } }
 ```
 
 ### `GET /settings/{scope}/history`
@@ -1830,6 +1873,30 @@ agent has applied or refused the request, then its outcome:
 Only the person who sent the request, or someone with `users.view`, may read an outcome
 (`403` otherwise). Outcomes are kept for a day.
 
+### 4.13.5 The identity request topic
+
+Every request is published to `<release>-identity-requests` with the key `identity`
+([06](./06-event-and-topic-contracts.md) §6.15):
+
+```json
+{
+  "request_id": "idr-5b2d8e1f0a3c",
+  "action": "create_user",
+  "submitted_at": "2026-10-14T09:45:00Z",
+  "actor_id": "usr-1a2b3c4d5e6f",
+  "actor_email": "admin@example.com",
+  "payload": {
+    "user_id": "usr-9d0e1f2a3b4c", "email": "ada@example.com",
+    "first_name": "Ada", "last_name": "Lovelace", "group_ids": ["editor"],
+    "password_hash": "$scrypt$ln=15,r=8,p=3$…$…"
+  },
+  "base_revision": null,
+  "context": { "ip": "10.1.2.3", "user_agent": "Mozilla/5.0 …" }
+}
+```
+
+A request never carries a password, only its hash.
+
 ### 4.13.6 Access tokens: `GET`, `POST /auth/tokens`, `DELETE /auth/tokens/{token_id}`, revocations
 
 Credentials for tools — an engine reading the REST catalog (§4.14) — carrying some of their
@@ -1876,30 +1943,6 @@ another domain signed — `403 invalid_signature` for any not signed with this d
 All changes go through `<release>-identity-requests` like any directory change, and the audit log
 records them (`token.created`, `token.revoked`, `token.revocation_applied`).
 
-### 4.13.5 The identity request topic
-
-Every request is published to `<release>-identity-requests` with the key `identity`
-([06](./06-event-and-topic-contracts.md) §6.15):
-
-```json
-{
-  "request_id": "idr-5b2d8e1f0a3c",
-  "action": "create_user",
-  "submitted_at": "2026-10-14T09:45:00Z",
-  "actor_id": "usr-1a2b3c4d5e6f",
-  "actor_email": "admin@example.com",
-  "payload": {
-    "user_id": "usr-9d0e1f2a3b4c", "email": "ada@example.com",
-    "first_name": "Ada", "last_name": "Lovelace", "group_ids": ["editor"],
-    "password_hash": "$scrypt$ln=15,r=8,p=3$…$…"
-  },
-  "base_revision": null,
-  "context": { "ip": "10.1.2.3", "user_agent": "Mozilla/5.0 …" }
-}
-```
-
-A request never carries a password, only its hash.
-
 ## 4.14 The Iceberg REST catalog: `/catalog/v1/…`
 
 The control plane serves the Iceberg REST catalog protocol, so engines attach the lake as a
@@ -1912,8 +1955,8 @@ is 11 §11.8; in short:
 | `GET /catalog/v1/config` | `catalog.read` on a dataset | defaults and the endpoints served; no `prefix`, no vended credentials |
 | `GET /catalog/v1/namespaces`, `GET /catalog/v1/namespaces/{ns}` | `catalog.read` on the dataset | one namespace per **dataset** the caller may read through the catalog; a locked one is not listed and answers `404`. A namespace's `properties` carry its `description` |
 | `GET /catalog/v1/namespaces/{ns}/tables` | `catalog.read` on it | the dataset's tables, whichever materialization writes each |
-| `GET /catalog/v1/namespaces/{ns}/tables/{table}` | `catalog.read` on it | the table's metadata location and metadata, resolved through its claim |
-| `POST /catalog/v1/namespaces/{ns}/tables/{table}` | `catalog.write` on it | a commit, through the pointer's compare-and-swap; `409` when another landed first; `400` for `set-location` or a property that moves files (`write.data.path`, `write.metadata.path`, `write.py-location-provider.impl`) |
+| `GET /catalog/v1/namespaces/{ns}/tables/{table}` | `catalog.read` on it | the table's metadata location and metadata, resolved through its claim; `config` empty: no storage credentials, no FileIO properties |
+| `POST /catalog/v1/namespaces/{ns}/tables/{table}` | `catalog.write` on it | a commit, through the pointer's compare-and-swap; `409` when another landed first; `503` `CommitStateUnknownException` when the pointer write failed and the pointer read back cannot tell whether it landed — load the table before committing again (11 §11.2); `400` for `set-location` or a property that moves files (`write.data.path`, `write.metadata.path`, `write.py-location-provider.impl`) |
 | `POST …/tables/{table}/metrics` | `catalog.read` on it | `204` |
 | table creation, drop, multi-table transactions | — | `501`: tables are made and dropped with materializations; datasets with `POST /datasets` |
 
@@ -1929,8 +1972,12 @@ SELECT count(*) FROM lake.sales.orders;
 SELECT o.status, sum(i.amount) FROM lake.sales.orders o JOIN lake.finance.invoices i USING (order_id) GROUP BY 1;
 ```
 
-The engine reads data files itself, with its own GCS access (an HMAC key for DuckDB's `gcs`
-secret, application default credentials for PyIceberg).
+The catalog vends no storage credentials: the engine reads data files itself, with credentials of
+its own for the backend the table's location names. For `gs://`, an HMAC key for DuckDB's `gcs`
+secret, application default credentials for PyIceberg; for `s3://`, an access key or the engine's
+credential chain, with the endpoint, region and path-style addressing of an S3-compatible server; for
+`abfss://`, the storage account's key, a connection string or a service principal. The console's
+Connect panel prints each engine's settings for a table's backend (console 06 §6.5).
 
 ## 4.15 Datasets: `/datasets`
 

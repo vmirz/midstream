@@ -710,7 +710,9 @@ The full checklist, including the console and the docs, is the `adding-permissio
 A person makes an access token for a tool — DuckDB on a laptop, a notebook's PyIceberg, a Spark job
 — so the tool can read the Iceberg REST catalog (11 §11.8) as them without a session that expires in
 hours or a password on disk (`identity/access_tokens.py`, `web/tokens.py`). One token is good in
-**every domain** where its owner has an account (20 §20.8).
+**every domain** where its owner has an account (20 §20.8). It opens the catalog, not the files: the
+tool reads data files with credentials of its own for the table's backend — GCS, S3 or Azure — which
+the catalog does not vend (04 §4.14, 20 §20.11).
 
 **The token.** `tok_<base64url claims>.<base64url HMAC-SHA256>`, signed with the **federation key**
 (`federation-key` in the auth Secret, the same value in every domain). Its claims — `jti` (a 12-hex
@@ -817,9 +819,11 @@ within the hour.
 `details` (`reason: sweep` for the sweep's own).
 
 **What it does not protect.** Grants decide what the control plane, the REST catalog and the console
-show and serve. They do not protect the files: an HMAC key that reads the bucket reads every table in
-it, and so do Google credentials that PyIceberg uses. Restricting a dataset therefore restricts only
-people without such credentials (14 §14.8).
+show and serve. They do not protect the files: credentials that read a bucket or container read every
+table in it, whatever their holder's roles — an HMAC key or Google credentials on GCS, an access key
+or a role on S3, an account key, a SAS or a role on Azure, and each of the console's storage profiles
+over its scope (20 §20.11). Restricting a dataset therefore restricts only people without such
+credentials (14 §14.8).
 
 ## 18.17 Single sign-on
 

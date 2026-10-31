@@ -13,8 +13,8 @@ platform cluster (`controlPlane.enabled=false`) — and needs:
 | One service token per domain | `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN`: that control plane's `service-token`, from its `<release>-auth` Secret; the chart reads it from the Secret each entry names. Without it the domain's live views show only what guests may see ([12](./12-security-model.md#122-authentication-and-authorization)) |
 | Control planes that say who they are | Every domain's control plane at Midstream 1.0 or later, with `domain.id` set to the id the registry gives it: one that says it is another domain is shown nothing of (`misconfigured`). Someone signs in to each as its bootstrap administrator first, adds people, and creates the first datasets |
 | One federation key | The same `federation-key` in every domain's auth Secret, for access tokens that work in every domain; the console's Domains section says when they differ |
-| Network to object storage | For the Data and Table tabs: the console reads each table itself, in whichever domain's bucket |
-| Storage profiles | `console.storage[]`, rendered into `CONSOLE_STORAGE_FILE`: one profile per destination prefix the domains' tables are on — `gs://`, `s3://` or `abfss://` — each with its Secret of **read-only** credentials (`CONSOLE_STORAGE_<NAME>_…`, a gcs key file). Without one covering a table's location the console reads nothing of it ([03 §3.6a](./03-configuration-reference.md)) |
+| Network to object storage | For the Table and Data tabs and the Schema tab's timeline: the console reads each table itself, in whichever domain's lake |
+| Storage profiles | `console.storage[]`, rendered into `CONSOLE_STORAGE_FILE`: one profile per destination prefix the domains' tables are on — `gs://`, `s3://` or `abfss://` — each with its Secret of **read-only** credentials (`CONSOLE_STORAGE_<NAME>_…`, a gcs key file) or, without one, the console's own cloud identity: `console.podLabels` and `console.serviceAccountAnnotations`, on the ServiceAccount the chart makes for it, `<release>-console` (IRSA's role ARN, AKS workload identity; GKE workload identity needs no value, only a role granted to the namespace). Without a profile covering a table's location the console reads nothing of it ([03 §3.6a](./03-configuration-reference.md)) |
 | TLS at the ingress | The session cookies are `Secure` only for requests that arrived over HTTPS (`CONSOLE_COOKIE_SECURE=auto`); the ingress must set `X-Forwarded-Proto` |
 | Sign-in providers (optional) | `CONSOLE_URL`, the console's public URL, and each provider's redirect URI registered with it: `<CONSOLE_URL>/api/auth/sso/<provider>/callback` ([03 §3.3a](./03-configuration-reference.md)). Each domain turns the provider on for itself (handbook 18 §18.17) |
 | Optional persistent volume | For the Parquet cache (cached profiles) |
@@ -164,11 +164,11 @@ Structured JSON via Pino, `service: midstream-console`.
 | `info` | `console log level changed` | A Settings page change to the log level was applied |
 | `info` | `shutting down console` | SIGTERM/SIGINT received |
 | `warn` | `live refresh failed` | A whole refresh pass of one domain failed; `domain` names it, `err` has the cause |
-| `info` | `storage profile: DuckDB reads its data files in place` / `storage profile: its data files are downloaded …` | At start, one per storage profile: `profile`, `kind`, `scope`, `mode`, `credentials` found or not (§13.11) |
+| `info` | `storage profile: DuckDB reads its data files in place` / `storage profile: its data files are downloaded …` | At start, one per storage profile: `profile`, `kind`, `scope`, `mode`, `endpoint`, `credentials` found or not, what it `readsWith`, and for a cached one the budgets (§13.11) |
 | `warn` | `no storage profiles are configured …` | At start: the console reads no object storage, and every table says so |
 | `warn` | `storage profiles read in place hand their credentials to DuckDB: give them read-only access …` | At start, naming the direct profiles (12 §12.4) |
 | `warn` | `storage profile <name>: …` | At start: something wrong with one profile, by its variables' names (§13.11) |
-| `warn` | `data access is disabled; the Data tab is unavailable` | At start, or after the Settings page turned the Data explorer off |
+| `warn` | `data access is disabled; the Data tab is unavailable` | At start, when the Data explorer is off: the console reads no object storage |
 | `warn` | `parquet cache eviction failed` | Cache may exceed its budget |
 | `warn` | `table could not be read` | A Data tab read or a run could not read a table; `err` has storage's own error, and the user got a `503` naming what failed (§13.7) |
 | `warn` | `table metadata unreadable` | The same, for the Table tab's view |
@@ -329,7 +329,7 @@ The message says what failed:
 
 | Message ends with | Cause | Fix |
 |---|---|---|
-| `no storage is configured for …` | No storage profile's scope covers the table's location | Add a profile whose scope covers it (`console.storage[]`); the Settings page lists the profiles |
+| `no storage is configured for …; add a storage profile whose scope covers it` | No storage profile's scope covers the table's location | Add a profile whose scope covers it (`console.storage[]`); the Settings page lists the profiles |
 | `object storage answered 403` | The profile's credentials may not read the table's bucket or container | Grant its identity read (and list) on it: the key file's or ADC's service account and, for direct gcs, the HMAC key's; the S3 key's policy; the Azure role or SAS |
 | `object storage could not be reached` | No credentials found, no network to the storage or its endpoint, or a timeout | `gcloud auth application-default login` locally for gcs; check the profile's endpoint and egress in the cluster |
 | `no object at …` | A metadata file or manifest the table names is gone: usually a snapshot that expired mid-read, so a retry works | If it persists, the table is damaged; handbook 12 |
@@ -393,8 +393,9 @@ du -sh "$CONSOLE_DATA_DIR/parquet-cache"
 ```
 
 Lower `CONSOLE_PARQUET_CACHE_MAX_BYTES`, or give the cached profiles direct access — an HMAC pair for
-a gcs profile, no `"access": "cached"` for the others — so nothing is downloaded at all. The cache can
-also be deleted at any time while the console is running.
+a gcs profile, a connection string or the account key for an Azure emulator, no `"access": "cached"`
+for any — so nothing is downloaded at all. The cache can also be deleted at any time while the
+console is running.
 
 ### High memory
 
@@ -424,6 +425,10 @@ term.
 | See who did what | Settings → Audit log |
 
 ## 13.9 Upgrade checklist
+
+Items 8–16 are earlier releases' notes, kept as a record: no installation of an earlier release is
+upgraded to this one, which is installed anew (handbook
+[14](../../docs/handbook/14-known-gaps-and-roadmap.md) §14.1).
 
 1. `npm install && npm audit` — expect 0 vulnerabilities.
 2. `npm run typecheck` — both projects.
@@ -501,8 +506,8 @@ to check — only for a gcs profile's objects: S3's messages are DuckDB's own an
 | `gcloud storage hmac list` | The key exists and is `ACTIVE` |
 
 The console warns at startup about a key id or secret of the wrong shape, by the variable's name,
-so check the boot log before the query log. See [03](./03-configuration-reference.md) for how to
-create a key.
+so check the boot log before the query log. See [03 §3.11](./03-configuration-reference.md) for how
+to create a key.
 
 ## 13.11 Storage profiles at start
 

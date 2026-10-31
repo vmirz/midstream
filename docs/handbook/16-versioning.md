@@ -127,7 +127,8 @@ console:
 
 Every app installs that commit, the control plane pins the runtimes to it, and the console runs
 its image, so the whole deployment runs one commit. Going back to a release is the same
-`helm upgrade` with the published chart and without these values.
+`helm upgrade` with the published chart and without these values, when that release takes the same
+values and reads the same tables (14 §14.1).
 
 ## The development line before 1.0.0
 

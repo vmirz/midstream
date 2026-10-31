@@ -184,7 +184,7 @@ schema migration of the envelope itself, not for optimistic concurrency.
 |-------|------|---------|-----------|
 | `materialization_id` | `str` | — | required, non-empty |
 | `tables` | `tuple[TableSpec, ...]` | — | at least one; unique names (without regard to case) and unique topics, kept tables included (`validate_table_specs`). The tables the runtime writes: one per source topic, in the order of the topics. An update can add and remove topics (07 §7.9a) |
-| `destination_uri` | `str` | — | required, non-empty; the deployment's destination when it was created (04 §4.5.2) |
+| `destination_uri` | `str` | — | required, non-empty; the deployment's destination when it was created (04 §4.5.2): `gs://<bucket>[/<prefix>]`, `s3://<bucket>[/<prefix>]` or `abfss://<container>@<account>.dfs.core.windows.net[/<prefix>]`, whose scheme names the backend its tables live in for good (11 §11.1) |
 | `desired_phase` | `str` | — | ∈ `LIFECYCLE_PHASES` |
 | `created_at` | `str` | — | required, non-empty |
 | `updated_at` | `str` | — | required, non-empty |
@@ -620,7 +620,7 @@ Published on Kafka topics. Full topic-level details in
 | Field | Type | Default | Validation |
 |-------|------|---------|-----------|
 | `tables` | `tuple[TableSpec, ...]` | — | at least one, unique names and topics (`validate_table_specs`): the tables the create view named, each in its dataset |
-| `destination_uri` | `str` | — | required; the deployment's destination, as the API resolved it |
+| `destination_uri` | `str` | — | required; the deployment's destination, as the API resolved it: a `gs://`, `s3://` or `abfss://` URI (11 §11.1) |
 | `name` | `str \| None` | `None` | the label, `None` for none |
 | `runtime_mode` | `str` | `"dedicated"` | ∈ `RUNTIME_MODES` |
 | `runtime_name` | `str \| None` | `None` | the runtime's generated, length-bounded name |

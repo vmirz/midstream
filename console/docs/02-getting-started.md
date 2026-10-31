@@ -7,7 +7,7 @@
 | Node ≥ 24 | The server runs TypeScript directly via native type stripping. Node 22 will fail on `.ts` entry points. |
 | npm ≥ 10 | Lockfile v3 and `overrides` support. |
 | Network access to a control plane | Everything except the shell of the UI requires it. |
-| Google ADC credentials (optional) | Only needed for the Data tab. Without them the Data tab reports that object storage is unreachable; every other feature works. |
+| Storage profiles (optional) | Only needed where the console reads a table from object storage itself — the Table and Data tabs, and the Schema tab's timeline and dates: a profile for the destination its tables are on, with read-only credentials (§2.2). Without one, those answer *no storage is configured for …*; every other feature works. |
 
 Check your toolchain:
 
@@ -68,6 +68,25 @@ CONSOLE_DOMAIN_LOCAL_SERVICE_TOKEN=<the control plane's AUTH_SERVICE_TOKEN>
 
 Without it the server logs a warning, and the fleet and detail streams read as a guest.
 
+### Reading tables
+
+The Table and Data tabs, and the Schema tab's timeline, read each table from object storage through
+the **storage profile** whose scope covers its location (03 §3.6a). Give `.env` one profile per
+destination prefix, and its credentials:
+
+```bash
+# console/.env
+CONSOLE_STORAGE='[{"name":"lake","scope":"s3://example-lake/","kind":"s3"}]'
+CONSOLE_STORAGE_LAKE_ACCESS_KEY_ID=<a read-only access key>
+CONSOLE_STORAGE_LAKE_SECRET_ACCESS_KEY=<its secret>
+```
+
+A `gcs` profile reads with your application default credentials (`gcloud auth application-default
+login`) and, without an HMAC key pair, downloads data files before it scans them; an `azure` profile
+reads with a connection string, the account key, a service principal or `DefaultAzureCredential`.
+An S3-compatible server, or an emulator of GCS or Azure, goes in the profile's `endpoint`. Without
+any profile the console reads no object storage, and says so at start.
+
 ## 2.3 Running only one half
 
 ```bash
@@ -96,13 +115,15 @@ npm start       # node --env-file-if-exists=.env server/main.ts
 
 ```bash
 npm run typecheck   # tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.server.json --noEmit
+npm test            # node --test over server/, src/ and shared/
 npm run build       # production client bundle
+CONSOLE_STORAGE_LIVE=1 node --test server/storage/live.test.ts   # the storage profiles against emulators
 ```
 
-There is no unit test runner wired up. The verification approach is an end-to-end harness against
-a stand-in control plane and a fake GCS endpoint; see
-[14 — Testing and verification](./14-testing-and-verification.md) for the full reproducible
-procedure.
+The unit suite runs the Iceberg reader and the run engine against a real table the control plane's
+own library wrote. The live storage tests need SeaweedFS, Azurite and fake-gcs-server running on
+this machine. See [14 — Testing and verification](./14-testing-and-verification.md) for the full
+reproducible procedure.
 
 ## 2.6 Expected build output
 
@@ -138,7 +159,8 @@ Because `useEventStream` tracks connection state, a server restart during develo
 | A banner says the registry sends a domain to a control plane that is another | The URL reaches another domain's control plane, or one whose `DOMAIN_ID` differs | Point the entry at the right control plane, or give the entry the id that control plane reports |
 | `Cannot find module ... server/main.ts` | You ran `node server/main.ts` from the repository root | `cd console` first, or use an absolute path |
 | Blank page and a MIME-type error in the console | The server was started before the client was built, or the client was rebuilt after the server started | `npm run build` then restart the server |
-| Data tab: "Object storage is not reachable" | No ADC credentials, or the destination bucket is not readable | `gcloud auth application-default login`, or set `CONSOLE_DATA_ACCESS_ENABLED=false` to hide the feature |
+| Table and Data tabs: *no storage is configured for …* | No storage profile's scope covers the table's location | Add one to `CONSOLE_STORAGE` (§2.2), or set `CONSOLE_DATA_ACCESS_ENABLED=false` to hide the feature |
+| Table and Data tabs: *… could not be read: object storage could not be reached*, or *answered 403* | The profile's credentials are missing or may not read the bucket, or its `endpoint` cannot be reached | `gcloud auth application-default login` for a `gcs` profile; the profile's `CONSOLE_STORAGE_<NAME>_…` variables for the others; its `endpoint` (13 §13.7) |
 | `PORT` already in use | A previous server is still running | `lsof -ti tcp:8787 \| xargs kill` |
 
 ## 2.9 Where to go next

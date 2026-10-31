@@ -1,14 +1,16 @@
 # 02 — Deployment and Manifests
 
 Everything in this system is deployed as Kubernetes custom resources managed by the Kaspr
-operator (`kaspr.io/v1alpha1`) plus two RBAC objects. There are no Deployments, Services, or
-Ingresses authored in this repository — the Kaspr operator derives those from `KasprApp`.
+operator (`kaspr.io/v1alpha1`), two RBAC objects and the console. The Kaspr operator derives each
+app's StatefulSet, Services and ServiceAccount from its `KasprApp`; besides those custom resources and
+the RBAC, the chart authors only the console's Deployment, Service, ServiceAccount, ConfigMap and
+optional volume claim, and optional HTTPRoutes or Ingresses (§2.1).
 
 ## 2.1 The chart
 
 Everything is deployed by one Helm chart, `charts/midstream`: three `KasprApp`s with their agents,
-tasks, tables and views, the console's Deployment and Service, the control plane's Role and
-RoleBinding, and optional HTTPRoutes or Ingresses. A release is one **domain** (§2.12, 20): its
+tasks, tables and views, the console's Deployment, Service and ServiceAccount, the control plane's
+Role and RoleBinding, and optional HTTPRoutes or Ingresses. A release is one **domain** (§2.12, 20): its
 control plane and apps, with the console or without it — or the shared console alone, serving any
 number of domains. Every resource, topic and table is named after
 the release (`fullnameOverride` replaces the release name), so one namespace can hold several
@@ -19,17 +21,20 @@ charts/midstream/
   Chart.yaml                    version = appVersion = the platform version
   values.yaml                   every value, documented in place
   README.md                     requirements and the values table
-  ci/                           values files the tests render: test (a domain with the console serving another),
-                                minimal, domain-only (no console), console-only (no domain)
+  ci/                           values files the tests render: test (a domain on GCS with the console serving another),
+                                minimal, domain-only (no console), console-only (no domain), s3 (a domain on an
+                                S3-compatible server), azure (a domain on Azure with workload identity)
   templates/
-    _helpers.tpl                derived names, labels, the package reference, storage, GCS, the runtime spec
+    _helpers.tpl                derived names, labels, the package reference, the Kaspr volumes, the lake's storage
+                                (Secret references, the pods' identity), the destination and console profile checks,
+                                the runtime spec
     control-plane/app.yaml      the control plane; control-plane/rbac.yaml its Role and RoleBinding
     maintenance/                app.yaml, maintenance-worker.yaml (agent), maintenance-step.yaml (task)
     tail/                       app.yaml, tail-worker.yaml (agent), tail-step.yaml (task); off with tail.enabled=false
     agents/   tasks/   tables/  the control plane's 8 agents, 8 tasks and 4 tables
     webviews/                   74 views: the HTTP API, the REST catalog, the tail app's four
-    console/deployment.yaml     the console: Deployment, Service, its domains' ConfigMap, optional PersistentVolumeClaim;
-                                off with console.enabled=false
+    console/deployment.yaml     the console: Deployment, Service, ServiceAccount, the ConfigMap of its domains and storage
+                                profiles, optional PersistentVolumeClaim; off with console.enabled=false
     route.yaml                  HTTPRoutes (route.enabled) or Ingresses (ingress.enabled): the domain's API, the console,
                                 and redirects from old hostnames (§2.12)
     NOTES.txt                   what helm prints after an install
@@ -44,7 +49,8 @@ Derived names, with a release called `midstream`:
 | Tables | `midstream-state`, `midstream-settings`, `midstream-directory`, `midstream-identity-audit`; `spec.name` stays bare |
 | Topics | `midstream-materialization-requests`, `-work`, `-status`, `-table-events`, `-schema-authority-updates`; `midstream-settings-requests`, `-identity-requests`, `-maintenance-requests`, `-tail-requests`; the scheduler's `midstream-control-plane-app-schedule-requests` |
 | Runtimes | `midstream-mat-<id>` (`controlPlane.settings.runtimeNamePrefix`), their tables under `<destination>/midstream/` (`storagePrefix`) |
-| Secrets | `midstream-auth` unless `auth.existingSecret`; the Kafka and GCS Secrets are named in values |
+| Secrets | `midstream-auth` unless `auth.existingSecret`; the Kafka Secret, the lake's (`storage.*.credentialsSecret`) and the console profiles' (`console.storage[].credentialsSecret`) are named in values |
+| ServiceAccounts | `midstream-console`, the chart's; kaspr-operator gives each app and each runtime its own, `<app>-app`: `midstream-control-plane-app`, `midstream-maintenance-app`, `midstream-tail-app`, `midstream-mat-<id>-app` (§2.9a) |
 
 Lint, render and apply:
 
@@ -191,9 +197,11 @@ through the runtime spec, with the control plane pinning the exact revision (10 
 | Value | Default | Key(s) | Used for |
 |-------|---------|--------|----------|
 | `kaspr.authentication.passwordSecret` | none, required | `password` | the Kafka user's password, for every app and runtime |
-| `gcs.credentialsSecret` | none: application default credentials | `google_application_credentials.json` (`gcs.credentialsKey`), mounted at `/app/gcp` and named by `GOOGLE_APPLICATION_CREDENTIALS` | GCS access for the apps, the runtimes and the console |
+| `storage.gcs.credentialsSecret` | none: application default credentials | `service-account.json`, mounted at `/etc/midstream/gcs` and named by `GOOGLE_APPLICATION_CREDENTIALS` | the lake on GCS, for the control plane, the maintenance and tail apps and every runtime (§2.9a) |
+| `storage.s3.credentialsSecret` | none: the pods' own identity | `access-key-id`, `secret-access-key`; `session-token`, optional | the lake on S3 or an S3-compatible server, likewise, as `AWS_*` |
+| `storage.azure.credentialsSecret` | none: the pods' own identity | `connection-string`, `account-key`, `client-id`, `tenant-id`, `client-secret`, each optional | the lake on Azure Blob Storage, likewise, as `AZURE_*` |
 | `auth.existingSecret` | `<release>-auth` | `signing-key`, `previous-signing-key`, `service-token`, `bootstrap-admin-email`, `bootstrap-admin-password`, `federation-key`, `previous-federation-key`, `protection-key`, each `optional: true` | session signing, the console's and the tail app's service token, the first administrator ([18](./18-identity-and-access.md) §18.11); access tokens every domain honours ([20](./20-domains-and-the-shared-console.md)); the key data protection hashes with, given to the control plane, the tail and maintenance apps and every runtime ([22](./22-data-protection.md) §22.8) |
-| `console.hmacSecret` | none | `CONSOLE_GCS_HMAC_KEY_ID`, `CONSOLE_GCS_HMAC_SECRET` | the console's direct `gs://` scans |
+| `console.storage[].credentialsSecret` | none: the console's own identity | by the profile's kind, each optional (§2.9a) | the console's reads of one destination prefix, as `CONSOLE_STORAGE_<NAME>_*` and, for `gcs`, a mounted key file |
 | `package.index.credentialsSecret` | none | `username`, `password` | a private package index |
 
 **Never** commit, echo, or reproduce the contents of these secrets. The chart references them by
@@ -202,8 +210,9 @@ name only; `docs/install.md` creates them.
 Every `auth` key is optional so that a deployment without the Secret still starts. Without
 `signing-key`, though, nobody can sign in and every request is a guest's; create the Secret before
 the first install ([18](./18-identity-and-access.md) §18.12). Without `protection-key` nothing can be
-hashed: a create or an edit whose policy hashes is refused, and the shipped default hashes — add it
-before upgrading an existing deployment ([22](./22-data-protection.md) §22.9).
+hashed: a create or an edit whose policy hashes is refused, and the shipped default hashes — create
+it with the Secret (`docs/install.md` §2); added later, it reaches the apps when they restart
+([22](./22-data-protection.md) §22.9).
 
 ### Scheduling constraints
 
@@ -211,16 +220,24 @@ before upgrading an existing deployment ([22](./22-data-protection.md) §22.9).
 and tail apps and, through the runtime spec, every runtime; the console has `console.nodeSelector`
 and `console.tolerations` of its own. Both are empty by default.
 
+### Cloud identity
+
+`kaspr.podLabels` label the control plane's pods, the maintenance and tail apps' and, through the
+runtime spec, every runtime's; `kaspr.serviceAccountAnnotations` annotate their ServiceAccounts. They
+carry the cloud identity a storage backend without a Secret is reached with — IRSA's role, AKS
+workload identity's client id — and the console has `console.podLabels` and
+`console.serviceAccountAnnotations` of its own (§2.9a). Both are empty by default.
+
 ### The embedded runtime app spec
 
 `CONTROL_PLANE_RUNTIME_APP_SPEC` is a **YAML document embedded in an environment
 variable**. It is parsed by `config._load_runtime_app_spec()` and used as the base `spec:` for
 every generated runtime `KasprApp`. Template rendering merges/overrides on top of it.
 
-Base value (abridged; see `control-plane.yaml:115-204`):
+Base value (abridged; `midstream.runtimeSpec` in `templates/_helpers.tpl`):
 
 ```yaml
-replicas: 16                     # replaced by each materialization's own replica count
+# no replicas: the control plane sets each materialization's own
 bootstrapServers: <kaspr.bootstrapServers>
 authentication: <kaspr.authentication>
 tls: <kaspr.tls>                 # when set
@@ -239,18 +256,19 @@ config: { valueSerializer: json, topicAllowDeclare: true, brokerRebalanceTimeout
 pythonPackages:                  # the same block as the apps'; the control plane pins the revision
   packages: [ midstream-platform==<appVersion> ]
 template:
-  pod: { nodeSelector, tolerations, volumes: [gcp-credentials] }
+  serviceAccount: { metadata: { annotations } }   # kaspr.serviceAccountAnnotations, when set (§2.9a)
+  pod: { metadata: { labels }, nodeSelector, tolerations, affinity, volumes: [gcs-credentials] }
+                                 # labels: kaspr.podLabels; the volume: storage.gcs.credentialsSecret
   kasprContainer:
     env:
       - name: RUNTIME_MEMBER_ID
         valueFrom: { fieldRef: { fieldPath: metadata.name } }
-      - name: GOOGLE_APPLICATION_CREDENTIALS
-        value: /app/gcp/google_application_credentials.json
-      - name: PROTOCOL_LOGGING_ENABLED
-        value: "true"
+      - <the lake's storage variables>   # from storage.*: Secret references and STORAGE_* (§2.9a)
       - name: PROTECTION_KEY       # the auth Secret's protection-key, optional (22 §22.8)
         valueFrom: { secretKeyRef: { name: <release>-auth, key: protection-key, optional: true } }
-    volumeMounts: [ { name: gcp-credentials, mountPath: /app/gcp, readOnly: true } ]
+      - name: PROTOCOL_LOGGING_ENABLED
+        value: "true"
+    volumeMounts: [ { name: gcs-credentials, mountPath: /etc/midstream/gcs, readOnly: true } ]
 ```
 
 Two important differences from the control plane itself:
@@ -268,7 +286,7 @@ Two important differences from the control plane itself:
 
 The control plane adds `K_STREAM_WAIT_EMPTY=false`, `K_STORE_ROCKSDB_WRITE_BUFFER_SIZE=4194304` and
 `K_STORE_ROCKSDB_MAX_WRITE_BUFFER_NUMBER=2` to every runtime, merged by name with this env list
-([03 §3.3.4](./03-configuration-reference.md)); a variable the list sets itself wins. When it holds
+([03 §3.3.3](./03-configuration-reference.md)); a variable the list sets itself wins. When it holds
 a protection key it also adds `PROTECTION_KEY_ID`, the key's id, so a member can tell that the key it
 loaded is the deployment's, and adding or changing the key changes every runtime's spec: the sweep
 re-applies each runtime once (22 §22.8).
@@ -286,19 +304,19 @@ re-applies each runtime once (22 §22.8).
 
 | Variable | Base value |
 |----------|------------|
-| `CONTROL_PLANE_DEFAULT_NAMESPACE` | `midstream` |
+| `CONTROL_PLANE_DEFAULT_NAMESPACE` | the release's namespace, from the pod's `metadata.namespace` |
 | `CONTROL_PLANE_DEFAULT_LIST_LIMIT` | `"30"` |
-| `CONTROL_PLANE_DEFAULT_DESTINATION_URI` | `""` — set per environment; empty means every create request names its own destination |
-| `CONTROL_PLANE_RUNTIME_NAME_PREFIX` | `kaspr` |
+| `CONTROL_PLANE_DEFAULT_DESTINATION_URI` | `controlPlane.settings.defaultDestinationUri`, checked by the chart (§2.9a); empty, no materialization can be created until the Settings page sets one |
+| `CONTROL_PLANE_RUNTIME_NAME_PREFIX` | the release name, unless `controlPlane.settings.runtimeNamePrefix` names another |
 | `CONTROL_PLANE_RUNTIME_TEMPLATE_VERSION` | `v1` |
-| `GOOGLE_APPLICATION_CREDENTIALS` | `/app/gcp/google_application_credentials.json` |
+| The lake's storage variables | from `storage.*` (§2.9a): each backend's credentials as Secret references, and the `STORAGE_*` settings; the same as every runtime's |
 | `CONTROL_PLANE_RUNTIME_APP_SPEC` | the embedded YAML above |
-| `CONTROL_PLANE_MATERIALIZATION_REQUESTS_TOPIC` | `materialization-requests` |
-| `CONTROL_PLANE_MATERIALIZATION_WORK_TOPIC` | `materialization-work` |
-| `CONTROL_PLANE_MATERIALIZATION_STATUS_TOPIC` | `materialization-status` |
-| `CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC` | `materialization-schema-authority-updates` (runtime control, 06 §6.7) |
-| `CONTROL_PLANE_TABLE_EVENTS_TOPIC` | `materialization-table-events` |
-| `CONTROL_PLANE_STORAGE_PREFIX` | the release name (`controlPlane.settings.storagePrefix`; `materializer` when unset): the directory under the destination every materialization's tables are created in, which keeps deployments sharing a bucket apart (`ICEBERG_NAMESPACE` before 3.0; a table's Iceberg namespace is its dataset) |
+| `CONTROL_PLANE_MATERIALIZATION_REQUESTS_TOPIC` | `<release>-materialization-requests` |
+| `CONTROL_PLANE_MATERIALIZATION_WORK_TOPIC` | `<release>-materialization-work` |
+| `CONTROL_PLANE_MATERIALIZATION_STATUS_TOPIC` | `<release>-materialization-status` |
+| `CONTROL_PLANE_SCHEMA_AUTHORITY_UPDATES_TOPIC` | `<release>-materialization-schema-authority-updates` (runtime control, 06 §6.7) |
+| `CONTROL_PLANE_TABLE_EVENTS_TOPIC` | `<release>-materialization-table-events` |
+| `CONTROL_PLANE_STORAGE_PREFIX` | the release name, unless `controlPlane.settings.storagePrefix` names another, trimmed of whitespace and slashes as the control plane trims it (`materializer` when the variable is unset): the directory under the destination every materialization's tables are created in, which keeps deployments sharing a bucket apart (not a namespace: a table's Iceberg namespace is its dataset) |
 | `CONTROL_PLANE_DELETED_RETENTION_HOURS`, `…_DEFAULT_RUNTIME_STORAGE_SIZE`, `…_DEFAULT_RUNTIME_REPLICAS` | retention of deleted records; a new runtime's volume per member (`64Mi`: it holds only the state table, 10 §10.8) and default replicas. The control plane's own volume is its KasprApp's `storage` (1Gi), the maintenance app's likewise |
 | `CONTROL_PLANE_SETTINGS_REQUESTS_TOPIC` | `<release>-settings-requests` |
 | `CONTROL_PLANE_IDENTITY_REQUESTS_TOPIC` | `<release>-identity-requests` |
@@ -308,8 +326,9 @@ re-applies each runtime once (22 §22.8).
 
 Notably **absent** from the chart (code defaults apply):
 `CONTROL_PLANE_TABLE_NAME` (default `state`),
-`PROTOCOL_LOG_SLOW_WAIT_SECONDS` (default `30`), and the catalog settings
-(`catalog_api_enabled`, `catalog_base_url`, 03).
+`PROTOCOL_LOG_SLOW_WAIT_SECONDS` (default `30`), the catalog settings
+(`catalog_api_enabled`, `catalog_base_url`, 03), and `CONTROL_PLANE_ALLOW_FILE_DESTINATIONS`
+(off: a `file://` destination serves tests only, and the chart refuses one).
 
 See [03 — Configuration reference](./03-configuration-reference.md) for the complete list. Many of
 these can also be overridden from the console's Settings page, and an override wins over the value
@@ -653,11 +672,12 @@ A template cannot name a topic the agents do not consume unless it spells the su
 | Values | What they decide |
 |--------|------------------|
 | `package.*` | where the Python package comes from: this repository at a ref, or a release from an index |
-| `kaspr.*` | the Kafka address and authentication, the Kaspr version, storage class and scheduling of every Kaspr pod, runtimes included |
-| `gcs.*`, `auth.*` | the GCS credential Secret, if any, and the auth Secret |
-| `controlPlane.settings.*` | the deployment settings of 03 §3.2 (destination, prefixes, limits); `controlPlane.runtime.*` the runtime spec of §2.3 |
+| `kaspr.*` | the Kafka address and authentication, the Kaspr version, storage class, scheduling and cloud identity (`podLabels`, `serviceAccountAnnotations`) of every Kaspr pod, runtimes included |
+| `storage.*` | the lake's object storage: each backend's Secret and settings (§2.9a) |
+| `auth.*` | the auth Secret, and the sign-in the domain accepts (`sso`, `passwordSignIn`) |
+| `controlPlane.settings.*` | the deployment settings of 03 §3.2 (the destination, which the chart checks, §2.9a; prefixes; limits); `controlPlane.runtime.*` the runtime spec of §2.3 |
 | `maintenance.*`, `tail.*` | the two apps' replicas, resources, autoscaling and their request topics' partitions; `tail.enabled` |
-| `console.*` | the console's image, variables, cache volume and placement; `console.enabled` |
+| `console.*` | the console's image, variables, cache volume, placement, storage profiles and cloud identity (§2.9a); `console.enabled` |
 | `route.*`, `ingress.*`, `rbac.create`, `tables.partitions` | how it is reached, the Role, the global tables' partitions |
 
 The CPU of every runtime member, the memory of the seals and the compaction child, and the live
@@ -666,6 +686,126 @@ last the Settings page's (17).
 
 Two things follow from it: the scheduler topic is derived from the app id
 (14 §14.2), and every installation's runtimes may declare their topics.
+
+## 2.9a Object storage
+
+A table's location names its object storage for good: `gs://` Google Cloud Storage, `s3://` Amazon S3
+or an S3-compatible server that honours conditional writes, `abfss://` Azure Blob Storage (11 §11.1).
+The control plane, the maintenance and tail apps and every runtime reach it through the object store
+layer, one store per scheme with the process's one identity (11 §11.1a, 03 §3.3a); the console reads
+it through storage profiles of its own. The chart gives both Secret references, never values: no
+rendered manifest, runtime spec or ConfigMap holds a credential, and a credential typed into the
+values goes nowhere (`python/tests/test_chart_storage.py`). `docs/install.md` §2 creates each
+backend's bucket, identities and Secrets.
+
+### The apps and the runtimes: `storage.*`
+
+Fill in the block of every backend this domain's destinations use, and leave the others empty. A
+materialization keeps the destination it was created with, so a domain whose destination moves to
+another backend keeps its older tables where they are, and needs both blocks.
+
+| Value | Secret keys | Renders, in the control plane, the maintenance and tail apps and the runtime spec |
+|---|---|---|
+| `storage.gcs.credentialsSecret` | `service-account.json`, a Google service-account key | the volume `gcs-credentials`, mounted read-only at `/etc/midstream/gcs`, and `GOOGLE_APPLICATION_CREDENTIALS=/etc/midstream/gcs/service-account.json` |
+| `storage.s3.credentialsSecret` | `access-key-id` and `secret-access-key`, required: a pod does not start without them; `session-token` for temporary keys, optional | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`, each from its key |
+| `storage.s3.region` | — | `STORAGE_S3_REGION`; empty renders nothing, and the stores sign for `us-east-1` |
+| `storage.s3.endpoint` | — | `STORAGE_S3_ENDPOINT`, an S3-compatible server; empty: AWS. One endpoint serves every `s3://` destination of the domain |
+| `storage.s3.pathStyle` | — | `STORAGE_S3_PATH_STYLE: "true"` when `true`: path-style addressing, which most S3-compatible servers need |
+| `storage.azure.credentialsSecret` | `connection-string`, or `account-key`, or `client-id`, `tenant-id` and `client-secret` (a service principal) | `AZURE_STORAGE_CONNECTION_STRING`, `AZURE_STORAGE_ACCOUNT_KEY`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_CLIENT_SECRET`, each from its key with `optional: true`, so the apps use what the Secret holds |
+| `storage.azure.endpoint` | — | `STORAGE_AZURE_ENDPOINT`, an emulator's Blob endpoint to which the account is appended: `http://azurite:10000` reaches the account at `http://azurite:10000/<account>`. Empty: `https://<account>.blob.core.windows.net` |
+
+The credential variables are each SDK's own, the names workload identities inject. A backend without
+a Secret renders none, and its SDK's default chain finds the pods' own identity (below). An endpoint
+is an `http://` or `https://` URL naming the server alone, `http(s)://host[:port]`, trailing slashes
+dropped: a bare `host:port`, a path or a user fails the install, naming the value. What each store
+does with these variables is 03 §3.3a and 11 §11.1a. The console takes none of them: it reads through
+its profiles alone.
+
+The variables are part of the runtime spec, so a change of `storage.*` changes every runtime's spec,
+and the sweep re-applies, and restarts, each one (07 §7.7). A Secret's new content reaches a pod when
+it next starts.
+
+### The pods' own identity: `kaspr.podLabels`, `kaspr.serviceAccountAnnotations`
+
+A backend without a Secret is reached with the pods' cloud identity. `kaspr.podLabels` label every
+Kaspr pod (each KasprApp's `template.pod.metadata.labels`, and the runtime spec's), and
+`kaspr.serviceAccountAnnotations` annotate the ServiceAccount kaspr-operator creates for each app and
+each runtime (`template.serviceAccount.metadata.annotations`), named `<app>-app`:
+`<release>-control-plane-app`, `<release>-maintenance-app`, `<release>-tail-app`, and
+`<runtimeNamePrefix>-<materialization id>-app`, a new one with every materialization. The identity
+must trust them all:
+
+| Identity | Values | Trust |
+|---|---|---|
+| IRSA | `serviceAccountAnnotations: {eks.amazonaws.com/role-arn: <the role's ARN>}` | the role trusts `system:serviceaccount:<namespace>:*-app`, a `StringLike` condition that leaves the console's `<release>-console` out |
+| EKS Pod Identity | none | an association for each ServiceAccount, every new runtime's included |
+| AKS workload identity | `podLabels: {azure.workload.identity/use: "true"}`, `serviceAccountAnnotations: {azure.workload.identity/client-id: <the identity's client id>}` | a federated credential for each ServiceAccount, every new runtime's included; at most 20 per identity |
+| GKE workload identity | none | the bucket's role granted to the namespace, the console's pods included unless the console runs in a namespace of its own |
+
+Both values must be maps, and every value renders as a string. A label the chart sets itself —
+`app.kubernetes.io/name`, `…/instance`, `…/version`, `…/managed-by`, `…/component`, `helm.sh/chart` —
+is refused. `ci/azure-values.yaml` renders AKS workload identity.
+
+### The destination
+
+`controlPlane.settings.defaultDestinationUri` decides where new materializations' tables go
+(`CONTROL_PLANE_DEFAULT_DESTINATION_URI`). The chart checks it by the control plane's own rules
+(03 §3.2.1, 17 §17.3), trimmed of surrounding whitespace and with trailing slashes dropped:
+`gs://bucket[/prefix]`, `s3://bucket[/prefix]` or `abfss://container@account.dfs.core.windows.net[/prefix]`,
+each bucket or container named as its backend allows, at most 1,024 characters. Anything else fails
+the install, naming the rule, and so does `file://`, which serves tests and a laptop only. Empty, no
+materialization can be created until the Settings page sets one. `controlPlane.settings.storagePrefix`
+is trimmed as the control plane trims it, of whitespace and then of slashes; what is left, or else
+the release name, is `CONTROL_PLANE_STORAGE_PREFIX`, and a destination's tables live under
+`<destination>/<storage prefix>/`.
+
+### The console's storage profiles: `console.storage[]`
+
+The console reads every domain's tables itself, through **storage profiles**: one per destination
+prefix, each with credentials of its own. An object is read with the profile whose `scope` is the
+longest prefix of its URI, as DuckDB picks among scoped secrets, so one console reads domains on
+different backends, in one statement too (console 03 §3.6a, console 07 §07.10). A location no profile
+covers is never read: its table answers "no storage is configured for <location>". With no profile,
+the console lists every domain's materializations and reads none of their tables.
+
+| Field | Takes |
+|---|---|
+| `name` | a lower-case letter, then up to 39 lower-case letters, digits or hyphens; unique. The profile's credential variables are `CONSOLE_STORAGE_<NAME>_*`, the name in upper case with `-` as `_` |
+| `scope` | the destination prefix it serves, ending with `/` and naming a bucket, or a container and its account — `gs://example-lake/`, `s3://example-lake/prod/`, `abfss://lake@exampleaccount.dfs.core.windows.net/`; unique |
+| `kind` | `gcs`, `s3` or `azure`, matching the scope's scheme |
+| `endpoint` | `s3`: an S3-compatible server; `azure`: an emulator's Blob endpoint, to which the account is appended; `gcs`: an emulator, read without credentials; `http(s)://host[:port]`, as above. Empty: the cloud's. The `s3` profiles of one bucket name one endpoint, compared as the console compares them: an `s3://` path names none, so neither DuckDB nor the console could tell their objects apart |
+| `region` | `s3`: the bucket's region; empty: `us-east-1` |
+| `pathStyle` | `s3`: `true` or `false`, path-style addressing |
+| `access` | `direct`, the default: DuckDB scans the objects in place; `cached`: the console downloads each file first. A `gcs` profile scans in place only with an HMAC key, and an `azure` profile with an `endpoint` only with a connection string or the account key |
+| `credentialsSecret` | a Secret in the release's namespace, every key optional |
+
+The chart refuses any other field — a credential typed into a profile among them — and any profile
+that breaks a rule, naming the profile and the rule. It renders the profiles, without credentials, as
+`storage.json` in the ConfigMap `<release>-console-domains`, mounted at `/etc/midstream` beside
+`domains.json` and named by `CONSOLE_STORAGE_FILE`; a change of profiles restarts the console
+(`checksum/storage`). Each profile's Secret reaches the console by kind, every key `optional: true`:
+
+| `kind` | Secret keys | Reach the console as |
+|---|---|---|
+| `gcs` | `hmac-key-id`, `hmac-secret` | `CONSOLE_STORAGE_<NAME>_GCS_HMAC_KEY_ID`, `…_GCS_HMAC_SECRET`, for DuckDB's scans |
+| `gcs` | `service-account.json` | a file mounted at `/etc/midstream-storage/<name>`, named by the profile's `keyFile`, for metadata reads |
+| `s3` | `access-key-id`, `secret-access-key`, `session-token` | `…_ACCESS_KEY_ID`, `…_SECRET_ACCESS_KEY`, `…_SESSION_TOKEN` |
+| `azure` | `connection-string`, `account-key`, `client-id`, `tenant-id`, `client-secret` | `…_AZURE_CONNECTION_STRING`, `…_AZURE_ACCOUNT_KEY`, `…_AZURE_CLIENT_ID`, `…_AZURE_TENANT_ID`, `…_AZURE_CLIENT_SECRET` |
+
+A profile without a `credentialsSecret` reads as the console's own identity: application default
+credentials, the SDK's credential chain, workload identity. The console runs as its own
+ServiceAccount, `<release>-console`, which the chart creates; `console.serviceAccountAnnotations`
+annotate it and `console.podLabels` label the console's pods, by the same rules as `kaspr.*` — IRSA's
+`eks.amazonaws.com/role-arn` of a read-only role, or AKS workload identity's label and client id. The
+console never writes a table, so give every profile read-only credentials: a statement's sandbox does
+not stop a write to a path it may read, only the SQL guard does (console 12 §12.4).
+
+### What helm prints
+
+`NOTES.txt` warns when `console.storage` names no profile, since the console could then read no
+table, and, in a release with a domain whose console serves it, when no profile's scope is a prefix
+of `<destination>/<storage prefix>/`, where the domain's tables live. Without a destination it says
+that none is configured yet.
 
 ## 2.10 Runtime resources (created at runtime, not in the chart)
 
@@ -711,7 +851,7 @@ one task (10 §10.10):
 
 | Resource | Does |
 |---|---|
-| KasprApp `<release>-maintenance` | 1 replica; requests 0.5 CPU / 1 GiB, limits 2 CPU / 3 GiB (a compaction child holds up to ~1.3 GiB), the CPU request then set from use between 100m and 1500m (§2.10c); the same package, Kafka user, GCP credentials and scheduling as the control plane |
+| KasprApp `<release>-maintenance` | 1 replica; requests 0.5 CPU / 1 GiB, limits 2 CPU / 3 GiB (a compaction child holds up to ~1.3 GiB), the CPU request then set from use between 100m and 1500m (§2.10c); the same package, Kafka user, storage credentials, cloud identity and scheduling as the control plane |
 | KasprAgent `maintenance-worker` | consumes `<release>-maintenance-requests` (declared, 6 partitions, keyed by table) and hands each message to the member's worker; outputs table events (route `events`) to `materialization-table-events` |
 | KasprTask `maintenance-step` | every 5 s on every member (not `onLeader`): finishes jobs, starts those due, sends their table events |
 
@@ -734,7 +874,7 @@ tables between them; each table is one member's.
 
 | Resource | Does |
 |---|---|
-| KasprApp `<release>-tail` | 2 replicas; requests 1 CPU / 2 GiB, limits 2 CPU / 4 GiB, the CPU request then set from use between 100m and 1500m (§2.10c); web port 6065; the same package, Kafka user, GCP credentials and scheduling as the control plane |
+| KasprApp `<release>-tail` | 2 replicas; requests 1 CPU / 2 GiB, limits 2 CPU / 4 GiB, the CPU request then set from use between 100m and 1500m (§2.10c); web port 6065; the same package, Kafka user, storage credentials, cloud identity and scheduling as the control plane |
 | KasprAgent `tail-worker` | consumes `<release>-tail-requests` (declared, **64 partitions**, keyed by table): the member assigned a table's partition owns it |
 | KasprTask `tail-step` | every 5 s on every member (not `onLeader`) |
 | KasprWebView `tail-rows` | `GET /tail/v1/materializations/{id}/tables/{table}`: `contentType: application/octet-stream` (Parquet) with `errorContentType: application/json` |
@@ -847,12 +987,18 @@ the container a `resizePolicy`. The Settings page shows the runtimes' value read
 ## 2.11 Deployment checklist
 
 ```bash
+# 0. Before the first install on a store: check that it keeps the conditional writes the pointer
+#    relies on, with the storage variables and credentials the pods will have (03 §3.3a)
+python -m midstream.lakehouse.store.check s3://example-lake/_check
+
 # 1. Lint and render
 helm lint charts/midstream -f my-values.yaml
 helm template midstream charts/midstream -n midstream -f my-values.yaml > /tmp/midstream.yaml
 
-# 2. Confirm the Secrets the values name exist (names only — never print contents)
-kubectl -n midstream get secret midstream-kafka midstream-gcs midstream-auth -o name
+# 2. Confirm the Secrets the values name exist (names only — never print contents): the Kafka and
+#    auth Secrets, storage.*.credentialsSecret and console.storage[].credentialsSecret (here the
+#    names ci/s3-values.yaml gives them)
+kubectl -n midstream get secret midstream-kafka midstream-auth midstream-s3 midstream-s3-reader -o name
 
 # 3. Install or upgrade
 helm upgrade --install midstream charts/midstream -n midstream --create-namespace -f my-values.yaml
@@ -874,25 +1020,15 @@ curl -s localhost:6065/materializations | python -m json.tool        # guests ma
 Anything more needs a session; see [18](./18-identity-and-access.md) §18.10 for signing in with
 `curl`.
 
-**Upgrading to 1.0** is a fresh start: the 0.x runtimes, tables and materialization-plane topics
-are removed and the control plane comes up from zero members, keeping the identity and settings
-tables — the procedure is 12 §12.13.
+**There is no upgrade from an earlier release.** Every installation of this release is new, with
+`storage.*` and `console.storage` written for it, and nothing converts the values, tables or records
+an earlier installation left (14 §14.1, `docs/install.md` §8). `helm upgrade` applies
+changed values to an installation of this release.
 
-**Upgrading to 4.1** adds the tail app and its topic. The control plane only sends to
-`<release>-tail-requests`, so it needs no forced rebalance; the tail app starts with its own
-group. The console reads it at its domain's `tailUrl` in the registry, which the chart sets for its
-own domain (console 03 §3.3).
-
-**Upgrading to 4.2** gives every app a VerticalPodAutoscaler and raises the runtimes' CPU limit to
-two cores (§2.10c). Use kaspr-operator 0.19.5 or later to get the VPAs: an older one ignores the
-field, and the apps run as before. The deploy restarts the control plane, maintenance and tail apps
-once, for the new package, but not for their VPAs. The runtimes roll once when the control plane
-re-applies them with the new limit. No topics change.
-
-**Upgrading to a release that adds topics** (0.5.0 the settings topics, 0.6.0 the identity topics,
-1.0 `materialization-table-events`): the control plane uses static group membership, so a rolling
-restart does not assign the new topics. Force one rebalance per environment after the deploy, as
-[17 — Settings](./17-settings.md) §17.12 describes. Until then the new agent consumes nothing.
+**A later release that adds topics**, applied with `helm upgrade`: the control plane uses static
+group membership, so a rolling restart does not assign the new topics. Force one rebalance per
+environment after the deploy, as [17 — Settings](./17-settings.md) §17.12 describes. Until then the
+new agent consumes nothing.
 
 ## 2.12 Routes, domains and the shared console
 
@@ -907,9 +1043,11 @@ A release is a **domain** — `domain.id` and `domain.name` — and the switches
 
 `console.domains` is the console's registry (20 §20.2): each domain's id and name; `local: true` for
 this release's own domain, reached by its Services; for another, `controlPlaneUrl`, `tailUrl` and
-`serviceTokenSecret: {name, key}`; and exactly one `settingsHome`. The chart renders it as the
-ConfigMap `<release>-console-domains` and each remote domain's token as
-`CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN`, and refuses a registry that breaks a rule. `console.url` is the
+`serviceTokenSecret: {name, key}`; and exactly one `settingsHome`. The chart renders it as
+`domains.json` in the ConfigMap `<release>-console-domains`, beside the storage profiles'
+`storage.json` (§2.9a), and each remote domain's token as `CONSOLE_DOMAIN_<ID>_SERVICE_TOKEN`, and
+refuses a registry that breaks a rule. A domain's entry names no storage: the console reads every
+domain's tables through the profile their locations match, whatever the backend. `console.url` is the
 URL people use; `console.sso.*` the console's OAuth clients and `auth.sso.*` what the domain accepts
 (18 §18.17); every domain's auth Secret holds the same `federation-key` (18 §18.11).
 
@@ -927,8 +1065,18 @@ hand (20 §20.13). `python/tests/test_chart_domains.py` renders each shape.
 
 ## 2.13 CI
 
-Continuous integration is being set up in GitHub Actions. This repository has no linter or
-formatter; the gates, run locally until then, are:
+`.github/workflows/ci.yml` runs on every pull request and every push to `main`. This repository has
+no linter or formatter; the jobs are the gates:
+
+| Job | Runs |
+|---|---|
+| One version everywhere | `python tools/version.py check` |
+| Python 3.12, 3.13 | the unit suite, `python -m compileall -q python/src`, the sdist and the wheel |
+| Console | `npm run typecheck`, `npm test`, `npm run build`, and the console's image, not pushed |
+| Helm chart | `helm lint` and `helm template` with every values file under `ci/` |
+| Object stores | the conformance suite and each store's own cases (`python/tests/test_store_live.py`) against SeaweedFS 4.51 and moto 5.2.5 for `s3://`, Azurite 3.37.0 for `abfss://` and fake-gcs-server 1.56.1 for `gs://`, each started in the job. A check a store cannot run is skipped and named: conditional deletes on S3, whose store offers none; on fake-gcs-server the conditional deletes it ignores and the batch requests it cannot answer |
+
+Locally:
 
 ```bash
 python -m unittest discover -s python/tests -p 'test_*.py' -v
@@ -936,3 +1084,6 @@ python -m compileall python/src
 helm lint charts/midstream -f charts/midstream/ci/test-values.yaml
 helm template midstream charts/midstream -n midstream -f charts/midstream/ci/test-values.yaml
 ```
+
+The live suite runs against any store by hand, with `STORAGE_LIVE_TESTS` naming base URIs and the
+store's own variables set (the module's docstring has examples).

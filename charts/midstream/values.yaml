@@ -69,12 +69,15 @@ kaspr:
   # <release>-maintenance-app, <release>-tail-app and <runtimeNamePrefix>-<materialization id>-app, a new
   # one with each materialization. So the cloud identity must trust them all:
   #   IRSA                   serviceAccountAnnotations: {eks.amazonaws.com/role-arn: <the role's ARN>}, the
-  #                          role trusting system:serviceaccount:<namespace>:* (a StringLike condition)
+  #                          role trusting system:serviceaccount:<namespace>:*-app (a StringLike
+  #                          condition, which leaves the console's <release>-console out)
   #   AKS workload identity  podLabels: {azure.workload.identity/use: "true"} and serviceAccountAnnotations:
   #                          {azure.workload.identity/client-id: <the identity's client id>}, with a
   #                          federated credential for each ServiceAccount, every new runtime's included
+  #                          (an identity takes at most 20)
   # EKS Pod Identity needs no value here but an association for each ServiceAccount, every new runtime's
-  # included; GKE workload identity needs none either: grant the bucket's role to the namespace.
+  # included; GKE workload identity needs none either: grant the bucket's role to the namespace, which
+  # covers the console's pods too unless the console runs in a namespace of its own.
   podLabels: {}
   serviceAccountAnnotations: {}
 
